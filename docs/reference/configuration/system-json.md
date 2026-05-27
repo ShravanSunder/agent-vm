@@ -111,6 +111,15 @@ effective Gondolin fingerprint in one build, the first profile performs the
 expensive asset build and later profiles materialize profile-local cache entries
 from those assets.
 
+For Docker-backed image profiles, the effective Gondolin fingerprint includes
+the inspected Docker rootfs layer identity after the Docker build completes.
+This lets unchanged Docker outputs reuse cached Gondolin assets without forcing
+a rebuild on every `agent-vm build`, while Dockerfile or overlay changes that
+alter the image layers still produce a new image generation. Each successful
+profile build also writes a profile-local prepared-image record under
+`cacheDir`; gateway and Tool VM startup may use that record when the matching
+assets still exist.
+
 ## runtimeDir
 
 `runtimeDir` stores active, non-backup runtime artifacts that are not durable

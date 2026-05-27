@@ -14,6 +14,21 @@ export type RunTaskFn = (
 	fn: (context?: RunTaskContext) => Promise<void>,
 ) => Promise<void>;
 
+export interface RunTaskGroupTask {
+	readonly fn: (context?: RunTaskContext) => Promise<void>;
+	readonly title: string;
+}
+
+export interface RunTaskGroupOptions {
+	readonly concurrency: number;
+	readonly maxVisible?: number;
+}
+
+export type RunTaskGroupFn = (
+	tasks: readonly RunTaskGroupTask[],
+	options: RunTaskGroupOptions,
+) => Promise<void>;
+
 export async function runTaskWithResult<TResult>(
 	runTaskStep: RunTaskFn,
 	title: string,

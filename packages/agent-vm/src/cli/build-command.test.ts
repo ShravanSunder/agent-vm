@@ -228,6 +228,11 @@ async function runBuildCommand(
 	await runBuildCommandDefault(options, {
 		computeGondolinFingerprint: async (fingerprintOptions) =>
 			`test-fingerprint:${fingerprintOptions.buildConfigPath}`,
+		resolveDockerRootfsIdentity: async (imageTag) => ({
+			architecture: 'arm64',
+			layers: [`sha256:test-layer:${imageTag}`],
+			os: 'linux',
+		}),
 		resolveRequiredZigVersion: async () => '0.15.2',
 		resolveZigVersion: async () => '0.15.2',
 		...dependencies,
@@ -446,17 +451,12 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(dockerBuilds).toHaveLength(1);
-		const output = outputLines.join('\n');
-		expect(output).toContain('Managed image plan: gateway/openclaw');
-		expect(output).toContain(
-			'base image: ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
-		);
-		expect(output).toContain('@agent-vm/openclaw-agent-vm-plugin@');
-		expect(output).toContain('source: installed-package');
-		expect(output).toContain('openclaw@2026.5.7');
-		expect(output).toContain('@openclaw/discord@2026.5.7');
-		expect(output).toContain('source: overlay');
-		expect(output).toContain('generated Dockerfile:');
+		expect(outputLines).toHaveLength(1);
+		expect(outputLines[0]).not.toContain('\n');
+		expect(outputLines[0]).toContain('base openclaw-gateway:2026.05.07.1');
+		expect(outputLines[0]).toContain('overlay overlay.jsonc');
+		expect(outputLines[0]).toContain('agent-vm ');
+		expect(outputLines[0]).toContain('packages openclaw,discord');
 	});
 
 	it('prints OpenClaw package-version mismatch warnings in the managed Dockerfile plan', async () => {
@@ -531,11 +531,10 @@ describe('runBuildCommand', () => {
 			},
 		);
 
-		const output = outputLines.join('\n');
-		expect(output).toContain('warnings:');
-		expect(output).toContain(
-			'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/discord uses 2026.5.2.',
-		);
+		expect(outputLines).toHaveLength(1);
+		expect(outputLines[0]).not.toContain('\n');
+		expect(outputLines[0]).toContain('warnings 1');
+		expect(outputLines[0]).not.toContain('OpenClaw package versions differ');
 	});
 
 	it('adds Discord OpenClaw package when a managed openclaw profile serves a Discord zone', async () => {
@@ -827,7 +826,7 @@ describe('runBuildCommand', () => {
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds[0]).toEqual({
 			cacheDir: '/cache/gateway-images/openclaw',
-			fullReset: true,
+			fullReset: undefined,
 		});
 		expect(gondolinBuilds[1]).toEqual({
 			cacheDir: '/cache/tool-vm-images/default',
@@ -835,8 +834,18 @@ describe('runBuildCommand', () => {
 		});
 	});
 
-	it('forces a Gondolin reset for any target rebuilt from a Dockerfile in this invocation', async () => {
-		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
+	it('uses Docker rootfs identity as fingerprint input for Docker-backed targets', async () => {
+		const fingerprintInputs: unknown[] = [];
+		const gondolinBuilds: {
+			cacheDir: string;
+			fingerprintInput: unknown;
+			fullReset: boolean | undefined;
+		}[] = [];
+		const dockerRootfsIdentity = {
+			architecture: 'arm64',
+			layers: ['sha256:rootfs-a', 'sha256:rootfs-b'],
+			os: 'linux',
+		};
 
 		await runBuildCommand(
 			{ systemConfig: createTestSystemConfig() },
@@ -845,19 +854,51 @@ describe('runBuildCommand', () => {
 				buildGondolinImage: async (options) => {
 					gondolinBuilds.push({
 						cacheDir: options.cacheDir,
+						fingerprintInput: options.fingerprintInput,
 						fullReset: options.fullReset,
 					});
-					return { built: true, fingerprint: 'docker-refresh', imagePath: '/cache/docker-refresh' };
+					return {
+						built: true,
+						fingerprint: options.cacheDir.includes('gateway-images')
+							? 'gateway-rootfs-fingerprint'
+							: 'tool-fingerprint',
+						imagePath: '/cache/docker-refresh',
+					};
+				},
+				computeGondolinFingerprint: async (options) => {
+					fingerprintInputs.push(options.fingerprintInput);
+					return options.fingerprintInput === undefined
+						? 'tool-fingerprint'
+						: 'gateway-rootfs-fingerprint';
 				},
 				resolveOciImageTag: async () => 'tag:latest',
+				resolveDockerRootfsIdentity: async () => dockerRootfsIdentity,
 				runTask: async (_title, fn) => await fn(),
 				syncBundledOpenClawPlugin: noOpPluginSync,
 			},
 		);
 
+		expect(fingerprintInputs).toEqual([
+			{
+				dockerRootfsIdentity,
+				schemaVersion: 1,
+			},
+			undefined,
+		]);
 		expect(gondolinBuilds).toEqual([
-			{ cacheDir: '/cache/gateway-images/openclaw', fullReset: true },
-			{ cacheDir: '/cache/tool-vm-images/default', fullReset: undefined },
+			{
+				cacheDir: '/cache/gateway-images/openclaw',
+				fingerprintInput: {
+					dockerRootfsIdentity,
+					schemaVersion: 1,
+				},
+				fullReset: undefined,
+			},
+			{
+				cacheDir: '/cache/tool-vm-images/default',
+				fingerprintInput: undefined,
+				fullReset: undefined,
+			},
 		]);
 	});
 
@@ -1495,7 +1536,7 @@ describe('runBuildCommand', () => {
 		]);
 	});
 
-	it('dedupes mixed gateway and tool VM targets while propagating reset', async () => {
+	it('dedupes mixed gateway and tool VM targets without forcing reset for Docker-backed profiles', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const configDirectory = path.join(temporaryDirectory, 'config');
 		const cacheDirectory = path.join(temporaryDirectory, 'cache');
@@ -1578,7 +1619,7 @@ describe('runBuildCommand', () => {
 		expect(gondolinBuilds).toEqual([
 			{
 				cacheDir: path.join(cacheDirectory, 'gateway-images', 'openclaw'),
-				fullReset: true,
+				fullReset: undefined,
 			},
 		]);
 		for (const imagePath of [
@@ -1589,6 +1630,160 @@ describe('runBuildCommand', () => {
 				expect(fs.existsSync(path.join(imagePath, fileName))).toBe(true);
 			}
 		}
+	});
+
+	it('builds multiple Docker-backed image targets concurrently before Gondolin asset builds', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayImageDirectory = path.join(
+			temporaryDirectory,
+			'vm-images',
+			'gateways',
+			'openclaw',
+		);
+		const toolVmImageDirectory = path.join(temporaryDirectory, 'vm-images', 'tool-vms', 'default');
+		const gatewayDockerfilePath = path.join(gatewayImageDirectory, 'Dockerfile');
+		const toolVmDockerfilePath = path.join(toolVmImageDirectory, 'Dockerfile');
+		fs.mkdirSync(gatewayImageDirectory, { recursive: true });
+		fs.mkdirSync(toolVmImageDirectory, { recursive: true });
+		fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
+		fs.writeFileSync(toolVmDockerfilePath, 'FROM scratch\n', 'utf8');
+
+		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const systemConfig = createLoadedSystemConfig(
+			{
+				...baseConfig,
+				cacheDir: path.join(temporaryDirectory, 'cache'),
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: path.join(gatewayImageDirectory, 'build-config.json'),
+							dockerfile: gatewayDockerfilePath,
+						},
+					},
+					toolVms: {
+						default: {
+							type: 'toolVm',
+							buildConfig: path.join(toolVmImageDirectory, 'build-config.json'),
+							dockerfile: toolVmDockerfilePath,
+						},
+					},
+				},
+			},
+			{ systemConfigPath: path.join(temporaryDirectory, 'config', 'system.json') },
+		);
+		let activeDockerBuilds = 0;
+		let maxActiveDockerBuilds = 0;
+		const dockerBuildStarts: string[] = [];
+
+		await runBuildCommand(
+			{ systemConfig },
+			{
+				buildDockerImage: async (options) => {
+					activeDockerBuilds += 1;
+					maxActiveDockerBuilds = Math.max(maxActiveDockerBuilds, activeDockerBuilds);
+					dockerBuildStarts.push(options.imageTag);
+					await new Promise((resolve) => {
+						setTimeout(resolve, 20);
+					});
+					activeDockerBuilds -= 1;
+				},
+				buildGondolinImage: async (options) => {
+					const imagePath = path.join(options.cacheDir, 'fingerprint');
+					writeFakeImageAssets(imagePath, options.cacheDir);
+					return {
+						built: true,
+						fingerprint: 'fingerprint',
+						imagePath,
+					};
+				},
+				resolveOciImageTag: async (buildConfigPath) =>
+					buildConfigPath.includes('/tool-vms/')
+						? 'agent-vm-tool-vm:latest'
+						: 'agent-vm-gateway:latest',
+				resolveProjectRootFromDockerfile: async () => temporaryDirectory,
+				runTask: async (_title, fn) => fn(),
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(dockerBuildStarts).toEqual(['agent-vm-gateway:latest', 'agent-vm-tool-vm:latest']);
+		expect(maxActiveDockerBuilds).toBe(2);
+	});
+
+	it('keeps Docker image tags distinct when gateway and Tool VM profile names match', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayImageDirectory = path.join(temporaryDirectory, 'vm-images', 'gateways', 'default');
+		const toolVmImageDirectory = path.join(temporaryDirectory, 'vm-images', 'tool-vms', 'default');
+		const gatewayDockerfilePath = path.join(gatewayImageDirectory, 'Dockerfile');
+		const toolVmDockerfilePath = path.join(toolVmImageDirectory, 'Dockerfile');
+		fs.mkdirSync(gatewayImageDirectory, { recursive: true });
+		fs.mkdirSync(toolVmImageDirectory, { recursive: true });
+		fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
+		fs.writeFileSync(toolVmDockerfilePath, 'FROM scratch\n', 'utf8');
+
+		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const systemConfig = createLoadedSystemConfig(
+			{
+				...baseConfig,
+				cacheDir: path.join(temporaryDirectory, 'cache'),
+				imageProfiles: {
+					gateways: {
+						default: {
+							type: 'openclaw',
+							buildConfig: path.join(gatewayImageDirectory, 'build-config.json'),
+							dockerfile: gatewayDockerfilePath,
+						},
+					},
+					toolVms: {
+						default: {
+							type: 'toolVm',
+							buildConfig: path.join(toolVmImageDirectory, 'build-config.json'),
+							dockerfile: toolVmDockerfilePath,
+						},
+					},
+				},
+				zones: baseConfig.zones.map((zone) => ({
+					...zone,
+					gateway: {
+						...zone.gateway,
+						imageProfile: 'default',
+					},
+				})),
+			},
+			{ systemConfigPath: path.join(temporaryDirectory, 'config', 'system.json') },
+		);
+		const dockerBuilds: string[] = [];
+
+		await runBuildCommand(
+			{ systemConfig },
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options.imageTag);
+				},
+				buildGondolinImage: async (options) => {
+					const imagePath = path.join(options.cacheDir, 'fingerprint');
+					writeFakeImageAssets(imagePath, options.cacheDir);
+					return {
+						built: true,
+						fingerprint: 'fingerprint',
+						imagePath,
+					};
+				},
+				resolveOciImageTag: async (buildConfigPath) =>
+					buildConfigPath.includes('/tool-vms/')
+						? 'agent-vm-tool-default:latest'
+						: 'agent-vm-gateway-default:latest',
+				resolveProjectRootFromDockerfile: async () => temporaryDirectory,
+				runTask: async (_title, fn) => fn(),
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(dockerBuilds).toEqual([
+			'agent-vm-gateway-default:latest',
+			'agent-vm-tool-default:latest',
+		]);
 	});
 
 	it('passes fullReset to shared Gondolin builds when forceRebuild is enabled', async () => {
@@ -1626,15 +1821,19 @@ describe('runBuildCommand', () => {
 		expect(taskTitles).toContain('Gondolin: toolVm/default');
 	});
 
-	it('routes Tasuku stream preview into child-process image builds', async () => {
+	it('keeps interactive build tasks quiet instead of streaming child output into Tasuku', async () => {
 		const taskStreamPreview = new Writable({
 			write(_chunk, _encoding, callback) {
 				callback();
 			},
 		});
-		const dockerStreamPreviews: unknown[] = [];
+		const dockerBuildOptions: {
+			readonly quiet: boolean | undefined;
+			readonly streamPreview: unknown;
+		}[] = [];
 		const gondolinStreamPreviews: unknown[] = [];
 		const taskStatuses: (string | undefined)[] = [];
+		const taskOutputLines: string[] = [];
 
 		await runBuildCommand(
 			{
@@ -1642,7 +1841,14 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async (options) => {
-					dockerStreamPreviews.push(options.streamPreview);
+					dockerBuildOptions.push({
+						quiet: options.quiet,
+						streamPreview: options.streamPreview,
+					});
+					options.streamPreview?.write('#1 [internal] load build definition\n');
+					options.streamPreview?.write(
+						'View build details: docker-desktop://dashboard/build/orbstack/orbstack/test-build\n',
+					);
 				},
 				buildGondolinImage: async (options) => {
 					gondolinStreamPreviews.push(options.streamPreview);
@@ -1652,7 +1858,9 @@ describe('runBuildCommand', () => {
 				runTask: async (_title, fn) => {
 					await fn({
 						interactive: true,
-						setOutput: () => {},
+						setOutput: (output) => {
+							taskOutputLines.push(typeof output === 'string' ? output : output.message);
+						},
 						setStatus: (status) => {
 							taskStatuses.push(status);
 						},
@@ -1663,12 +1871,15 @@ describe('runBuildCommand', () => {
 			},
 		);
 
-		expect(dockerStreamPreviews).toEqual([taskStreamPreview]);
-		expect(gondolinStreamPreviews).toEqual([taskStreamPreview, taskStreamPreview]);
+		expect(dockerBuildOptions).toEqual([{ quiet: true, streamPreview: expect.any(Object) }]);
+		expect(gondolinStreamPreviews).toEqual([undefined, undefined]);
 		expect(taskStatuses).toContain('docker build');
 		expect(taskStatuses).toContain('docker image ready');
-		expect(taskStatuses).toContain('building vm assets');
+		expect(taskStatuses).toContain('checking vm assets');
 		expect(taskStatuses).toContain('vm assets ready');
+		expect(taskOutputLines[0]).toBe('dockerfile Dockerfile');
+		expect(taskOutputLines.at(-1)).toContain('View build details: docker-desktop://');
+		expect(taskOutputLines.every((line) => !line.includes('\n'))).toBe(true);
 	});
 
 	it('keeps Gondolin task status alive while VM assets are building quietly', async () => {

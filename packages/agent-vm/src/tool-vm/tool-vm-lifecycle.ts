@@ -17,6 +17,7 @@ import {
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
+import { readPreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolVmProfile } from '../controller/leases/lease-manager.js';
 import {
@@ -99,10 +100,21 @@ export async function createToolVm(
 		audience: 'tool-vm',
 		logPrefix: 'tool-vm-secrets',
 	});
-	const toolImage = await buildGondolinImage({
+	const toolImageCacheDir = path.join(
+		options.cacheDir,
+		'tool-vm-images',
+		options.profile.imageProfile,
+	);
+	const preparedToolImage = await readPreparedGondolinImage({
 		buildConfigPath: toolImageProfile.buildConfig,
-		cacheDir: path.join(options.cacheDir, 'tool-vm-images', options.profile.imageProfile),
+		cacheDir: toolImageCacheDir,
 	});
+	const toolImage =
+		preparedToolImage ??
+		(await buildGondolinImage({
+			buildConfigPath: toolImageProfile.buildConfig,
+			cacheDir: toolImageCacheDir,
+		}));
 
 	// Internal createToolVm callers bypass the /lease route; validate and pin
 	// immediately before handing the RealFS root to the VM adapter.

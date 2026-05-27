@@ -188,6 +188,39 @@ process.exit(1);
 		]);
 	});
 
+	it('delegates production builds to the child-process runner without rendering child output', async () => {
+		const childBuildRequests: GondolinImageBuildRequest[] = [];
+		let childStreamWriteResult: boolean | undefined;
+		const dependencies: GondolinImageBuilderDependencies = {
+			runBuildChildProcess: async (options) => {
+				childBuildRequests.push(options.request);
+				childStreamWriteResult = options.streamPreview.write('hidden rootfs progress\n');
+				return {
+					built: true,
+					fingerprint: 'child-fp',
+					imagePath: '/cache/child-fp',
+				};
+			},
+		};
+
+		const result = await buildGondolinImage(
+			{
+				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
+				cacheDir: '/cache/gateway-images/openclaw',
+			},
+			dependencies,
+		);
+
+		expect(result.fingerprint).toBe('child-fp');
+		expect(childStreamWriteResult).toBe(true);
+		expect(childBuildRequests).toEqual([
+			{
+				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
+				cacheDir: '/cache/gateway-images/openclaw',
+			},
+		]);
+	});
+
 	it('passes cacheDir, configDir, and fullReset through to the core builder', async () => {
 		const buildImageCalls: {
 			readonly cacheDir: string;

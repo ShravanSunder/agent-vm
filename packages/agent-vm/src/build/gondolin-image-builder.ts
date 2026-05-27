@@ -17,6 +17,7 @@ import { resolveRuntimeBuildVersionTag as resolveRuntimeBuildVersionTagDefault }
 export interface GondolinImageBuildRequest {
 	readonly buildConfigPath: string;
 	readonly cacheDir: string;
+	readonly fingerprintInput?: unknown;
 	readonly fullReset?: boolean;
 }
 
@@ -38,6 +39,10 @@ export interface GondolinImageBuilderDependencies {
 	readonly resolveRuntimeBuildVersionTag?: () => Promise<string>;
 }
 
+interface ComputeFingerprintFromConfigPathOptions {
+	readonly fingerprintInput?: unknown;
+}
+
 interface GondolinBuildChildResultMessage {
 	readonly result: BuildImageResult;
 	readonly type: 'result';
@@ -55,6 +60,17 @@ type GondolinBuildChildMessage =
 
 const CHILD_EXIT_GRACE_MS = 2_000;
 const CHILD_STDERR_TAIL_BYTES = 16_384;
+const silentTaskOutput: TaskOutput = {
+	write: () => true,
+};
+
+function hasRuntimeBuildVersionDependency(
+	optionsOrDependencies:
+		| ComputeFingerprintFromConfigPathOptions
+		| Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'>,
+): optionsOrDependencies is Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> {
+	return 'resolveRuntimeBuildVersionTag' in optionsOrDependencies;
+}
 
 async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
 	try {
@@ -74,16 +90,28 @@ async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildCo
 
 export async function computeFingerprintFromConfigPath(
 	buildConfigPath: string,
+	optionsOrDependencies:
+		| ComputeFingerprintFromConfigPathOptions
+		| Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> = {},
 	dependencies: Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> = {},
 ): Promise<string> {
+	const options: ComputeFingerprintFromConfigPathOptions = hasRuntimeBuildVersionDependency(
+		optionsOrDependencies,
+	)
+		? {}
+		: optionsOrDependencies;
+	const resolvedDependencies = hasRuntimeBuildVersionDependency(optionsOrDependencies)
+		? optionsOrDependencies
+		: dependencies;
 	const buildConfig = await loadBuildConfigFromJson(buildConfigPath);
 	const runtimeBuildVersionTag = await (
-		dependencies.resolveRuntimeBuildVersionTag ?? resolveRuntimeBuildVersionTagDefault
+		resolvedDependencies.resolveRuntimeBuildVersionTag ?? resolveRuntimeBuildVersionTagDefault
 	)();
 
 	const effectiveBuildFingerprint = await computeEffectiveBuildFingerprint({
 		buildConfig,
 		configDir: path.dirname(path.resolve(buildConfigPath)),
+		...(options.fingerprintInput === undefined ? {} : { fingerprintInput: options.fingerprintInput }),
 		gondolinVersion: runtimeBuildVersionTag,
 	});
 	return effectiveBuildFingerprint.fingerprint;
@@ -164,6 +192,9 @@ export async function runGondolinImageBuildRequest(
 			buildConfig,
 			cacheDir: request.cacheDir,
 			configDir,
+			...(request.fingerprintInput === undefined
+				? {}
+				: { fingerprintInput: request.fingerprintInput }),
 			...(request.fullReset ? { fullReset: true } : {}),
 		},
 		{
@@ -259,6 +290,7 @@ export async function buildGondolinImage(
 	options: {
 		readonly buildConfigPath: string;
 		readonly cacheDir: string;
+		readonly fingerprintInput?: unknown;
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
 	},
@@ -267,13 +299,24 @@ export async function buildGondolinImage(
 	const request: GondolinImageBuildRequest = {
 		buildConfigPath: options.buildConfigPath,
 		cacheDir: options.cacheDir,
+		...(options.fingerprintInput === undefined ? {} : { fingerprintInput: options.fingerprintInput }),
 		...(options.fullReset ? { fullReset: true } : {}),
 	};
 
-	if (options.streamPreview) {
+	if (options.streamPreview || dependencies.runBuildChildProcess) {
 		const runBuildChildProcess =
 			dependencies.runBuildChildProcess ?? runGondolinBuildChildProcess;
-		return await runBuildChildProcess({ request, streamPreview: options.streamPreview });
+		return await runBuildChildProcess({
+			request,
+			streamPreview: options.streamPreview ?? silentTaskOutput,
+		});
+	}
+
+	if (Object.keys(dependencies).length === 0) {
+		return await runGondolinBuildChildProcess({
+			request,
+			streamPreview: silentTaskOutput,
+		});
 	}
 
 	return await runGondolinImageBuildRequest(request, dependencies);

@@ -48,6 +48,8 @@ interface BuildPipelineDependencies {
 	readonly gondolinVersion?: string;
 }
 
+const inFlightImageBuilds = new Map<string, Promise<BuildImageResult>>();
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
 }
@@ -207,37 +209,57 @@ export async function buildImage(
 	});
 	const fingerprint = effectiveBuildFingerprint.fingerprint;
 	const imagePath = path.join(options.cacheDir, fingerprint);
+	const buildImageForFingerprint = async (): Promise<BuildImageResult> => {
+		if (options.fullReset) {
+			await fs.rm(imagePath, { recursive: true, force: true });
+		}
 
-	if (options.fullReset) {
-		await fs.rm(imagePath, { recursive: true, force: true });
-	}
+		if (await hasBuiltImageAssets(imagePath)) {
+			return {
+				built: false,
+				fingerprint,
+				imagePath,
+			};
+		}
 
-	if (await hasBuiltImageAssets(imagePath)) {
+		await fs.mkdir(imagePath, { recursive: true });
+		const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
+		const effectiveBuildConfig = await prepareBuildConfigWithAgentVmRootfsInitExtra({
+			buildConfig: options.buildConfig,
+			imagePath,
+			rootfsInitExtraContent: effectiveBuildFingerprint.rootfsInitExtraContent,
+		});
+		await withCapturedBuildOutput(options.output, async () => {
+			await buildAssetsImplementation(effectiveBuildConfig, imagePath, options.configDir);
+		});
+
+		if (!(await hasBuiltImageAssets(imagePath))) {
+			throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);
+		}
+
 		return {
-			built: false,
+			built: true,
 			fingerprint,
 			imagePath,
 		};
-	}
-
-	await fs.mkdir(imagePath, { recursive: true });
-	const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
-	const effectiveBuildConfig = await prepareBuildConfigWithAgentVmRootfsInitExtra({
-		buildConfig: options.buildConfig,
-		imagePath,
-		rootfsInitExtraContent: effectiveBuildFingerprint.rootfsInitExtraContent,
-	});
-	await withCapturedBuildOutput(options.output, async () => {
-		await buildAssetsImplementation(effectiveBuildConfig, imagePath, options.configDir);
-	});
-
-	if (!(await hasBuiltImageAssets(imagePath))) {
-		throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);
-	}
-
-	return {
-		built: true,
-		fingerprint,
-		imagePath,
 	};
+
+	if (options.output) {
+		return await buildImageForFingerprint();
+	}
+
+	const inFlightKey = path.resolve(imagePath);
+	const existingBuild = inFlightImageBuilds.get(inFlightKey);
+	if (existingBuild) {
+		return await existingBuild;
+	}
+	const buildPromise = buildImageForFingerprint();
+	inFlightImageBuilds.set(inFlightKey, buildPromise);
+	try {
+		return await buildPromise;
+	} finally {
+		if (inFlightImageBuilds.get(inFlightKey) === buildPromise) {
+			inFlightImageBuilds.delete(inFlightKey);
+		}
+	}
 }
