@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -70,6 +71,9 @@ export async function readPreparedGondolinImage(options: {
 		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
 			return undefined;
 		}
+		if (error instanceof SyntaxError) {
+			return undefined;
+		}
 		throw error;
 	}
 
@@ -114,7 +118,7 @@ export async function writePreparedGondolinImage(
 		schemaVersion: preparedImageRecordSchemaVersion,
 	};
 	const recordPath = preparedImageRecordPath(options.cacheDir);
-	const temporaryRecordPath = `${recordPath}.${process.pid}.tmp`;
+	const temporaryRecordPath = `${recordPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
 	await fs.writeFile(temporaryRecordPath, `${JSON.stringify(record, null, "\t")}\n`, 'utf8');
 	await fs.rename(temporaryRecordPath, recordPath);
 }

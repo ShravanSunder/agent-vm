@@ -82,4 +82,39 @@ describe('prepared Gondolin image cache', () => {
 
 		await expect(readPreparedGondolinImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
 	});
+
+	it('ignores a corrupted prepared image record', async () => {
+		const cacheDir = await createTemporaryDirectory();
+		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
+		await fs.writeFile(path.join(cacheDir, 'prepared-image.json'), '{not-json', 'utf8');
+
+		await expect(readPreparedGondolinImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
+	});
+
+	it('uses unique temporary record paths for concurrent writers', async () => {
+		const cacheDir = await createTemporaryDirectory();
+		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
+		const firstImagePath = path.join(cacheDir, 'fingerprint-1');
+		const secondImagePath = path.join(cacheDir, 'fingerprint-2');
+		await writeFakeImageAssets(firstImagePath);
+		await writeFakeImageAssets(secondImagePath);
+
+		await Promise.all([
+			writePreparedGondolinImage({
+				buildConfigPath,
+				cacheDir,
+				fingerprint: 'fingerprint-1',
+				imagePath: firstImagePath,
+			}),
+			writePreparedGondolinImage({
+				buildConfigPath,
+				cacheDir,
+				fingerprint: 'fingerprint-2',
+				imagePath: secondImagePath,
+			}),
+		]);
+
+		const preparedImage = await readPreparedGondolinImage({ buildConfigPath, cacheDir });
+		expect(preparedImage?.fingerprint).toMatch(/^fingerprint-[12]$/u);
+	});
 });

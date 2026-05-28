@@ -73,10 +73,14 @@ export function createPlainRunTaskGroup(runTask: RunTaskFn): RunTaskGroupFn {
 		const workerCount = Math.min(options.concurrency, tasks.length);
 		const workers = Array.from({ length: workerCount }, async () => {
 			for (;;) {
-				const task = tasks[nextIndex];
+				const index = nextIndex;
 				nextIndex += 1;
-				if (!task) {
+				if (index >= tasks.length) {
 					return;
+				}
+				const task = tasks[index];
+				if (!task) {
+					throw new Error(`Expected task group item at index ${index}.`);
 				}
 				// oxlint-disable-next-line no-await-in-loop -- each plain worker owns one serial queue while workers run in parallel
 				await runTask(task.title, task.fn);

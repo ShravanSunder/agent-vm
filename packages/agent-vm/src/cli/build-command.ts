@@ -208,10 +208,14 @@ async function runWithConcurrency<TItem>(
 	const workerCount = Math.min(concurrency, items.length);
 	const workers = Array.from({ length: workerCount }, async () => {
 		for (;;) {
-			const item = items[nextIndex];
+			const index = nextIndex;
 			nextIndex += 1;
-			if (item === undefined) {
+			if (index >= items.length) {
 				return;
+			}
+			const item = items[index];
+			if (item === undefined) {
+				throw new Error(`Expected build queue item at index ${index}.`);
 			}
 			// oxlint-disable-next-line no-await-in-loop -- each worker intentionally processes its own queue slot serially while workers run in parallel
 			await fn(item);

@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -53,7 +52,6 @@ interface BuildPipelineDependencies {
 
 const inFlightImageBuilds = new Map<string, Promise<BuildImageResult>>();
 const gondolinWorkDirectoryName = '.agent-vm-gondolin-work';
-let sparseRootfsOutputMoveQueue: Promise<void> = Promise.resolve();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
@@ -125,49 +123,6 @@ async function loadBuildAssets(): Promise<
 			...(configDir ? { configDir } : {}),
 			...(workDir ? { workDir } : {}),
 		} satisfies BuildOptions);
-}
-
-async function withSparseRootfsOutputMove<TResult>(
-	options: {
-		readonly outputDirectory: string;
-		readonly workDir: string;
-	},
-	fn: () => Promise<TResult>,
-): Promise<TResult> {
-	const previousSparseRootfsOutputMove = sparseRootfsOutputMoveQueue;
-	let releaseSparseRootfsOutputMove: (() => void) | undefined;
-	sparseRootfsOutputMoveQueue = new Promise<void>((resolve) => {
-		releaseSparseRootfsOutputMove = resolve;
-	});
-	await previousSparseRootfsOutputMove;
-
-	const expectedSourcePath = path.resolve(options.workDir, 'rootfs.ext4');
-	const expectedDestinationPath = path.resolve(options.outputDirectory, 'rootfs.ext4');
-	const originalCopyFileSync = fsSync.copyFileSync.bind(fsSync);
-	fsSync.copyFileSync = ((sourcePath, destinationPath, mode) => {
-		const resolvedSourcePath = path.resolve(String(sourcePath));
-		const resolvedDestinationPath = path.resolve(String(destinationPath));
-		if (
-			resolvedSourcePath === expectedSourcePath &&
-			resolvedDestinationPath === expectedDestinationPath
-		) {
-			try {
-				fsSync.rmSync(destinationPath, { force: true });
-				fsSync.renameSync(sourcePath, destinationPath);
-				return;
-			} catch {
-				// Fall back to Node's copy behavior if the optimized move is not available.
-			}
-		}
-		originalCopyFileSync(sourcePath, destinationPath, mode);
-	}) as typeof fsSync.copyFileSync;
-
-	try {
-		return await fn();
-	} finally {
-		fsSync.copyFileSync = originalCopyFileSync;
-		releaseSparseRootfsOutputMove?.();
-	}
 }
 
 function createRedirectedWrite(output: BuildOutput): typeof process.stderr.write {
@@ -290,20 +245,12 @@ export async function buildImage(
 		await fs.rm(gondolinWorkDir, { recursive: true, force: true });
 		try {
 			await withCapturedBuildOutput(options.output, async () => {
-				await withSparseRootfsOutputMove(
-					{
-						outputDirectory: imagePath,
-						workDir: gondolinWorkDir,
-					},
-					async () => {
-						await buildAssetsImplementation(
-							effectiveBuildConfig,
-							imagePath,
-							options.configDir,
-							gondolinWorkDir,
-							options.output !== undefined,
-						);
-					},
+				await buildAssetsImplementation(
+					effectiveBuildConfig,
+					imagePath,
+					options.configDir,
+					gondolinWorkDir,
+					options.output !== undefined,
 				);
 			});
 		} finally {
