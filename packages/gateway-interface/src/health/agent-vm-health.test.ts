@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	deriveZoneHealthSnapshot,
+	healthEventBucketKey,
 	isAgentVmHealthEvent,
 	type AgentVmHealthEvent,
 } from './agent-vm-health.js';
@@ -40,6 +41,59 @@ describe('agent-vm health events', () => {
 		} satisfies AgentVmHealthEvent;
 
 		expect(isAgentVmHealthEvent(workerEvent)).toBe(true);
+	});
+
+	it('accepts gateway recovery health events', () => {
+		const event = {
+			action: 'gateway-vm-restart',
+			cooldownMs: 3_660_000,
+			consecutiveFailures: 10,
+			elapsedMs: 45_000,
+			kind: 'gateway-recovery',
+			newBootedAt: '2026-05-27T13:01:00.000Z',
+			newHostPid: 2222,
+			newVmId: 'new-gateway-vm',
+			observedAtMs: 1_000,
+			oldBootedAt: '2026-05-27T12:00:00.000Z',
+			oldHostPid: 1111,
+			oldVmId: 'old-gateway-vm',
+			reason: 'gateway-control-link-unhealthy',
+			result: 'ok',
+			zoneId: 'sunfam',
+		} satisfies AgentVmHealthEvent;
+
+		expect(isAgentVmHealthEvent(event)).toBe(true);
+		expect(healthEventBucketKey(event)).toBe('sunfam:gateway-recovery:gateway-vm-restart');
+	});
+
+	it('surfaces failed gateway recovery as a zone health issue', () => {
+		const event = {
+			action: 'gateway-vm-restart',
+			cooldownMs: 3_660_000,
+			consecutiveFailures: 10,
+			elapsedMs: 45_000,
+			errorCode: 'restart-verification-failed',
+			kind: 'gateway-recovery',
+			observedAtMs: 1_000,
+			oldBootedAt: '2026-05-27T12:00:00.000Z',
+			oldHostPid: 1111,
+			oldVmId: 'old-gateway-vm',
+			reason: 'gateway-service-unhealthy',
+			result: 'failed',
+			zoneId: 'sunfam',
+		} satisfies AgentVmHealthEvent;
+
+		const snapshot = deriveZoneHealthSnapshot([event], {
+			nowMs: 2_000,
+			staleAfterMs: 30_000,
+			zoneId: 'sunfam',
+		});
+
+		expect(snapshot.kind).toBe('failed');
+		if (snapshot.kind !== 'failed') {
+			throw new Error('Expected failed snapshot.');
+		}
+		expect(snapshot.issues[0]?.kind).toBe('gateway-recovery-failed');
 	});
 
 	it('rejects ISO observedAt strings because stale math uses observedAtMs', () => {

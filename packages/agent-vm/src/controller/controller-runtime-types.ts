@@ -30,6 +30,7 @@ export interface ControllerRuntime {
 
 export interface ControllerRuntimeDependencies {
 	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
+	readonly clearTimeoutImpl?: (timer: NodeJS.Timeout) => void;
 	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
 	readonly createManagedToolVm?: (options: {
 		readonly profile: ToolVmProfile;
@@ -66,6 +67,7 @@ export interface ControllerRuntimeDependencies {
 		callback: () => void | Promise<void>,
 		delayMs: number,
 	) => NodeJS.Timeout;
+	readonly setTimeoutImpl?: (callback: () => void, delayMs: number) => NodeJS.Timeout;
 	readonly startGatewayZone?: typeof startGatewayZone;
 	readonly startHttpServer?: (options: {
 		readonly app: ReturnType<typeof createControllerService>;

@@ -230,6 +230,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 	let project: OpenClawSmokeProject | undefined;
 	let systemConfig: SmokeHarnessRuntime['systemConfig'] | undefined;
 	let gatewayVm: ManagedVm | undefined;
+	const gatewayStarts: ManagedVm[] = [];
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
@@ -250,6 +251,12 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 					gatewayControlLinkBackoffCeilingMs: 2_000,
 					gatewayControlLinkIntervalMs: 1_000,
 					gatewayServiceIntervalMs: 1_000,
+					gatewayServiceAutoRestart: {
+						cooldownMs: 61 * 60 * 1000,
+						consecutiveFailureThreshold: 2,
+						enabled: true,
+						restartTimeoutMs: 120_000,
+					},
 					staleAfterMs: 20_000,
 				},
 			},
@@ -280,6 +287,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 			},
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
+				gatewayStarts.push(result.vm);
 				gatewayVm = result.vm;
 				result.vm.setIngressRoutes([
 					{
@@ -402,5 +410,46 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 		expect(boundedProbe.errorCode).toBe('controller-request-timeout');
 		expect(boundedProbe.elapsedMs).toBeLessThan(5_000);
 		expect(boundedProbe.logLines.join('\n')).toContain('gateway-control-link publish failed');
+	});
+
+	it('auto restarts the live OpenClaw gateway VM after repeated gateway-service failures', async () => {
+		if (gatewayVm === undefined || harness === undefined) {
+			throw new Error('Expected OpenClaw control-link smoke harness to be initialized.');
+		}
+		const initialGatewayVmId = gatewayVm.id;
+		const killResult = await gatewayVm.exec(`
+set -eu
+gateway_pid="$(pgrep -f '[o]penclaw.*gateway' | head -n 1 || true)"
+if [ -z "$gateway_pid" ]; then
+  echo "no openclaw gateway process found" >&2
+  exit 1
+fi
+kill "$gateway_pid"
+`);
+		expect(killResult.exitCode, killResult.stderr).toBe(0);
+
+		const recoveryEvent = await waitForHealthEvent({
+			controllerUrl: harness.controllerUrl,
+			describeEvent: 'gateway-recovery ok',
+			matches: (event) =>
+				event.kind === 'gateway-recovery' &&
+				event.result === 'ok' &&
+				event.oldVmId === initialGatewayVmId,
+			timeoutMs: 180_000,
+		});
+
+		expect(recoveryEvent).toMatchObject({
+			kind: 'gateway-recovery',
+			oldVmId: initialGatewayVmId,
+			result: 'ok',
+			zoneId,
+		});
+		if (recoveryEvent.kind !== 'gateway-recovery') {
+			throw new Error('Expected gateway-recovery event.');
+		}
+		expect(gatewayStarts.map((startedGatewayVm) => startedGatewayVm.id)).toContain(
+			recoveryEvent.newVmId,
+		);
+		expect(recoveryEvent.newVmId).not.toBe(initialGatewayVmId);
 	});
 });

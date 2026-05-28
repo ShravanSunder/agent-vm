@@ -282,6 +282,14 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
 			'GET /zones/<zoneId>/health-snapshot',
 		);
+		const operationsManual = files.find((file) =>
+			file.relativePath.endsWith('operations.md'),
+		)?.content;
+		expect(operationsManual).toContain('gateway-recovery');
+		expect(operationsManual).toContain(
+			'10 consecutive gateway-service or gateway-control-link failures',
+		);
+		expect(operationsManual).toContain('61 minute cooldown');
 		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
 			'Health timeouts are operation-specific',
 		);

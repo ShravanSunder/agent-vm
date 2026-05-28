@@ -11,6 +11,7 @@ import {
 	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import { ActiveTaskRegistry, type ActiveWorkerTask } from '../active-task-registry.js';
+import type { Lease } from '../leases/lease-manager.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from '../worker-task-runner.js';
 import { createOpenClawZoneRuntime } from './openclaw-zone-runtime.js';
 import { createWorkerZoneRuntime } from './worker-zone-runtime.js';
@@ -255,6 +256,42 @@ function createPreparedWorkerTask(input: WorkerTaskInput): PreparedWorkerTask {
 	};
 }
 
+function createTestLease(options: { readonly id: string; readonly zoneId: string }): Lease {
+	return {
+		agentId: 'agent-main',
+		agentWorkspaceDir: '/workspace',
+		createdAt: 1_000,
+		effectiveIdleTtlMs: 60_000,
+		guestWorkdir: '/work',
+		hostWorkMountDir: '/tmp/work',
+		id: options.id,
+		lastUsedAt: 2_000,
+		profileId: 'standard',
+		runtimeRecordId: `record-${options.id}`,
+		sshAccess: {
+			host: '127.0.0.1',
+			port: 22,
+		},
+		tcpSlot: 0,
+		vm: {
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 19000 })),
+			enableSsh: vi.fn(async () => ({
+				command: 'ssh root@127.0.0.1',
+				host: '127.0.0.1',
+				port: 22,
+			})),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
+			getVmInstance: vi.fn(),
+			id: `tool-vm-${options.id}`,
+			setIngressRoutes: vi.fn(),
+		},
+		zoneId: options.zoneId,
+	};
+}
+
 describe('zone runtime contracts', () => {
 	it('keeps OpenClaw and Worker runtimes behind one discriminated zone runtime interface', () => {
 		const openClawRuntime = {
@@ -444,6 +481,73 @@ describe('createOpenClawZoneRuntime', () => {
 		await expect(runtime.getLogs()).rejects.toThrow(
 			"Gateway runtime for zone 'shravan' is unavailable. Last error: gateway boot failed",
 		);
+	});
+
+	it('force releases all zone leases before restarting the OpenClaw gateway VM', async () => {
+		const close = vi.fn(async () => {});
+		let gatewayStartCount = 0;
+		const releaseLease = vi.fn(async (leaseId: string) => {
+			if (leaseId === 'lease-fails') {
+				throw new Error('tool vm close failed');
+			}
+		});
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			leaseManager: {
+				listLeases: () => [
+					createTestLease({ id: 'lease-ok', zoneId: 'shravan' }),
+					createTestLease({ id: 'lease-fails', zoneId: 'shravan' }),
+					createTestLease({ id: 'lease-other-zone', zoneId: 'alevtina' }),
+				],
+				releaseLease,
+			},
+			now: () => Date.parse('2026-04-30T10:00:00.000Z'),
+			restartGatewayZone: async () => {
+				gatewayStartCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: gatewayStartCount === 1 ? close : vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh root@127.0.0.1',
+							host: '127.0.0.1',
+							port: 22,
+						})),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => null,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${gatewayStartCount}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: openClawZone,
+				};
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.restart()).resolves.toBeUndefined();
+
+		expect(releaseLease).toHaveBeenCalledTimes(2);
+		expect(releaseLease).toHaveBeenCalledWith('lease-ok', { force: true });
+		expect(releaseLease).toHaveBeenCalledWith('lease-fails', { force: true });
+		expect(close).toHaveBeenCalledOnce();
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { id: 'gateway-vm-2' } },
+			lifecycleState: 'running',
+		});
 	});
 
 	it('refreshes only gateway audience secrets for OpenClaw zones', async () => {

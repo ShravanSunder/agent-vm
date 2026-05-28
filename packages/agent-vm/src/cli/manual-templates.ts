@@ -179,11 +179,14 @@ Health model:
 - GET /zones/<zoneId>/health-snapshot is an in-memory zone health view.
 - gateway-service-health means the agent-vm controller can probe the gateway service through the gateway VM runtime.
 - gateway-control-link means the gateway VM can call back to the agent-vm controller through controller.vm.host:18800.
+- gateway-recovery means the controller attempted an automatic gateway VM restart after repeated gateway-service or gateway-control-link failures.
 - lease-heartbeat means an active Tool VM operation can refresh its active use.
 - lease-renew means an idle cached Tool VM lease can be reused.
 - tool-vm-ssh means command, file-bridge, finalize, or probe SSH operations on the gateway-to-Tool-VM path.
 
 Health event history is in-memory controller state. It is useful for live diagnosis but is lost on agent-vm controller restart.
+
+By default, controller.health.gatewayServiceAutoRestart restarts a running OpenClaw gateway VM after 10 consecutive gateway-service or gateway-control-link failures. It has a 61 minute cooldown per zone and a 10 minute restart deadline. Restart releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive.
 
 Health timeouts are operation-specific. Short health probes should fail quickly; git push/pull and lease-create get longer budgets. Do not assume every abort means the work should be killed.
 `,

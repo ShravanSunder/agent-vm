@@ -237,6 +237,12 @@ describe('loadSystemConfig', () => {
 			eventHistoryLimit: 500,
 			gatewayControlLinkBackoffCeilingMs: 120_000,
 			gatewayControlLinkIntervalMs: 10_000,
+			gatewayServiceAutoRestart: {
+				cooldownMs: 61 * 60 * 1000,
+				consecutiveFailureThreshold: 10,
+				enabled: true,
+				restartTimeoutMs: 10 * 60 * 1000,
+			},
 			gatewayServiceIntervalMs: 10_000,
 			staleAfterMs: 30_000,
 		});
@@ -250,6 +256,12 @@ describe('loadSystemConfig', () => {
 				eventHistoryLimit: 25,
 				gatewayControlLinkBackoffCeilingMs: 90_000,
 				gatewayControlLinkIntervalMs: 15_000,
+				gatewayServiceAutoRestart: {
+					cooldownMs: 7_200_000,
+					consecutiveFailureThreshold: 8,
+					enabled: false,
+					restartTimeoutMs: 480_000,
+				},
 				gatewayServiceIntervalMs: 20_000,
 				staleAfterMs: 45_000,
 			},
@@ -266,6 +278,12 @@ describe('loadSystemConfig', () => {
 			eventHistoryLimit: 25,
 			gatewayControlLinkBackoffCeilingMs: 90_000,
 			gatewayControlLinkIntervalMs: 15_000,
+			gatewayServiceAutoRestart: {
+				cooldownMs: 7_200_000,
+				consecutiveFailureThreshold: 8,
+				enabled: false,
+				restartTimeoutMs: 480_000,
+			},
 			gatewayServiceIntervalMs: 20_000,
 			staleAfterMs: 45_000,
 		});
@@ -284,6 +302,26 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/gatewayServiceIntervalMs/u);
+	});
+
+	test('rejects non-positive gateway service auto restart settings', async () => {
+		const config = createValidSystemConfigInput();
+		config.controller = {
+			health: {
+				gatewayServiceAutoRestart: {
+					cooldownMs: 0,
+					consecutiveFailureThreshold: 10,
+					enabled: true,
+					restartTimeoutMs: 10 * 60 * 1000,
+				},
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-gateway-service-auto-restart-non-positive-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/cooldownMs/u);
 	});
 
 	test('rejects controller health backoff ceilings below the base interval', async () => {

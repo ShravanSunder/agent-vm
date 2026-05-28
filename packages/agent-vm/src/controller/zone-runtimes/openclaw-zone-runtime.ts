@@ -53,6 +53,10 @@ function buildOpenClawCombinedLogsCommand(logPath: string): string {
 	].join('; ');
 }
 
+function writeOpenClawZoneRuntimeLog(message: string): void {
+	process.stderr.write(`[openclaw-zone-runtime] ${message}\n`);
+}
+
 export function createOpenClawZoneRuntime(
 	options: CreateOpenClawZoneRuntimeOptions,
 ): OpenClawZoneRuntime {
@@ -74,6 +78,23 @@ export function createOpenClawZoneRuntime(
 			throw new ControllerZoneRuntimeUnavailableError(options.zone.id, lastError);
 		}
 		return gateway;
+	};
+
+	const releaseZoneLeases = async (zoneId: string): Promise<void> => {
+		const releaseResults = await Promise.allSettled(
+			options.leaseManager
+				.listLeases()
+				.filter((activeLease) => activeLease.zoneId === zoneId)
+				.map(async (lease) => await options.leaseManager.releaseLease(lease.id, { force: true })),
+		);
+		for (const [index, releaseResult] of releaseResults.entries()) {
+			if (releaseResult.status === 'fulfilled') {
+				continue;
+			}
+			writeOpenClawZoneRuntimeLog(
+				`lease release failed while restarting zone '${zoneId}' at index ${index}: ${formatUnknownError(releaseResult.reason)}`,
+			);
+		}
 	};
 
 	const stop = async (): Promise<void> => {
@@ -104,6 +125,7 @@ export function createOpenClawZoneRuntime(
 	};
 
 	const restart = async (): Promise<void> => {
+		await releaseZoneLeases(options.zone.id);
 		await stop();
 		await start();
 	};
@@ -113,17 +135,7 @@ export function createOpenClawZoneRuntime(
 			await (options.runControllerDestroy ?? runControllerDestroyDefault)(
 				{ purge, systemConfig: options.systemConfig, zoneId: options.zone.id },
 				{
-					releaseZoneLeases: async (zoneId) => {
-						await Promise.all(
-							options.leaseManager
-								.listLeases()
-								.filter((activeLease) => activeLease.zoneId === zoneId)
-								.map(
-									async (lease) =>
-										await options.leaseManager.releaseLease(lease.id, { force: true }),
-								),
-						);
-					},
+					releaseZoneLeases,
 					stopGatewayZone: async () => await stop(),
 				},
 			),

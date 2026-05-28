@@ -22,7 +22,10 @@ import {
 } from './controller-runtime-types.js';
 import type { PullDefaultRequest } from './git-pull-default-operations.js';
 import type { PushBranchRequest } from './git-push-operations.js';
-import { createGatewayServiceHealthMonitor } from './health/gateway-service-health-monitor.js';
+import {
+	createGatewayServiceHealthMonitor,
+	type GatewayVmRecoveryResult,
+} from './health/gateway-service-health-monitor.js';
 import { HealthEventStore } from './health/health-event-store.js';
 import { createMutableControllerRuntimeReadiness } from './http/controller-http-route-support.js';
 import { createControllerService } from './http/controller-http-routes.js';
@@ -384,6 +387,90 @@ export async function startControllerRuntime(
 			zoneGitCapabilityStore.verifyTokenForZone(zoneId, token),
 		stopController,
 	};
+	const recoverGatewayVm = async (request: {
+		readonly consecutiveFailures: number;
+		readonly reason: 'gateway-control-link-unhealthy' | 'gateway-service-unhealthy';
+		readonly zoneId: string;
+	}): Promise<GatewayVmRecoveryResult> => {
+		const startedAtMs = now();
+		const elapsedMs = (): number => now() - startedAtMs;
+		if (runtimeReadiness.get().state === 'stopping') {
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'controller-stopping',
+				result: 'failed',
+			};
+		}
+
+		let runtime: ReturnType<typeof registry.getOpenClawRuntime>;
+		try {
+			runtime = registry.getOpenClawRuntime(request.zoneId);
+		} catch (error) {
+			writeControllerRuntimeLog(
+				`Gateway VM recovery failed to find OpenClaw runtime for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+			);
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'runtime-unavailable',
+				result: 'failed',
+			};
+		}
+
+		const oldSnapshot = runtime.getSnapshot();
+		if (oldSnapshot.lifecycleState !== 'running' || !oldSnapshot.gateway) {
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'old-gateway-not-running',
+				result: 'failed',
+			};
+		}
+		const oldGateway = oldSnapshot.gateway;
+		writeControllerRuntimeLog(
+			`Auto-restarting gateway VM for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
+		);
+
+		try {
+			await runtime.restart();
+		} catch (error) {
+			writeControllerRuntimeLog(
+				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+			);
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'restart-threw',
+				oldBootedAt: oldSnapshot.bootedAt,
+				oldHostPid: oldGateway.vm.hostPid,
+				oldVmId: oldGateway.vm.id,
+				result: 'failed',
+			};
+		}
+
+		const newSnapshot = runtime.getSnapshot();
+		if (
+			newSnapshot.lifecycleState !== 'running' ||
+			!newSnapshot.gateway ||
+			newSnapshot.gateway.vm.id === oldGateway.vm.id
+		) {
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'restart-verification-failed',
+				oldBootedAt: oldSnapshot.bootedAt,
+				oldHostPid: oldGateway.vm.hostPid,
+				oldVmId: oldGateway.vm.id,
+				result: 'failed',
+			};
+		}
+		return {
+			elapsedMs: elapsedMs(),
+			newBootedAt: newSnapshot.bootedAt,
+			newHostPid: newSnapshot.gateway.vm.hostPid,
+			newVmId: newSnapshot.gateway.vm.id,
+			oldBootedAt: oldSnapshot.bootedAt,
+			oldHostPid: oldGateway.vm.hostPid,
+			oldVmId: oldGateway.vm.id,
+			result: 'ok',
+		};
+	};
 	const controllerApp = createControllerService({
 		healthEventStore,
 		leaseManager,
@@ -417,6 +504,13 @@ export async function startControllerRuntime(
 
 	const gatewayServiceHealthMonitor = controllerHealthConfig.enabled
 		? createGatewayServiceHealthMonitor({
+				...(dependencies.clearIntervalImpl
+					? { clearIntervalImpl: dependencies.clearIntervalImpl }
+					: {}),
+				...(dependencies.clearTimeoutImpl
+					? { clearTimeoutImpl: dependencies.clearTimeoutImpl }
+					: {}),
+				gatewayServiceAutoRestart: controllerHealthConfig.gatewayServiceAutoRestart,
 				healthEventStore,
 				intervalMs: controllerHealthConfig.gatewayServiceIntervalMs,
 				now,
@@ -435,6 +529,10 @@ export async function startControllerRuntime(
 						zoneId: health.zoneId,
 					};
 				},
+				recoverGatewayVm,
+				...(dependencies.setIntervalImpl ? { setIntervalImpl: dependencies.setIntervalImpl } : {}),
+				...(dependencies.setTimeoutImpl ? { setTimeoutImpl: dependencies.setTimeoutImpl } : {}),
+				staleAfterMs: controllerHealthConfig.staleAfterMs,
 				zoneIds: registry.selectedZoneIds.filter((zoneId) => {
 					const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
 					return zone ? isOpenClawZone(zone) : false;
@@ -446,8 +544,9 @@ export async function startControllerRuntime(
 	const snapshotByZone = registry.getSnapshotByZone();
 	return {
 		async close(): Promise<void> {
+			runtimeReadiness.set('stopping');
 			clearReaperTimer();
-			gatewayServiceHealthMonitor?.stop();
+			await gatewayServiceHealthMonitor?.stop();
 			requestHeartbeatRegistry.stopAll();
 			const releaseError = await releaseAllLeases();
 			let stopError: Error | undefined;
