@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fork } from 'node:child_process';
 import type { Readable } from 'node:stream';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
 	buildImage as buildImageFromCore,
@@ -183,6 +184,18 @@ function createProcessStderrOutput(): TaskOutput {
 	};
 }
 
+export function resolveDefaultGondolinBuildChildModuleUrl(moduleUrl: URL): URL {
+	const modulePath = fileURLToPath(moduleUrl);
+	const sourceBuildDirectory = `${path.sep}src${path.sep}build${path.sep}`;
+	if (modulePath.includes(sourceBuildDirectory)) {
+		const packageRootPath = path.resolve(path.dirname(modulePath), '..', '..');
+		return pathToFileURL(
+			path.join(packageRootPath, 'dist', 'build', 'gondolin-image-build-child-entrypoint.js'),
+		);
+	}
+	return new URL('./gondolin-image-build-child-entrypoint.js', moduleUrl);
+}
+
 export async function runGondolinImageBuildRequest(
 	request: GondolinImageBuildRequest,
 	dependencies: Omit<GondolinImageBuilderDependencies, 'runBuildChildProcess'> = {},
@@ -218,7 +231,7 @@ export async function runGondolinBuildChildProcess(
 	return await new Promise<BuildImageResult>((resolve, reject) => {
 		const childModuleUrl =
 			options.childModuleUrl ??
-			new URL('./gondolin-image-build-child-entrypoint.js', import.meta.url);
+			resolveDefaultGondolinBuildChildModuleUrl(new URL(import.meta.url));
 		const childProcess = fork(childModuleUrl, [], {
 			execArgv: [...childProcessExecArgv()],
 			stdio: ['ignore', 'pipe', 'pipe', 'ipc'],

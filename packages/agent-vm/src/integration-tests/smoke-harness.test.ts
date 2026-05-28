@@ -339,11 +339,13 @@ describe('startSmokeControllerRuntime', () => {
 			'COPY openclaw-mcp-portal-plugin-local.tgz /tmp/openclaw-mcp-portal-plugin-local.tgz',
 		);
 		expect(dockerfile).toContain('npm install --omit=dev --no-audit --no-fund');
+		expect(dockerfile).toContain('RUN pnpm add -g "openclaw@');
+		expect(dockerfile).toContain('"@openclaw/codex@');
+		expect(dockerfile).toContain('/usr/local/bin/openclaw');
 		expect(dockerfile).toContain('package_root="/opt/agent-vm/local-packages/node_modules"');
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/gondolin');
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
 		expect(dockerfile).not.toContain('portal-server.js');
-		expect(dockerfile).not.toContain('pnpm add -g');
 		expect(dockerfile).not.toContain('/work/repo/packages/mcp-portal');
 		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
 		const toolVmDockerfilePath = systemConfig.imageProfiles.toolVms.tool?.dockerfile;
@@ -398,6 +400,9 @@ describe('startSmokeControllerRuntime', () => {
 		expect(dockerfile).toContain(
 			'COPY openclaw-agent-vm-plugin-local.tgz /tmp/openclaw-agent-vm-plugin-local.tgz',
 		);
+		expect(dockerfile).toContain('RUN pnpm add -g "openclaw@');
+		expect(dockerfile).toContain('"@openclaw/codex@');
+		expect(dockerfile).toContain('/usr/local/bin/openclaw');
 		expect(dockerfile).not.toContain('mcp-portal-local.tgz');
 		expect(dockerfile).not.toContain('openclaw-mcp-portal-plugin-local.tgz');
 		expect(systemConfig.imageProfiles.toolVms.tool).toEqual(originalToolVmProfile);

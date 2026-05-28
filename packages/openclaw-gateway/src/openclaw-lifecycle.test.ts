@@ -43,6 +43,7 @@ function shellQuoteForTest(value: string): string {
 
 afterEach(async () => {
 	vi.useRealTimers();
+	vi.unstubAllEnvs();
 	await Promise.all(
 		createdDirectories
 			.splice(0)
@@ -445,6 +446,7 @@ describe('openclawLifecycle', () => {
 		});
 
 		it('builds the expected OpenClaw environment, mounts, and tcp hosts', () => {
+			vi.stubEnv('PATH', '/host-only/bin');
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -468,7 +470,9 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBeUndefined();
 			expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
 			expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
-			expect(vmSpec.environment.PATH).toContain('/pnpm:');
+			expect(vmSpec.environment.PATH).toBe(
+				'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+			);
 			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
 			// IPv4-preference egress for the Node OpenClaw process to defeat
 			// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
@@ -596,7 +600,9 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.startCommand).toContain('cd /home/openclaw');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
-			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
+			expect(processSpec.startCommand).toContain(
+				'nohup /usr/local/bin/openclaw gateway --port 18789',
+			);
 			expect(processSpec.startCommand).toContain('> /agent-vm/logs/gateway-boot-latest.log 2>&1');
 			expect(processSpec.healthCheck).toEqual({
 				type: 'http',
