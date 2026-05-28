@@ -172,6 +172,7 @@ const generatedSystemConfigSchema = z
 					gateway: z
 						.object({ config: z.string().optional(), type: z.string().optional() })
 						.passthrough(),
+					adminAccess: z.object({ mode: z.literal('none') }).optional(),
 					runtimeAuthHints: z
 						.array(
 							z
@@ -247,7 +248,7 @@ const generatedOpenClawToolVmSystemConfigSchema = generatedSystemConfigSchema.ex
 const generatedManagedImageOverlaySchema = z.object({
 	schemaVersion: z.literal(1),
 	extraAptPackages: z.array(z.string()),
-	extraOpenClawPackages: z.array(z.string()),
+	openClawPackageOverrides: z.array(z.string()),
 	copy: z.array(z.unknown()),
 	runAfterBase: z.array(z.string()),
 });
@@ -487,7 +488,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(overlay).toEqual({
 			schemaVersion: 1,
 			extraAptPackages: [],
-			extraOpenClawPackages: [],
+			openClawPackageOverrides: [],
 			copy: [],
 			runAfterBase: [],
 		});
@@ -861,6 +862,13 @@ describe('scaffoldAgentVmProject', () => {
 				readonly controlUi: {
 					readonly allowedOrigins: readonly string[];
 				};
+				readonly http: {
+					readonly endpoints: {
+						readonly chatCompletions: {
+							readonly enabled: boolean;
+						};
+					};
+				};
 			};
 			readonly plugins: {
 				readonly load: {
@@ -896,9 +904,13 @@ describe('scaffoldAgentVmProject', () => {
 			'http://localhost:18791',
 		]);
 		expect(openClawConfig.plugins.load.paths).toEqual([
+			'/home/openclaw/.openclaw/extensions',
 			'/home/openclaw/.openclaw/extensions/gondolin',
 			'/home/openclaw/.openclaw/extensions/mcp-portal',
+			'/pnpm/global/5/node_modules/@openclaw',
+			'/pnpm/global/5/node_modules/@agent-vm',
 		]);
+		expect(openClawConfig.gateway.http.endpoints.chatCompletions.enabled).toBe(true);
 		expect(openClawConfig.agents.defaults.model.primary).toBe('openai-codex/gpt-5.5');
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
@@ -913,7 +925,7 @@ describe('scaffoldAgentVmProject', () => {
 			allowIpv6UniqueLocalRange: true,
 			allowRfc2544BenchmarkRange: true,
 		});
-		expect(openClawConfig.tools.allow).toContain('zone_git_push');
+		expect(openClawConfig.tools.allow).toEqual(['*']);
 		expect(openClawConfig.tools.sandbox.tools.alsoAllow).toEqual([
 			'web_search',
 			'web_fetch',
@@ -1255,13 +1267,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(generatedSecretReferenceSchema.parse(secrets.OPENCLAW_GATEWAY_TOKEN).ref).toBe(
 			'op://agent-vm/test-openclaw-gateway-auth/password',
 		);
-		expect(config.zones[0].adminAccess).toEqual({
-			mode: 'secret',
-			secret: {
-				source: '1password',
-				ref: 'op://agent-vm/test-openclaw-ssh-access/token',
-			},
-		});
+		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 		expect(config.zones[0].gateway.controlAuth).toEqual({
 			mode: 'token',
 			secret: 'OPENCLAW_GATEWAY_TOKEN',
@@ -1384,7 +1390,7 @@ describe('scaffoldAgentVmProject', () => {
 		).toEqual({
 			schemaVersion: 1,
 			extraAptPackages: [],
-			extraOpenClawPackages: [],
+			openClawPackageOverrides: [],
 			copy: [],
 			runAfterBase: [],
 		});
@@ -1452,7 +1458,7 @@ describe('scaffoldAgentVmProject', () => {
 			'config.promptContext',
 		);
 		expect(openClawConfig.mcp?.servers).toEqual({});
-		expect(openClawConfig.tools?.allow).toContain('zone_git_push');
+		expect(openClawConfig.tools?.allow).toEqual(['*']);
 	});
 
 	it('does not scaffold Discord environment variables for openclaw defaults', async () => {
@@ -1476,12 +1482,9 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).toContain('# PERPLEXITY_API_KEY=');
 		expect(envContent).toContain('# OPENCLAW_GATEWAY_TOKEN=');
 		expect(envContent).not.toContain('MCP_PORTAL_SERVER_SECRET');
-		expect(envContent).toContain('# AGENT_VM_TEST_OPENCLAW_SSH_ACCESS_TOKEN=');
+		expect(envContent).not.toContain('SSH_ACCESS_TOKEN');
 		expect(envContent).not.toContain('DISCORD_BOT_TOKEN');
-		expect(config.zones[0].adminAccess).toEqual({
-			mode: 'secret',
-			secret: { source: 'environment', envVar: 'AGENT_VM_TEST_OPENCLAW_SSH_ACCESS_TOKEN' },
-		});
+		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 	});
 
 	it('scaffolds worker-specific env references for worker type', async () => {
@@ -1611,10 +1614,7 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(config.host.githubToken).toEqual({ source: 'environment', envVar: 'GITHUB_TOKEN' });
 		expect(config.host.secretsProvider).toBeUndefined();
-		expect(config.zones[0].adminAccess).toEqual({
-			mode: 'secret',
-			secret: { source: 'environment', envVar: 'AGENT_VM_ENV_WORKER_SSH_ACCESS_TOKEN' },
-		});
+		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 		const secrets = config.zones[0]?.secrets ?? {};
 		expect(secrets['GITHUB_TOKEN']?.source).toBe('environment');
 		expect(secrets['GITHUB_TOKEN']?.envVar).toBe('GITHUB_TOKEN');

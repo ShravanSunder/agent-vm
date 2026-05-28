@@ -9,6 +9,7 @@ import {
 	buildGondolinImage,
 	computeFingerprintFromConfigPath,
 	runGondolinBuildChildProcess,
+	runGondolinImageBuildRequest,
 	type GondolinImageBuilderDependencies,
 	type GondolinImageBuildRequest,
 } from './gondolin-image-builder.js';
@@ -182,8 +183,42 @@ process.exit(1);
 					buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
 					cacheDir: '/cache/gateway-images/openclaw',
 					fullReset: true,
+					previewOutput: true,
 				},
 				streamPreviewChunks: ['building rootfs\n'],
+			},
+		]);
+	});
+
+	it('delegates production builds to the child-process runner without rendering child output', async () => {
+		const childBuildRequests: GondolinImageBuildRequest[] = [];
+		let childStreamWriteResult: boolean | undefined;
+		const dependencies: GondolinImageBuilderDependencies = {
+			runBuildChildProcess: async (options) => {
+				childBuildRequests.push(options.request);
+				childStreamWriteResult = options.streamPreview.write('hidden rootfs progress\n');
+				return {
+					built: true,
+					fingerprint: 'child-fp',
+					imagePath: '/cache/child-fp',
+				};
+			},
+		};
+
+		const result = await buildGondolinImage(
+			{
+				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
+				cacheDir: '/cache/gateway-images/openclaw',
+			},
+			dependencies,
+		);
+
+		expect(result.fingerprint).toBe('child-fp');
+		expect(childStreamWriteResult).toBe(true);
+		expect(childBuildRequests).toEqual([
+			{
+				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
+				cacheDir: '/cache/gateway-images/openclaw',
 			},
 		]);
 	});
@@ -194,6 +229,7 @@ process.exit(1);
 			readonly configDir?: string;
 			readonly fullReset?: boolean;
 			readonly gondolinVersion?: string;
+			readonly hasOutput: boolean;
 		}[] = [];
 		const dependencies: GondolinImageBuilderDependencies = {
 			loadBuildConfig: async () => ({
@@ -210,11 +246,13 @@ process.exit(1);
 						...(buildDependencies?.gondolinVersion
 							? { gondolinVersion: buildDependencies.gondolinVersion }
 							: {}),
+						hasOutput: options.output !== undefined,
 					} satisfies {
 						readonly cacheDir: string;
 						readonly configDir?: string;
 						readonly fullReset?: boolean;
 						readonly gondolinVersion?: string;
+						readonly hasOutput: boolean;
 					},
 				);
 				return {
@@ -241,8 +279,89 @@ process.exit(1);
 				configDir: '/project/vm-images/gateways/openclaw',
 				fullReset: true,
 				gondolinVersion: 'runtime@1',
+				hasOutput: false,
 			},
 		]);
+	});
+
+	it('passes an output stream to the core builder for preview requests', async () => {
+		const outputPresence: boolean[] = [];
+		const dependencies: GondolinImageBuilderDependencies = {
+			loadBuildConfig: async () => ({
+				arch: 'aarch64',
+				distro: 'alpine',
+			}),
+			resolveRuntimeBuildVersionTag: async () => 'runtime@1',
+			buildImage: async (options) => {
+				outputPresence.push(options.output !== undefined);
+				return {
+					built: true,
+					fingerprint: 'preview-fp',
+					imagePath: '/cache/preview-fp',
+				};
+			},
+		};
+
+		const result = await runGondolinImageBuildRequest(
+			{
+				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
+				cacheDir: '/cache/gateway-images/openclaw',
+				previewOutput: true,
+			},
+			dependencies,
+		);
+
+		expect(result.fingerprint).toBe('preview-fp');
+		expect(outputPresence).toEqual([true]);
+	});
+
+	it('uses the original stderr writer for preview output after stderr is redirected', async () => {
+		const stderrChunks: string[] = [];
+		const originalStderrWrite = process.stderr.write;
+		process.stderr.write = ((chunk: string | Uint8Array) => {
+			stderrChunks.push(String(chunk));
+			return true;
+		}) as typeof process.stderr.write;
+		const dependencies: GondolinImageBuilderDependencies = {
+			loadBuildConfig: async () => ({
+				arch: 'aarch64',
+				distro: 'alpine',
+			}),
+			resolveRuntimeBuildVersionTag: async () => 'runtime@1',
+			buildImage: async (options) => {
+				process.stderr.write = (() => {
+					throw new Error('preview output used redirected stderr');
+				}) as typeof process.stderr.write;
+				try {
+					options.output?.write('preview phase\n');
+				} finally {
+					process.stderr.write = originalStderrWrite;
+				}
+				return {
+					built: true,
+					fingerprint: 'preview-fp',
+					imagePath: '/cache/preview-fp',
+				};
+			},
+		};
+
+		const result = await (async () => {
+			try {
+				return await runGondolinImageBuildRequest(
+					{
+						buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
+						cacheDir: '/cache/gateway-images/openclaw',
+						previewOutput: true,
+					},
+					dependencies,
+				);
+			} finally {
+				process.stderr.write = originalStderrWrite;
+			}
+		})();
+
+		expect(result.fingerprint).toBe('preview-fp');
+		expect(stderrChunks).toEqual(['preview phase\n']);
 	});
 });
 

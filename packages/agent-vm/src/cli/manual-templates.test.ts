@@ -103,11 +103,11 @@ describe('manual templates', () => {
 		expect(imageVersioningManual).toContain('There is one owner for each version decision');
 		expect(imageVersioningManual).toContain('package.json owns which installed @agent-vm/*');
 		expect(imageVersioningManual).toContain('managed-images.json');
-		expect(imageVersioningManual).toContain('extraOpenClawPackages');
+		expect(imageVersioningManual).toContain('openClawPackageOverrides');
 		expect(imageVersioningManual).toContain('cacheDir/generated-dockerfiles');
 		expect(imageVersioningManual).toContain('validation tool mirror');
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'op://agent-vm/<zoneId>-ssh-access/token',
+			'Zones scaffold controller SSH adminAccess as mode: "none"',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'agent-vm controller ssh --zone <zoneId>',
@@ -115,6 +115,9 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'--all-secrets',
 		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('gateway-ingress.md'))?.content,
+		).toContain('Use "openclaw" or "openclaw/<agentId>"');
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'Controller SSH opens an interactive shell only',
 		);
@@ -131,7 +134,7 @@ describe('manual templates', () => {
 			'agent-vm auth codex-harness --zone <zoneId> --agent <agentId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'Managed OpenClaw gateway base images include the native Codex CLI',
+			'Managed OpenClaw gateway builds install the native Codex CLI version pinned by managed-images.json',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'@openai/codex',

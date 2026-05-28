@@ -1,5 +1,7 @@
 FROM node:24-slim
 
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/
+
 # Runtime auth must flow through controller HTTP mediation. Keep token env
 # names, registry auth files, and build args out of this image so a future
 # edit cannot accidentally turn a runtime secret into image state.
@@ -12,34 +14,25 @@ RUN apt-get update && \
       openssh-server \
       ca-certificates \
       git \
-      gh \
-      curl \
-      python3 && \
+      curl && \
     rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates && \
-    corepack enable && \
-    corepack prepare pnpm@10.33.0 --activate && \
-    pnpm add -g openclaw@2026.5.2 @openai/codex && \
-    OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \
-    (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \
-    printf '%s\n' \
-      '{' \
-      '  "gateway": { "mode": "local", "auth": { "mode": "token" } },' \
-      '  "plugins": {' \
-      '    "allow": ["memory-core"],' \
-      '    "slots": { "memory": "memory-core" },' \
-      '    "entries": {' \
-      '      "memory-core": { "enabled": true }' \
-      '    }' \
-      '  }' \
-      '}' > /tmp/openclaw-plugin-stage-config.json && \
-    chmod 600 /tmp/openclaw-plugin-stage-config.json && \
-    (OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json openclaw doctor --fix --non-interactive || true) && \
-    rm -f /tmp/openclaw-plugin-stage-config.json /tmp/openclaw-plugin-stage-config.json.bak && \
+    npm install -g pnpm@10.33.0 && \
+    pnpm --version && \
+    uv python install 3.13 --install-dir /opt/python --no-progress --compile-bytecode && \
+    python_bin="$(find /opt/python -mindepth 3 -maxdepth 3 -type f -path '*/bin/python3.13' | head -n 1)" && \
+    python_bindir="$(dirname "$python_bin")" && \
+    ln -sfn "$python_bindir/python" /usr/local/bin/python && \
+    ln -sfn "$python_bindir/python3" /usr/local/bin/python3 && \
+    ln -sfn "$python_bindir/python3.13" /usr/local/bin/python3.13 && \
+    ln -sfn "$python_bindir/pip" /usr/local/bin/pip && \
+    ln -sfn "$python_bindir/pip3" /usr/local/bin/pip3 && \
+    ln -sfn "$python_bindir/pip3.13" /usr/local/bin/pip3.13 && \
+    python3 --version && \
+    uv --version && \
+    uvx --version && \
+    rm -rf /root/.cache/uv && \
     mkdir -p /opt/openclaw-sdk && \
-    ln -sf "$OPENCLAW_PACKAGE_ROOT/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \
-    printf '#!/bin/sh\nexec /pnpm/openclaw "$@"\n' > /usr/local/bin/openclaw && \
-    chmod 755 /usr/local/bin/openclaw && \
     useradd -m -s /bin/bash openclaw && \
     mkdir -p /home/openclaw/.openclaw/extensions /pnpm/global/5/node_modules/@openclaw /zone /run/sshd /root /work/tmp /work/cache /var/log && \
     touch /var/log/lastlog /var/log/faillog && \

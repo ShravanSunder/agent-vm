@@ -1591,7 +1591,7 @@ Acceptance tests:
   portal server packages.
 - generated Dockerfile symlinks both extension directories.
 - generated Dockerfile has `mcp-portal-server` available.
-- overlay `extraOpenClawPackages` cannot override the managed portal plugin
+- overlay `openClawPackageOverrides` cannot override the managed portal plugin
   package by accident.
 
 - [x] **Step 2: Managed Tool VM image installs TypeScript helper**

@@ -11,10 +11,16 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
-import type { CreateVmOptions, ManagedVm, PinnedRealFsRoot } from '@agent-vm/gondolin-adapter';
+import {
+	buildImageAssetFileNames,
+	type CreateVmOptions,
+	type ManagedVm,
+	type PinnedRealFsRoot,
+} from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { writePreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
 	createManagedExecProcessStub,
@@ -133,6 +139,15 @@ async function createWorkMountDirectory(
 	const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, name);
 	await mkdir(hostWorkMountDir, { recursive: true });
 	return hostWorkMountDir;
+}
+
+async function writeFakeImageAssets(imagePath: string): Promise<void> {
+	await mkdir(imagePath, { recursive: true });
+	await Promise.all(
+		buildImageAssetFileNames.map(
+			async (fileName) => await writeFile(path.join(imagePath, fileName), '', 'utf8'),
+		),
+	);
 }
 
 function createPinnedRealFsRoot(hostPath: string): PinnedRealFsRoot {
@@ -673,6 +688,77 @@ describe('createToolVm', () => {
 			cacheDir: path.join(systemConfig.cacheDir, 'tool-vm-images', 'default'),
 		});
 		expect(exec).not.toHaveBeenCalled();
+	});
+
+	it('uses a prepared Tool VM image record without rebuilding Gondolin assets', async () => {
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: () => createManagedExecProcessStub(),
+			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
+			getVmInstance: () => ({
+				close: async () => {},
+				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				exec: () => createManagedExecProcessStub(),
+				fs: createManagedVmFsStub(),
+				id: 'vm-instance',
+				setIngressRoutes: () => {},
+			}),
+			id: 'managed-vm',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool VM profile');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'openclaw-work-mount',
+		);
+		const cacheDir = path.join(systemConfig.cacheDir, 'tool-vm-images', 'default');
+		const imagePath = path.join(cacheDir, 'prepared-fingerprint');
+		await writeFakeImageAssets(imagePath);
+		await writePreparedGondolinImage({
+			buildConfigPath: '/project/vm-images/tool-vms/default/build-config.json',
+			cacheDir,
+			fingerprint: 'prepared-fingerprint',
+			fingerprintInput: { dockerRootfsIdentity: { layers: ['sha256:tool'] }, schemaVersion: 1 },
+			imagePath,
+		});
+		const buildGondolinImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'rebuilt-fingerprint',
+			imagePath: '/cache/rebuilt-fingerprint',
+		}));
+		let capturedCreateVmOptions: CreateVmOptions | undefined;
+
+		await createToolVm(
+			{
+				cacheDir: systemConfig.cacheDir,
+				profile: standardProfile,
+				systemConfig,
+				tcpSlot: 0,
+				hostWorkMountDir: requestedWorkMountDir,
+				zoneId: 'shravan',
+				secretResolver: createSecretResolver({}),
+			},
+			{
+				buildGondolinImage,
+				createManagedVm: async (createVmOptions) => {
+					capturedCreateVmOptions = createVmOptions;
+					return managedVm;
+				},
+				closePinnedRealFsRoot: () => {},
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+
+		expect(buildGondolinImage).not.toHaveBeenCalled();
+		expect(capturedCreateVmOptions?.imagePath).toBe(imagePath);
 	});
 
 	it('rejects direct lifecycle calls with host work mount paths outside OpenClaw roots', async () => {

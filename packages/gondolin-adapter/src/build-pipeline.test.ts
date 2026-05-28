@@ -222,6 +222,63 @@ describe('buildImage', () => {
 		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
 	});
 
+	it('dedupes concurrent identical image builds in process', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			rootfs: {
+				label: 'gondolin-root',
+			},
+		};
+		let releaseBuild: (() => void) | undefined;
+		const releaseBuildPromise = new Promise<void>((resolve) => {
+			releaseBuild = resolve;
+		});
+		const firstBuildStarted = Promise.withResolvers<void>();
+		const fakeBuildIntoDirectory = vi.fn(
+			async (_buildConfig: unknown, outputDirectory: string): Promise<void> => {
+				firstBuildStarted.resolve();
+				await releaseBuildPromise;
+				await writeFakeAssets(outputDirectory);
+			},
+		);
+
+		const firstResultPromise = buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+				fingerprintInput: { dockerRootfsIdentity: { layers: ['sha256:a'] } },
+			},
+			{
+				buildAssets: fakeBuildIntoDirectory,
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+		await firstBuildStarted.promise;
+		const secondResultPromise = buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+				fingerprintInput: { dockerRootfsIdentity: { layers: ['sha256:a'] } },
+			},
+			{
+				buildAssets: fakeBuildIntoDirectory,
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+		releaseBuild?.();
+
+		const [firstResult, secondResult] = await Promise.all([
+			firstResultPromise,
+			secondResultPromise,
+		]);
+
+		expect(firstResult).toEqual(secondResult);
+		expect(fakeBuildIntoDirectory).toHaveBeenCalledOnce();
+	});
+
 	it('surfaces access failures while checking existing fingerprinted image assets', async () => {
 		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
 		temporaryDirectories.push(cacheDirectory);
@@ -310,6 +367,7 @@ describe('buildImage', () => {
 	it('routes Gondolin process output to the provided stream and disables dynamic progress', async () => {
 		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
 		temporaryDirectories.push(cacheDirectory);
+		const verboseValues: (boolean | undefined)[] = [];
 		const outputChunks: string[] = [];
 		const output = new Writable({
 			write(chunk, _encoding, callback) {
@@ -332,7 +390,14 @@ describe('buildImage', () => {
 				output,
 			},
 			{
-				buildAssets: async (_buildConfig: BuildConfig, outputDirectory: string): Promise<void> => {
+				buildAssets: async (
+					_buildConfig: BuildConfig,
+					outputDirectory: string,
+					_configDir?: string,
+					_workDir?: string,
+					verbose?: boolean,
+				): Promise<void> => {
+					verboseValues.push(verbose);
 					if (process.env.CI !== 'true') {
 						throw new Error('Expected CI=true while Gondolin build output is captured.');
 					}
@@ -343,6 +408,7 @@ describe('buildImage', () => {
 			},
 		);
 
+		expect(verboseValues).toEqual([true]);
 		expect(outputChunks.join('')).toContain('building rootfs');
 		expect(process.env.CI).toBe(originalCi);
 	});

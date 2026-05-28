@@ -113,14 +113,14 @@ package.json owns which installed @agent-vm/* package version this deployment us
 
 The installed @agent-vm/agent-vm package owns managed-images.json. That manifest selects the managed GHCR base image tags and managed OpenClaw default version tested with that package. Deployment repos should not copy or edit managed-images.json.
 
-vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and extraOpenClawPackages for OpenClaw runtime package pins such as openclaw@2026.5.7 or @openclaw/discord@2026.5.7.
+vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and openClawPackageOverrides for OpenClaw runtime package pins such as openclaw@2026.5.7 or @openclaw/discord@2026.5.7.
 
 Do not edit cacheDir/generated-dockerfiles/... by hand. Generated Dockerfiles are build output. If a generated Dockerfile contains the wrong package version, change package.json or the overlay that produced it, then rebuild.
 
 For OpenClaw gateway images, agent-vm build resolves packages in this order:
 1. @agent-vm/openclaw-agent-vm-plugin comes from the installed agent-vm package.
 2. managed default OpenClaw companion packages come from managed-images.json.
-3. overlay extraOpenClawPackages override managed companion defaults by package name.
+3. overlay openClawPackageOverrides override managed companion defaults by package name.
 4. generated Dockerfiles receive the resolved package specs only as disposable output.
 
 If the deployment installs openclaw in package.json for host-side validation, keep it aligned with the runtime version chosen by the overlay. Treat package.json's openclaw entry as the validation tool mirror, not the runtime image owner.
@@ -218,6 +218,7 @@ Agent-vm exposes OpenClaw gateway HTTP through Gondolin ingress. Keep three laye
 3. OpenClaw serves its Control UI, gateway WebSocket, /healthz, /readyz, /v1/chat/completions, /v1/responses, and plugin HTTP routes from its guest gateway port.
 
 The current OpenClaw gateway route is intentionally simple: agent-vm sets one route, "/" -> the OpenClaw guest gateway port. That one route is enough for the OpenClaw Control UI, OpenAI-compatible APIs, SSE streaming, readiness probes, and WebSocket traffic when OpenClaw is the only guest web server being exposed.
+For /v1/chat/completions, the request model selects the OpenClaw agent, not the underlying provider model. Use "openclaw" or "openclaw/<agentId>" in the HTTP request body; configure provider models inside the OpenClaw agent defaults.
 
 SSE and streaming responses need incremental forwarding. Agent-vm keeps Gondolin response buffering disabled for gateway ingress. If a request waits a long time before the first byte, tune zones[].gateway.ingress.upstreamHeaderTimeoutMs. If a long response can sit idle between body chunks, tune zones[].gateway.ingress.upstreamResponseTimeoutMs. Streaming responses are less sensitive to the body idle timeout when the model emits regular chunks.
 
@@ -250,7 +251,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension.
 		Managed OpenClaw gateway images install @agent-vm/openclaw-mcp-portal-plugin and @agent-vm/mcp-portal. The plugin registers native MCP Portal tools and calls the portal core library directly inside the gateway VM.
 		plugins.entries.mcp-portal.hooks.allowPromptInjection must stay true when promptContext is enabled.
-	Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in extraOpenClawPackages.
+	Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in openClawPackageOverrides.
 
 	Use agent-vm init --openclaw-agents sun,shravan,alevtina to scaffold agents.list entries with per-agent /zone/agents/<id> workspaces.
 
@@ -313,13 +314,13 @@ Use http-mediation for service tokens that should be swapped into outbound reque
 Use env only when the gateway process itself must read the raw value.
 Do not bake secrets into Dockerfiles or images.
 
-Each zone can protect controller-mediated SSH with adminAccess. For 1Password-backed configs, create op://agent-vm/<zoneId>-ssh-access/token.
+Zones scaffold controller SSH adminAccess as mode: "none" because secret-backed admin SSH requires an operator-created secret. To protect controller-mediated SSH, create the secret first, then change zones[].adminAccess to mode: "secret" with a real secret reference.
 Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw admin commands source the token named by gateway.controlAuth.secret.
 Use agent-vm controller ssh --zone <zoneId> --all-secrets only when the shell must inspect or debug every raw gateway environment secret.
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
 For OpenClaw provider auth flows, prefer agent-vm auth openclaw <provider> --zone <zoneId>. Add --agent <agentId> for one agent or --all-agents to repeat the same provider login for every configured zone agent.
 For native Codex harness auth, use agent-vm auth codex-harness --zone <zoneId> --agent <agentId>.
-Managed OpenClaw gateway base images include the native Codex CLI so codex-harness auth can run inside the gateway VM. If a deployment overrides the base image, install @openai/codex in that image before running codex-harness auth.
+Managed OpenClaw gateway builds install the native Codex CLI version pinned by managed-images.json so codex-harness auth can run inside the gateway VM. If a deployment overrides the generated Dockerfile, install @openai/codex in that image before running codex-harness auth.
 Tool VMs and agent sandboxes do not receive gateway SSH secrets.
 `,
 			),

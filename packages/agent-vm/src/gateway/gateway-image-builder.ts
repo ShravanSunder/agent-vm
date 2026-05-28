@@ -4,6 +4,7 @@ import {
 	buildGondolinImage as buildGondolinImageDefault,
 	type GondolinImageBuilderDependencies,
 } from '../build/gondolin-image-builder.js';
+import { readPreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { GatewayBuildImageOptions } from './gateway-zone-support.js';
 
@@ -24,6 +25,14 @@ export async function buildGatewayImage(
 	},
 	dependencies: GatewayImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
+	const preparedImage = await readPreparedGondolinImage(options);
+	if (preparedImage) {
+		return {
+			built: false,
+			fingerprint: preparedImage.fingerprint,
+			imagePath: preparedImage.imagePath,
+		};
+	}
 	const buildImage = dependencies.buildImage;
 	if (buildImage) {
 		const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;

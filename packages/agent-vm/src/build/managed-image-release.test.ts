@@ -16,18 +16,19 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 		baseImages: {
 			'openclaw-gateway': {
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
-				tag: '2026.05.07.1',
+				tag: '2026.05.27.1',
 			},
 			'worker-gateway': {
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
-				tag: '2026.05.07.1',
+				tag: '2026.05.27.1',
 			},
 			'tool-vm': {
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
-				tag: '2026.05.07.1',
+				tag: '2026.05.27.1',
 			},
 		},
-		openClawVersion: '2026.5.2',
+		openAiCodexCliVersion: '0.134.0',
+		openClawVersion: '2026.5.20',
 	};
 }
 
@@ -37,17 +38,18 @@ describe('managed image release', () => {
 
 		expect(release.baseImages['openclaw-gateway']).toEqual({
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
-			tag: '2026.05.07.1',
+			tag: '2026.05.27.1',
 		});
 		expect(release.baseImages['worker-gateway']).toEqual({
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
-			tag: '2026.05.07.1',
+			tag: '2026.05.27.1',
 		});
 		expect(release.baseImages['tool-vm']).toEqual({
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
-			tag: '2026.05.07.1',
+			tag: '2026.05.27.1',
 		});
-		expect(release.openClawVersion).toBe('2026.5.7');
+		expect(release.openClawVersion).toBe('2026.5.20');
+		expect(release.openAiCodexCliVersion).toBe('0.134.0');
 		expect(release.baseImages['tool-vm'].tag).not.toMatch(/^0\.0\.\d+$/u);
 	});
 
@@ -74,7 +76,7 @@ describe('managed image release', () => {
 		);
 	});
 
-	it('installs uv in OpenClaw gateway Dockerfiles for stdio MCP providers', async () => {
+	it('keeps uv in the OpenClaw gateway base instead of generated Dockerfiles', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-uv-'));
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
 
@@ -88,10 +90,10 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
-		expect(generatedDockerfile).toContain(
+		expect(generatedDockerfile).not.toContain(
 			'COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/',
 		);
-		expect(generatedDockerfile).toContain('RUN uv --version && uvx --version');
+		expect(generatedDockerfile).not.toContain('RUN uv --version && uvx --version');
 	});
 
 	it('reports overlay OpenClaw package pins as deployment-owned plan entries', async () => {
@@ -104,7 +106,7 @@ describe('managed image release', () => {
 				'{',
 				'  "schemaVersion": 1,',
 				'  "extraAptPackages": [],',
-				'  "extraOpenClawPackages": [',
+				'  "openClawPackageOverrides": [',
 				'    "openclaw@2026.5.7",',
 				'    "@openclaw/discord@2026.5.7"',
 				'  ],',
@@ -135,8 +137,11 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).toContain('"@agent-vm/openclaw-mcp-portal-plugin@');
 		expect(generatedDockerfile).toContain('"@agent-vm/mcp-portal@');
 		expect(generatedDockerfile).toContain(
-			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/discord@2026.5.7"',
+			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/discord@2026.5.7" "@openclaw/codex@2026.5.7"',
 		);
+		expect(generatedDockerfile).toContain('"@openai/codex@0.134.0"');
+		expect(generatedDockerfile).toContain('openclaw doctor --fix --non-interactive');
+		expect(generatedDockerfile).toContain('/opt/openclaw-sdk/sandbox.js');
 		expect(generatedDockerfile).toContain('package_root="$(pnpm root -g)"');
 		expect(generatedDockerfile).toContain(
 			'ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" /home/openclaw/.openclaw/extensions/mcp-portal',
@@ -145,7 +150,7 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).not.toContain('@openclaw/discord@2026.5.2');
 		expect(result.plan).toMatchObject({
 			baseImage: {
-				reference: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
+				reference: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.27.1',
 				source: 'managed-images.json',
 			},
 			dockerfilePath: path.join(outputDirectory, 'Dockerfile'),
@@ -171,9 +176,108 @@ describe('managed image release', () => {
 					source: 'overlay',
 					version: '2026.5.7',
 				},
+				{
+					name: '@openclaw/codex',
+					spec: '@openclaw/codex@2026.5.7',
+					source: 'overlay',
+					version: '2026.5.7',
+				},
 			],
 			warnings: [],
 		});
+	});
+
+	it('rejects unpinned OpenClaw package overrides', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-unpinned-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "openClawPackageOverrides": [',
+				'    "@openclaw/discord"',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/openClawPackageOverrides requires exact package versions/u);
+	});
+
+	it('reports legacy OpenClaw package overlay keys with the new override name', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-legacy-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "extraOpenClawPackages": [',
+				'    "@openclaw/discord@2026.5.7"',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/rename extraOpenClawPackages to openClawPackageOverrides/u);
+	});
+
+	it('rejects non-OpenClaw package overrides', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-non-openclaw-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "openClawPackageOverrides": [',
+				'    "@openai/codex@0.134.0"',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/only accepts OpenClaw runtime package pins/u);
 	});
 
 	it('installs MCP Portal in Tool VM Dockerfiles without credential literals', async () => {
@@ -228,7 +332,7 @@ describe('managed image release', () => {
 				'{',
 				'  "schemaVersion": 1,',
 				'  "extraAptPackages": [],',
-				'  "extraOpenClawPackages": [',
+				'  "openClawPackageOverrides": [',
 				'    "openclaw@2026.5.7",',
 				'    "@openclaw/discord@2026.5.2"',
 				'  ],',
@@ -270,7 +374,7 @@ describe('managed image release', () => {
 				'{',
 				'  "schemaVersion": 1,',
 				'  "extraAptPackages": [],',
-				'  "extraOpenClawPackages": [',
+				'  "openClawPackageOverrides": [',
 				'    "@agent-vm/mcp-portal@0.0.1"',
 				'  ],',
 				'  "runAfterBase": []',

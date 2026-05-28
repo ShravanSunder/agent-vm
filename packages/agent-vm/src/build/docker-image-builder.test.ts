@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDockerImage, type DockerImageBuilderDependencies } from './docker-image-builder.js';
+import {
+	buildDockerImage,
+	resolveDockerRootfsIdentity,
+	type DockerImageBuilderDependencies,
+	type DockerRootfsIdentity,
+} from './docker-image-builder.js';
 
 describe('buildDockerImage', () => {
 	it('runs docker build with the dockerfile directory as build context', async () => {
@@ -75,5 +80,45 @@ describe('buildDockerImage', () => {
 				},
 			),
 		).rejects.toThrow('Docker build failed for agent-vm-gateway:latest: exit code 1');
+	});
+
+	it('resolves rootfs identity from Docker image inspect output', async () => {
+		const identity = await resolveDockerRootfsIdentity('agent-vm-gateway:latest', {
+			inspectImage: async () => ({
+				Architecture: 'arm64',
+				Os: 'linux',
+				RootFS: {
+					Layers: ['sha256:layer-a', 'sha256:layer-b'],
+				},
+				Variant: 'v8',
+			}),
+		});
+
+		expect(identity).toEqual({
+			architecture: 'arm64',
+			layers: ['sha256:layer-a', 'sha256:layer-b'],
+			os: 'linux',
+			variant: 'v8',
+		} satisfies DockerRootfsIdentity);
+	});
+
+	it('treats missing Docker images as absent rootfs identity', async () => {
+		const identity = await resolveDockerRootfsIdentity('agent-vm-gateway:latest', {
+			inspectImage: async () => undefined,
+		});
+
+		expect(identity).toBeUndefined();
+	});
+
+	it('rejects Docker images without ordered rootfs layers', async () => {
+		await expect(
+			resolveDockerRootfsIdentity('agent-vm-gateway:latest', {
+				inspectImage: async () => ({
+					Architecture: 'arm64',
+					Os: 'linux',
+					RootFS: {},
+				}),
+			}),
+		).rejects.toThrow(/missing ordered rootfs layers/u);
 	});
 });
