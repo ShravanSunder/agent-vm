@@ -211,6 +211,7 @@ function createHealthyOpenClawConfig(): object {
 			load: {
 				paths: [
 					'/home/openclaw/.openclaw/extensions/gondolin',
+					'/pnpm/global/5/node_modules/@openclaw',
 					'/home/openclaw/.openclaw/extensions/mcp-portal',
 				],
 			},
