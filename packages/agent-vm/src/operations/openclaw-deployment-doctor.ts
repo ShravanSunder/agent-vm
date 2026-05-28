@@ -106,6 +106,32 @@ function isOpenAiCodexModel(modelName: string | undefined): boolean {
 	return modelName?.startsWith('openai-codex/') === true || modelName === 'openai-codex';
 }
 
+function hasOpenAiProviderConfig(config: OpenClawDeploymentConfig): boolean {
+	const models = config.models;
+	if (!isObjectRecord(models)) {
+		return false;
+	}
+	const providers = models.providers;
+	return isObjectRecord(providers) && isObjectRecord(providers.openai);
+}
+
+function openAiProviderUsesPiRuntime(config: OpenClawDeploymentConfig): boolean {
+	const models = config.models;
+	if (!isObjectRecord(models)) {
+		return true;
+	}
+	const providers = models.providers;
+	if (!isObjectRecord(providers)) {
+		return true;
+	}
+	const openAiProvider = providers.openai;
+	if (!isObjectRecord(openAiProvider)) {
+		return true;
+	}
+	const agentRuntime = openAiProvider.agentRuntime;
+	return isObjectRecord(agentRuntime) && agentRuntime.id === 'pi';
+}
+
 function collectOpenClawCodexAgentIds(config: OpenClawDeploymentConfig): readonly string[] {
 	const defaultModelName = resolveOpenClawModelName(config.agents?.defaults?.model);
 	return (config.agents?.list ?? [])
@@ -281,6 +307,13 @@ export function buildOpenClawDeploymentDoctorChecks(
 					!hasMemoryCore || config.plugins?.slots?.memory === 'memory-core'
 						? 'plugins.slots.memory=memory-core'
 						: 'Set plugins.slots.memory to "memory-core" when memory-core is enabled.',
+			},
+			{
+				name: `openclaw-openai-provider-runtime-${target.zoneId}`,
+				ok: openAiProviderUsesPiRuntime(config),
+				hint: hasOpenAiProviderConfig(config)
+					? 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI API-key models do not get claimed by the Codex OAuth runtime.'
+					: 'No models.providers.openai config present.',
 			},
 			...buildCodexHarnessAuthReadErrorChecks(target),
 			...buildAgentAuthProfileChecks(target),

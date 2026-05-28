@@ -46,6 +46,7 @@ interface BuildPipelineDependencies {
 		outputDirectory: string,
 		configDir?: string,
 		workDir?: string,
+		verbose?: boolean,
 	) => Promise<unknown>;
 	readonly gondolinVersion?: string;
 }
@@ -107,6 +108,7 @@ async function loadBuildAssets(): Promise<
 		outputDirectory: string,
 		configDir?: string,
 		workDir?: string,
+		verbose?: boolean,
 	) => Promise<unknown>
 > {
 	const gondolinModule = await import('@earendil-works/gondolin');
@@ -115,10 +117,11 @@ async function loadBuildAssets(): Promise<
 		outputDirectory: string,
 		configDir?: string,
 		workDir?: string,
+		verbose?: boolean,
 	): Promise<unknown> =>
 		await gondolinModule.buildAssets(buildConfig, {
 			outputDir: outputDirectory,
-			verbose: false,
+			verbose: verbose ?? false,
 			...(configDir ? { configDir } : {}),
 			...(workDir ? { workDir } : {}),
 		} satisfies BuildOptions);
@@ -298,6 +301,7 @@ export async function buildImage(
 							imagePath,
 							options.configDir,
 							gondolinWorkDir,
+							options.output !== undefined,
 						);
 					},
 				);

@@ -376,7 +376,7 @@ copy steps, post-base commands, and runtime OpenClaw packages. `agent-vm build`
 regenerates Dockerfiles under `cacheDir/generated-dockerfiles/...`; do not edit
 generated Dockerfiles by hand. OpenClaw gateway deployments that need specific
 OpenClaw package versions should pin them in the overlay's
-`extraOpenClawPackages`. Overlay package pins override managed default companion
+`openClawPackageOverrides`. Overlay package pins override managed default companion
 packages during Dockerfile generation. If the overlay pins `openclaw@X` and an
 `@openclaw/*@Y` package with a different version, build output warns before
 Docker and Gondolin work begin.

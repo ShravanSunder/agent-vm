@@ -419,6 +419,7 @@ describe('buildImage', () => {
 	it('routes Gondolin process output to the provided stream and disables dynamic progress', async () => {
 		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
 		temporaryDirectories.push(cacheDirectory);
+		const verboseValues: (boolean | undefined)[] = [];
 		const outputChunks: string[] = [];
 		const output = new Writable({
 			write(chunk, _encoding, callback) {
@@ -441,7 +442,14 @@ describe('buildImage', () => {
 				output,
 			},
 			{
-				buildAssets: async (_buildConfig: BuildConfig, outputDirectory: string): Promise<void> => {
+				buildAssets: async (
+					_buildConfig: BuildConfig,
+					outputDirectory: string,
+					_configDir?: string,
+					_workDir?: string,
+					verbose?: boolean,
+				): Promise<void> => {
+					verboseValues.push(verbose);
 					if (process.env.CI !== 'true') {
 						throw new Error('Expected CI=true while Gondolin build output is captured.');
 					}
@@ -452,6 +460,7 @@ describe('buildImage', () => {
 			},
 		);
 
+		expect(verboseValues).toEqual([true]);
 		expect(outputChunks.join('')).toContain('building rootfs');
 		expect(process.env.CI).toBe(originalCi);
 	});

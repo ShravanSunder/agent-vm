@@ -119,17 +119,18 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 		baseImages: {
 			'openclaw-gateway': {
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
-				tag: '2026.05.07.1',
+				tag: '2026.05.27.1',
 			},
 			'worker-gateway': {
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
-				tag: '2026.05.07.1',
+				tag: '2026.05.27.1',
 			},
 			'tool-vm': {
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
-				tag: '2026.05.07.1',
+				tag: '2026.05.27.1',
 			},
 		},
+		openAiCodexCliVersion: '0.134.0',
 		openClawVersion: '2026.5.7',
 	};
 }
@@ -282,7 +283,7 @@ describe('runBuildCommand', () => {
 			JSON.stringify({
 				schemaVersion: 1,
 				extraAptPackages: ['ca-certificates'],
-				extraOpenClawPackages: ['@openclaw/discord@2026.5.7'],
+				openClawPackageOverrides: ['@openclaw/discord@2026.5.7'],
 				copy: [{ from: 'certs/strip-nonascii-certs.py', to: '/tmp/strip-nonascii-certs.py' }],
 				runAfterBase: ['python3 /tmp/strip-nonascii-certs.py'],
 			}),
@@ -352,7 +353,7 @@ describe('runBuildCommand', () => {
 		);
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain(
-			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
+			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.27.1',
 		);
 		expect(generatedDockerfile).toContain(
 			`RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@${readOpenClawAgentVmPluginVersion()}"`,
@@ -363,6 +364,8 @@ describe('runBuildCommand', () => {
 		expect(generatedDockerfile).toContain(
 			'ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
 		);
+		expect(generatedDockerfile).toContain('pnpm store prune');
+		expect(generatedDockerfile).toContain('rm -rf /root/.cache /root/.npm /tmp/*');
 		expect(generatedDockerfile).toContain(
 			'RUN apt-get update && apt-get install -y --no-install-recommends "ca-certificates"',
 		);
@@ -388,7 +391,7 @@ describe('runBuildCommand', () => {
 			JSON.stringify({
 				schemaVersion: 1,
 				extraAptPackages: [],
-				extraOpenClawPackages: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.7'],
+				openClawPackageOverrides: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.7'],
 				runAfterBase: [],
 			}),
 			'utf8',
@@ -453,7 +456,7 @@ describe('runBuildCommand', () => {
 		expect(dockerBuilds).toHaveLength(1);
 		expect(outputLines).toHaveLength(1);
 		expect(outputLines[0]).not.toContain('\n');
-		expect(outputLines[0]).toContain('base openclaw-gateway:2026.05.07.1');
+		expect(outputLines[0]).toContain('base openclaw-gateway:2026.05.27.1');
 		expect(outputLines[0]).toContain('overlay overlay.jsonc');
 		expect(outputLines[0]).toContain('agent-vm ');
 		expect(outputLines[0]).toContain('packages openclaw,discord');
@@ -472,7 +475,7 @@ describe('runBuildCommand', () => {
 			JSON.stringify({
 				schemaVersion: 1,
 				extraAptPackages: [],
-				extraOpenClawPackages: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.2'],
+				openClawPackageOverrides: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.2'],
 				runAfterBase: [],
 			}),
 			'utf8',
@@ -604,7 +607,9 @@ describe('runBuildCommand', () => {
 		);
 
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
-		expect(generatedDockerfile).toContain('RUN pnpm add -g "@openclaw/discord@2026.5.7"');
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/codex@2026.5.7" "@openclaw/discord@2026.5.7"',
+		);
 	});
 
 	it('does not add disabled OpenClaw channel packages', async () => {
@@ -674,6 +679,9 @@ describe('runBuildCommand', () => {
 		);
 
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/codex@2026.5.7"',
+		);
 		expect(generatedDockerfile).not.toContain('@openclaw/discord');
 	});
 
@@ -1821,7 +1829,7 @@ describe('runBuildCommand', () => {
 		expect(taskTitles).toContain('Gondolin: toolVm/default');
 	});
 
-	it('keeps interactive build tasks quiet instead of streaming child output into Tasuku', async () => {
+	it('keeps interactive build task output compact while deriving Gondolin phase status', async () => {
 		const taskStreamPreview = new Writable({
 			write(_chunk, _encoding, callback) {
 				callback();
@@ -1852,6 +1860,10 @@ describe('runBuildCommand', () => {
 				},
 				buildGondolinImage: async (options) => {
 					gondolinStreamPreviews.push(options.streamPreview);
+					options.streamPreview?.write(
+						'Extracting OCI rootfs from agent-vm-gateway:latest (docker)...\n',
+					);
+					options.streamPreview?.write('Creating rootfs ext4 image...\n');
 					return { built: true, fingerprint: 'interactive-fp', imagePath: '/cache/interactive' };
 				},
 				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
@@ -1872,10 +1884,12 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(dockerBuildOptions).toEqual([{ quiet: true, streamPreview: expect.any(Object) }]);
-		expect(gondolinStreamPreviews).toEqual([undefined, undefined]);
+		expect(gondolinStreamPreviews).toEqual([expect.any(Object), expect.any(Object)]);
 		expect(taskStatuses).toContain('docker build');
 		expect(taskStatuses).toContain('docker image ready');
 		expect(taskStatuses).toContain('checking vm assets');
+		expect(taskStatuses).toContain('extracting OCI rootfs · 1s elapsed');
+		expect(taskStatuses).toContain('creating rootfs image · 1s elapsed');
 		expect(taskStatuses).toContain('vm assets ready');
 		expect(taskOutputLines[0]).toBe('dockerfile Dockerfile');
 		expect(taskOutputLines.at(-1)).toContain('View build details: docker-desktop://');
@@ -2320,32 +2334,85 @@ describe('runBuildCommand', () => {
 		expect(statusMessages).toContain('image cache auto-prune failed');
 	});
 
-	it('fails before image builds when Zig is missing', async () => {
+	it('does not require Zig for the normal published-helper Gondolin path', async () => {
 		const dockerBuilds: string[] = [];
 		const gondolinBuilds: string[] = [];
+		const resolveRequiredZigVersion = vi.fn(async () => '0.15.2');
+		const resolveZigVersion = vi.fn(async () => undefined);
 
-		await expect(
-			runBuildCommandDefault(
-				{
-					systemConfig: createTestSystemConfig(),
+		await runBuildCommandDefault(
+			{
+				systemConfig: createTestSystemConfig(),
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options.imageTag);
 				},
-				{
-					buildDockerImage: async (options) => {
-						dockerBuilds.push(options.imageTag);
-					},
-					buildGondolinImage: async (options) => {
-						gondolinBuilds.push(options.buildConfigPath);
-						return { built: true, fingerprint: 'zig-fp', imagePath: '/cache/zig' };
-					},
-					resolveRequiredZigVersion: async () => '0.15.2',
-					resolveZigVersion: async () => undefined,
-					runTask: async (_title, fn) => {
-						await fn();
-					},
-					syncBundledOpenClawPlugin: noOpPluginSync,
+				buildGondolinImage: async (options) => {
+					gondolinBuilds.push(options.buildConfigPath);
+					return { built: true, fingerprint: 'zig-fp', imagePath: '/cache/zig' };
 				},
-			),
-		).rejects.toThrow('Install Zig >= 0.15.2. On macOS: brew install zig.');
+				computeGondolinFingerprint: async () => 'zig-fp',
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				resolveDockerRootfsIdentity: async () => ({
+					architecture: 'arm64',
+					layers: ['sha256:test-layer'],
+					os: 'linux',
+				}),
+				resolveRequiredZigVersion,
+				resolveZigVersion,
+				runTask: async (_title, fn) => {
+					await fn();
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(resolveRequiredZigVersion).not.toHaveBeenCalled();
+		expect(resolveZigVersion).not.toHaveBeenCalled();
+		expect(dockerBuilds).toEqual(['agent-vm-gateway:latest']);
+		expect(gondolinBuilds).toEqual([
+			'/project/vm-images/gateways/openclaw/build-config.json',
+			'/project/vm-images/tool-vms/default/build-config.json',
+		]);
+	});
+
+	it('fails before image builds when source-built sandbox helpers need Zig and Zig is missing', async () => {
+		const dockerBuilds: string[] = [];
+		const gondolinBuilds: string[] = [];
+		const originalBuildHelpersFromSource = process.env.GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE;
+		process.env.GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE = '1';
+
+		try {
+			await expect(
+				runBuildCommandDefault(
+					{
+						systemConfig: createTestSystemConfig(),
+					},
+					{
+						buildDockerImage: async (options) => {
+							dockerBuilds.push(options.imageTag);
+						},
+						buildGondolinImage: async (options) => {
+							gondolinBuilds.push(options.buildConfigPath);
+							return { built: true, fingerprint: 'zig-fp', imagePath: '/cache/zig' };
+						},
+						resolveRequiredZigVersion: async () => '0.15.2',
+						resolveZigVersion: async () => undefined,
+						runTask: async (_title, fn) => {
+							await fn();
+						},
+						syncBundledOpenClawPlugin: noOpPluginSync,
+					},
+				),
+			).rejects.toThrow('Install Zig >= 0.15.2. On macOS: brew install zig.');
+		} finally {
+			if (originalBuildHelpersFromSource === undefined) {
+				delete process.env.GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE;
+			} else {
+				process.env.GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE = originalBuildHelpersFromSource;
+			}
+		}
 
 		expect(dockerBuilds).toEqual([]);
 		expect(gondolinBuilds).toEqual([]);

@@ -19,6 +19,7 @@ export interface GondolinImageBuildRequest {
 	readonly cacheDir: string;
 	readonly fingerprintInput?: unknown;
 	readonly fullReset?: boolean;
+	readonly previewOutput?: boolean;
 }
 
 export interface RunGondolinBuildChildProcessOptions {
@@ -175,6 +176,13 @@ function forwardChildStream(stream: Readable | null, output: TaskOutput, onChunk
 	});
 }
 
+function createProcessStderrOutput(): TaskOutput {
+	const writeToStderr = process.stderr.write.bind(process.stderr);
+	return {
+		write: (chunk) => writeToStderr(chunk),
+	};
+}
+
 export async function runGondolinImageBuildRequest(
 	request: GondolinImageBuildRequest,
 	dependencies: Omit<GondolinImageBuilderDependencies, 'runBuildChildProcess'> = {},
@@ -196,6 +204,7 @@ export async function runGondolinImageBuildRequest(
 				? {}
 				: { fingerprintInput: request.fingerprintInput }),
 			...(request.fullReset ? { fullReset: true } : {}),
+			...(request.previewOutput ? { output: createProcessStderrOutput() } : {}),
 		},
 		{
 			gondolinVersion: runtimeBuildVersionTag,
@@ -301,6 +310,7 @@ export async function buildGondolinImage(
 		cacheDir: options.cacheDir,
 		...(options.fingerprintInput === undefined ? {} : { fingerprintInput: options.fingerprintInput }),
 		...(options.fullReset ? { fullReset: true } : {}),
+		...(options.streamPreview ? { previewOutput: true } : {}),
 	};
 
 	if (options.streamPreview || dependencies.runBuildChildProcess) {

@@ -220,6 +220,73 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		});
 	});
 
+	it('flags OpenAI provider configs that do not explicitly use pi runtime', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: [],
+				runtimeMaterializesPortalEndpoints: true,
+				zoneId: 'shravan',
+				config: {
+					models: {
+						providers: {
+							openai: {
+								apiKey: { provider: 'default', id: 'OPENAI_API_KEY' },
+							},
+						},
+					},
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						entries: {
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+						},
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/home/openclaw/.openclaw/extensions/mcp-portal',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+					approvals: openClawPluginApprovalSession,
+					tools: openClawSandboxPluginTools,
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-openai-provider-runtime-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI API-key models do not get claimed by the Codex OAuth runtime.',
+		});
+	});
+
+	it('accepts OpenAI provider configs that explicitly use pi runtime', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: [],
+				runtimeMaterializesPortalEndpoints: true,
+				zoneId: 'shravan',
+				config: {
+					models: {
+						providers: {
+							openai: {
+								apiKey: { provider: 'default', id: 'OPENAI_API_KEY' },
+								agentRuntime: { id: 'pi' },
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-openai-provider-runtime-shravan'),
+		).toMatchObject({ ok: true });
+	});
+
 	it('ignores OpenClaw-owned Discord session and binding semantics', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{

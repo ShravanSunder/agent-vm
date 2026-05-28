@@ -19,23 +19,49 @@ describe('managed base Dockerfiles', () => {
 		},
 	);
 
-	it('pins pnpm in the OpenClaw gateway base to preserve the global package layout', async () => {
+	it('pins pnpm in the OpenClaw gateway base without baking OpenClaw runtime packages', async () => {
 		const dockerfile = await fs.readFile(
 			path.join(process.cwd(), 'docker', 'base-images', 'openclaw-gateway', 'Dockerfile'),
 			'utf8',
 		);
 
-		expect(dockerfile).toContain('corepack prepare pnpm@10.33.0 --activate');
+		expect(dockerfile).toContain('npm install -g pnpm@10.33.0');
+		expect(dockerfile).toContain('pnpm --version');
 		expect(dockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
-		expect(dockerfile).toContain('exec /pnpm/openclaw "$@"');
+		expect(dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/');
+		expect(dockerfile).toContain('uv python install 3.13 --install-dir /opt/python');
+		expect(dockerfile).toContain('ln -sfn "$python_bindir/python3" /usr/local/bin/python3');
+		expect(dockerfile).not.toContain('python3 \\');
+		expect(dockerfile).not.toContain('gh \\');
+		expect(dockerfile).not.toContain('pnpm add -g openclaw');
+		expect(dockerfile).not.toContain('openclaw doctor');
 	});
 
-	it('installs the native Codex CLI in the OpenClaw gateway base for harness auth', async () => {
+	it('does not install the native Codex CLI in the OpenClaw gateway base', async () => {
 		const dockerfile = await fs.readFile(
 			path.join(process.cwd(), 'docker', 'base-images', 'openclaw-gateway', 'Dockerfile'),
 			'utf8',
 		);
 
-		expect(dockerfile).toContain('pnpm add -g openclaw@2026.5.2 @openai/codex');
+		expect(dockerfile).not.toContain('@openai/codex');
+	});
+
+	it('keeps the Tool VM base focused on agent CLI helpers', async () => {
+		const dockerfile = await fs.readFile(
+			path.join(process.cwd(), 'docker', 'base-images', 'tool-vm', 'Dockerfile'),
+			'utf8',
+		);
+
+		expect(dockerfile).toContain('npm install -g pnpm@10.33.0');
+		expect(dockerfile).toContain('pnpm --version');
+		expect(dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/');
+		expect(dockerfile).toContain('uv python install 3.13 --install-dir /opt/python');
+		expect(dockerfile).toContain('gh \\');
+		expect(dockerfile).toContain('ripgrep \\');
+		expect(dockerfile).toContain('fd-find \\');
+		expect(dockerfile).toContain('micro \\');
+		expect(dockerfile).not.toContain('python3 \\');
+		expect(dockerfile).not.toContain('nano \\');
+		expect(dockerfile).not.toContain('vim-tiny');
 	});
 });

@@ -110,6 +110,8 @@ const RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE = 2;
 const DOCKER_BUILD_CONCURRENCY = 2;
 const GONDOLIN_BUILD_CONCURRENCY = 2;
 const BUILD_DETAIL_MAX_LENGTH = 118;
+const GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE_ENV = 'GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE';
+const TASK_OUTPUT_BUFFER_MAX_LENGTH = 4_096;
 const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
 const openClawManagedPackageConfigSchema = z
 	.object({
@@ -353,23 +355,40 @@ async function findZoneIdsWithGatewayRuntimeRecords(
 	return zoneIds;
 }
 
-function startElapsedStatusHeartbeat(
+interface ElapsedStatusController {
+	readonly setBaseStatus: (status: string) => void;
+	readonly stop: () => void;
+}
+
+function startElapsedStatusController(
 	taskContext: RunTaskContext | undefined,
-	baseStatus: string,
-): () => void {
-	taskContext?.setStatus(baseStatus);
-	if (taskContext?.interactive !== true) {
-		return () => {};
-	}
+	initialStatus: string,
+): ElapsedStatusController {
+	let currentStatus = initialStatus;
+	const renderStatus = (): void => {
+		if (taskContext?.interactive === true) {
+			const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAtMs) / 1000));
+			taskContext.setStatus(`${currentStatus} · ${elapsedSeconds}s elapsed`);
+			return;
+		}
+		taskContext?.setStatus(currentStatus);
+	};
 
 	const startedAtMs = Date.now();
-	const heartbeatInterval = setInterval(() => {
-		const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAtMs) / 1000));
-		taskContext.setStatus(`${baseStatus} · ${elapsedSeconds}s elapsed`);
-	}, 8_000);
+	taskContext?.setStatus(currentStatus);
+	const heartbeatInterval =
+		taskContext?.interactive === true ? setInterval(renderStatus, 8_000) : undefined;
 
-	return () => {
-		clearInterval(heartbeatInterval);
+	return {
+		setBaseStatus: (status) => {
+			currentStatus = status;
+			renderStatus();
+		},
+		stop: () => {
+			if (heartbeatInterval) {
+				clearInterval(heartbeatInterval);
+			}
+		},
 	};
 }
 
@@ -394,6 +413,20 @@ async function assertZigBuildPrerequisite(
 		requiredVersion: requiredZigVersion,
 		...(zigVersion ? { installedVersion: zigVersion } : {}),
 	});
+}
+
+function isTruthyEnvironmentFlag(value: string | undefined): boolean {
+	const normalizedValue = value?.trim().toLowerCase();
+	return (
+		normalizedValue === '1' ||
+		normalizedValue === 'true' ||
+		normalizedValue === 'yes' ||
+		normalizedValue === 'on'
+	);
+}
+
+function shouldAssertZigBuildPrerequisite(env: NodeJS.ProcessEnv = process.env): boolean {
+	return isTruthyEnvironmentFlag(env[GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE_ENV]);
 }
 
 async function assertUniqueDockerImageTags(
@@ -590,6 +623,80 @@ function createDockerTaskOutput(
 	};
 }
 
+interface GondolinPhasePattern {
+	readonly pattern: RegExp;
+	readonly status: string;
+}
+
+const gondolinPhasePatterns: readonly GondolinPhasePattern[] = [
+	{ pattern: /^Extracting OCI rootfs\b/, status: 'extracting OCI rootfs' },
+	{
+		pattern: /^Creating OCI export container\b/,
+		status: 'exporting OCI rootfs',
+	},
+	{
+		pattern: /^Extracting Alpine minirootfs for rootfs\b/,
+		status: 'extracting rootfs',
+	},
+	{
+		pattern: /^Extracting Alpine minirootfs for initramfs\b/,
+		status: 'extracting initramfs',
+	},
+	{ pattern: /^Installing rootfs packages\b/, status: 'installing rootfs packages' },
+	{ pattern: /^Installing initramfs packages\b/, status: 'installing initramfs packages' },
+	{ pattern: /^Bootstrapped busybox shell\b/, status: 'bootstrapping rootfs shell' },
+	{ pattern: /^Applying post-build copies\b/, status: 'applying post-build copies' },
+	{ pattern: /^Running post-build command\b/, status: 'running post-build commands' },
+	{ pattern: /^Syncing kernel modules\b/, status: 'copying kernel modules' },
+	{ pattern: /^Creating rootfs ext4 image\b/, status: 'creating rootfs image' },
+	{ pattern: /^Creating initramfs\b/, status: 'creating initramfs' },
+	{ pattern: /^Rootfs image written\b/, status: 'rootfs image ready' },
+	{ pattern: /^Fetching kernel\b/, status: 'fetching kernel' },
+	{ pattern: /^Fetching libkrunfw-compatible kernel\b/, status: 'fetching libkrunfw kernel' },
+	{ pattern: /^Copying assets to output directory\b/, status: 'copying vm assets' },
+	{ pattern: /^Generating manifest\b/, status: 'generating vm manifest' },
+	{ pattern: /^Build complete\b/, status: 'vm asset build complete' },
+];
+
+function parseGondolinPhaseStatus(line: string): string | undefined {
+	const normalizedLine = line.trim();
+	for (const phasePattern of gondolinPhasePatterns) {
+		if (phasePattern.pattern.test(normalizedLine)) {
+			return phasePattern.status;
+		}
+	}
+	return undefined;
+}
+
+function createGondolinPhaseTaskOutput(
+	taskContext: RunTaskContext | undefined,
+	statusController: ElapsedStatusController,
+): TaskOutput | undefined {
+	if (taskContext?.interactive !== true) {
+		return undefined;
+	}
+	let bufferedOutput = '';
+	return {
+		write: (chunk) => {
+			bufferedOutput += String(chunk);
+			let lineBreakIndex = bufferedOutput.indexOf('\n');
+			while (lineBreakIndex !== -1) {
+				const line = bufferedOutput.slice(0, lineBreakIndex);
+				bufferedOutput = bufferedOutput.slice(lineBreakIndex + 1);
+				const phaseStatus = parseGondolinPhaseStatus(line);
+				if (phaseStatus) {
+					statusController.setBaseStatus(phaseStatus);
+				}
+				lineBreakIndex = bufferedOutput.indexOf('\n');
+			}
+			if (bufferedOutput.length > TASK_OUTPUT_BUFFER_MAX_LENGTH) {
+				bufferedOutput = bufferedOutput.slice(-TASK_OUTPUT_BUFFER_MAX_LENGTH);
+			}
+			return true;
+		},
+	};
+}
+
 export async function runBuildCommand(
 	options: {
 		readonly forceRebuild?: boolean;
@@ -628,7 +735,9 @@ export async function runBuildCommand(
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 
-	await assertZigBuildPrerequisite(resolveRequiredZigVersion, resolveZigVersion);
+	if (shouldAssertZigBuildPrerequisite()) {
+		await assertZigBuildPrerequisite(resolveRequiredZigVersion, resolveZigVersion);
+	}
 
 	const gatewayImageTargets: readonly ImageTarget[] = Object.entries(
 		options.systemConfig.imageProfiles.gateways,
@@ -827,10 +936,11 @@ export async function runBuildCommand(
 			(targetPlan): RunTaskGroupTask => ({
 				title: `Gondolin: ${targetPlan.imageTarget.family}/${targetPlan.imageTarget.name}`,
 				fn: async (taskContext) => {
-					const stopHeartbeat = startElapsedStatusHeartbeat(
+					const statusController = startElapsedStatusController(
 						taskContext,
 						targetPlan.shouldResetGondolinCache ? 'building vm assets' : 'checking vm assets',
 					);
+					const gondolinTaskOutput = createGondolinPhaseTaskOutput(taskContext, statusController);
 					let result: BuildImageResult;
 					try {
 						result = await buildGondolinImage({
@@ -840,9 +950,10 @@ export async function runBuildCommand(
 								? {}
 								: { fingerprintInput: targetPlan.fingerprintInput }),
 							...(targetPlan.shouldResetGondolinCache ? { fullReset: true } : {}),
+							...(gondolinTaskOutput ? { streamPreview: gondolinTaskOutput } : {}),
 						});
 					} finally {
-						stopHeartbeat();
+						statusController.stop();
 					}
 					if (targetPlan.sharedDedupeKey && result.fingerprint !== targetPlan.fingerprint) {
 						throw new Error(

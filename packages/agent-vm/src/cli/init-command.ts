@@ -155,14 +155,17 @@ interface RuntimeAuthHint {
 interface DefaultManagedImageOverlay {
 	readonly schemaVersion: 1;
 	readonly extraAptPackages: readonly string[];
-	readonly extraOpenClawPackages: readonly string[];
+	readonly openClawPackageOverrides: readonly string[];
 	readonly copy: readonly [];
 	readonly runAfterBase: readonly string[];
 }
 
 const defaultGatewayIngressPort = 18791;
+const defaultOpenClawExtensionsRootPath = '/home/openclaw/.openclaw/extensions';
 const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions/gondolin';
 const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
+const defaultOpenClawManagedPackageExtensionsPath = '/pnpm/global/5/node_modules/@openclaw';
+const defaultAgentVmManagedPackageExtensionsPath = '/pnpm/global/5/node_modules/@agent-vm';
 const scaffoldedGatewayPortSystemConfigSchema = z
 	.object({
 		zones: z.array(
@@ -320,7 +323,7 @@ function defaultManagedImageOverlay(): DefaultManagedImageOverlay {
 	return {
 		schemaVersion: 1,
 		extraAptPackages: [],
-		extraOpenClawPackages: [],
+		openClawPackageOverrides: [],
 		copy: [],
 		runAfterBase: [],
 	} satisfies DefaultManagedImageOverlay;
@@ -390,10 +393,6 @@ const defaultSystemConfig = (
 	zones: [
 		{
 			id: zoneId,
-			adminAccess: {
-				mode: 'secret',
-				secret: defaultZoneSshAccessSecret(zoneId, secretsProvider),
-			},
 			gateway: {
 				type: gatewayType,
 				memory: '2G',
@@ -447,10 +446,6 @@ type HostGithubToken =
 	| { readonly source: '1password'; readonly ref: string }
 	| { readonly source: 'environment'; readonly envVar: string };
 
-type AdminAccessReference =
-	| { readonly source: '1password'; readonly ref: string }
-	| { readonly source: 'environment'; readonly envVar: string };
-
 type SecretReference =
 	| {
 			readonly source: '1password';
@@ -480,28 +475,6 @@ function defaultHostGithubToken(secretsProvider: SecretsProvider): HostGithubTok
 		default:
 			return assertNeverSecretsProvider(secretsProvider);
 	}
-}
-
-function defaultZoneSshAccessSecret(
-	zoneId: string,
-	secretsProvider: SecretsProvider,
-): AdminAccessReference {
-	switch (secretsProvider) {
-		case '1password':
-			return { source: '1password', ref: `op://agent-vm/${zoneId}-ssh-access/token` };
-		case 'environment':
-			return { source: 'environment', envVar: defaultZoneSshAccessEnvVar(zoneId) };
-		default:
-			return assertNeverSecretsProvider(secretsProvider);
-	}
-}
-
-function defaultZoneSshAccessEnvVar(zoneId: string): string {
-	const zoneSegment = zoneId
-		.replace(/[^A-Z0-9]+/giu, '_')
-		.replace(/^_+|_+$/gu, '')
-		.toUpperCase();
-	return `AGENT_VM_${zoneSegment}_SSH_ACCESS_TOKEN`;
 }
 
 interface SecretShape {
@@ -653,12 +626,12 @@ function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonl
 }
 
 function envVarsForGatewayType(gatewayType: GatewayType, zoneId: string): readonly string[] {
-	const zoneSshAccessEnvVar = defaultZoneSshAccessEnvVar(zoneId);
+	void zoneId;
 	switch (gatewayType) {
 		case 'worker':
-			return ['GITHUB_TOKEN', 'OPENAI_API_KEY', zoneSshAccessEnvVar];
+			return ['GITHUB_TOKEN', 'OPENAI_API_KEY'];
 		case 'openclaw':
-			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN', zoneSshAccessEnvVar];
+			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN'];
 		default: {
 			const exhaustive: never = gatewayType;
 			throw new Error(`Unhandled gateway type: ${String(exhaustive)}`);
@@ -819,6 +792,13 @@ const defaultOpenClawConfig = (
 				`http://localhost:${gatewayIngressPort}`,
 			],
 		},
+		http: {
+			endpoints: {
+				chatCompletions: {
+					enabled: true,
+				},
+			},
+		},
 		mode: 'local',
 		port: 18789,
 	},
@@ -833,7 +813,7 @@ const defaultOpenClawConfig = (
 		servers: defaultOpenClawMcpPortalServers(agentIds),
 	},
 	tools: {
-		allow: ['zone_git_push'],
+		allow: ['*'],
 		elevated: { enabled: false },
 		sandbox: {
 			tools: {
@@ -853,7 +833,13 @@ const defaultOpenClawConfig = (
 	session: { dmScope: 'per-channel-peer' },
 	plugins: {
 		load: {
-			paths: [defaultOpenClawExtensionsPath, defaultOpenClawMcpPortalExtensionsPath],
+			paths: [
+				defaultOpenClawExtensionsRootPath,
+				defaultOpenClawExtensionsPath,
+				defaultOpenClawMcpPortalExtensionsPath,
+				defaultOpenClawManagedPackageExtensionsPath,
+				defaultAgentVmManagedPackageExtensionsPath,
+			],
 		},
 		allow: ['gondolin', 'memory-core', 'mcp-portal'],
 		slots: { memory: 'memory-core' },
@@ -905,7 +891,11 @@ async function resolveOpenClawControlUiIngressPort(
 }
 
 function formatJsoncConfig(comment: string, value: unknown): string {
-	return `// ${comment}\n${JSON.stringify(value, null, '\t')}\n`;
+	const formattedComment = comment
+		.split('\n')
+		.map((line) => `// ${line}`)
+		.join('\n');
+	return `${formattedComment}\n${JSON.stringify(value, null, '\t')}\n`;
 }
 
 function formatJsonSchemaArtifact(value: Record<string, unknown>): string {
@@ -1085,7 +1075,10 @@ async function scaffoldAgentVmProjectInternal(
 		systemConfigPath,
 		formatAuthoredConfig(
 			systemConfigPath,
-			'Human-authored agent-vm system config. Comments are allowed here; runtime effective files stay strict JSON.',
+			[
+				'Human-authored agent-vm system config. Comments are allowed here; runtime effective files stay strict JSON.',
+				'Controller SSH adminAccess is not scaffolded by default because it needs a real operator-created secret; add zones[].adminAccess only after creating that secret.',
+			].join('\n'),
 			defaultSystemConfig(
 				options.zoneId,
 				gatewayType,
