@@ -303,15 +303,37 @@ function appendDoctorFailedCheckLines(lines: string[], checks: readonly DoctorCh
 	}
 }
 
-function appendDoctorPassingCheckLines(lines: string[], checks: readonly DoctorCheck[]): void {
+function formatDoctorPassingCheckDetails(check: DoctorCheck): readonly string[] {
+	const details: string[] = [];
+	if (check.value !== undefined) {
+		details.push(dim(`      ${String(check.value)}`));
+	}
+	if (check.hint !== undefined) {
+		const [firstLine, ...remainingLines] = check.hint.split('\n');
+		details.push(dim(`      ${firstLine ?? ''}`));
+		for (const line of remainingLines) {
+			details.push(dim(`      ${line}`));
+		}
+	}
+	return details;
+}
+
+function appendDoctorPassingCheckLines(
+	lines: string[],
+	checks: readonly DoctorCheck[],
+	options: { readonly showDetails: boolean },
+): void {
 	for (const check of checks) {
 		lines.push(`${formatDoctorPassingCheckStatus()}    ${check.name}`);
+		if (options.showDetails) {
+			lines.push(...formatDoctorPassingCheckDetails(check));
+		}
 	}
 }
 
 function appendDoctorPassingPreviewLines(lines: string[], checks: readonly DoctorCheck[]): void {
 	const visibleChecks = checks.slice(0, defaultPassingPreviewLimit);
-	appendDoctorPassingCheckLines(lines, visibleChecks);
+	appendDoctorPassingCheckLines(lines, visibleChecks, { showDetails: false });
 	const hiddenCheckCount = checks.length - visibleChecks.length;
 	if (hiddenCheckCount > 0) {
 		const checkLabel = hiddenCheckCount === 1 ? 'check' : 'checks';
@@ -344,7 +366,7 @@ function writeDoctorText(
 			lines.push('');
 		}
 		lines.push(green(`Passing (${passedChecks.length})`));
-		appendDoctorPassingCheckLines(lines, passedChecks);
+		appendDoctorPassingCheckLines(lines, passedChecks, { showDetails: true });
 	} else if (passedChecks.length > 0) {
 		if (failedChecks.length > 0) {
 			lines.push('');

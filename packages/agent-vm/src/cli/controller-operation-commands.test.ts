@@ -757,7 +757,12 @@ describe('runControllerOperationCommand', () => {
 						ok: false,
 						checks: [
 							{ name: 'controller-required-binary', ok: false, hint: 'missing binary' },
-							{ name: 'controller-port', ok: true, value: 18800 },
+							{
+								name: 'controller-port',
+								ok: true,
+								value: 18800,
+								hint: 'bound to localhost',
+							},
 						],
 					}),
 				},
@@ -780,6 +785,8 @@ describe('runControllerOperationCommand', () => {
 			expect(output).toContain('Passing');
 			expect(output).toContain('FAIL  controller-required-binary');
 			expect(output).toContain('ok    controller-port');
+			expect(output).toContain('      18800');
+			expect(output).toContain('      bound to localhost');
 			expect(output).not.toContain('passed checks hidden.');
 		} finally {
 			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
