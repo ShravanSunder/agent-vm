@@ -1,3 +1,5 @@
+import type { GatewayRecoveryHealthReason } from '@agent-vm/gateway-interface';
+
 export type GatewayVmRecoveryObservationResult =
 	| 'failed'
 	| 'ok'
@@ -5,9 +7,7 @@ export type GatewayVmRecoveryObservationResult =
 	| 'timeout'
 	| 'unobserved';
 
-export type GatewayVmRecoveryReason =
-	| 'gateway-control-link-unhealthy'
-	| 'gateway-service-unhealthy';
+export type GatewayVmRecoveryReason = GatewayRecoveryHealthReason;
 
 export interface GatewayVmAutoRecoveryPolicy {
 	readonly consecutiveFailureThreshold: number;
@@ -28,7 +28,7 @@ export interface GatewayVmRecoveryObservation {
 
 export interface GatewayVmRecoveryLifecycleEvent {
 	readonly observedAtMs: number;
-	readonly result?: 'failed' | 'ok';
+	readonly result?: 'failed' | 'ok' | undefined;
 	readonly zoneId: string;
 }
 
@@ -62,6 +62,13 @@ interface GatewayVmRecoveryTrackerState {
 	lastRecoveryAttemptAtMs: number | undefined;
 	recoveryInFlight: boolean;
 }
+
+const createInitialGatewayVmRecoveryTrackerState = (): GatewayVmRecoveryTrackerState => ({
+	gatewayControlLinkConsecutiveFailures: 0,
+	gatewayServiceConsecutiveFailures: 0,
+	lastRecoveryAttemptAtMs: undefined,
+	recoveryInFlight: false,
+});
 
 function isHealthyObservation(result: GatewayVmRecoveryObservationResult): boolean {
 	return result === 'ok';
@@ -113,15 +120,21 @@ function decideRecovery(props: {
 export function createGatewayVmRecoveryTracker(
 	options: CreateGatewayVmRecoveryTrackerOptions,
 ): GatewayVmRecoveryTracker {
-	const state: GatewayVmRecoveryTrackerState = {
-		gatewayControlLinkConsecutiveFailures: 0,
-		gatewayServiceConsecutiveFailures: 0,
-		lastRecoveryAttemptAtMs: undefined,
-		recoveryInFlight: false,
+	const stateByZoneId = new Map<string, GatewayVmRecoveryTrackerState>();
+
+	const getStateForZone = (zoneId: string): GatewayVmRecoveryTrackerState => {
+		const existingState = stateByZoneId.get(zoneId);
+		if (existingState) {
+			return existingState;
+		}
+		const state = createInitialGatewayVmRecoveryTrackerState();
+		stateByZoneId.set(zoneId, state);
+		return state;
 	};
 
 	return {
 		markRecoveryFinished(event): void {
+			const state = getStateForZone(event.zoneId);
 			state.recoveryInFlight = false;
 			if (event.result === 'ok') {
 				state.gatewayControlLinkConsecutiveFailures = 0;
@@ -129,10 +142,12 @@ export function createGatewayVmRecoveryTracker(
 			}
 		},
 		markRecoveryStarted(event): void {
+			const state = getStateForZone(event.zoneId);
 			state.lastRecoveryAttemptAtMs = event.observedAtMs;
 			state.recoveryInFlight = true;
 		},
 		recordGatewayControlLinkObservation(observation): GatewayVmRecoveryDecision {
+			const state = getStateForZone(observation.zoneId);
 			if (observation.result === 'unobserved') {
 				return {
 					consecutiveFailures: state.gatewayControlLinkConsecutiveFailures,
@@ -157,6 +172,7 @@ export function createGatewayVmRecoveryTracker(
 			});
 		},
 		recordGatewayServiceProbe(observation): GatewayVmRecoveryDecision {
+			const state = getStateForZone(observation.zoneId);
 			if (isHealthyObservation(observation.result)) {
 				state.gatewayServiceConsecutiveFailures = 0;
 				return { consecutiveFailures: 0, kind: 'none' };

@@ -31,17 +31,19 @@ export interface GatewayVmRecoveryRequest {
 export type GatewayVmRecoveryResult =
 	| {
 			readonly elapsedMs: number;
-			readonly newBootedAt?: string | undefined;
-			readonly newHostPid?: number | undefined;
-			readonly newVmId?: string | undefined;
-			readonly oldBootedAt?: string | undefined;
-			readonly oldHostPid?: number | undefined;
-			readonly oldVmId?: string | undefined;
+			readonly leaseReleaseFailureCount: number;
+			readonly newBootedAt: string;
+			readonly newHostPid: number;
+			readonly newVmId: string;
+			readonly oldBootedAt: string;
+			readonly oldHostPid: number;
+			readonly oldVmId: string;
 			readonly result: 'ok';
 	  }
 	| {
 			readonly elapsedMs: number;
-			readonly errorCode?: string | undefined;
+			readonly errorCode: string;
+			readonly leaseReleaseFailureCount?: number | undefined;
 			readonly oldBootedAt?: string | undefined;
 			readonly oldHostPid?: number | undefined;
 			readonly oldVmId?: string | undefined;
@@ -49,21 +51,20 @@ export type GatewayVmRecoveryResult =
 	  };
 
 export interface CreateGatewayServiceHealthMonitorOptions {
-	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
-	readonly clearTimeoutImpl?: (timer: NodeJS.Timeout) => void;
-	readonly gatewayServiceAutoRestart?: GatewayVmAutoRecoveryPolicy | undefined;
+	readonly clearIntervalImpl?: ((timer: NodeJS.Timeout) => void) | undefined;
+	readonly clearTimeoutImpl?: ((timer: NodeJS.Timeout) => void) | undefined;
+	readonly gatewayServiceAutoRestart: GatewayVmAutoRecoveryPolicy;
 	readonly healthEventStore: HealthEventStore;
 	readonly intervalMs: number;
 	readonly now: () => number;
 	readonly probeZoneHealth: (zoneId: string) => Promise<GatewayServiceHealthProbeResult>;
-	readonly recoverGatewayVm?: (
-		request: GatewayVmRecoveryRequest,
-	) => Promise<GatewayVmRecoveryResult>;
-	readonly setIntervalImpl?: (
-		callback: () => void | Promise<void>,
-		delayMs: number,
-	) => NodeJS.Timeout;
-	readonly setTimeoutImpl?: (callback: () => void, delayMs: number) => NodeJS.Timeout;
+	readonly recoverGatewayVm?:
+		| ((request: GatewayVmRecoveryRequest) => Promise<GatewayVmRecoveryResult>)
+		| undefined;
+	readonly setIntervalImpl?:
+		| ((callback: () => void | Promise<void>, delayMs: number) => NodeJS.Timeout)
+		| undefined;
+	readonly setTimeoutImpl?: ((callback: () => void, delayMs: number) => NodeJS.Timeout) | undefined;
 	readonly staleAfterMs: number;
 	readonly zoneIds: readonly string[];
 }
@@ -77,13 +78,6 @@ const unknownGatewayServiceHealthTarget = {
 	port: 0,
 } as const;
 
-const defaultRecoveryPolicy = {
-	consecutiveFailureThreshold: 10,
-	cooldownMs: 61 * 60 * 1000,
-	enabled: false,
-	restartTimeoutMs: 10 * 60 * 1000,
-} as const satisfies GatewayVmAutoRecoveryPolicy;
-
 export function createGatewayServiceHealthMonitor(
 	options: CreateGatewayServiceHealthMonitorOptions,
 ): GatewayServiceHealthMonitor {
@@ -91,7 +85,7 @@ export function createGatewayServiceHealthMonitor(
 	const clearIntervalImpl = options.clearIntervalImpl ?? clearInterval;
 	const setTimeoutImpl = options.setTimeoutImpl ?? setTimeout;
 	const clearTimeoutImpl = options.clearTimeoutImpl ?? clearTimeout;
-	const recoveryPolicy = options.gatewayServiceAutoRestart ?? defaultRecoveryPolicy;
+	const recoveryPolicy = options.gatewayServiceAutoRestart;
 	const recoveryTracker = createGatewayVmRecoveryTracker({ policy: recoveryPolicy });
 	let timer: NodeJS.Timeout | undefined;
 	let runningTick: Promise<void> | undefined;
@@ -163,6 +157,7 @@ export function createGatewayServiceHealthMonitor(
 				cooldownMs: recoveryPolicy.cooldownMs,
 				elapsedMs: props.result.elapsedMs,
 				kind: 'gateway-recovery',
+				leaseReleaseFailureCount: props.result.leaseReleaseFailureCount,
 				newBootedAt: props.result.newBootedAt,
 				newHostPid: props.result.newHostPid,
 				newVmId: props.result.newVmId,
@@ -185,6 +180,9 @@ export function createGatewayServiceHealthMonitor(
 			elapsedMs: props.result.elapsedMs,
 			errorCode: props.result.errorCode,
 			kind: 'gateway-recovery',
+			...(props.result.leaseReleaseFailureCount === undefined
+				? {}
+				: { leaseReleaseFailureCount: props.result.leaseReleaseFailureCount }),
 			observedAtMs: props.observedAtMs,
 			oldBootedAt: props.result.oldBootedAt,
 			oldHostPid: props.result.oldHostPid,

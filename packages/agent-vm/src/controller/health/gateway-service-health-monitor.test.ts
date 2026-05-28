@@ -5,6 +5,13 @@ import { HealthEventStore } from './health-event-store.js';
 
 /* oxlint-disable eslint/no-await-in-loop -- Consecutive monitor ticks are intentionally sequential state transitions. */
 
+const gatewayServiceAutoRestart = {
+	cooldownMs: 61 * 60 * 1000,
+	consecutiveFailureThreshold: 10,
+	enabled: true,
+	restartTimeoutMs: 10 * 60 * 1000,
+} as const;
+
 describe('createGatewayServiceHealthMonitor', () => {
 	it('records ok and failed gateway service probes', async () => {
 		const healthEventStore = new HealthEventStore({
@@ -28,6 +35,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				zoneId: 'sunfam',
 			});
 		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart,
 			healthEventStore,
 			intervalMs: 10_000,
 			now: () => 12_000,
@@ -62,6 +70,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			staleAfterMs: 30_000,
 		});
 		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart,
 			healthEventStore,
 			intervalMs: 10_000,
 			now: () => 12_000,
@@ -92,6 +101,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 		const setIntervalImpl = vi.fn(() => timer);
 		const monitor = createGatewayServiceHealthMonitor({
 			clearIntervalImpl,
+			gatewayServiceAutoRestart,
 			healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
 			intervalMs: 10_000,
 			now: () => 12_000,
@@ -117,6 +127,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 		});
 		const recoverGatewayVm = vi.fn(async () => ({
 			elapsedMs: 45_000,
+			leaseReleaseFailureCount: 0,
 			newBootedAt: '2026-05-27T13:01:00.000Z',
 			newHostPid: 2222,
 			newVmId: 'new-gateway-vm',
@@ -126,12 +137,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			result: 'ok' as const,
 		}));
 		const monitor = createGatewayServiceHealthMonitor({
-			gatewayServiceAutoRestart: {
-				cooldownMs: 61 * 60 * 1000,
-				consecutiveFailureThreshold: 10,
-				enabled: true,
-				restartTimeoutMs: 10 * 60 * 1000,
-			},
+			gatewayServiceAutoRestart,
 			healthEventStore,
 			intervalMs: 10_000,
 			now: () => nowMs,
@@ -165,6 +171,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
 			expect.objectContaining({
 				kind: 'gateway-recovery',
+				leaseReleaseFailureCount: 0,
 				newVmId: 'new-gateway-vm',
 				oldVmId: 'old-gateway-vm',
 				result: 'ok',
@@ -192,6 +199,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 		});
 		const recoverGatewayVm = vi.fn(async () => ({
 			elapsedMs: 45_000,
+			leaseReleaseFailureCount: 0,
 			newBootedAt: '2026-05-27T13:01:00.000Z',
 			newHostPid: 2222,
 			newVmId: 'new-gateway-vm',
@@ -201,12 +209,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			result: 'ok' as const,
 		}));
 		const monitor = createGatewayServiceHealthMonitor({
-			gatewayServiceAutoRestart: {
-				cooldownMs: 61 * 60 * 1000,
-				consecutiveFailureThreshold: 10,
-				enabled: true,
-				restartTimeoutMs: 10 * 60 * 1000,
-			},
+			gatewayServiceAutoRestart,
 			healthEventStore,
 			intervalMs: 10_000,
 			now: () => nowMs,
@@ -239,16 +242,79 @@ describe('createGatewayServiceHealthMonitor', () => {
 		});
 	});
 
+	it('does not restart when unrelated controller-request failures accumulate while gateway service and control link are healthy', async () => {
+		let nowMs = 0;
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 50,
+			staleAfterMs: 30_000,
+		});
+		const recoverGatewayVm = vi.fn(async () => ({
+			elapsedMs: 45_000,
+			leaseReleaseFailureCount: 0,
+			newBootedAt: '2026-05-27T13:01:00.000Z',
+			newHostPid: 2222,
+			newVmId: 'new-gateway-vm',
+			oldBootedAt: '2026-05-27T12:00:00.000Z',
+			oldHostPid: 1111,
+			oldVmId: 'old-gateway-vm',
+			result: 'ok' as const,
+		}));
+		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart,
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/readyz',
+				port: 18789,
+				statusCode: 200,
+				zoneId: 'sunfam',
+			})),
+			recoverGatewayVm,
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		for (let index = 1; index <= 13; index += 1) {
+			nowMs = index * 10_000;
+			healthEventStore.record({
+				attempt: index,
+				elapsedMs: 100,
+				errorCode: 'discord-provider-disconnected',
+				kind: 'controller-request',
+				maxAttempts: 1,
+				observedAtMs: nowMs,
+				operation: 'openclaw-runtime-status',
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+			healthEventStore.record({
+				controllerHost: 'controller.vm.host',
+				controllerPort: 18800,
+				elapsedMs: 1,
+				kind: 'gateway-control-link',
+				observedAtMs: nowMs,
+				operation: 'controller-health',
+				path: '/health',
+				result: 'ok',
+				zoneId: 'sunfam',
+			});
+			await monitor.tick();
+		}
+
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+	});
+
 	it('does not auto restart again inside the 61 minute cooldown', async () => {
 		let nowMs = 0;
-		const recoverGatewayVm = vi.fn(async () => ({ elapsedMs: 1, result: 'failed' as const }));
+		const recoverGatewayVm = vi.fn(async () => ({
+			elapsedMs: 1,
+			errorCode: 'restart-threw',
+			result: 'failed' as const,
+		}));
 		const monitor = createGatewayServiceHealthMonitor({
-			gatewayServiceAutoRestart: {
-				cooldownMs: 61 * 60 * 1000,
-				consecutiveFailureThreshold: 10,
-				enabled: true,
-				restartTimeoutMs: 10 * 60 * 1000,
-			},
+			gatewayServiceAutoRestart,
 			healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
 			intervalMs: 10_000,
 			now: () => nowMs,
@@ -334,8 +400,29 @@ describe('createGatewayServiceHealthMonitor', () => {
 		let resolveRecovery: (() => void) | undefined;
 		const recoverGatewayVm = vi.fn(
 			async () =>
-				await new Promise<{ readonly elapsedMs: number; readonly result: 'ok' }>((resolve) => {
-					resolveRecovery = () => resolve({ elapsedMs: 1, result: 'ok' });
+				await new Promise<{
+					readonly elapsedMs: number;
+					readonly leaseReleaseFailureCount: number;
+					readonly newBootedAt: string;
+					readonly newHostPid: number;
+					readonly newVmId: string;
+					readonly oldBootedAt: string;
+					readonly oldHostPid: number;
+					readonly oldVmId: string;
+					readonly result: 'ok';
+				}>((resolve) => {
+					resolveRecovery = () =>
+						resolve({
+							elapsedMs: 1,
+							leaseReleaseFailureCount: 0,
+							newBootedAt: '2026-05-27T13:01:00.000Z',
+							newHostPid: 2222,
+							newVmId: 'new-gateway-vm',
+							oldBootedAt: '2026-05-27T13:00:00.000Z',
+							oldHostPid: 1111,
+							oldVmId: 'old-gateway-vm',
+							result: 'ok',
+						});
 				}),
 		);
 		const monitor = createGatewayServiceHealthMonitor({

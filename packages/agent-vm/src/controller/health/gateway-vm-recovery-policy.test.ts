@@ -54,6 +54,60 @@ describe('createGatewayVmRecoveryTracker', () => {
 		).toEqual({ consecutiveFailures: 1, kind: 'none' });
 	});
 
+	it('tracks consecutive failures independently per zone', () => {
+		const tracker = createGatewayVmRecoveryTracker({ policy });
+
+		for (let index = 1; index <= 9; index += 1) {
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: index * 10_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 95_000,
+				result: 'ok',
+				zoneId: 'alevtina',
+			}),
+		).toEqual({ consecutiveFailures: 0, kind: 'none' });
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 100_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 10,
+			kind: 'restart',
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+	});
+
+	it('honors disabled auto recovery policy without returning restart decisions', () => {
+		const tracker = createGatewayVmRecoveryTracker({
+			policy: { ...policy, enabled: false },
+		});
+
+		for (let index = 1; index <= 10; index += 1) {
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: index * 10_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 110_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({ consecutiveFailures: 11, kind: 'none', reason: 'disabled' });
+	});
+
 	it('waits for 10 degraded gateway-control-link observations before returning a restart decision', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 

@@ -425,12 +425,15 @@ export async function startControllerRuntime(
 			};
 		}
 		const oldGateway = oldSnapshot.gateway;
+		const oldBootedAt = oldSnapshot.bootedAt;
+		const oldHostPid = oldGateway.vm.hostPid;
 		writeControllerRuntimeLog(
 			`Auto-restarting gateway VM for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
 		);
 
+		let restartResult: { readonly leaseReleaseFailureCount: number };
 		try {
-			await runtime.restart();
+			restartResult = await runtime.restart();
 		} catch (error) {
 			writeControllerRuntimeLog(
 				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
@@ -438,35 +441,44 @@ export async function startControllerRuntime(
 			return {
 				elapsedMs: elapsedMs(),
 				errorCode: 'restart-threw',
-				oldBootedAt: oldSnapshot.bootedAt,
-				oldHostPid: oldGateway.vm.hostPid,
+				...(oldBootedAt === undefined ? {} : { oldBootedAt }),
+				...(oldHostPid === undefined ? {} : { oldHostPid }),
 				oldVmId: oldGateway.vm.id,
 				result: 'failed',
 			};
 		}
 
 		const newSnapshot = runtime.getSnapshot();
+		const newBootedAt = newSnapshot.bootedAt;
+		const newGateway = newSnapshot.gateway;
 		if (
 			newSnapshot.lifecycleState !== 'running' ||
-			!newSnapshot.gateway ||
-			newSnapshot.gateway.vm.id === oldGateway.vm.id
+			!newGateway ||
+			oldBootedAt === undefined ||
+			newBootedAt === undefined ||
+			oldHostPid === undefined ||
+			newGateway.vm.hostPid === undefined ||
+			newGateway.vm.id === oldGateway.vm.id ||
+			newGateway.vm.hostPid === oldHostPid ||
+			newBootedAt === oldBootedAt
 		) {
 			return {
 				elapsedMs: elapsedMs(),
 				errorCode: 'restart-verification-failed',
-				oldBootedAt: oldSnapshot.bootedAt,
-				oldHostPid: oldGateway.vm.hostPid,
+				...(oldBootedAt === undefined ? {} : { oldBootedAt }),
+				...(oldHostPid === undefined ? {} : { oldHostPid }),
 				oldVmId: oldGateway.vm.id,
 				result: 'failed',
 			};
 		}
 		return {
 			elapsedMs: elapsedMs(),
-			newBootedAt: newSnapshot.bootedAt,
-			newHostPid: newSnapshot.gateway.vm.hostPid,
-			newVmId: newSnapshot.gateway.vm.id,
-			oldBootedAt: oldSnapshot.bootedAt,
-			oldHostPid: oldGateway.vm.hostPid,
+			leaseReleaseFailureCount: restartResult.leaseReleaseFailureCount,
+			newBootedAt,
+			newHostPid: newGateway.vm.hostPid,
+			newVmId: newGateway.vm.id,
+			oldBootedAt,
+			oldHostPid,
 			oldVmId: oldGateway.vm.id,
 			result: 'ok',
 		};

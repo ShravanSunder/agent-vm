@@ -110,6 +110,12 @@ fast formatting and linting.
   version in `mise.toml` is active. Live Gondolin/OpenClaw smokes depend on
   that toolchain selection and may silently skip under a stale system `zig`.
   Skipped live smoke tests are not evidence that their live path was exercised.
+  When a change claims to fix live VM, Gondolin, OpenClaw gateway, Tool VM SSH,
+  or controller control-link behavior, enable the relevant smoke flag and run
+  the targeted smoke test before calling the feature tested. For example,
+  `AGENT_VM_OPENCLAW_SMOKE=1 mise exec -- pnpm vitest --config
+  vitest.smoke.config.ts run <specific-smoke-file>`. A skipped smoke only
+  proves the gate works; it does not prove the feature works.
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
   publish script.

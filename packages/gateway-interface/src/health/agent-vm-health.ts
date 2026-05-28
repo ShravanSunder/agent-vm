@@ -99,6 +99,7 @@ export type AgentVmHealthEvent =
 			readonly elapsedMs: number;
 			readonly errorCode?: string | undefined;
 			readonly kind: 'gateway-recovery';
+			readonly leaseReleaseFailureCount?: number | undefined;
 			readonly newBootedAt?: string | undefined;
 			readonly newHostPid?: number | undefined;
 			readonly newVmId?: string | undefined;
@@ -106,6 +107,7 @@ export type AgentVmHealthEvent =
 			readonly oldHostPid?: number | undefined;
 			readonly oldVmId?: string | undefined;
 			readonly reason: GatewayRecoveryHealthReason;
+			readonly result: 'failed' | 'ok';
 	  });
 
 export const zoneHealthStateKinds = ['unknown', 'ok', 'stale', 'failed'] as const;
@@ -265,6 +267,7 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 				isPositiveInteger(value.cooldownMs) &&
 				isNonNegativeFiniteNumber(value.elapsedMs) &&
 				optionalString(value.errorCode) &&
+				optionalNonNegativeInteger(value.leaseReleaseFailureCount) &&
 				optionalString(value.newBootedAt) &&
 				optionalNonNegativeInteger(value.newHostPid) &&
 				optionalString(value.newVmId) &&

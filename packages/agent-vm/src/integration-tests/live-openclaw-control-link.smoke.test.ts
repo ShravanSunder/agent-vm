@@ -419,12 +419,29 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 		const initialGatewayVmId = gatewayVm.id;
 		const killResult = await gatewayVm.exec(`
 set -eu
-gateway_pid="$(pgrep -f '[o]penclaw.*gateway' | head -n 1 || true)"
+port_hex="$(printf '%04X' 18789)"
+socket_inode="$(awk -v port=":$port_hex" '$2 ~ port && $4 == "0A" { print $10; exit }' /proc/net/tcp /proc/net/tcp6 2>/dev/null || true)"
+gateway_pid=""
+if [ -n "$socket_inode" ]; then
+  for fd in /proc/[0-9]*/fd/*; do
+    target="$(readlink "$fd" 2>/dev/null || true)"
+    if [ "$target" = "socket:[$socket_inode]" ]; then
+      gateway_pid="$(echo "$fd" | cut -d / -f 3)"
+      break
+    fi
+  done
+fi
 if [ -z "$gateway_pid" ]; then
   echo "no openclaw gateway process found" >&2
   exit 1
 fi
-kill "$gateway_pid"
+kill -STOP "$gateway_pid"
+readyz_code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/readyz 2>/dev/null || true)"
+if [ "$readyz_code" != "000" ]; then
+  echo "readyz still returned $readyz_code after stopping pid $gateway_pid" >&2
+  exit 1
+fi
+echo "stopped openclaw gateway pid $gateway_pid"
 `);
 		expect(killResult.exitCode, killResult.stderr).toBe(0);
 

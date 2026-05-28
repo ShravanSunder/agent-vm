@@ -59,10 +59,14 @@ export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 	}>;
 	getLogs(): Promise<{ readonly output: string; readonly zoneId: string }>;
 	refreshCredentials(): Promise<{ readonly ok: true; readonly zoneId: string }>;
-	restart(): Promise<void>;
+	restart(): Promise<OpenClawZoneRestartResult>;
 	start(): Promise<void>;
 	stop(): Promise<void>;
 	upgrade(): Promise<{ readonly ok: true; readonly zoneId: string }>;
+}
+
+export interface OpenClawZoneRestartResult {
+	readonly leaseReleaseFailureCount: number;
 }
 
 export interface WorkerZoneRuntime extends ControllerZoneRuntimeBase {

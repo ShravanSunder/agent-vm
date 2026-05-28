@@ -307,7 +307,7 @@ describe('zone runtime contracts', () => {
 			getLogs: async () => ({ output: 'logs', zoneId: 'shravan' }),
 			getSnapshot: () => ({ lifecycleState: 'stopped' }),
 			refreshCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
-			restart: async () => {},
+			restart: async () => ({ leaseReleaseFailureCount: 0 }),
 			shutdown: async () => {},
 			start: async () => {},
 			stop: async () => {},
@@ -538,7 +538,7 @@ describe('createOpenClawZoneRuntime', () => {
 		});
 
 		await runtime.start();
-		await expect(runtime.restart()).resolves.toBeUndefined();
+		await expect(runtime.restart()).resolves.toEqual({ leaseReleaseFailureCount: 1 });
 
 		expect(releaseLease).toHaveBeenCalledTimes(2);
 		expect(releaseLease).toHaveBeenCalledWith('lease-ok', { force: true });
@@ -548,6 +548,107 @@ describe('createOpenClawZoneRuntime', () => {
 			gateway: { vm: { id: 'gateway-vm-2' } },
 			lifecycleState: 'running',
 		});
+	});
+
+	it('serializes shutdown behind an in-flight OpenClaw gateway restart', async () => {
+		type RestartGatewayZone = NonNullable<
+			Parameters<typeof createOpenClawZoneRuntime>[0]['restartGatewayZone']
+		>;
+		let gatewayStartCount = 0;
+		let resolveSecondGatewayStart:
+			| ((value: Awaited<ReturnType<RestartGatewayZone>>) => void)
+			| undefined;
+		const optionsRestartGatewayZone: RestartGatewayZone = async () => {
+			gatewayStartCount += 1;
+			const close = vi.fn(async () => {});
+			const result = {
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					startCommand: 'start',
+				},
+				vm: {
+					close,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh root@127.0.0.1',
+						host: '127.0.0.1',
+						port: 22,
+					})),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => null,
+					getVmInstance: vi.fn(),
+					id: `gateway-vm-${gatewayStartCount}`,
+					setIngressRoutes: vi.fn(),
+				},
+				zone: openClawZone,
+			} satisfies Awaited<ReturnType<RestartGatewayZone>>;
+			if (gatewayStartCount === 2) {
+				return await new Promise<Awaited<ReturnType<RestartGatewayZone>>>((resolve) => {
+					resolveSecondGatewayStart = resolve;
+				});
+			}
+			return result;
+		};
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-04-30T10:00:00.000Z'),
+			restartGatewayZone: optionsRestartGatewayZone,
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		const restartPromise = runtime.restart();
+		await vi.waitFor(() => {
+			expect(gatewayStartCount).toBe(2);
+		});
+		const shutdownPromise = runtime.shutdown();
+		await Promise.resolve();
+		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'stopped' });
+
+		if (!resolveSecondGatewayStart) {
+			throw new Error('Expected second gateway start to be pending.');
+		}
+		resolveSecondGatewayStart({
+			image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+			ingress: { host: '127.0.0.1', port: 18791 },
+			processSpec: {
+				bootstrapCommand: 'bootstrap',
+				guestListenPort: 18789,
+				healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+				logPath: '/agent-vm/logs/gateway-boot-latest.log',
+				startCommand: 'start',
+			},
+			vm: {
+				close: vi.fn(async () => {}),
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh root@127.0.0.1',
+					host: '127.0.0.1',
+					port: 22,
+				})),
+				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+				fs: createManagedVmFsStub(),
+				getHostPid: () => null,
+				getVmInstance: vi.fn(),
+				id: 'gateway-vm-2',
+				setIngressRoutes: vi.fn(),
+			},
+			zone: openClawZone,
+		});
+
+		await restartPromise;
+		await shutdownPromise;
+
+		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'stopped' });
 	});
 
 	it('refreshes only gateway audience secrets for OpenClaw zones', async () => {
@@ -1093,7 +1194,7 @@ function createFakeOpenClawRuntime(
 		getLogs: async () => ({ output: `logs for ${zoneId}`, zoneId }),
 		getSnapshot: () => ({ lifecycleState }),
 		refreshCredentials: async () => ({ ok: true, zoneId }),
-		restart: async () => {},
+		restart: async () => ({ leaseReleaseFailureCount: 0 }),
 		shutdown: async () => {
 			lifecycleState = 'stopped';
 		},
