@@ -190,6 +190,9 @@ requires an old running gateway VM identity, force releases that zone's Tool VM
 leases, restarts the gateway, then records old and new VM identity in a
 `gateway-recovery` health event. Failed or timed-out recovery attempts are
 recorded as failed `gateway-recovery` events and do not freeze the monitor loop.
+After 3 consecutive failed automatic recoveries, the controller records
+`gateway-recovery-suspended` and stops automatic restarts for that zone until
+the 24 hour failed-recovery reset window expires.
 
 ---
 

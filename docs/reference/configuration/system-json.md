@@ -108,6 +108,8 @@ the defaults.
 | `gatewayServiceAutoRestart.enabled` | `true` | Enables automatic restart for a running OpenClaw gateway VM after repeated gateway-service or gateway-control-link health failures. |
 | `gatewayServiceAutoRestart.consecutiveFailureThreshold` | `10` | Consecutive degraded observations required before restart. A healthy observation resets that boundary's counter. |
 | `gatewayServiceAutoRestart.cooldownMs` | `3660000` | Minimum time between automatic restart attempts for one zone. This is 61 minutes by default. |
+| `gatewayServiceAutoRestart.maxConsecutiveFailedRecoveries` | `3` | Failed automatic restart attempts allowed before the controller suspends further auto-recovery for that zone. |
+| `gatewayServiceAutoRestart.failedRecoveryResetMs` | `86400000` | Suspension reset window after the latest failed recovery attempt. This is 24 hours by default. |
 | `gatewayServiceAutoRestart.restartTimeoutMs` | `600000` | Maximum time the controller waits for one automatic restart before recording failed `gateway-recovery`. |
 | `staleAfterMs` | `30000` | Age after which a latest health event is treated as stale in zone health snapshots. |
 | `eventHistoryLimit` | `500` | Rolling in-memory event history retained by the agent-vm controller. Latest per-boundary state is retained separately. |
@@ -135,6 +137,8 @@ Example:
         "enabled": true,
         "consecutiveFailureThreshold": 10,
         "cooldownMs": 3660000,
+        "maxConsecutiveFailedRecoveries": 3,
+        "failedRecoveryResetMs": 86400000,
         "restartTimeoutMs": 600000
       },
       "staleAfterMs": 30000,

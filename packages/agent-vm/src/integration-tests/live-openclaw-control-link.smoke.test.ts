@@ -255,6 +255,8 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 						cooldownMs: 61 * 60 * 1000,
 						consecutiveFailureThreshold: 2,
 						enabled: true,
+						failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+						maxConsecutiveFailedRecoveries: 3,
 						restartTimeoutMs: 120_000,
 					},
 					staleAfterMs: 20_000,
@@ -452,7 +454,7 @@ echo "stopped openclaw gateway pid $gateway_pid"
 				event.kind === 'gateway-recovery' &&
 				event.result === 'ok' &&
 				event.oldVmId === initialGatewayVmId,
-			timeoutMs: 180_000,
+			timeoutMs: 300_000,
 		});
 
 		expect(recoveryEvent).toMatchObject({

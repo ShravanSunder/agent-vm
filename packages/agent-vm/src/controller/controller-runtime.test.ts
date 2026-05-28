@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -11,7 +11,10 @@ import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
-import { startControllerRuntime } from './controller-runtime.js';
+import {
+	classifyGatewayRecoveryRestartError,
+	startControllerRuntime,
+} from './controller-runtime.js';
 import type { controllerLeaseCreateRequestSchema } from './http/controller-request-schemas.js';
 import type {
 	ExecuteWorkerTaskOptions,
@@ -20,6 +23,46 @@ import type {
 } from './worker-task-runner.js';
 
 type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequestSchema>;
+
+let previousOnePasswordServiceAccountToken: string | undefined;
+let previousOpenClawGatewayToken: string | undefined;
+
+beforeEach(() => {
+	previousOnePasswordServiceAccountToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
+	previousOpenClawGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+	process.env.OP_SERVICE_ACCOUNT_TOKEN = 'test-op-service-account-token';
+	process.env.OPENCLAW_GATEWAY_TOKEN = 'test-openclaw-gateway-token';
+});
+
+afterEach(() => {
+	if (previousOnePasswordServiceAccountToken === undefined) {
+		delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
+	} else {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOnePasswordServiceAccountToken;
+	}
+	if (previousOpenClawGatewayToken === undefined) {
+		delete process.env.OPENCLAW_GATEWAY_TOKEN;
+	} else {
+		process.env.OPENCLAW_GATEWAY_TOKEN = previousOpenClawGatewayToken;
+	}
+});
+
+describe('classifyGatewayRecoveryRestartError', () => {
+	it('separates disk, secret, and VM creation restart failures for health triage', () => {
+		expect(
+			classifyGatewayRecoveryRestartError(
+				Object.assign(new Error('disk full'), { code: 'ENOSPC' }),
+			),
+		).toBe('restart-disk-failure');
+		expect(
+			classifyGatewayRecoveryRestartError(new Error('Failed to resolve secret from 1Password')),
+		).toBe('restart-secret-failure');
+		expect(classifyGatewayRecoveryRestartError(new Error('Gondolin VM.create failed'))).toBe(
+			'restart-vm-create-failed',
+		);
+		expect(classifyGatewayRecoveryRestartError(new Error('unexpected'))).toBe('restart-threw');
+	});
+});
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -42,6 +85,8 @@ const systemConfig = {
 				cooldownMs: 61 * 60 * 1000,
 				consecutiveFailureThreshold: 10,
 				enabled: true,
+				failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+				maxConsecutiveFailedRecoveries: 3,
 				restartTimeoutMs: 10 * 60 * 1000,
 			},
 			gatewayControlLinkBackoffCeilingMs: 120_000,
@@ -454,6 +499,8 @@ describe('startControllerRuntime', () => {
 						cooldownMs: 61 * 60 * 1000,
 						consecutiveFailureThreshold: 2,
 						enabled: true,
+						failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+						maxConsecutiveFailedRecoveries: 3,
 						restartTimeoutMs: 10 * 60 * 1000,
 					},
 				},
@@ -467,7 +514,10 @@ describe('startControllerRuntime', () => {
 		let gatewayStartCount = 0;
 		const firstGatewayClose = vi.fn(async () => {});
 		const healthProbeCommands: string[] = [];
-		const intervalCallbacks: (() => void | Promise<void>)[] = [];
+		const intervalCallbacks: {
+			readonly callback: () => void | Promise<void>;
+			readonly delayMs: number;
+		}[] = [];
 		let startHttpServerArgs:
 			| {
 					app: {
@@ -549,8 +599,8 @@ describe('startControllerRuntime', () => {
 				runTask: async (_title, fn) => {
 					await fn();
 				},
-				setIntervalImpl: (callback) => {
-					intervalCallbacks.push(callback);
+				setIntervalImpl: (callback, delayMs) => {
+					intervalCallbacks.push({ callback, delayMs });
 					return fakeInterval;
 				},
 				startGatewayZone,
@@ -560,7 +610,10 @@ describe('startControllerRuntime', () => {
 				},
 			},
 		);
-		const monitorTick = intervalCallbacks[1];
+		const monitorTick = intervalCallbacks.find(
+			(interval) =>
+				interval.delayMs === runtimeSystemConfig.controller.health.gatewayServiceIntervalMs,
+		)?.callback;
 		if (!monitorTick) {
 			throw new Error('Expected gateway-service monitor interval callback.');
 		}
@@ -607,6 +660,8 @@ describe('startControllerRuntime', () => {
 						cooldownMs: 61 * 60 * 1000,
 						consecutiveFailureThreshold: 1,
 						enabled: true,
+						failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+						maxConsecutiveFailedRecoveries: 3,
 						restartTimeoutMs: 10 * 60 * 1000,
 					},
 				},
@@ -618,7 +673,10 @@ describe('startControllerRuntime', () => {
 		}
 		let nowMs = Date.parse('2026-05-27T13:00:00.000Z');
 		let gatewayStartCount = 0;
-		const intervalCallbacks: (() => void | Promise<void>)[] = [];
+		const intervalCallbacks: {
+			readonly callback: () => void | Promise<void>;
+			readonly delayMs: number;
+		}[] = [];
 		let startHttpServerArgs:
 			| {
 					app: {
@@ -699,8 +757,8 @@ describe('startControllerRuntime', () => {
 				runTask: async (_title, fn) => {
 					await fn();
 				},
-				setIntervalImpl: (callback) => {
-					intervalCallbacks.push(callback);
+				setIntervalImpl: (callback, delayMs) => {
+					intervalCallbacks.push({ callback, delayMs });
 					return fakeInterval;
 				},
 				startGatewayZone,
@@ -710,7 +768,10 @@ describe('startControllerRuntime', () => {
 				},
 			},
 		);
-		const monitorTick = intervalCallbacks[1];
+		const monitorTick = intervalCallbacks.find(
+			(interval) =>
+				interval.delayMs === runtimeSystemConfig.controller.health.gatewayServiceIntervalMs,
+		)?.callback;
 		if (!monitorTick) {
 			throw new Error('Expected gateway-service monitor interval callback.');
 		}

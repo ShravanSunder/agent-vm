@@ -96,6 +96,39 @@ describe('agent-vm health events', () => {
 		expect(snapshot.issues[0]?.kind).toBe('gateway-recovery-failed');
 	});
 
+	it('accepts suspended gateway recovery events and surfaces them as distinct issues', () => {
+		const event = {
+			action: 'gateway-vm-restart',
+			consecutiveFailedRecoveries: 3,
+			consecutiveFailures: 12,
+			cooldownMs: 3_660_000,
+			errorCode: 'max-failed-recoveries',
+			failedRecoveryResetMs: 86_400_000,
+			kind: 'gateway-recovery-suspended',
+			observedAtMs: 1_000,
+			reason: 'gateway-service-unhealthy',
+			result: 'failed',
+			zoneId: 'sunfam',
+		} satisfies AgentVmHealthEvent;
+
+		expect(isAgentVmHealthEvent(event)).toBe(true);
+		expect(healthEventBucketKey(event)).toBe(
+			'sunfam:gateway-recovery-suspended:gateway-vm-restart',
+		);
+
+		const snapshot = deriveZoneHealthSnapshot([event], {
+			nowMs: 2_000,
+			staleAfterMs: 30_000,
+			zoneId: 'sunfam',
+		});
+
+		expect(snapshot.kind).toBe('failed');
+		if (snapshot.kind !== 'failed') {
+			throw new Error('Expected failed snapshot.');
+		}
+		expect(snapshot.issues[0]?.kind).toBe('gateway-recovery-suspended');
+	});
+
 	it('rejects ISO observedAt strings because stale math uses observedAtMs', () => {
 		expect(
 			isAgentVmHealthEvent({

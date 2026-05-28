@@ -27,6 +27,8 @@ type OpenClawZoneConfig = ControllerZoneConfig & {
 };
 
 export interface CreateOpenClawZoneRuntimeOptions {
+	readonly clearTimeoutImpl?: ((timer: NodeJS.Timeout) => void) | undefined;
+	readonly closeGatewayTimeoutMs?: number | undefined;
 	readonly deleteGatewayRuntimeRecord?: (stateDirectory: string) => Promise<void>;
 	readonly leaseManager: Pick<LeaseManager, 'listLeases' | 'releaseLease'>;
 	readonly now: () => number;
@@ -36,9 +38,12 @@ export interface CreateOpenClawZoneRuntimeOptions {
 	readonly runControllerLogs?: typeof runControllerLogsDefault;
 	readonly runControllerUpgrade?: typeof runControllerUpgradeDefault;
 	readonly secretResolver: SecretResolver;
+	readonly setTimeoutImpl?: ((callback: () => void, delayMs: number) => NodeJS.Timeout) | undefined;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zone: OpenClawZoneConfig;
 }
+
+const defaultGatewayCloseTimeoutMs = 60_000;
 
 function formatUnknownError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -61,6 +66,9 @@ function writeOpenClawZoneRuntimeLog(message: string): void {
 export function createOpenClawZoneRuntime(
 	options: CreateOpenClawZoneRuntimeOptions,
 ): OpenClawZoneRuntime {
+	const clearTimeoutImpl = options.clearTimeoutImpl ?? clearTimeout;
+	const closeGatewayTimeoutMs = options.closeGatewayTimeoutMs ?? defaultGatewayCloseTimeoutMs;
+	const setTimeoutImpl = options.setTimeoutImpl ?? setTimeout;
 	let gateway: GatewayZoneRuntimeHandle | undefined;
 	let bootedAt: string | undefined;
 	let lastError: string | undefined;
@@ -118,13 +126,38 @@ export function createOpenClawZoneRuntime(
 		return { failedLeaseIds };
 	};
 
+	const closeGatewayWithDeadline = async (
+		activeGateway: GatewayZoneRuntimeHandle,
+	): Promise<void> => {
+		let timeout: NodeJS.Timeout | undefined;
+		try {
+			await Promise.race([
+				activeGateway.vm.close(),
+				new Promise<never>((_resolve, reject) => {
+					timeout = setTimeoutImpl(() => {
+						reject(
+							new Error(
+								`Gateway VM close timed out for zone '${options.zone.id}' after ${closeGatewayTimeoutMs}ms`,
+							),
+						);
+					}, closeGatewayTimeoutMs);
+					timeout.unref?.();
+				}),
+			]);
+		} finally {
+			if (timeout) {
+				clearTimeoutImpl(timeout);
+			}
+		}
+	};
+
 	const stopNow = async (): Promise<void> => {
 		const activeGateway = gateway;
 		gateway = undefined;
 		bootedAt = undefined;
 		lastError = undefined;
 		if (activeGateway) {
-			await activeGateway.vm.close();
+			await closeGatewayWithDeadline(activeGateway);
 		}
 		await (options.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
 			options.zone.gateway.stateDir,

@@ -351,6 +351,8 @@ const defaultControllerHealthConfig = {
 		cooldownMs: 61 * 60 * 1000,
 		consecutiveFailureThreshold: 10,
 		enabled: true,
+		failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+		maxConsecutiveFailedRecoveries: 3,
 		restartTimeoutMs: 10 * 60 * 1000,
 	},
 	gatewayControlLinkBackoffCeilingMs: 120_000,
@@ -372,6 +374,18 @@ const gatewayServiceAutoRestartSchema = z
 			.positive()
 			.default(defaultControllerHealthConfig.gatewayServiceAutoRestart.consecutiveFailureThreshold),
 		enabled: z.boolean().default(defaultControllerHealthConfig.gatewayServiceAutoRestart.enabled),
+		failedRecoveryResetMs: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.gatewayServiceAutoRestart.failedRecoveryResetMs),
+		maxConsecutiveFailedRecoveries: z
+			.number()
+			.int()
+			.positive()
+			.default(
+				defaultControllerHealthConfig.gatewayServiceAutoRestart.maxConsecutiveFailedRecoveries,
+			),
 		restartTimeoutMs: z
 			.number()
 			.int()

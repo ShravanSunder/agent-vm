@@ -64,6 +64,39 @@ function formatUnknownError(error: unknown): string {
 	return typeof error === 'string' ? error : JSON.stringify(error);
 }
 
+function getUnknownErrorCode(error: unknown): string | undefined {
+	if (typeof error !== 'object' || error === null || !('code' in error)) {
+		return undefined;
+	}
+	return typeof error.code === 'string' ? error.code : undefined;
+}
+
+export function classifyGatewayRecoveryRestartError(error: unknown): string {
+	const code = getUnknownErrorCode(error);
+	if (
+		code === 'EACCES' ||
+		code === 'EIO' ||
+		code === 'ENOENT' ||
+		code === 'ENOSPC' ||
+		code === 'EROFS'
+	) {
+		return 'restart-disk-failure';
+	}
+	const message = formatUnknownError(error).toLowerCase();
+	if (
+		message.includes('1password') ||
+		message.includes('credential') ||
+		message.includes('op://') ||
+		message.includes('secret')
+	) {
+		return 'restart-secret-failure';
+	}
+	if (message.includes('gondolin') || message.includes('qemu') || message.includes('vm.create')) {
+		return 'restart-vm-create-failed';
+	}
+	return 'restart-threw';
+}
+
 function isOpenClawZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig & {
 	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'openclaw' }>;
 } {
@@ -440,7 +473,7 @@ export async function startControllerRuntime(
 			);
 			return {
 				elapsedMs: elapsedMs(),
-				errorCode: 'restart-threw',
+				errorCode: classifyGatewayRecoveryRestartError(error),
 				...(oldBootedAt === undefined ? {} : { oldBootedAt }),
 				...(oldHostPid === undefined ? {} : { oldHostPid }),
 				oldVmId: oldGateway.vm.id,

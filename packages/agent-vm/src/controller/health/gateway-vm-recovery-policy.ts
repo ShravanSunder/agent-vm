@@ -13,6 +13,8 @@ export interface GatewayVmAutoRecoveryPolicy {
 	readonly consecutiveFailureThreshold: number;
 	readonly cooldownMs: number;
 	readonly enabled: boolean;
+	readonly failedRecoveryResetMs: number;
+	readonly maxConsecutiveFailedRecoveries: number;
 	readonly restartTimeoutMs: number;
 }
 
@@ -43,6 +45,13 @@ export type GatewayVmRecoveryDecision =
 			readonly kind: 'restart';
 			readonly reason: GatewayVmRecoveryReason;
 			readonly zoneId: string;
+	  }
+	| {
+			readonly consecutiveFailedRecoveries: number;
+			readonly consecutiveFailures: number;
+			readonly kind: 'suspended';
+			readonly reason: 'max-failed-recoveries';
+			readonly zoneId: string;
 	  };
 
 export interface GatewayVmRecoveryTracker {
@@ -57,6 +66,7 @@ export interface GatewayVmRecoveryTracker {
 }
 
 interface GatewayVmRecoveryTrackerState {
+	consecutiveFailedRecoveries: number;
 	gatewayControlLinkConsecutiveFailures: number;
 	gatewayServiceConsecutiveFailures: number;
 	lastRecoveryAttemptAtMs: number | undefined;
@@ -64,6 +74,7 @@ interface GatewayVmRecoveryTrackerState {
 }
 
 const createInitialGatewayVmRecoveryTrackerState = (): GatewayVmRecoveryTrackerState => ({
+	consecutiveFailedRecoveries: 0,
 	gatewayControlLinkConsecutiveFailures: 0,
 	gatewayServiceConsecutiveFailures: 0,
 	lastRecoveryAttemptAtMs: undefined,
@@ -89,6 +100,32 @@ function isWithinCooldown(
 	);
 }
 
+function hasActiveRecoverySuspension(
+	state: GatewayVmRecoveryTrackerState,
+	policy: GatewayVmAutoRecoveryPolicy,
+	observedAtMs: number,
+): boolean {
+	return (
+		state.consecutiveFailedRecoveries >= policy.maxConsecutiveFailedRecoveries &&
+		state.lastRecoveryAttemptAtMs !== undefined &&
+		observedAtMs - state.lastRecoveryAttemptAtMs < policy.failedRecoveryResetMs
+	);
+}
+
+function resetFailedRecoveriesIfSuspensionExpired(
+	state: GatewayVmRecoveryTrackerState,
+	policy: GatewayVmAutoRecoveryPolicy,
+	observedAtMs: number,
+): void {
+	if (
+		state.consecutiveFailedRecoveries >= policy.maxConsecutiveFailedRecoveries &&
+		state.lastRecoveryAttemptAtMs !== undefined &&
+		observedAtMs - state.lastRecoveryAttemptAtMs >= policy.failedRecoveryResetMs
+	) {
+		state.consecutiveFailedRecoveries = 0;
+	}
+}
+
 function decideRecovery(props: {
 	readonly consecutiveFailures: number;
 	readonly observedAtMs: number;
@@ -108,6 +145,16 @@ function decideRecovery(props: {
 	}
 	if (isWithinCooldown(props.state, props.policy, props.observedAtMs)) {
 		return { consecutiveFailures: props.consecutiveFailures, kind: 'none', reason: 'cooldown' };
+	}
+	resetFailedRecoveriesIfSuspensionExpired(props.state, props.policy, props.observedAtMs);
+	if (hasActiveRecoverySuspension(props.state, props.policy, props.observedAtMs)) {
+		return {
+			consecutiveFailedRecoveries: props.state.consecutiveFailedRecoveries,
+			consecutiveFailures: props.consecutiveFailures,
+			kind: 'suspended',
+			reason: 'max-failed-recoveries',
+			zoneId: props.zoneId,
+		};
 	}
 	return {
 		consecutiveFailures: props.consecutiveFailures,
@@ -137,8 +184,13 @@ export function createGatewayVmRecoveryTracker(
 			const state = getStateForZone(event.zoneId);
 			state.recoveryInFlight = false;
 			if (event.result === 'ok') {
+				state.consecutiveFailedRecoveries = 0;
 				state.gatewayControlLinkConsecutiveFailures = 0;
 				state.gatewayServiceConsecutiveFailures = 0;
+				return;
+			}
+			if (event.result === 'failed') {
+				state.consecutiveFailedRecoveries += 1;
 			}
 		},
 		markRecoveryStarted(event): void {
@@ -156,6 +208,7 @@ export function createGatewayVmRecoveryTracker(
 				};
 			}
 			if (isHealthyObservation(observation.result)) {
+				state.consecutiveFailedRecoveries = 0;
 				state.gatewayControlLinkConsecutiveFailures = 0;
 				return { consecutiveFailures: 0, kind: 'none' };
 			}
@@ -174,6 +227,7 @@ export function createGatewayVmRecoveryTracker(
 		recordGatewayServiceProbe(observation): GatewayVmRecoveryDecision {
 			const state = getStateForZone(observation.zoneId);
 			if (isHealthyObservation(observation.result)) {
+				state.consecutiveFailedRecoveries = 0;
 				state.gatewayServiceConsecutiveFailures = 0;
 				return { consecutiveFailures: 0, kind: 'none' };
 			}

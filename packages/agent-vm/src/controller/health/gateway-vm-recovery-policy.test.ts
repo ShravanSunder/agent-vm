@@ -6,6 +6,8 @@ const policy = {
 	cooldownMs: 61 * 60 * 1000,
 	consecutiveFailureThreshold: 10,
 	enabled: true,
+	failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+	maxConsecutiveFailedRecoveries: 3,
 	restartTimeoutMs: 10 * 60 * 1000,
 } as const;
 
@@ -171,7 +173,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 		).toEqual({ consecutiveFailures: 11, kind: 'none', reason: 'cooldown' });
 	});
 
-	it('allows another automatic restart after the 61 minute cooldown expires', () => {
+	it('allows another automatic restart after one failed recovery and the 61 minute cooldown expires', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
 		for (let index = 1; index <= 10; index += 1) {
@@ -187,6 +189,61 @@ describe('createGatewayVmRecoveryTracker', () => {
 		expect(
 			tracker.recordGatewayServiceProbe({
 				observedAtMs: 100_000 + policy.cooldownMs + 1,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toMatchObject({ kind: 'restart', zoneId: 'sunfam' });
+	});
+
+	it('suspends automatic restarts after repeated failed recoveries until the reset window expires', () => {
+		const tracker = createGatewayVmRecoveryTracker({
+			policy: { ...policy, maxConsecutiveFailedRecoveries: 2 },
+		});
+
+		for (let index = 1; index <= 10; index += 1) {
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: index * 10_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+		tracker.markRecoveryStarted({ observedAtMs: 100_000, zoneId: 'sunfam' });
+		tracker.markRecoveryFinished({ observedAtMs: 110_000, result: 'failed', zoneId: 'sunfam' });
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 100_000 + policy.cooldownMs + 1,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toMatchObject({ kind: 'restart', zoneId: 'sunfam' });
+		tracker.markRecoveryStarted({
+			observedAtMs: 100_000 + policy.cooldownMs + 1,
+			zoneId: 'sunfam',
+		});
+		tracker.markRecoveryFinished({
+			observedAtMs: 110_000 + policy.cooldownMs + 1,
+			result: 'failed',
+			zoneId: 'sunfam',
+		});
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 100_000 + policy.cooldownMs * 2 + 2,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailedRecoveries: 2,
+			consecutiveFailures: 12,
+			kind: 'suspended',
+			reason: 'max-failed-recoveries',
+			zoneId: 'sunfam',
+		});
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 110_000 + policy.cooldownMs + policy.failedRecoveryResetMs + 2,
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),

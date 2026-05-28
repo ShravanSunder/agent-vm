@@ -194,6 +194,29 @@ export function createGatewayServiceHealthMonitor(
 		options.healthEventStore.record(event);
 	};
 
+	const recordGatewayRecoverySuspendedEvent = (props: {
+		readonly consecutiveFailedRecoveries: number;
+		readonly consecutiveFailures: number;
+		readonly observedAtMs: number;
+		readonly reason: GatewayVmRecoveryReason;
+		readonly zoneId: string;
+	}): void => {
+		const event = {
+			action: 'gateway-vm-restart',
+			consecutiveFailedRecoveries: props.consecutiveFailedRecoveries,
+			consecutiveFailures: props.consecutiveFailures,
+			cooldownMs: recoveryPolicy.cooldownMs,
+			errorCode: 'max-failed-recoveries',
+			failedRecoveryResetMs: recoveryPolicy.failedRecoveryResetMs,
+			kind: 'gateway-recovery-suspended',
+			observedAtMs: props.observedAtMs,
+			reason: props.reason,
+			result: 'failed',
+			zoneId: props.zoneId,
+		} satisfies AgentVmHealthEvent;
+		options.healthEventStore.record(event);
+	};
+
 	const maybeRecoverGatewayVm = async (props: {
 		readonly observedAtMs: number;
 		readonly reason: GatewayVmRecoveryReason;
@@ -219,6 +242,16 @@ export function createGatewayServiceHealthMonitor(
 						zoneId: props.zoneId,
 					});
 
+		if (decision.kind === 'suspended') {
+			recordGatewayRecoverySuspendedEvent({
+				consecutiveFailedRecoveries: decision.consecutiveFailedRecoveries,
+				consecutiveFailures: decision.consecutiveFailures,
+				observedAtMs: props.observedAtMs,
+				reason: props.reason,
+				zoneId: decision.zoneId,
+			});
+			return;
+		}
 		if (decision.kind !== 'restart') {
 			return;
 		}

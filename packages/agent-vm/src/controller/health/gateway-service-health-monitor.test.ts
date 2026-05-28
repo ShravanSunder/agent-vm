@@ -9,6 +9,8 @@ const gatewayServiceAutoRestart = {
 	cooldownMs: 61 * 60 * 1000,
 	consecutiveFailureThreshold: 10,
 	enabled: true,
+	failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+	maxConsecutiveFailedRecoveries: 3,
 	restartTimeoutMs: 10 * 60 * 1000,
 } as const;
 
@@ -338,6 +340,57 @@ describe('createGatewayServiceHealthMonitor', () => {
 		expect(recoverGatewayVm).toHaveBeenCalledOnce();
 	});
 
+	it('records a suspended recovery event after repeated failed recoveries', async () => {
+		let nowMs = 0;
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 30,
+			staleAfterMs: 30_000,
+		});
+		const recoverGatewayVm = vi.fn(async () => ({
+			elapsedMs: 1,
+			errorCode: 'restart-threw',
+			result: 'failed' as const,
+		}));
+		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart: {
+				...gatewayServiceAutoRestart,
+				consecutiveFailureThreshold: 1,
+				maxConsecutiveFailedRecoveries: 2,
+			},
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: false,
+				path: '/readyz',
+				port: 18789,
+				statusCode: 502,
+				zoneId: 'sunfam',
+			})),
+			recoverGatewayVm,
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		nowMs = 10_000;
+		await monitor.tick();
+		nowMs += gatewayServiceAutoRestart.cooldownMs + 1;
+		await monitor.tick();
+		nowMs += gatewayServiceAutoRestart.cooldownMs + 1;
+		await monitor.tick();
+
+		expect(recoverGatewayVm).toHaveBeenCalledTimes(2);
+		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
+			expect.objectContaining({
+				consecutiveFailedRecoveries: 2,
+				errorCode: 'max-failed-recoveries',
+				kind: 'gateway-recovery-suspended',
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		);
+	});
+
 	it('records a failed gateway recovery event when restart exceeds the configured deadline', async () => {
 		let nowMs = 0;
 		const timeoutCallbacks: (() => void)[] = [];
@@ -354,6 +407,8 @@ describe('createGatewayServiceHealthMonitor', () => {
 				cooldownMs: 61 * 60 * 1000,
 				consecutiveFailureThreshold: 10,
 				enabled: true,
+				failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+				maxConsecutiveFailedRecoveries: 3,
 				restartTimeoutMs: 5_000,
 			},
 			healthEventStore,
@@ -381,7 +436,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 		}
 		nowMs = 100_000;
 		const tickPromise = monitor.tick();
-		await Promise.resolve();
+		await vi.waitFor(() => {
+			expect(timeoutCallbacks).toHaveLength(1);
+		});
 		nowMs = 105_000;
 		timeoutCallbacks[0]?.();
 		await tickPromise;
@@ -431,6 +488,8 @@ describe('createGatewayServiceHealthMonitor', () => {
 				cooldownMs: 61 * 60 * 1000,
 				consecutiveFailureThreshold: 1,
 				enabled: true,
+				failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+				maxConsecutiveFailedRecoveries: 3,
 				restartTimeoutMs: 10 * 60 * 1000,
 			},
 			healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),

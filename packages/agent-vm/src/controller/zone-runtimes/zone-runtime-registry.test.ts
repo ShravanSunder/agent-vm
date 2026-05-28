@@ -550,6 +550,84 @@ describe('createOpenClawZoneRuntime', () => {
 		});
 	});
 
+	it('releases the lifecycle queue when gateway VM close exceeds its deadline', async () => {
+		let gatewayStartCount = 0;
+		const closeTimeoutCallbacks: (() => void)[] = [];
+		const clearTimeoutImpl = vi.fn();
+		const runtime = createOpenClawZoneRuntime({
+			clearTimeoutImpl,
+			closeGatewayTimeoutMs: 5_000,
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-04-30T10:00:00.000Z'),
+			restartGatewayZone: async () => {
+				gatewayStartCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close:
+							gatewayStartCount === 1
+								? vi.fn(
+										async () =>
+											await new Promise<never>(() => {
+												// Close intentionally hangs; the runtime must release its lifecycle queue.
+											}),
+									)
+								: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh root@127.0.0.1',
+							host: '127.0.0.1',
+							port: 22,
+						})),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => null,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${gatewayStartCount}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: openClawZone,
+				};
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			setTimeoutImpl: (callback, delayMs) => {
+				expect(delayMs).toBe(5_000);
+				closeTimeoutCallbacks.push(callback);
+				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+			},
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		const stopPromise = runtime.stop();
+		await vi.waitFor(() => {
+			expect(closeTimeoutCallbacks).toHaveLength(1);
+		});
+		closeTimeoutCallbacks[0]?.();
+
+		await expect(stopPromise).rejects.toThrow(
+			"Gateway VM close timed out for zone 'shravan' after 5000ms",
+		);
+		await runtime.start();
+
+		expect(gatewayStartCount).toBe(2);
+		expect(clearTimeoutImpl).toHaveBeenCalledOnce();
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { id: 'gateway-vm-2' } },
+			lifecycleState: 'running',
+		});
+	});
+
 	it('serializes shutdown behind an in-flight OpenClaw gateway restart', async () => {
 		type RestartGatewayZone = NonNullable<
 			Parameters<typeof createOpenClawZoneRuntime>[0]['restartGatewayZone']
@@ -611,6 +689,7 @@ describe('createOpenClawZoneRuntime', () => {
 			expect(gatewayStartCount).toBe(2);
 		});
 		const shutdownPromise = runtime.shutdown();
+		// Let shutdown queue behind the suspended restart before inspecting the stopped snapshot.
 		await Promise.resolve();
 		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'stopped' });
 
