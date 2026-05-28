@@ -1,10 +1,9 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
-import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { command, flag, positional, string, subcommands } from 'cmd-ts';
 
-import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
+import { readPreparedGondolinImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerOfflineCleanup } from '../../operations/controller-offline-cleanup.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
@@ -67,21 +66,16 @@ export async function isGatewayImageCached(
 	if (!gatewayImageProfile) {
 		throw new Error(`Gateway image profile '${zone.gateway.imageProfile}' is not configured.`);
 	}
-	const gatewayFingerprint = await computeFingerprintFromConfigPath(
-		gatewayImageProfile.buildConfig,
-	);
-	const gatewayCachePath = path.join(
+	const gatewayProfileCacheDirectory = path.join(
 		systemConfig.cacheDir,
 		'gateway-images',
 		zone.gateway.imageProfile,
-		gatewayFingerprint,
 	);
-	try {
-		await fs.access(path.join(gatewayCachePath, 'manifest.json'));
-		return true;
-	} catch {
-		return false;
-	}
+	const preparedGatewayImage = await readPreparedGondolinImage({
+		buildConfigPath: gatewayImageProfile.buildConfig,
+		cacheDir: gatewayProfileCacheDirectory,
+	});
+	return preparedGatewayImage !== undefined;
 }
 
 async function requireGatewayImageCache(

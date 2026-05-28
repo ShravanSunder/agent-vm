@@ -25,42 +25,51 @@ function createStateDirectory(): string {
 	return temporaryDirectory;
 }
 
-async function findAvailablePort(): Promise<number> {
-	return await new Promise((resolve, reject) => {
-		const server = net.createServer();
-		server.on('error', reject);
+async function findUnusedTcpPort(): Promise<number> {
+	const server = net.createServer();
+	await new Promise<void>((resolve, reject) => {
+		server.once('error', reject);
 		server.listen(0, '127.0.0.1', () => {
-			const address = server.address();
-			if (typeof address === 'object' && address !== null) {
-				server.close(() => resolve(address.port));
-				return;
-			}
-			server.close(() => reject(new Error('Failed to determine an available port.')));
+			resolve();
 		});
 	});
+	const address = server.address();
+	await new Promise<void>((resolve, reject) => {
+		server.close((error) => {
+			if (error) {
+				reject(error);
+				return;
+			}
+			resolve();
+		});
+	});
+	if (address === null || typeof address === 'string') {
+		throw new Error('Failed to allocate an unused TCP port.');
+	}
+	return address.port;
 }
 
-function createRuntimeRecord(options: {
+function createRuntimeRecord(props: {
 	readonly ingressPort: number;
 	readonly qemuPid: number;
 	readonly stateDirectory: string;
 }): Promise<void> {
-	return writeGatewayRuntimeRecord(options.stateDirectory, {
+	return writeGatewayRuntimeRecord(props.stateDirectory, {
 		configPath: '/deployments/claw/config/system.jsonc',
 		controllerPort: 18800,
 		createdAt: '2026-04-13T12:34:56.000Z',
 		gatewayType: 'openclaw',
 		guestListenPort: 18789,
-		ingressPort: options.ingressPort,
+		ingressPort: props.ingressPort,
 		processIdentity: {
 			command: 'qemu-system-aarch64 -m 4G',
 			lstart: 'Fri May 22 10:00:00 2026',
 		},
 		projectNamespace: 'claw-tests-a1b2c3d4',
-		qemuPid: options.qemuPid,
+		qemuPid: props.qemuPid,
 		schemaVersion: 1,
 		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-		vmId: `vm-${options.qemuPid}`,
+		vmId: `vm-${props.qemuPid}`,
 		zoneId: 'shravan',
 	});
 }
@@ -88,11 +97,8 @@ describe('integration: orphan recovery', () => {
 	it('removes a stale runtime record when the recorded pid is already dead', async () => {
 		const stateDirectory = createStateDirectory();
 		const deadPid = findDefinitelyDeadPid();
-		await createRuntimeRecord({
-			ingressPort: await findAvailablePort(),
-			qemuPid: deadPid,
-			stateDirectory,
-		});
+		const ingressPort = await findUnusedTcpPort();
+		await createRuntimeRecord({ ingressPort, qemuPid: deadPid, stateDirectory });
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
@@ -113,11 +119,8 @@ describe('integration: orphan recovery', () => {
 
 	it('preserves a runtime record when the gateway port is free but the recorded pid is live and unrelated', async () => {
 		const stateDirectory = createStateDirectory();
-		await createRuntimeRecord({
-			ingressPort: await findAvailablePort(),
-			qemuPid: 1,
-			stateDirectory,
-		});
+		const ingressPort = await findUnusedTcpPort();
+		await createRuntimeRecord({ ingressPort, qemuPid: 1, stateDirectory });
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({

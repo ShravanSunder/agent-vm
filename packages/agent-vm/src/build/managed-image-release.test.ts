@@ -96,6 +96,41 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).not.toContain('RUN uv --version && uvx --version');
 	});
 
+	it('keeps stable OpenClaw runtime preparation ahead of volatile agent-vm package installs', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-stage-'));
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			requiredOpenClawPackageNames: ['@openclaw/discord'],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		const openClawStageIndex = generatedDockerfile.indexOf(
+			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.27.1 AS openclaw-runtime',
+		);
+		const openClawInstallIndex = generatedDockerfile.indexOf(
+			'RUN pnpm add -g "openclaw@2026.5.20" "@openclaw/codex@2026.5.20" "@openclaw/discord@2026.5.20"',
+		);
+		const openClawPostinstallIndex = generatedDockerfile.indexOf(
+			'(cd "$openclaw_package_root" && node scripts/postinstall-bundled-plugins.mjs)',
+		);
+		const finalStageIndex = generatedDockerfile.indexOf('FROM openclaw-runtime');
+		const agentVmInstallIndex = generatedDockerfile.indexOf(
+			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@',
+		);
+
+		expect(openClawStageIndex).toBeGreaterThanOrEqual(0);
+		expect(openClawInstallIndex).toBeGreaterThan(openClawStageIndex);
+		expect(openClawPostinstallIndex).toBeGreaterThan(openClawInstallIndex);
+		expect(finalStageIndex).toBeGreaterThan(openClawPostinstallIndex);
+		expect(agentVmInstallIndex).toBeGreaterThan(finalStageIndex);
+	});
+
 	it('reports overlay OpenClaw package pins as deployment-owned plan entries', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-plan-'));
 		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
