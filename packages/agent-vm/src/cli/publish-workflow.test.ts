@@ -91,4 +91,26 @@ describe('publish workflow', () => {
 		);
 		expect(agentsGuidance).not.toContain(staleNpmTokenOpRef);
 	});
+
+	it('verifies local npm publish cannot reference missing managed GHCR base image tags', async () => {
+		const publishScript = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'publish-local.sh'),
+			'utf8',
+		);
+
+		expect(publishScript).toContain('verify_managed_base_images_exist');
+		expect(publishScript).toContain('packages/agent-vm/managed-images.json');
+		expect(publishScript).toContain('Object.values(manifest.baseImages)');
+		expect(publishScript).toContain('`${image.repository}:${image.tag}`');
+		expect(publishScript).toContain('docker buildx imagetools inspect');
+		expect(publishScript).toContain('MANAGED_BASE_IMAGE_MANIFEST');
+		expect(publishScript).toContain("['linux/amd64', 'linux/arm64']");
+		expect(publishScript).not.toContain('mapfile');
+		expect(publishScript.indexOf('[publish] verifying managed GHCR base image tags')).toBeLessThan(
+			publishScript.indexOf('[publish] verifying npm auth'),
+		);
+		expect(publishScript.indexOf('verify_managed_base_images_exist')).toBeLessThan(
+			publishScript.indexOf('pnpm -r publish'),
+		);
+	});
 });
