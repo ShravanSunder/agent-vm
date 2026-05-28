@@ -35,7 +35,15 @@ import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 const TOOL_VM_MEDIATED_ENV_PROFILE_PATH = '/etc/profile.d/agent-vm-mediated-env.sh';
 const TOOL_VM_MEDIATED_ENVIRONMENT_PATH = '/etc/environment';
 const TOOL_VM_MEDIATED_SSHD_CONFIG_PATH = '/etc/ssh/sshd_config';
-const reservedToolVmMediatedSecretNames = new Set(['BASH_ENV', 'NODE_OPTIONS']);
+const reservedToolVmMediatedSecretNames = new Set([
+	'BASH_ENV',
+	'HOME',
+	'LOGNAME',
+	'NODE_OPTIONS',
+	'PATH',
+	'SHELL',
+	'USER',
+]);
 const shellEnvironmentNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 export interface ToolVmLifecycleDependencies {
@@ -97,6 +105,7 @@ function buildToolVmMediatedEnvBootstrapCommand(secretNames: readonly string[]):
 		'environment_tmp="${environment_path}.$$"',
 		'sshd_config_tmp="${sshd_config_path}.$$"',
 		'sshd_config_body_tmp="${sshd_config_path}.body.$$"',
+		'trap \'rm -f "$profile_tmp" "$environment_tmp" "$sshd_config_tmp" "$sshd_config_body_tmp"\' EXIT',
 		"missing=''",
 		"unsafe=''",
 		'{',
@@ -161,8 +170,13 @@ function buildToolVmMediatedEnvBootstrapCommand(secretNames: readonly string[]):
 		'  cat "$sshd_config_body_tmp"',
 		'} > "$sshd_config_tmp"',
 		'rm -f "$sshd_config_body_tmp"',
-		'chmod 0644 "$sshd_config_tmp"',
-		'mv "$sshd_config_tmp" "$sshd_config_path"',
+		'if [ -e "$sshd_config_path" ]; then',
+		'  cat "$sshd_config_tmp" > "$sshd_config_path"',
+		'  rm -f "$sshd_config_tmp"',
+		'else',
+		'  chmod 0644 "$sshd_config_tmp"',
+		'  mv "$sshd_config_tmp" "$sshd_config_path"',
+		'fi',
 	].join('\n');
 }
 
