@@ -2,32 +2,67 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { BuildConfig } from '@agent-vm/gondolin-adapter';
-import { describe, expect, it } from 'vitest';
+import { buildImageAssetFileNames } from '@agent-vm/gondolin-adapter';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
+import { writePreparedGondolinImage } from '../../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig } from '../../config/system-config.js';
 import { isGatewayImageCached } from './controller-definition.js';
 
+const temporaryDirectories: string[] = [];
+
+async function createTemporaryDirectory(): Promise<string> {
+	const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-controller-cache-'));
+	temporaryDirectories.push(temporaryDirectory);
+	return temporaryDirectory;
+}
+
+async function writeFakeImageAssets(imagePath: string): Promise<void> {
+	await fs.mkdir(imagePath, { recursive: true });
+	await Promise.all(
+		buildImageAssetFileNames.map(
+			async (fileName) => await fs.writeFile(path.join(imagePath, fileName), '', 'utf8'),
+		),
+	);
+}
+
+afterEach(async () => {
+	await Promise.all(
+		temporaryDirectories
+			.splice(0)
+			.map(async (directoryPath) => await fs.rm(directoryPath, { recursive: true, force: true })),
+	);
+});
+
 describe('isGatewayImageCached', () => {
-	it('uses the current gateway fingerprint when checking the cache', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-controller-cache-'),
-		);
+	it('accepts the build-prepared gateway image cache record', async () => {
+		const temporaryDirectoryPath = await createTemporaryDirectory();
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 		const buildConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
 		const cacheDir = path.join(temporaryDirectoryPath, 'cache');
-		const buildConfig = {
-			arch: 'aarch64',
-			distro: 'alpine',
-		} satisfies Partial<BuildConfig>;
+		const gatewayProfileCacheDirectory = path.join(cacheDir, 'gateway-images', 'worker');
+		const imagePath = path.join(gatewayProfileCacheDirectory, 'docker-backed-fingerprint');
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
-		await fs.writeFile(buildConfigPath, JSON.stringify(buildConfig), 'utf8');
-
-		const currentFingerprint = await computeFingerprintFromConfigPath(buildConfigPath);
-		const gatewayCachePath = path.join(cacheDir, 'gateway-images', 'worker', currentFingerprint);
-		await fs.mkdir(gatewayCachePath, { recursive: true });
-		await fs.writeFile(path.join(gatewayCachePath, 'manifest.json'), '{}\n', 'utf8');
+		await fs.writeFile(
+			buildConfigPath,
+			JSON.stringify({ arch: 'aarch64', distro: 'alpine' }),
+			'utf8',
+		);
+		await writeFakeImageAssets(imagePath);
+		await writePreparedGondolinImage({
+			buildConfigPath,
+			cacheDir: gatewayProfileCacheDirectory,
+			fingerprint: 'docker-backed-fingerprint',
+			fingerprintInput: {
+				dockerRootfsIdentity: {
+					architecture: 'arm64',
+					layers: ['sha256:rootfs-layer'],
+					os: 'linux',
+				},
+				schemaVersion: 1,
+			},
+			imagePath,
+		});
 
 		const systemConfig = createLoadedSystemConfig(
 			{
@@ -83,7 +118,5 @@ describe('isGatewayImageCached', () => {
 		);
 
 		await expect(isGatewayImageCached(systemConfig, 'coding-agent')).resolves.toBe(true);
-
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 });
