@@ -4,11 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-patchedDependencies:
-  '@earendil-works/gondolin@0.12.0':
-    hash: a62e288cbcd45d50ffa7751ebd3c87715a00bce8324b4ba626f0f4670c4bd9d0
-    path: patches/@earendil-works__gondolin@0.12.0.patch
-
 importers:
 
   .:
@@ -79,6 +74,9 @@ importers:
       '@hono/node-server':
         specifier: ^2.0.2
         version: 2.0.2(hono@4.12.18)
+      ansis:
+        specifier: ^4.3.0
+        version: 4.3.0
       cmd-ts:
         specifier: ^0.15.0
         version: 0.15.0
@@ -100,6 +98,9 @@ importers:
 
   packages/agent-vm-worker:
     dependencies:
+      '@agent-vm/gateway-interface':
+        specifier: workspace:*
+        version: link:../gateway-interface
       '@hono/node-server':
         specifier: ^2.0.2
         version: 2.0.2(hono@4.12.18)
@@ -164,7 +165,7 @@ importers:
         version: link:../secret-management
       '@earendil-works/gondolin':
         specifier: 0.12.0
-        version: 0.12.0(patch_hash=a62e288cbcd45d50ffa7751ebd3c87715a00bce8324b4ba626f0f4670c4bd9d0)
+        version: 0.12.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -1670,6 +1671,10 @@ packages:
 
   ansis@4.2.0:
     resolution: {integrity: sha512-HqZ5rWlFjGiV0tDm3UxxgNRqsOTniqoKZu0pIAfh7TZQMGuZK+hH0drySty0si0QXj1ieop4+SkSfPZBPPkHig==}
+    engines: {node: '>=14'}
+
+  ansis@4.3.0:
+    resolution: {integrity: sha512-44mvgtPvohuU/70DdY5Oz2AIrLJ9k6/5x4KmoSvPwO+5Moijo0+N9D0fKbbYZQWP1hNm5CpOf+E01jhxG/r8xg==}
     engines: {node: '>=14'}
 
   any-promise@1.3.0:
@@ -3859,7 +3864,7 @@ snapshots:
   '@earendil-works/gondolin-krun-runner-linux-x64@0.12.0':
     optional: true
 
-  '@earendil-works/gondolin@0.12.0(patch_hash=a62e288cbcd45d50ffa7751ebd3c87715a00bce8324b4ba626f0f4670c4bd9d0)':
+  '@earendil-works/gondolin@0.12.0':
     dependencies:
       cbor2: 2.3.0
       node-forge: 1.4.0
@@ -4830,6 +4835,8 @@ snapshots:
       color-convert: 2.0.1
 
   ansis@4.2.0: {}
+
+  ansis@4.3.0: {}
 
   any-promise@1.3.0: {}
 

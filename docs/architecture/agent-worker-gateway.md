@@ -666,6 +666,12 @@ The worker exposes a simple REST API for the controller to interact with:
 
 **One task at a time**: Each VM runs exactly one task. This is by design — the VM is the isolation boundary for that task.
 
+Worker controller-tool calls that go back to the agent-vm controller, such as
+`worker-push-branches` and `worker-pull-default`, use the shared bounded
+controller request policy surface. They are long-timeout, non-retried unsafe
+mutations because Git push/pull can legitimately take time and duplicate
+requests are not automatically safe.
+
 ---
 
 ## End-to-End Walk-Through

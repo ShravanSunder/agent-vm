@@ -1435,7 +1435,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		await runAgentVmCli(
-			['doctor'],
+			['doctor', '--json'],
 			{
 				stderr: {
 					write: () => true,

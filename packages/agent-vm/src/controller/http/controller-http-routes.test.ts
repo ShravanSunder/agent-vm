@@ -12,12 +12,18 @@ import {
 	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
+import { HealthEventStore } from '../health/health-event-store.js';
 import { SandboxSeedingError } from '../leases/agent-sandbox-seeding.js';
-import { AgentLeaseCompatibilityConflictError, type Lease } from '../leases/lease-manager.js';
+import {
+	AgentLeaseCompatibilityConflictError,
+	createLeaseManager,
+	type Lease,
+} from '../leases/lease-manager.js';
 import {
 	OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 	LeaseWorkMountValidationError,
 } from '../leases/lease-work-mount-paths.js';
+import { createTcpPool } from '../leases/tcp-pool.js';
 import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
 import { ZoneGitConflictError } from '../zone-git/zone-git-operations.js';
@@ -235,6 +241,45 @@ describe('createControllerApp', () => {
 			ok: false,
 			state: 'recovering',
 		});
+	});
+
+	it('exposes zone health-event routes from the controller app', async () => {
+		const app = createControllerAppForTest({
+			controllerPort: 18800,
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/zones/beta/health-events', {
+			body: JSON.stringify({
+				controllerHost: 'controller.vm.host',
+				controllerPort: 18800,
+				elapsedMs: 15,
+				kind: 'gateway-control-link',
+				observedAtMs: Date.now(),
+				operation: 'controller-health',
+				path: '/health',
+				result: 'ok',
+				zoneId: 'beta',
+			}),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(200);
+		await expect(response.json()).resolves.toEqual({ ok: true });
 	});
 
 	it('returns not-ready for lease creation while runtime is recovering', async () => {
@@ -529,6 +574,49 @@ describe('createControllerApp', () => {
 		});
 	});
 
+	it('records controller-observed lease renew health events', async () => {
+		const lease = createLeaseStub('lease-123', 0, { agentId: 'beta', zoneId: 'sunfam' });
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		const app = createControllerAppForTest({
+			healthEventStore,
+			readIdentityPem: async () => 'pem-from-file',
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => lease),
+				renewLease: vi.fn(async () => ({
+					kind: 'renewed' as const,
+					lastUsedAt: lease.lastUsedAt,
+					lease,
+				})),
+				peekLease: vi.fn(() => ({ kind: 'snapshot' as const, lease })),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease/lease-123/renew', { method: 'POST' });
+
+		expect(response.status).toBe(200);
+		expect(healthEventStore.listLatestEventsForZone('sunfam')).toEqual([
+			expect.objectContaining({
+				agentId: 'beta',
+				kind: 'lease-renew',
+				leaseId: 'lease-123',
+				result: 'ok',
+				zoneId: 'sunfam',
+			}),
+		]);
+	});
+
 	it('creates an agent-scoped lease without accepting or returning scopeKey or sandbox', async () => {
 		const lease = createLeaseStub('01890f00-0000-7000-8000-000000000000', 0);
 		const createLease = vi.fn(async (_options: ControllerCreateLeaseOptions) => lease);
@@ -746,6 +834,11 @@ describe('createControllerApp', () => {
 	});
 
 	it('exposes active-use controller routes with UUIDv7 validation and idempotent cleanup', async () => {
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		const lease = createLeaseStub('lease-123', 0, { agentId: 'main', zoneId: 'shravan' });
 		const startActiveUse = vi.fn(() => ({
 			expiresAt: 5_000,
 			heartbeatAfterMs: 1_000,
@@ -757,11 +850,12 @@ describe('createControllerApp', () => {
 		}));
 		const endActiveUse = vi.fn(() => ({ kind: 'ended' as const }));
 		const app = createControllerAppForTest({
+			healthEventStore,
 			toolVmProfiles: {},
 			leaseManager: {
 				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
 				renewLease: vi.fn(),
-				peekLease: vi.fn(),
+				peekLease: vi.fn(() => ({ kind: 'snapshot' as const, lease })),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 				startActiveUse,
@@ -816,9 +910,86 @@ describe('createControllerApp', () => {
 			'01890f00-0000-7000-8000-000000000000',
 			{},
 		);
+		expect(healthEventStore.listLatestEventsForZone('shravan')).toEqual([
+			expect.objectContaining({
+				agentId: 'main',
+				kind: 'lease-heartbeat',
+				leaseId: 'lease-123',
+				result: 'ok',
+				useId: '01890f00-0000-7000-8000-000000000000',
+				zoneId: 'shravan',
+			}),
+		]);
 		expect(endActiveUse).toHaveBeenCalledWith('lease-123', '01890f00-0000-7000-8000-000000000000', {
 			outcome: 'completed',
 		});
+	});
+
+	it('returns the existing active use when lease-use-start retries after a lost response', async () => {
+		let now = 1_000;
+		const leaseManager = createLeaseManager({
+			controllerPort: 18800,
+			createLeaseId: () => '01890f00-0000-7000-8000-000000000100',
+			createManagedVm: vi.fn(async () => ({
+				...createLeaseStub('managed', 0).vm,
+				getHostPid: () => 12_345,
+			})),
+			deleteToolVmRuntimeRecord: vi.fn(async () => {}),
+			now: () => now,
+			projectNamespace: 'controller-http-routes-test',
+			readProcessIdentity: async () => ({
+				command: 'qemu-system-x86_64 -m 1G',
+				lstart: 'Fri May 22 10:00:00 2026',
+			}),
+			stateDirFor: (zoneId) => `/tmp/controller-http-routes-test/${zoneId}`,
+			systemConfigPath: '/etc/agent-vm/system.json',
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+			writeToolVmRuntimeRecord: vi.fn(async () => {}),
+		});
+		const lease = await leaseManager.createLease({
+			agentId: 'main',
+			agentWorkspaceDir: '/host/agent-work',
+			effectiveIdleTtlMs: 60_000,
+			profile: {
+				cpus: 1,
+				imageProfile: 'default',
+				memory: '1G',
+			},
+			profileId: 'standard',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+			hostWorkMountDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+		const app = createControllerAppForTest({
+			healthEventStore: new HealthEventStore({
+				eventHistoryLimit: 20,
+				staleAfterMs: 30_000,
+			}),
+			leaseManager,
+			toolVmProfiles: {},
+		});
+		const requestBody = {
+			correlation: { toolName: 'shell' },
+			useId: '01890f00-0000-7000-8000-000000000000',
+		};
+
+		const firstResponse = await app.request(`/lease/${lease.id}/uses`, {
+			body: JSON.stringify(requestBody),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+		now = 1_500;
+		const retryResponse = await app.request(`/lease/${lease.id}/uses`, {
+			body: JSON.stringify(requestBody),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(firstResponse.status).toBe(200);
+		expect(retryResponse.status).toBe(200);
+		const firstBody = await firstResponse.json();
+		await expect(retryResponse.json()).resolves.toEqual(firstBody);
+		expect(leaseManager.getActiveUseCount(lease.id)).toBe(1);
 	});
 
 	it('accepts bounded active-use heartbeat operation reports', async () => {
@@ -2039,7 +2210,12 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 503 when a zone gateway health probe is unhealthy', async () => {
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
 		const app = createControllerAppForTest({
+			healthEventStore,
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -2062,6 +2238,9 @@ describe('createControllerApp', () => {
 				getZoneHealth: vi.fn(async () => ({
 					ok: false,
 					observation: 'http 503',
+					path: '/health',
+					port: 18789,
+					statusCode: 503,
 					zoneId: 'shravan',
 				})),
 				getZoneLogs: vi.fn(async () => ({})),
@@ -2077,8 +2256,21 @@ describe('createControllerApp', () => {
 		await expect(response.json()).resolves.toEqual({
 			ok: false,
 			observation: 'http 503',
+			path: '/health',
+			port: 18789,
+			statusCode: 503,
 			zoneId: 'shravan',
 		});
+		expect(healthEventStore.listLatestEventsForZone('shravan')).toEqual([
+			expect.objectContaining({
+				kind: 'gateway-service-health',
+				path: '/health',
+				port: 18789,
+				result: 'failed',
+				statusCode: 503,
+				zoneId: 'shravan',
+			}),
+		]);
 	});
 
 	it('serves zone Git status and push through controller operations', async () => {

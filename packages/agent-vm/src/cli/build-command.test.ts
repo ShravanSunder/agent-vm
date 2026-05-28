@@ -459,7 +459,8 @@ describe('runBuildCommand', () => {
 		expect(outputLines[0]).toContain('base openclaw-gateway:2026.05.27.1');
 		expect(outputLines[0]).toContain('overlay overlay.jsonc');
 		expect(outputLines[0]).toContain('agent-vm ');
-		expect(outputLines[0]).toContain('packages openclaw,discord');
+		expect(outputLines[0]).toContain('packages openclaw@2026.5.7[overlay]');
+		expect(outputLines[0]).toContain('discord@2026.5.7[overlay]');
 	});
 
 	it('prints OpenClaw package-version mismatch warnings in the managed Dockerfile plan', async () => {
@@ -537,6 +538,7 @@ describe('runBuildCommand', () => {
 		expect(outputLines).toHaveLength(1);
 		expect(outputLines[0]).not.toContain('\n');
 		expect(outputLines[0]).toContain('warnings 1');
+		expect(outputLines[0]).toContain('discord@2026.5.2[overlay]');
 		expect(outputLines[0]).not.toContain('OpenClaw package versions differ');
 	});
 

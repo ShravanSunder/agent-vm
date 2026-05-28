@@ -1,6 +1,7 @@
 import path from 'node:path/posix';
 
 import {
+	type AgentVmHealthEvent,
 	createToolVmActiveUseHandle,
 	type EndToolVmActiveUseRequest,
 	type HeartbeatToolVmActiveUseResponse,
@@ -19,6 +20,7 @@ import {
 	type LeaseClient,
 	type OpenClawRuntimeStatusReport,
 } from '../controller-lease-client.js';
+import { fetchControllerWithPolicy } from '../controller-request-policy.js';
 import {
 	findOpenClawGondolinSandboxMismatch,
 	resolveOpenClawAgentIdFromSessionKey,
@@ -147,6 +149,33 @@ function activeUseOutcomeForFinalizeParams(finalizeParams: {
 			: 'failed';
 }
 
+async function publishFinalizeToolVmSshHealthEvent(options: {
+	readonly agentId: string;
+	readonly leaseId: string;
+	readonly publishHealthEvent: (event: AgentVmHealthEvent) => Promise<void>;
+	readonly timedOut: boolean;
+	readonly zoneId: string;
+}): Promise<void> {
+	const event = {
+		agentId: options.agentId,
+		elapsedMs: 0,
+		...(options.timedOut ? { errorCode: 'ssh-command-timed-out' } : {}),
+		kind: 'tool-vm-ssh',
+		leaseId: options.leaseId,
+		observedAtMs: Date.now(),
+		operation: 'finalize',
+		result: options.timedOut ? 'failed' : 'ok',
+		zoneId: options.zoneId,
+	} satisfies AgentVmHealthEvent;
+	try {
+		await options.publishHealthEvent(event);
+	} catch (error) {
+		writeSandboxBackendLog(
+			`tool-vm-ssh finalize health publish failed for zone '${options.zoneId}' lease '${options.leaseId}': ${formatUnknownError(error)}`,
+		);
+	}
+}
+
 function mergedAbortSignal(
 	firstSignal: AbortSignal | undefined,
 	secondSignal: AbortSignal,
@@ -267,6 +296,22 @@ export function createGondolinSandboxBackendFactory(
 			dependencies.createLeaseClient?.({
 				controllerUrl: options.controllerUrl,
 			}) ?? createLeaseClient({ controllerUrl: options.controllerUrl });
+		const publishHealthEvent = async (event: AgentVmHealthEvent): Promise<void> => {
+			const response = await fetchControllerWithPolicy({
+				input: `${options.controllerUrl.replace(/\/+$/u, '')}/zones/${encodeURIComponent(options.zoneId)}/health-events`,
+				init: {
+					body: JSON.stringify(event),
+					headers: { 'content-type': 'application/json' },
+					method: 'POST',
+				},
+				operation: 'health-event-publish',
+			});
+			if (!response.ok) {
+				await response.text().catch(() => undefined);
+				throw new Error(`health event publish returned HTTP ${String(response.status)}`);
+			}
+			await response.text().catch(() => undefined);
+		};
 		const markLeaseStale = async (
 			lease: CachedAgentLeaseEntry['lease'],
 			reason: ToolVmSshFailureKind,
@@ -296,6 +341,13 @@ export function createGondolinSandboxBackendFactory(
 			try {
 				const renewedLease = await leaseClient.renewLease(cachedEntry.lease.leaseId);
 				await runToolVmSshOperationWithGuard({
+					healthEvent: {
+						agentId,
+						leaseId: renewedLease.leaseId,
+						operation: 'probe',
+						publish: publishHealthEvent,
+						zoneId: options.zoneId,
+					},
 					operation: async (signal) =>
 						await dependencies.runRemoteShellScript({
 							allowFailure: false,
@@ -379,6 +431,7 @@ export function createGondolinSandboxBackendFactory(
 			markCachedLeaseStale: async (reason, error) => {
 				await markLeaseStale(lease, reason, error);
 			},
+			publishHealthEvent,
 			runRemoteShellScript: dependencies.runRemoteShellScript,
 			buildExecSpec: dependencies.buildExecSpec,
 			sessionKey: params.sessionKey,
@@ -401,6 +454,7 @@ function createSandboxBackendHandle(options: {
 	readonly lease: CachedAgentLeaseEntry['lease'];
 	readonly leaseClient: LeaseClient;
 	readonly markCachedLeaseStale: (reason: ToolVmSshFailureKind, error: unknown) => Promise<void>;
+	readonly publishHealthEvent: (event: AgentVmHealthEvent) => Promise<void>;
 	readonly runRemoteShellScript: CreateBackendDependencies['runRemoteShellScript'];
 	readonly sessionKey: string;
 	readonly zoneId: string;
@@ -482,6 +536,13 @@ function createSandboxBackendHandle(options: {
 			},
 			async (activeUseHandle) =>
 				await runToolVmSshOperationWithGuard({
+					healthEvent: {
+						agentId: options.lease.agentId,
+						leaseId: options.lease.leaseId,
+						operation: 'file-bridge',
+						publish: options.publishHealthEvent,
+						zoneId: options.zoneId,
+					},
 					operation: async (signal) => {
 						const operationSignal = mergedAbortSignals([
 							shellParams.signal,
@@ -598,6 +659,13 @@ function createSandboxBackendHandle(options: {
 					finalizeParams.token,
 					activeUseOutcomeForFinalizeParams(finalizeParams),
 				);
+				void publishFinalizeToolVmSshHealthEvent({
+					agentId: options.lease.agentId,
+					leaseId: options.lease.leaseId,
+					publishHealthEvent: options.publishHealthEvent,
+					timedOut: finalizeParams.timedOut,
+					zoneId: options.zoneId,
+				});
 				if (finalizeParams.timedOut) {
 					await options.markCachedLeaseStale('ssh-command-timed-out', undefined);
 				}
@@ -613,6 +681,13 @@ function createSandboxBackendHandle(options: {
 				},
 				async (activeUseHandle) =>
 					await runToolVmSshOperationWithGuard({
+						healthEvent: {
+							agentId: options.lease.agentId,
+							leaseId: options.lease.leaseId,
+							operation: 'command',
+							publish: options.publishHealthEvent,
+							zoneId: options.zoneId,
+						},
 						operation: async (signal) =>
 							await options.runRemoteShellScript({
 								script: commandParams.script,

@@ -33,6 +33,7 @@ Use docs/manual/layout.md before moving files or changing generated folders.
 Use docs/manual/image-versioning.md before changing agent-vm package pins, managed image pins, OpenClaw runtime package pins, or generated Dockerfiles.
 Use docs/manual/tool-vm-leases.md before changing agent-vm Tool VM lease identity, renewal, or reuse behavior.
 Use docs/manual/gateway-ingress.md before changing gateway ports, OpenClaw Control UI access, SSE/streaming behavior, WebSocket access, or serving additional webservers from inside a VM.
+Use docs/manual/operations.md before debugging agent-vm controller health, gateway service health, lease-heartbeat, lease-renew, Tool VM SSH, or Gondolin tcpHosts timeouts.
 Use docs/manual/mcp-portal.md before changing MCP providers, MCP Portal profiles, MCP package pins, or live MCP validation.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
@@ -70,7 +71,7 @@ Read in this order:
 11. per-agent-setup.md explains multi-agent layout and tool access choices.
 12. migration-discord.md explains how existing Discord deployments keep working.
 13. secrets.md explains runtime auth and HTTP mediation.
-14. operations.md explains start, graceful stop, and scoped offline cleanup.
+14. operations.md explains start, graceful stop, scoped offline cleanup, health snapshots, lease-heartbeat, lease-renew, gateway-service health, and gateway-to-controller control-link checks.
 
 Local deployment notes belong in docs/manual/local-notes.md or another non-generated file.
 `,
@@ -138,6 +139,7 @@ The OpenClaw plugin derives agentId from the OpenClaw session key and sends agen
 The controller validates the requested gateway work path, resolves it to a host work mount, and returns the Tool VM guest workdir. The lease identity remains zoneId + agentId, not a path string.
 TCP slots are capacity; they are not identity.
 GET lease reads are read-only. Cached Tool VM handles renew idle leases with POST renew, and active shell/file operations heartbeat per-use records so long commands are not reaped mid-run.
+Health snapshots call POST renew lease-renew and active-use heartbeat lease-heartbeat. Both keep lease state alive when successful, but they prove different things: lease-renew proves an idle cached lease can be reused, while lease-heartbeat proves an active operation still has a live controller path.
 
 Example:
 - shravan agent uses agentId=shravan.
@@ -170,6 +172,20 @@ It reads the selected deployment config, loads only that zone's gateway-runtime.
 Do not use broad QEMU process kills as normal deployment workflow. Multiple agent-vm installations can run on one host, and broad process matching can kill the wrong installation.
 
 Local package scripts should be thin wrappers around these commands. Deployment repos should not copy process-fencing logic.
+
+Health model:
+- GET /health is the global agent-vm controller liveness endpoint.
+- GET /zones/<zoneId>/health is an on-demand live gateway-service probe.
+- GET /zones/<zoneId>/health-snapshot is an in-memory zone health view.
+- gateway-service-health means the agent-vm controller can probe the gateway service through the gateway VM runtime.
+- gateway-control-link means the gateway VM can call back to the agent-vm controller through controller.vm.host:18800.
+- lease-heartbeat means an active Tool VM operation can refresh its active use.
+- lease-renew means an idle cached Tool VM lease can be reused.
+- tool-vm-ssh means command, file-bridge, finalize, or probe SSH operations on the gateway-to-Tool-VM path.
+
+Health event history is in-memory controller state. It is useful for live diagnosis but is lost on agent-vm controller restart.
+
+Health timeouts are operation-specific. Short health probes should fail quickly; git push/pull and lease-create get longer budgets. Do not assume every abort means the work should be killed.
 `,
 			),
 		},
@@ -181,6 +197,7 @@ Local package scripts should be thin wrappers around these commands. Deployment 
 Agent-vm provides VM lifecycle, storage mounts, TCP/HTTP mediation, image build, and tool VM leases.
 OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
 The controller is the control plane: it issues leases and tracks active uses. Command stdout, stderr, and file bridge traffic stay on the gateway-to-Tool-VM SSH data path.
+OpenClaw application heartbeat turns are not infrastructure health checks. Use agent-vm health snapshots to distinguish gateway-service health, gateway-to-controller control link, lease-heartbeat, lease-renew, and Tool VM SSH health.
 
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
 OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.
@@ -297,7 +314,7 @@ Use http-mediation for service tokens that should be swapped into outbound reque
 Use env only when the gateway process itself must read the raw value.
 Do not bake secrets into Dockerfiles or images.
 
-Zones do not scaffold controller SSH adminAccess by default because it requires an operator-created secret. To protect controller-mediated SSH, add zones[].adminAccess with a real secret reference first.
+Zones scaffold controller SSH adminAccess as mode: "none" because secret-backed admin SSH requires an operator-created secret. To protect controller-mediated SSH, create the secret first, then change zones[].adminAccess to mode: "secret" with a real secret reference.
 Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw admin commands source the token named by gateway.controlAuth.secret.
 Use agent-vm controller ssh --zone <zoneId> --all-secrets only when the shell must inspect or debug every raw gateway environment secret.
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.

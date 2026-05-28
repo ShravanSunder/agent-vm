@@ -31,6 +31,15 @@ host
   secretsProvider
   githubToken
 
+controller
+  health
+    enabled
+    gatewayServiceIntervalMs
+    gatewayControlLinkIntervalMs
+    gatewayControlLinkBackoffCeilingMs
+    staleAfterMs
+    eventHistoryLimit
+
 cacheDir
 
 runtimeDir
@@ -84,6 +93,41 @@ intentionally checked-in test deployments.
 | `env` | Read 1Password service account token from an env var. Defaults to `OP_SERVICE_ACCOUNT_TOKEN`. |
 | `keychain` | Read the service account token from macOS Keychain. |
 | `op-cli` | Resolve the service account token through the 1Password CLI. |
+
+## controller.health
+
+`controller.health` tunes agent-vm controller health collection. Omit it for
+the defaults.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Enables periodic health monitors. Health routes remain available when disabled. |
+| `gatewayServiceIntervalMs` | `10000` | Host-side interval for the agent-vm controller to probe each running gateway-service through the gateway VM health check. |
+| `gatewayControlLinkIntervalMs` | `10000` | In-VM interval for the OpenClaw Gondolin plugin to call the agent-vm controller `GET /health` endpoint. |
+| `gatewayControlLinkBackoffCeilingMs` | `120000` | Maximum backoff interval for repeated gateway-to-controller failures. Must be at least `gatewayControlLinkIntervalMs`. |
+| `staleAfterMs` | `30000` | Age after which a latest health event is treated as stale in zone health snapshots. |
+| `eventHistoryLimit` | `500` | Rolling in-memory event history retained by the agent-vm controller. Latest per-boundary state is retained separately. |
+
+Health event history is in-memory controller state. It is useful for live
+diagnostics and zone health snapshots, but it is not durable across an
+agent-vm controller restart.
+
+Example:
+
+```jsonc
+{
+  "controller": {
+    "health": {
+      "enabled": true,
+      "gatewayServiceIntervalMs": 10000,
+      "gatewayControlLinkIntervalMs": 10000,
+      "gatewayControlLinkBackoffCeilingMs": 120000,
+      "staleAfterMs": 30000,
+      "eventHistoryLimit": 500
+    }
+  }
+}
+```
 
 ## cacheDir
 

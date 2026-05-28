@@ -23,6 +23,7 @@ const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/exte
 const managedOpenClawMcpPortalPluginExtensionPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const managedPnpmHomePath = '/pnpm';
 const managedPnpmGlobalDirectory = '/pnpm/global';
+const exactPackageVersionPattern = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u;
 
 export interface ManagedImageSource {
 	readonly kind: 'managedBase';
@@ -134,6 +135,15 @@ const managedImageReleaseSchema = z
 
 type ManagedImageOverlay = z.infer<typeof managedImageOverlaySchema>;
 
+function hasLegacyOpenClawPackageOverlayKey(value: unknown): boolean {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		!Array.isArray(value) &&
+		Object.hasOwn(value, 'extraOpenClawPackages')
+	);
+}
+
 async function loadManagedImageOverlay(overlayPath: string | undefined): Promise<ManagedImageOverlay> {
 	if (!overlayPath) {
 		return {
@@ -145,6 +155,11 @@ async function loadManagedImageOverlay(overlayPath: string | undefined): Promise
 		};
 	}
 	const rawOverlay = await loadJsonConfigFile(overlayPath);
+	if (hasLegacyOpenClawPackageOverlayKey(rawOverlay)) {
+		throw new Error(
+			`Invalid managed image overlay at ${overlayPath}: rename extraOpenClawPackages to openClawPackageOverrides.`,
+		);
+	}
 	const parsedOverlay = managedImageOverlaySchema.safeParse(rawOverlay);
 	if (!parsedOverlay.success) {
 		throw new Error(
@@ -191,6 +206,33 @@ function parsePackageSpec(packageSpec: string): ParsedPackageSpec {
 
 function packageSpec(packageName: string, version: string): string {
 	return `${packageName}@${version}`;
+}
+
+function isOpenClawRuntimePackageName(packageName: string): boolean {
+	return packageName === 'openclaw' || packageName.startsWith('@openclaw/');
+}
+
+function assertValidOpenClawPackageOverride(packageSpecValue: string): ParsedPackageSpec {
+	const parsedPackageSpec = parsePackageSpec(packageSpecValue);
+	if (managedOpenClawPackageNames.has(parsedPackageSpec.name)) {
+		throw new Error(
+			`openClawPackageOverrides cannot override managed package ${parsedPackageSpec.name}. Update the agent-vm release instead.`,
+		);
+	}
+	if (!isOpenClawRuntimePackageName(parsedPackageSpec.name)) {
+		throw new Error(
+			`openClawPackageOverrides only accepts OpenClaw runtime package pins. Use openclaw@<version> or @openclaw/<name>@<version>, not ${packageSpecValue}.`,
+		);
+	}
+	if (
+		parsedPackageSpec.version === undefined ||
+		!exactPackageVersionPattern.test(parsedPackageSpec.version)
+	) {
+		throw new Error(
+			`openClawPackageOverrides requires exact package versions. Use ${parsedPackageSpec.name}@<version>, not ${packageSpecValue}.`,
+		);
+	}
+	return parsedPackageSpec;
 }
 
 function renderManagedDockerfile(props: {
@@ -311,14 +353,9 @@ function resolveOpenClawPackagePlanEntries(props: {
 	let overlayOpenClawVersion: string | undefined;
 
 	for (const overlayPackageSpec of props.overlay.openClawPackageOverrides) {
-		const parsedPackageSpec = parsePackageSpec(overlayPackageSpec);
+		const parsedPackageSpec = assertValidOpenClawPackageOverride(overlayPackageSpec);
 		const name = parsedPackageSpec.name;
 		const version = parsedPackageSpec.version;
-		if (managedOpenClawPackageNames.has(name)) {
-			throw new Error(
-				`openClawPackageOverrides cannot override managed package ${name}. Update the agent-vm release instead.`,
-			);
-		}
 		if (name === 'openclaw' && version !== undefined) {
 			overlayOpenClawVersion = version;
 		}

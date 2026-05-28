@@ -4,6 +4,7 @@ import type { z } from 'zod';
 import { scrubGithubTokenFromOutput } from '../git-auth-support.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { PushBranchesValidationError } from '../git-push-operations.js';
+import type { HealthEventStore } from '../health/health-event-store.js';
 import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
 import { writeTaskFailureSentinel } from '../task-state-reader.js';
 import { ZONE_GIT_CAPABILITY_HEADER } from '../zone-git/zone-git-capability-store.js';
@@ -301,6 +302,8 @@ export function registerControllerZoneOperationRoutes(
 	app: Hono,
 	operations: ControllerRouteOperations,
 	options: {
+		readonly healthEventStore?: HealthEventStore;
+		readonly now?: () => number;
 		readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
 	} = {},
 ): void {
@@ -331,6 +334,21 @@ export function registerControllerZoneOperationRoutes(
 		}
 		try {
 			const health = await operations.getZoneHealth(context.req.param('zoneId'));
+			if (
+				options.healthEventStore &&
+				typeof health.path === 'string' &&
+				typeof health.port === 'number'
+			) {
+				options.healthEventStore.record({
+					kind: 'gateway-service-health',
+					observedAtMs: options.now?.() ?? Date.now(),
+					path: health.path,
+					port: health.port,
+					result: health.ok ? 'ok' : 'failed',
+					...(typeof health.statusCode === 'number' ? { statusCode: health.statusCode } : {}),
+					zoneId: context.req.param('zoneId'),
+				});
+			}
 			return context.json(health, health.ok ? 200 : 503);
 		} catch (error) {
 			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));

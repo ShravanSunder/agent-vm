@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
+import { dim, green, red } from 'ansis';
 import { execa } from 'execa';
 
 import type { ManagedImageSource } from '../build/managed-image-dockerfile.js';
@@ -52,6 +53,16 @@ interface ImageProfileDoctorTarget {
 	readonly source?: ManagedImageSource;
 	readonly type: 'openclaw' | 'toolVm' | 'worker';
 }
+
+interface DoctorCommandResult {
+	readonly checks: readonly DoctorCheck[];
+	readonly failed: number;
+	readonly ok: boolean;
+	readonly passed: number;
+	readonly summary: string;
+}
+
+const defaultPassingPreviewLimit = 3;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -262,6 +273,110 @@ function convertConfigValidationChecksToDoctorChecks(
 	);
 }
 
+function formatDoctorCheckStatus(check: DoctorCheck): string {
+	return check.ok ? green('PASS') : red('FAIL');
+}
+
+function formatDoctorPassingCheckStatus(): string {
+	return dim('ok');
+}
+
+function formatDoctorFailedCheckDetails(check: DoctorCheck): readonly string[] {
+	const details: string[] = [];
+	if (check.value !== undefined) {
+		details.push(`      ${String(check.value)}`);
+	}
+	if (check.hint !== undefined) {
+		const [firstLine, ...remainingLines] = check.hint.split('\n');
+		details.push(`      ${firstLine ?? ''}`);
+		for (const line of remainingLines) {
+			details.push(`      ${line}`);
+		}
+	}
+	return details;
+}
+
+function appendDoctorFailedCheckLines(lines: string[], checks: readonly DoctorCheck[]): void {
+	for (const check of checks) {
+		lines.push(`${formatDoctorCheckStatus(check)}  ${check.name}`);
+		lines.push(...formatDoctorFailedCheckDetails(check));
+	}
+}
+
+function formatDoctorPassingCheckDetails(check: DoctorCheck): readonly string[] {
+	const details: string[] = [];
+	if (check.value !== undefined) {
+		details.push(dim(`      ${String(check.value)}`));
+	}
+	if (check.hint !== undefined) {
+		const [firstLine, ...remainingLines] = check.hint.split('\n');
+		details.push(dim(`      ${firstLine ?? ''}`));
+		for (const line of remainingLines) {
+			details.push(dim(`      ${line}`));
+		}
+	}
+	return details;
+}
+
+function appendDoctorPassingCheckLines(
+	lines: string[],
+	checks: readonly DoctorCheck[],
+	options: { readonly showDetails: boolean },
+): void {
+	for (const check of checks) {
+		lines.push(`${formatDoctorPassingCheckStatus()}    ${check.name}`);
+		if (options.showDetails) {
+			lines.push(...formatDoctorPassingCheckDetails(check));
+		}
+	}
+}
+
+function appendDoctorPassingPreviewLines(lines: string[], checks: readonly DoctorCheck[]): void {
+	const visibleChecks = checks.slice(0, defaultPassingPreviewLimit);
+	appendDoctorPassingCheckLines(lines, visibleChecks, { showDetails: false });
+	const hiddenCheckCount = checks.length - visibleChecks.length;
+	if (hiddenCheckCount > 0) {
+		const checkLabel = hiddenCheckCount === 1 ? 'check' : 'checks';
+		lines.push(
+			dim(
+				`... ${hiddenCheckCount} more passing ${checkLabel} hidden. Use --show-passed to show all.`,
+			),
+		);
+	}
+}
+
+function writeDoctorText(
+	io: CliIo,
+	result: DoctorCommandResult,
+	options: { readonly showPassed: boolean },
+): void {
+	const failedChecks = result.checks.filter((check) => !check.ok);
+	const passedChecks = result.checks.filter((check) => check.ok);
+	const statusLine =
+		result.failed === 0
+			? green(`${result.passed} passed, 0 failed`)
+			: red(`${result.failed} failed`) + dim(', ') + green(`${result.passed} passed`);
+	const lines = ['agent-vm doctor', '', statusLine, ''];
+	if (failedChecks.length > 0) {
+		lines.push(red(`Failures (${failedChecks.length})`));
+		appendDoctorFailedCheckLines(lines, failedChecks);
+	}
+	if (options.showPassed && passedChecks.length > 0) {
+		if (failedChecks.length > 0) {
+			lines.push('');
+		}
+		lines.push(green(`Passing (${passedChecks.length})`));
+		appendDoctorPassingCheckLines(lines, passedChecks, { showDetails: true });
+	} else if (passedChecks.length > 0) {
+		if (failedChecks.length > 0) {
+			lines.push('');
+		}
+		lines.push(green(`Passing (${passedChecks.length})`));
+		appendDoctorPassingPreviewLines(lines, passedChecks);
+	}
+	io.stdout.write(`${lines.join('\n')}\n`);
+}
+
 export async function runControllerOperationCommand(
 	options: RunControllerOperationCommandOptions,
 ): Promise<void> {
@@ -347,12 +462,19 @@ export async function runControllerOperationCommand(
 			const checks = [...doctorResult.checks, ...dynamicChecks];
 			const failed = checks.filter((check) => !check.ok).length;
 			const passed = checks.length - failed;
-			writeJson(options.io, {
+			const result = {
 				ok: doctorResult.ok && failed === 0,
 				summary: failed === 0 ? 'all checks passed' : `${failed} check(s) failed`,
 				passed,
 				failed,
 				checks,
+			} satisfies DoctorCommandResult;
+			if (options.restArguments.includes('--json')) {
+				writeJson(options.io, result);
+				return;
+			}
+			writeDoctorText(options.io, result, {
+				showPassed: options.restArguments.includes('--show-passed'),
 			});
 			return;
 		}

@@ -172,6 +172,7 @@ const generatedSystemConfigSchema = z
 					gateway: z
 						.object({ config: z.string().optional(), type: z.string().optional() })
 						.passthrough(),
+					adminAccess: z.object({ mode: z.literal('none') }).optional(),
 					runtimeAuthHints: z
 						.array(
 							z
@@ -1266,7 +1267,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(generatedSecretReferenceSchema.parse(secrets.OPENCLAW_GATEWAY_TOKEN).ref).toBe(
 			'op://agent-vm/test-openclaw-gateway-auth/password',
 		);
-		expect(config.zones[0]).not.toHaveProperty('adminAccess');
+		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 		expect(config.zones[0].gateway.controlAuth).toEqual({
 			mode: 'token',
 			secret: 'OPENCLAW_GATEWAY_TOKEN',
@@ -1483,7 +1484,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).not.toContain('MCP_PORTAL_SERVER_SECRET');
 		expect(envContent).not.toContain('SSH_ACCESS_TOKEN');
 		expect(envContent).not.toContain('DISCORD_BOT_TOKEN');
-		expect(config.zones[0]).not.toHaveProperty('adminAccess');
+		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 	});
 
 	it('scaffolds worker-specific env references for worker type', async () => {
@@ -1613,7 +1614,7 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(config.host.githubToken).toEqual({ source: 'environment', envVar: 'GITHUB_TOKEN' });
 		expect(config.host.secretsProvider).toBeUndefined();
-		expect(config.zones[0]).not.toHaveProperty('adminAccess');
+		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 		const secrets = config.zones[0]?.secrets ?? {};
 		expect(secrets['GITHUB_TOKEN']?.source).toBe('environment');
 		expect(secrets['GITHUB_TOKEN']?.envVar).toBe('GITHUB_TOKEN');

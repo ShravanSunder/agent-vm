@@ -187,6 +187,99 @@ describe('managed image release', () => {
 		});
 	});
 
+	it('rejects unpinned OpenClaw package overrides', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-unpinned-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "openClawPackageOverrides": [',
+				'    "@openclaw/discord"',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/openClawPackageOverrides requires exact package versions/u);
+	});
+
+	it('reports legacy OpenClaw package overlay keys with the new override name', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-legacy-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "extraOpenClawPackages": [',
+				'    "@openclaw/discord@2026.5.7"',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/rename extraOpenClawPackages to openClawPackageOverrides/u);
+	});
+
+	it('rejects non-OpenClaw package overrides', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-non-openclaw-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "openClawPackageOverrides": [',
+				'    "@openai/codex@0.134.0"',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/only accepts OpenClaw runtime package pins/u);
+	});
+
 	it('installs MCP Portal in Tool VM Dockerfiles without credential literals', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-tool-vm-plan-'));
 		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');

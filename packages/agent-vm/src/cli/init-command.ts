@@ -393,6 +393,7 @@ const defaultSystemConfig = (
 	zones: [
 		{
 			id: zoneId,
+			adminAccess: { mode: 'none' },
 			gateway: {
 				type: gatewayType,
 				memory: '2G',
@@ -1077,7 +1078,8 @@ async function scaffoldAgentVmProjectInternal(
 			systemConfigPath,
 			[
 				'Human-authored agent-vm system config. Comments are allowed here; runtime effective files stay strict JSON.',
-				'Controller SSH adminAccess is not scaffolded by default because it needs a real operator-created secret; add zones[].adminAccess only after creating that secret.',
+				'Controller SSH adminAccess defaults to mode: "none" because secret-backed admin SSH needs a real operator-created secret.',
+				'To enable controller-mediated SSH, create the secret first, then change zones[].adminAccess to { "mode": "secret", "secret": { ... } }.',
 			].join('\n'),
 			defaultSystemConfig(
 				options.zoneId,

@@ -161,6 +161,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -202,6 +203,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -244,6 +246,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -285,6 +288,55 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		expect(
 			checks.find((check) => check.name === 'openclaw-openai-provider-runtime-shravan'),
 		).toMatchObject({ ok: true });
+	});
+
+	it('skips MCP Portal plugin readiness checks when MCP Portal is not configured', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				runtimeMaterializesPortalEndpoints: false,
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+					approvals: openClawPluginApprovalSession,
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'discord'],
+						entries: {
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+							discord: { enabled: true },
+						},
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+					tools: openClawSandboxPluginTools,
+				},
+			},
+		]);
+
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-mcp-portal-load-path-shravan',
+		);
+		expect(checks.map((check) => check.name)).not.toContain('openclaw-mcp-portal-allowed-shravan');
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-mcp-portal-prompt-injection-shravan',
+		);
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-mcp-portal-agent-endpoints-shravan',
+		);
+		expect(checks.every((check) => check.ok)).toBe(true);
 	});
 
 	it('ignores OpenClaw-owned Discord session and binding semantics', () => {
@@ -337,6 +389,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -418,7 +471,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-plugin-load-paths-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/gondolin.',
+			hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/gondolin and /pnpm/global/5/node_modules/@openclaw.',
 		});
 		expect(
 			checks.find((check) => check.name === 'openclaw-tool-vm-workspace-shravan-defaults'),
@@ -485,6 +538,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -669,6 +723,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 	it('flags portal endpoint checks when no agents are configured', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
+				runtimeMaterializesPortalEndpoints: true,
 				zoneId: 'shravan',
 				config: {
 					agents: {
@@ -685,7 +740,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.',
+			hint: 'No agents are configured for this OpenClaw zone. Add at least one agent under zones[].agents and openclaw.json agents.list before MCP Portal endpoint readiness can pass.',
 		});
 	});
 
@@ -715,6 +770,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -971,6 +1027,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/pnpm/global/5/node_modules/@openclaw',
 							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},
@@ -1083,6 +1140,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/pnpm/global/5/node_modules/@openclaw',
 							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},
@@ -1138,6 +1196,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/pnpm/global/5/node_modules/@openclaw',
 							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},

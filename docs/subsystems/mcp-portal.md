@@ -109,9 +109,6 @@ Inherited runtime variables:
 - `SSL_CERT_FILE`
 - `UV_CACHE_DIR`
 
-Managed OpenClaw gateway Dockerfiles install pinned `uv` and `uvx` binaries so
-`uv run` stdio providers can start without deployment-owned image overlays.
-
 Use `transport.env` for provider credentials such as `PERPLEXITY_API_KEY` or
 `TAVILY_API_KEY`. Prefer `secretPolicies.<name>.injection: "http-mediation"`
 when the stdio MCP server reads the env value and sends it in outbound HTTP
@@ -123,6 +120,20 @@ only as an explicit exception for providers that cannot operate with
 placeholders.
 
 Do not rely on whole-process environment inheritance.
+
+For stdio MCP providers, prefer
+`secretPolicies.<name>.injection: "http-mediation"` when the provider uses the
+secret in HTTP headers or query strings to call a remote API. The controller
+resolves the real secret on the host, gives the gateway VM only a generated
+placeholder environment value, and passes the real value to Gondolin as a
+host-restricted mediated secret. The stdio child process reads the placeholder
+from `transport.env`; Gondolin substitutes the real value only on outbound
+requests to the configured `hosts`.
+
+Use `secretPolicies.<name>.injection: "env"` only when the provider cannot work
+with HTTP mediation, such as protocols that place credentials in request bodies,
+opaque WebSocket payloads, or other bytes Gondolin cannot inspect. Raw env
+provider secrets must be named intentionally in `zones[].gateway.rawEnvSecrets`.
 
 Managed OpenClaw gateway mode does not start a portal HTTP server, does not open
 guest port `18790`, and does not require `MCP_PORTAL_SERVER_SECRET`. The
