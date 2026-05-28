@@ -628,6 +628,82 @@ describe('createOpenClawZoneRuntime', () => {
 		});
 	});
 
+	it('releases the lifecycle queue when gateway VM restart exceeds its deadline', async () => {
+		type RestartGatewayZone = NonNullable<
+			Parameters<typeof createOpenClawZoneRuntime>[0]['restartGatewayZone']
+		>;
+		let gatewayStartCount = 0;
+		const restartTimeoutCallbacks: (() => void)[] = [];
+		const clearTimeoutImpl = vi.fn();
+		const createGatewayStartResult = (
+			gatewayVmId: string,
+		): Awaited<ReturnType<RestartGatewayZone>> => ({
+			image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+			ingress: { host: '127.0.0.1', port: 18791 },
+			processSpec: {
+				bootstrapCommand: 'bootstrap',
+				guestListenPort: 18789,
+				healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+				logPath: '/agent-vm/logs/gateway-boot-latest.log',
+				startCommand: 'start',
+			},
+			vm: {
+				close: vi.fn(async () => {}),
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh root@127.0.0.1',
+					host: '127.0.0.1',
+					port: 22,
+				})),
+				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+				fs: createManagedVmFsStub(),
+				getHostPid: () => null,
+				getVmInstance: vi.fn(),
+				id: gatewayVmId,
+				setIngressRoutes: vi.fn(),
+			},
+			zone: openClawZone,
+		});
+		const runtime = createOpenClawZoneRuntime({
+			clearTimeoutImpl,
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-04-30T10:00:00.000Z'),
+			restartGatewayZone: async () => {
+				gatewayStartCount += 1;
+				if (gatewayStartCount === 2) {
+					return await new Promise<Awaited<ReturnType<RestartGatewayZone>>>(() => {
+						// Second start intentionally hangs; restart timeout must release the queue.
+					});
+				}
+				return createGatewayStartResult(`gateway-vm-${gatewayStartCount}`);
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			setTimeoutImpl: (callback, delayMs) => {
+				expect(delayMs).toBe(5_000);
+				restartTimeoutCallbacks.push(callback);
+				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+			},
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		const restartPromise = runtime.restart({ timeoutMs: 5_000 });
+		await vi.waitFor(() => {
+			expect(restartTimeoutCallbacks).toHaveLength(1);
+		});
+		restartTimeoutCallbacks[0]?.();
+
+		await expect(restartPromise).rejects.toThrow(
+			"OpenClaw gateway restart timed out for zone 'shravan' after 5000ms",
+		);
+		await expect(runtime.shutdown()).resolves.toBeUndefined();
+
+		expect(clearTimeoutImpl).toHaveBeenCalledOnce();
+		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'stopped' });
+	});
+
 	it('serializes shutdown behind an in-flight OpenClaw gateway restart', async () => {
 		type RestartGatewayZone = NonNullable<
 			Parameters<typeof createOpenClawZoneRuntime>[0]['restartGatewayZone']

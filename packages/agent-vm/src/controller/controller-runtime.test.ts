@@ -60,6 +60,13 @@ describe('classifyGatewayRecoveryRestartError', () => {
 		expect(classifyGatewayRecoveryRestartError(new Error('Gondolin VM.create failed'))).toBe(
 			'restart-vm-create-failed',
 		);
+		expect(
+			classifyGatewayRecoveryRestartError(
+				Object.assign(new Error('restart timed out'), {
+					code: 'OPENCLAW_GATEWAY_RESTART_TIMEOUT',
+				}),
+			),
+		).toBe('recovery-timeout');
 		expect(classifyGatewayRecoveryRestartError(new Error('unexpected'))).toBe('restart-threw');
 	});
 });

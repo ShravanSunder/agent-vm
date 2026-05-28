@@ -50,6 +50,7 @@ describe('agent-vm health events', () => {
 			consecutiveFailures: 10,
 			elapsedMs: 45_000,
 			kind: 'gateway-recovery',
+			leaseReleaseFailureCount: 0,
 			newBootedAt: '2026-05-27T13:01:00.000Z',
 			newHostPid: 2222,
 			newVmId: 'new-gateway-vm',
@@ -64,6 +65,43 @@ describe('agent-vm health events', () => {
 
 		expect(isAgentVmHealthEvent(event)).toBe(true);
 		expect(healthEventBucketKey(event)).toBe('sunfam:gateway-recovery:gateway-vm-restart');
+	});
+
+	it('rejects malformed gateway recovery health events', () => {
+		const okEvent = {
+			action: 'gateway-vm-restart',
+			cooldownMs: 3_660_000,
+			consecutiveFailures: 10,
+			elapsedMs: 45_000,
+			kind: 'gateway-recovery',
+			leaseReleaseFailureCount: 0,
+			newBootedAt: '2026-05-27T13:01:00.000Z',
+			newHostPid: 2222,
+			newVmId: 'new-gateway-vm',
+			observedAtMs: 1_000,
+			oldBootedAt: '2026-05-27T12:00:00.000Z',
+			oldHostPid: 1111,
+			oldVmId: 'old-gateway-vm',
+			reason: 'gateway-control-link-unhealthy',
+			result: 'ok',
+			zoneId: 'sunfam',
+		};
+
+		expect(isAgentVmHealthEvent({ ...okEvent, result: 'stale' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...okEvent, newVmId: undefined })).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				action: 'gateway-vm-restart',
+				cooldownMs: 3_660_000,
+				consecutiveFailures: 10,
+				elapsedMs: 45_000,
+				kind: 'gateway-recovery',
+				observedAtMs: 1_000,
+				reason: 'gateway-service-unhealthy',
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toBe(false);
 	});
 
 	it('surfaces failed gateway recovery as a zone health issue', () => {

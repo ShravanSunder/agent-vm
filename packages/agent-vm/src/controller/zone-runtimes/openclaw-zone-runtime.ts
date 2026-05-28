@@ -19,6 +19,7 @@ import type {
 	ControllerZoneConfig,
 	GatewayZoneRuntimeHandle,
 	OpenClawZoneRuntime,
+	OpenClawZoneRestartOptions,
 	OpenClawZoneRestartResult,
 } from './zone-runtime-types.js';
 
@@ -44,6 +45,23 @@ export interface CreateOpenClawZoneRuntimeOptions {
 }
 
 const defaultGatewayCloseTimeoutMs = 60_000;
+
+class OpenClawZoneRestartTimeoutError extends Error {
+	readonly code = 'OPENCLAW_GATEWAY_RESTART_TIMEOUT';
+
+	constructor(zoneId: string, timeoutMs: number) {
+		super(`OpenClaw gateway restart timed out for zone '${zoneId}' after ${timeoutMs}ms`);
+		this.name = 'OpenClawZoneRestartTimeoutError';
+	}
+}
+
+export function isOpenClawZoneRestartTimeoutError(
+	error: unknown,
+): error is OpenClawZoneRestartTimeoutError {
+	return (
+		error instanceof Error && 'code' in error && error.code === 'OPENCLAW_GATEWAY_RESTART_TIMEOUT'
+	);
+}
 
 function formatUnknownError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -73,6 +91,7 @@ export function createOpenClawZoneRuntime(
 	let bootedAt: string | undefined;
 	let lastError: string | undefined;
 	let lifecycleOperation: Promise<void> = Promise.resolve();
+	let lifecycleGeneration = 0;
 
 	const startGateway = async (): Promise<GatewayZoneStartResult> =>
 		options.restartGatewayZone
@@ -164,9 +183,19 @@ export function createOpenClawZoneRuntime(
 		);
 	};
 
-	const startNow = async (): Promise<void> => {
+	const startNow = async (expectedGeneration?: number): Promise<void> => {
 		try {
 			const startedGateway = await startGateway();
+			if (expectedGeneration !== undefined && expectedGeneration !== lifecycleGeneration) {
+				try {
+					await closeGatewayWithDeadline(startedGateway);
+				} catch (error) {
+					writeOpenClawZoneRuntimeLog(
+						`stale gateway start cleanup failed for zone '${options.zone.id}': ${formatUnknownError(error)}`,
+					);
+				}
+				return;
+			}
 			gateway = startedGateway;
 			bootedAt = new Date(options.now()).toISOString();
 			lastError = undefined;
@@ -183,12 +212,44 @@ export function createOpenClawZoneRuntime(
 	const start = async (): Promise<void> =>
 		await runLifecycleOperation(async () => await startNow());
 
-	const restart = async (): Promise<OpenClawZoneRestartResult> => {
+	const restart = async (
+		restartOptions: OpenClawZoneRestartOptions = {},
+	): Promise<OpenClawZoneRestartResult> => {
 		return await runLifecycleOperation(async () => {
-			const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
-			await stopNow();
-			await startNow();
-			return { leaseReleaseFailureCount: leaseReleaseResult.failedLeaseIds.length };
+			lifecycleGeneration += 1;
+			const operationGeneration = lifecycleGeneration;
+			const restartOperation = (async (): Promise<OpenClawZoneRestartResult> => {
+				const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
+				await stopNow();
+				await startNow(operationGeneration);
+				if (operationGeneration !== lifecycleGeneration) {
+					throw new OpenClawZoneRestartTimeoutError(options.zone.id, restartOptions.timeoutMs ?? 0);
+				}
+				return { leaseReleaseFailureCount: leaseReleaseResult.failedLeaseIds.length };
+			})();
+
+			if (restartOptions.timeoutMs === undefined) {
+				return await restartOperation;
+			}
+
+			const restartTimeoutMs = restartOptions.timeoutMs;
+			let timeout: NodeJS.Timeout | undefined;
+			try {
+				return await Promise.race([
+					restartOperation,
+					new Promise<never>((_resolve, reject) => {
+						timeout = setTimeoutImpl(() => {
+							lifecycleGeneration += 1;
+							reject(new OpenClawZoneRestartTimeoutError(options.zone.id, restartTimeoutMs));
+						}, restartTimeoutMs);
+						timeout.unref?.();
+					}),
+				]);
+			} finally {
+				if (timeout) {
+					clearTimeoutImpl(timeout);
+				}
+			}
 		});
 	};
 

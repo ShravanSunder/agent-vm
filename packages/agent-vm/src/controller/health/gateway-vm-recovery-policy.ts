@@ -208,7 +208,6 @@ export function createGatewayVmRecoveryTracker(
 				};
 			}
 			if (isHealthyObservation(observation.result)) {
-				state.consecutiveFailedRecoveries = 0;
 				state.gatewayControlLinkConsecutiveFailures = 0;
 				return { consecutiveFailures: 0, kind: 'none' };
 			}
@@ -227,7 +226,6 @@ export function createGatewayVmRecoveryTracker(
 		recordGatewayServiceProbe(observation): GatewayVmRecoveryDecision {
 			const state = getStateForZone(observation.zoneId);
 			if (isHealthyObservation(observation.result)) {
-				state.consecutiveFailedRecoveries = 0;
 				state.gatewayServiceConsecutiveFailures = 0;
 				return { consecutiveFailures: 0, kind: 'none' };
 			}

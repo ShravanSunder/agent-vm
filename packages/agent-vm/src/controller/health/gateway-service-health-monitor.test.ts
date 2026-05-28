@@ -391,6 +391,69 @@ describe('createGatewayServiceHealthMonitor', () => {
 		);
 	});
 
+	it('suspends repeated failed control-link recoveries even when gateway service remains healthy', async () => {
+		let nowMs = 0;
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 30,
+			staleAfterMs: 30_000,
+		});
+		healthEventStore.record({
+			controllerHost: 'controller.vm.host',
+			controllerPort: 18800,
+			elapsedMs: 1,
+			kind: 'gateway-control-link',
+			observedAtMs: 1_000,
+			operation: 'controller-health',
+			path: '/health',
+			result: 'ok',
+			zoneId: 'sunfam',
+		});
+		const recoverGatewayVm = vi.fn(async () => ({
+			elapsedMs: 1,
+			errorCode: 'restart-threw',
+			result: 'failed' as const,
+		}));
+		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart: {
+				...gatewayServiceAutoRestart,
+				consecutiveFailureThreshold: 1,
+				maxConsecutiveFailedRecoveries: 2,
+			},
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/readyz',
+				port: 18789,
+				statusCode: 200,
+				zoneId: 'sunfam',
+			})),
+			recoverGatewayVm,
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		nowMs = 40_000;
+		await monitor.tick();
+		nowMs += gatewayServiceAutoRestart.cooldownMs + 1;
+		await monitor.tick();
+		nowMs += gatewayServiceAutoRestart.cooldownMs + 1;
+		await monitor.tick();
+
+		expect(recoverGatewayVm).toHaveBeenCalledTimes(2);
+		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
+			expect.objectContaining({
+				consecutiveFailedRecoveries: 2,
+				errorCode: 'max-failed-recoveries',
+				kind: 'gateway-recovery-suspended',
+				reason: 'gateway-control-link-unhealthy',
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		);
+	});
+
 	it('records a failed gateway recovery event when restart exceeds the configured deadline', async () => {
 		let nowMs = 0;
 		const timeoutCallbacks: (() => void)[] = [];

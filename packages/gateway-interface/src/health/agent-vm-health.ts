@@ -98,17 +98,30 @@ export type AgentVmHealthEvent =
 			readonly consecutiveFailures: number;
 			readonly cooldownMs: number;
 			readonly elapsedMs: number;
-			readonly errorCode?: string | undefined;
+			readonly kind: 'gateway-recovery';
+			readonly leaseReleaseFailureCount: number;
+			readonly newBootedAt: string;
+			readonly newHostPid: number;
+			readonly newVmId: string;
+			readonly oldBootedAt: string;
+			readonly oldHostPid: number;
+			readonly oldVmId: string;
+			readonly reason: GatewayRecoveryHealthReason;
+			readonly result: 'ok';
+	  })
+	| (AgentVmHealthEventBase & {
+			readonly action: 'gateway-vm-restart';
+			readonly consecutiveFailures: number;
+			readonly cooldownMs: number;
+			readonly elapsedMs: number;
+			readonly errorCode: string;
 			readonly kind: 'gateway-recovery';
 			readonly leaseReleaseFailureCount?: number | undefined;
-			readonly newBootedAt?: string | undefined;
-			readonly newHostPid?: number | undefined;
-			readonly newVmId?: string | undefined;
 			readonly oldBootedAt?: string | undefined;
 			readonly oldHostPid?: number | undefined;
 			readonly oldVmId?: string | undefined;
 			readonly reason: GatewayRecoveryHealthReason;
-			readonly result: 'failed' | 'ok';
+			readonly result: 'failed';
 	  })
 	| (AgentVmHealthEventBase & {
 			readonly action: 'gateway-vm-restart';
@@ -274,24 +287,44 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 				isOneOf(['starting', 'ready', 'stopping', 'failed'] as const, value.state)
 			);
 		case 'gateway-recovery':
-			return (
-				value.action === 'gateway-vm-restart' &&
-				isNonNegativeInteger(value.consecutiveFailures) &&
-				isPositiveInteger(value.cooldownMs) &&
-				isNonNegativeFiniteNumber(value.elapsedMs) &&
-				optionalString(value.errorCode) &&
-				optionalNonNegativeInteger(value.leaseReleaseFailureCount) &&
-				optionalString(value.newBootedAt) &&
-				optionalNonNegativeInteger(value.newHostPid) &&
-				optionalString(value.newVmId) &&
-				optionalString(value.oldBootedAt) &&
-				optionalNonNegativeInteger(value.oldHostPid) &&
-				optionalString(value.oldVmId) &&
-				isOneOf(
+			if (
+				value.action !== 'gateway-vm-restart' ||
+				!isNonNegativeInteger(value.consecutiveFailures) ||
+				!isPositiveInteger(value.cooldownMs) ||
+				!isNonNegativeFiniteNumber(value.elapsedMs) ||
+				!isOneOf(
 					['gateway-control-link-unhealthy', 'gateway-service-unhealthy'] as const,
 					value.reason,
 				)
-			);
+			) {
+				return false;
+			}
+			if (value.result === 'ok') {
+				return (
+					isNonNegativeInteger(value.leaseReleaseFailureCount) &&
+					typeof value.newBootedAt === 'string' &&
+					isNonNegativeInteger(value.newHostPid) &&
+					typeof value.newVmId === 'string' &&
+					typeof value.oldBootedAt === 'string' &&
+					isNonNegativeInteger(value.oldHostPid) &&
+					typeof value.oldVmId === 'string' &&
+					value.errorCode === undefined
+				);
+			}
+			if (value.result === 'failed') {
+				return (
+					typeof value.errorCode === 'string' &&
+					value.errorCode.length > 0 &&
+					optionalNonNegativeInteger(value.leaseReleaseFailureCount) &&
+					optionalString(value.oldBootedAt) &&
+					optionalNonNegativeInteger(value.oldHostPid) &&
+					optionalString(value.oldVmId) &&
+					value.newBootedAt === undefined &&
+					value.newHostPid === undefined &&
+					value.newVmId === undefined
+				);
+			}
+			return false;
 		case 'gateway-recovery-suspended':
 			return (
 				value.action === 'gateway-vm-restart' &&

@@ -463,7 +463,7 @@ echo "stopped openclaw gateway pid $gateway_pid"
 			result: 'ok',
 			zoneId,
 		});
-		if (recoveryEvent.kind !== 'gateway-recovery') {
+		if (recoveryEvent.kind !== 'gateway-recovery' || recoveryEvent.result !== 'ok') {
 			throw new Error('Expected gateway-recovery event.');
 		}
 		expect(gatewayStarts.map((startedGatewayVm) => startedGatewayVm.id)).toContain(

@@ -43,7 +43,10 @@ import {
 	type ZoneGitReadConfig,
 } from './zone-git/zone-git-operations.js';
 import { isOpenClawZoneGitConfigured } from './zone-git/zone-git-paths.js';
-import { createOpenClawZoneRuntime } from './zone-runtimes/openclaw-zone-runtime.js';
+import {
+	createOpenClawZoneRuntime,
+	isOpenClawZoneRestartTimeoutError,
+} from './zone-runtimes/openclaw-zone-runtime.js';
 import { createWorkerZoneRuntime } from './zone-runtimes/worker-zone-runtime.js';
 import {
 	ControllerZoneConfigurationError,
@@ -72,6 +75,9 @@ function getUnknownErrorCode(error: unknown): string | undefined {
 }
 
 export function classifyGatewayRecoveryRestartError(error: unknown): string {
+	if (isOpenClawZoneRestartTimeoutError(error)) {
+		return 'recovery-timeout';
+	}
 	const code = getUnknownErrorCode(error);
 	if (
 		code === 'EACCES' ||
@@ -466,7 +472,9 @@ export async function startControllerRuntime(
 
 		let restartResult: { readonly leaseReleaseFailureCount: number };
 		try {
-			restartResult = await runtime.restart();
+			restartResult = await runtime.restart({
+				timeoutMs: controllerHealthConfig.gatewayServiceAutoRestart.restartTimeoutMs,
+			});
 		} catch (error) {
 			writeControllerRuntimeLog(
 				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
