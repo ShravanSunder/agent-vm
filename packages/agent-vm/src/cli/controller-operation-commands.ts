@@ -277,33 +277,63 @@ function formatDoctorCheckStatus(check: DoctorCheck): string {
 	return check.ok ? green('PASS') : red('FAIL');
 }
 
-function formatDoctorCheckDetails(check: DoctorCheck): readonly string[] {
+function formatDoctorPassingCheckStatus(): string {
+	return dim('ok');
+}
+
+function formatDoctorFailedCheckDetails(check: DoctorCheck): readonly string[] {
 	const details: string[] = [];
 	if (check.value !== undefined) {
-		details.push(`  value: ${String(check.value)}`);
+		details.push(`      ${String(check.value)}`);
 	}
 	if (check.hint !== undefined) {
 		const [firstLine, ...remainingLines] = check.hint.split('\n');
-		details.push(`  hint: ${firstLine ?? ''}`);
+		details.push(`      ${firstLine ?? ''}`);
 		for (const line of remainingLines) {
-			details.push(`        ${line}`);
+			details.push(`      ${line}`);
 		}
 	}
 	return details;
 }
 
-function appendDoctorCheckLines(lines: string[], checks: readonly DoctorCheck[]): void {
+function appendDoctorFailedCheckLines(lines: string[], checks: readonly DoctorCheck[]): void {
 	for (const check of checks) {
-		lines.push(`${formatDoctorCheckStatus(check)} ${check.name}`);
-		lines.push(...formatDoctorCheckDetails(check));
+		lines.push(`${formatDoctorCheckStatus(check)}  ${check.name}`);
+		lines.push(...formatDoctorFailedCheckDetails(check));
+	}
+}
+
+function formatDoctorPassingCheckDetails(check: DoctorCheck): readonly string[] {
+	const details: string[] = [];
+	if (check.value !== undefined) {
+		details.push(dim(`      ${String(check.value)}`));
+	}
+	if (check.hint !== undefined) {
+		const [firstLine, ...remainingLines] = check.hint.split('\n');
+		details.push(dim(`      ${firstLine ?? ''}`));
+		for (const line of remainingLines) {
+			details.push(dim(`      ${line}`));
+		}
+	}
+	return details;
+}
+
+function appendDoctorPassingCheckLines(
+	lines: string[],
+	checks: readonly DoctorCheck[],
+	options: { readonly showDetails: boolean },
+): void {
+	for (const check of checks) {
+		lines.push(`${formatDoctorPassingCheckStatus()}    ${check.name}`);
+		if (options.showDetails) {
+			lines.push(...formatDoctorPassingCheckDetails(check));
+		}
 	}
 }
 
 function appendDoctorPassingPreviewLines(lines: string[], checks: readonly DoctorCheck[]): void {
 	const visibleChecks = checks.slice(0, defaultPassingPreviewLimit);
-	for (const check of visibleChecks) {
-		lines.push(`${formatDoctorCheckStatus(check)} ${check.name}`);
-	}
+	appendDoctorPassingCheckLines(lines, visibleChecks, { showDetails: false });
 	const hiddenCheckCount = checks.length - visibleChecks.length;
 	if (hiddenCheckCount > 0) {
 		const checkLabel = hiddenCheckCount === 1 ? 'check' : 'checks';
@@ -328,15 +358,15 @@ function writeDoctorText(
 			: red(`${result.failed} failed`) + dim(', ') + green(`${result.passed} passed`);
 	const lines = ['agent-vm doctor', '', statusLine, ''];
 	if (failedChecks.length > 0) {
-		lines.push(`Failures (${failedChecks.length})`);
-		appendDoctorCheckLines(lines, failedChecks);
+		lines.push(red(`Failures (${failedChecks.length})`));
+		appendDoctorFailedCheckLines(lines, failedChecks);
 	}
 	if (options.showPassed && passedChecks.length > 0) {
 		if (failedChecks.length > 0) {
 			lines.push('');
 		}
 		lines.push(green(`Passing (${passedChecks.length})`));
-		appendDoctorCheckLines(lines, passedChecks);
+		appendDoctorPassingCheckLines(lines, passedChecks, { showDetails: true });
 	} else if (passedChecks.length > 0) {
 		if (failedChecks.length > 0) {
 			lines.push('');

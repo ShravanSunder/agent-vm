@@ -620,13 +620,14 @@ describe('runControllerOperationCommand', () => {
 		expect(output).toContain('FAIL');
 		expect(output).toContain('controller-required-binary');
 		expect(output).toContain('missing binary');
-		expect(output).toContain('        install the binary');
+		expect(output).toContain('      install the binary');
 		expect(output).toContain('Passing (11)');
-		expect(output).toContain('PASS controller-port');
-		expect(output).toContain('PASS host-runtime-dir');
+		expect(output).toContain('ok    controller-port');
+		expect(output).toContain('ok    host-runtime-dir');
 		expect(output).toContain('... 8 more passing checks hidden. Use --show-passed to show all.');
-		expect(output).not.toContain('PASS gateway-image-profile-worker-dockerfile');
-		expect(output).not.toContain('PASS worker-config-worker');
+		expect(output).not.toContain('ok    gateway-image-profile-worker-dockerfile');
+		expect(output).not.toContain('ok    worker-config-worker');
+		expect(output).not.toContain('hint:');
 		expect(output).not.toContain('passed checks hidden.');
 		const parseDoctorOutput = (): void => {
 			JSON.parse(output);
@@ -756,7 +757,12 @@ describe('runControllerOperationCommand', () => {
 						ok: false,
 						checks: [
 							{ name: 'controller-required-binary', ok: false, hint: 'missing binary' },
-							{ name: 'controller-port', ok: true, value: 18800 },
+							{
+								name: 'controller-port',
+								ok: true,
+								value: 18800,
+								hint: 'bound to localhost',
+							},
 						],
 					}),
 				},
@@ -777,8 +783,10 @@ describe('runControllerOperationCommand', () => {
 			const output = outputs.join('').replaceAll(ansiEscapeSequencePattern, '');
 			expect(output).toContain('Failures');
 			expect(output).toContain('Passing');
-			expect(output).toContain('FAIL controller-required-binary');
-			expect(output).toContain('PASS controller-port');
+			expect(output).toContain('FAIL  controller-required-binary');
+			expect(output).toContain('ok    controller-port');
+			expect(output).toContain('      18800');
+			expect(output).toContain('      bound to localhost');
 			expect(output).not.toContain('passed checks hidden.');
 		} finally {
 			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
