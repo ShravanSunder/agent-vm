@@ -262,11 +262,12 @@ describe('createToolVm', () => {
 	});
 
 	it('passes only Tool VM egress hosts and mediated secrets into the Tool VM', async () => {
+		const exec = vi.fn<ManagedVm['exec']>(() => createManagedExecProcessStub());
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-			exec: () => createManagedExecProcessStub(),
+			exec,
 			fs: createManagedVmFsStub(),
 			getHostPid: () => null,
 			getVmInstance: () => ({
@@ -408,6 +409,96 @@ describe('createToolVm', () => {
 		expect(resolveSecret).not.toHaveBeenCalledWith(
 			expect.objectContaining({ ref: 'GATEWAY_ONLY_TOKEN' }),
 		);
+		expect(exec).toHaveBeenCalledOnce();
+		const bootstrapCommand = exec.mock.calls[0]?.[0];
+		if (typeof bootstrapCommand !== 'string') {
+			throw new Error('Expected mediated placeholder bootstrap to use a shell command string.');
+		}
+		expect(bootstrapCommand).toContain('/etc/profile.d/agent-vm-mediated-env.sh');
+		expect(bootstrapCommand).toContain('/etc/environment');
+		expect(bootstrapCommand).toContain('/etc/ssh/sshd_config');
+		expect(bootstrapCommand).toContain(
+			"for name in 'GITHUB_TOKEN' 'LINEAR_API_KEY' 'READWISE_ACCESS_TOKEN'",
+		);
+		expect(bootstrapCommand).toContain('printf \'SetEnv BASH_ENV=%s\' "$profile_path"');
+		expect(bootstrapCommand).toContain('printf \' %s=%s\' "$name" "$value"');
+		expect(bootstrapCommand).not.toContain('DISCORD_BOT_TOKEN');
+		expect(bootstrapCommand).not.toContain('GATEWAY_ONLY_TOKEN');
+		expect(bootstrapCommand).not.toContain('github-real-secret');
+		expect(bootstrapCommand).not.toContain('linear-real-secret');
+		expect(bootstrapCommand).not.toContain('readwise-real-secret');
+	});
+
+	it('rejects mediated Tool VM secret names that collide with runtime bootstrap env', async () => {
+		const exec = vi.fn<ManagedVm['exec']>(() => createManagedExecProcessStub());
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec,
+			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
+			getVmInstance: () => ({
+				close: async () => {},
+				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				exec: () => createManagedExecProcessStub(),
+				fs: createManagedVmFsStub(),
+				id: 'vm-instance',
+				setIngressRoutes: () => {},
+			}),
+			id: 'managed-vm',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+		const createManagedVm = vi.fn(async () => managedVm);
+		const systemConfig = await createToolVmSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone');
+		}
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets = {
+			BASH_ENV: {
+				source: 'environment',
+				envVar: 'BASH_ENV',
+				injection: 'http-mediation',
+				audience: 'tool-vm',
+				hosts: ['api.github.com'],
+			},
+		};
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool VM profile');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'reserved-mediated-secret-name',
+		);
+
+		await expect(
+			createToolVm(
+				{
+					cacheDir: systemConfig.cacheDir,
+					profile: standardProfile,
+					systemConfig,
+					tcpSlot: 0,
+					hostWorkMountDir: requestedWorkMountDir,
+					zoneId: 'shravan',
+					secretResolver: createSecretResolver({ BASH_ENV: 'real-secret' }),
+				},
+				{
+					buildGondolinImage: async () => ({
+						built: true,
+						fingerprint: 'tool-fingerprint',
+						imagePath: '/cache/tool-fingerprint',
+					}),
+					createManagedVm,
+					closePinnedRealFsRoot: () => {},
+					pinRealFsRoot: createPinnedRealFsRoot,
+				},
+			),
+		).rejects.toThrow('reserved by agent-vm runtime bootstrap');
+		expect(exec).not.toHaveBeenCalled();
 	});
 
 	it('mounts zone Git leases at /zone and /agent-vm/zone-git', async () => {

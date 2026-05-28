@@ -1,0 +1,199 @@
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+
+import { createStaticSecretResolver } from '@agent-vm/secret-management';
+import { afterAll, describe, expect, it } from 'vitest';
+
+import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
+import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
+
+const execFileAsync = promisify(execFile);
+const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+
+const rawGithubToken = 'real-github-token-for-mediated-env-live-test';
+
+async function createTemporaryDirectory(): Promise<string> {
+	return await mkdtemp(path.join(os.tmpdir(), 'agent-vm-live-mediated-env-'));
+}
+
+async function createMediatedEnvSystemConfig(
+	temporaryDirectory: string,
+): Promise<LoadedSystemConfig> {
+	const zoneFilesDir = path.join(temporaryDirectory, 'zone-files', 'shravan');
+	const stateDir = path.join(temporaryDirectory, 'state', 'shravan');
+
+	return createLoadedSystemConfig(
+		{
+			cacheDir: path.join(temporaryDirectory, 'cache'),
+			host: {
+				controllerPort: 18800,
+				projectNamespace: 'mediated-env-live',
+				secretsProvider: {
+					type: '1password',
+					tokenSource: { type: 'env' },
+				},
+			},
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						type: 'openclaw',
+						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+					},
+				},
+				toolVms: {
+					default: {
+						type: 'toolVm',
+						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+					},
+				},
+			},
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '512M',
+				},
+			},
+			zones: [
+				{
+					agentToolVmProfiles: {},
+					defaultToolVmProfile: 'standard',
+					egressHosts: [{ host: 'api.github.com', audience: 'tool-vm' }],
+					gateway: {
+						type: 'openclaw',
+						controlAuth: {
+							mode: 'token',
+							secret: 'OPENCLAW_GATEWAY_TOKEN',
+						},
+						config: './config/shravan/openclaw.json',
+						cpus: 1,
+						imageProfile: 'openclaw',
+						memory: '512M',
+						port: 18791,
+						stateDir,
+						zoneFilesDir,
+					},
+					id: 'shravan',
+					secrets: {
+						GITHUB_TOKEN: {
+							source: 'config',
+							value: rawGithubToken,
+							injection: 'http-mediation',
+							audience: 'tool-vm',
+							hosts: ['api.github.com'],
+						},
+						OPENCLAW_GATEWAY_TOKEN: {
+							source: 'config',
+							value: 'gateway-token-not-for-tool-vm',
+							injection: 'env',
+							audience: 'gateway',
+						},
+					},
+					websocketBypass: [],
+				},
+			],
+		},
+		{ systemConfigPath: path.join(temporaryDirectory, 'config', 'system.json') },
+	);
+}
+
+async function runToolVmSshCommand(options: {
+	readonly host: string;
+	readonly identityFile: string;
+	readonly port: number;
+	readonly user: string;
+}): Promise<string> {
+	const { stdout } = await execFileAsync('ssh', [
+		'-4',
+		'-p',
+		String(options.port),
+		'-i',
+		options.identityFile,
+		'-o',
+		'StrictHostKeyChecking=no',
+		'-o',
+		'UserKnownHostsFile=/dev/null',
+		'-o',
+		'BatchMode=yes',
+		'-o',
+		'ConnectTimeout=10',
+		`${options.user}@${options.host}`,
+		'/bin/sh -c \'printf "%s" "$GITHUB_TOKEN"\' gondolin-sandbox-fs',
+	]);
+	return stdout;
+}
+
+describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () => {
+	let temporaryDirectory: string | undefined;
+
+	afterAll(async () => {
+		if (temporaryDirectory) {
+			await rm(temporaryDirectory, { recursive: true, force: true });
+		}
+	});
+
+	it('makes http-mediated placeholders visible to the same non-login SSH shell path OpenClaw uses', async () => {
+		temporaryDirectory = await createTemporaryDirectory();
+		const systemConfig = await createMediatedEnvSystemConfig(temporaryDirectory);
+		const zone = systemConfig.zones[0];
+		if (zone?.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const profile = systemConfig.toolVmProfiles.standard;
+		if (!profile) {
+			throw new Error('Expected standard Tool VM profile.');
+		}
+
+		const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
+		await mkdir(hostWorkMountDir, { recursive: true });
+		const toolVm = await createToolVm(
+			{
+				cacheDir: systemConfig.cacheDir,
+				hostWorkMountDir,
+				profile,
+				secretResolver: createStaticSecretResolver({}),
+				systemConfig,
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'default-gondolin-image',
+					imagePath: '',
+				}),
+			},
+		);
+
+		try {
+			const execPlaceholderResult = await toolVm.exec('printf "%s" "$GITHUB_TOKEN"');
+			expect(execPlaceholderResult.exitCode).toBe(0);
+			expect(execPlaceholderResult.stdout).not.toBe('');
+			expect(execPlaceholderResult.stdout).not.toBe(rawGithubToken);
+
+			const sshAccess = await toolVm.enableSsh({ user: 'root' });
+			if (!sshAccess.identityFile || !sshAccess.user) {
+				throw new Error('Expected Tool VM SSH access to include identityFile and user.');
+			}
+			const sshPlaceholder = await runToolVmSshCommand({
+				host: sshAccess.host,
+				identityFile: sshAccess.identityFile,
+				port: sshAccess.port,
+				user: sshAccess.user,
+			});
+
+			expect(sshPlaceholder).toBe(execPlaceholderResult.stdout);
+			expect(sshPlaceholder).not.toBe(rawGithubToken);
+		} finally {
+			await toolVm.close();
+		}
+	}, 90_000);
+});
