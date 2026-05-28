@@ -268,10 +268,11 @@ VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `
   build-config.jsonc
     |
     v
-  buildGondolinImage({ buildConfigPath, cacheDir })
+  buildGondolinImage({ buildConfigPath, cacheDir, fingerprintInput? })
     |
     |-- 1. Load config       JSON.parse(buildConfigPath) -> BuildConfig
-    |-- 2. Fingerprint        SHA-256(stableSerialize(config) + gondolinVersion)
+    |-- 2. Fingerprint        SHA-256(stableSerialize(config) + fingerprintInput
+    |                                      + gondolinVersion)
     |                         Truncated to 16 hex chars
     |-- 3. Cache check        Does cacheDir/{fingerprint}/ contain all 4 assets?
     |       |
@@ -292,9 +293,9 @@ VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `
     vmlinuz-virt
 ```
 
-`computeBuildFingerprint()` uses stable JSON serialization (sorted keys, no undefined values) to ensure the same config always produces the same fingerprint regardless of property order.
+`computeBuildFingerprint()` uses stable JSON serialization (sorted keys, no undefined values) to ensure the same config and fingerprint input always produce the same fingerprint regardless of property order. Docker-backed profiles pass the inspected Docker rootfs layer identity as fingerprint input, so unchanged Docker outputs can reuse Gondolin assets and changed Docker layers naturally produce a new generation.
 
-`buildGatewayImage()` in `gateway-image-builder.ts` is a thin wrapper that loads the config and delegates to `buildGondolinImage()`, supporting dependency injection for testing.
+`buildGatewayImage()` in `gateway-image-builder.ts` first checks the profile-local prepared-image record written by `agent-vm build`; if the build config, fingerprint input, fingerprint, and asset files still match, startup reuses that image path without invoking Gondolin. Otherwise it loads the config and delegates to `buildGondolinImage()`, supporting dependency injection for testing. Tool VM startup uses the same prepared-image record contract.
 
 `agent-vm build` dedupes repeated resolved build config path + effective
 fingerprint pairs across configured image profiles in the same invocation. The

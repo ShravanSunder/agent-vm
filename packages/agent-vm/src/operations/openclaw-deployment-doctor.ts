@@ -29,6 +29,9 @@ interface CodexHarnessAuthScan {
 	readonly readErrors: readonly CodexHarnessAuthReadError[];
 }
 
+const openClawGondolinPluginLoadPath = '/home/openclaw/.openclaw/extensions/gondolin';
+const openClawManagedPackageLoadPath = '/pnpm/global/5/node_modules/@openclaw';
+
 export interface OpenClawDeploymentDoctorTarget {
 	readonly configuredAuthProfileAgentIds?: readonly string[];
 	readonly configuredCodexHarnessAuthAgentIds?: readonly string[];
@@ -42,6 +45,13 @@ export interface OpenClawDeploymentDoctorTarget {
 
 function includesString(values: readonly unknown[] | undefined, expectedValue: string): boolean {
 	return values?.some((value) => value === expectedValue) === true;
+}
+
+function includesAllStrings(
+	values: readonly unknown[] | undefined,
+	expectedValues: readonly string[],
+): boolean {
+	return expectedValues.every((expectedValue) => includesString(values, expectedValue));
 }
 
 function hasEnabledEntry(
@@ -111,6 +121,32 @@ function resolveOpenClawModelName(model: unknown): string | undefined {
 
 function isOpenAiCodexModel(modelName: string | undefined): boolean {
 	return modelName?.startsWith('openai-codex/') === true || modelName === 'openai-codex';
+}
+
+function hasOpenAiProviderConfig(config: OpenClawDeploymentConfig): boolean {
+	const models = config.models;
+	if (!isObjectRecord(models)) {
+		return false;
+	}
+	const providers = models.providers;
+	return isObjectRecord(providers) && isObjectRecord(providers.openai);
+}
+
+function openAiProviderUsesPiRuntime(config: OpenClawDeploymentConfig): boolean {
+	const models = config.models;
+	if (!isObjectRecord(models)) {
+		return true;
+	}
+	const providers = models.providers;
+	if (!isObjectRecord(providers)) {
+		return true;
+	}
+	const openAiProvider = providers.openai;
+	if (!isObjectRecord(openAiProvider)) {
+		return true;
+	}
+	const agentRuntime = openAiProvider.agentRuntime;
+	return isObjectRecord(agentRuntime) && agentRuntime.id === 'pi';
 }
 
 function collectOpenClawCodexAgentIds(config: OpenClawDeploymentConfig): readonly string[] {
@@ -304,8 +340,11 @@ export function buildOpenClawDeploymentDoctorChecks(
 			...requirementChecks,
 			{
 				name: `openclaw-plugin-load-paths-${target.zoneId}`,
-				ok: includesString(pluginLoadPaths, '/home/openclaw/.openclaw/extensions/gondolin'),
-				hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/gondolin.',
+				ok: includesAllStrings(pluginLoadPaths, [
+					openClawGondolinPluginLoadPath,
+					openClawManagedPackageLoadPath,
+				]),
+				hint: `Add plugins.load.paths for ${openClawGondolinPluginLoadPath} and ${openClawManagedPackageLoadPath}.`,
 			},
 			...mcpPortalChecks,
 			{
@@ -315,6 +354,13 @@ export function buildOpenClawDeploymentDoctorChecks(
 					!hasMemoryCore || config.plugins?.slots?.memory === 'memory-core'
 						? 'plugins.slots.memory=memory-core'
 						: 'Set plugins.slots.memory to "memory-core" when memory-core is enabled.',
+			},
+			{
+				name: `openclaw-openai-provider-runtime-${target.zoneId}`,
+				ok: openAiProviderUsesPiRuntime(config),
+				hint: hasOpenAiProviderConfig(config)
+					? 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI API-key models do not get claimed by the Codex OAuth runtime.'
+					: 'No models.providers.openai config present.',
 			},
 			...buildCodexHarnessAuthReadErrorChecks(target),
 			...buildAgentAuthProfileChecks(target),

@@ -6,7 +6,15 @@ import { execa } from 'execa';
 import type { TaskOutput } from '../shared/run-task.js';
 
 export interface DockerCommandOptions {
+	readonly quiet?: boolean;
 	readonly streamPreview?: TaskOutput;
+}
+
+export interface DockerRootfsIdentity {
+	readonly architecture: string;
+	readonly layers: readonly string[];
+	readonly os: string;
+	readonly variant?: string;
 }
 
 export interface DockerImageBuilderDependencies {
@@ -19,10 +27,19 @@ export interface DockerImageBuilderDependencies {
 	} | void>;
 }
 
+export interface DockerImageInspectDependencies {
+	readonly inspectImage?: (imageTag: string) => Promise<unknown | undefined>;
+}
+
 export interface BuildDockerImageOptions {
 	readonly dockerfilePath: string;
 	readonly imageTag: string;
+	readonly quiet?: boolean;
 	readonly streamPreview?: TaskOutput;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
 }
 
 function pipeStreamAsLines(
@@ -44,7 +61,7 @@ async function executeDockerCommand(
 	options: DockerCommandOptions,
 ): Promise<void> {
 	if (!options.streamPreview) {
-		await execa(command, args, { stdio: 'inherit' });
+		await execa(command, args, { stdio: options.quiet ? 'pipe' : 'inherit' });
 		return;
 	}
 
@@ -52,6 +69,62 @@ async function executeDockerCommand(
 	pipeStreamAsLines(child.stdout, options.streamPreview);
 	pipeStreamAsLines(child.stderr, options.streamPreview);
 	await child;
+}
+
+async function inspectDockerImage(imageTag: string): Promise<unknown | undefined> {
+	try {
+		const result = await execa('docker', [
+			'image',
+			'inspect',
+			'--format',
+			'{{json .}}',
+			imageTag,
+		]);
+		return JSON.parse(result.stdout) as unknown;
+	} catch {
+		return undefined;
+	}
+}
+
+export async function resolveDockerRootfsIdentity(
+	imageTag: string,
+	dependencies: DockerImageInspectDependencies = {},
+): Promise<DockerRootfsIdentity | undefined> {
+	const inspectedImage = await (dependencies.inspectImage ?? inspectDockerImage)(imageTag);
+	if (inspectedImage === undefined) {
+		return undefined;
+	}
+	if (!isRecord(inspectedImage)) {
+		throw new Error(`Docker image '${imageTag}' inspect result must be an object.`);
+	}
+	const architecture = inspectedImage.Architecture;
+	const os = inspectedImage.Os;
+	const variant = inspectedImage.Variant;
+	const rootfs = inspectedImage.RootFS;
+	if (typeof architecture !== 'string' || architecture.length === 0) {
+		throw new Error(`Docker image '${imageTag}' is missing architecture.`);
+	}
+	if (typeof os !== 'string' || os.length === 0) {
+		throw new Error(`Docker image '${imageTag}' is missing operating system.`);
+	}
+	if (!isRecord(rootfs)) {
+		throw new Error(`Docker image '${imageTag}' is missing rootfs metadata.`);
+	}
+	const layers = rootfs.Layers;
+	if (
+		!Array.isArray(layers) ||
+		layers.length === 0 ||
+		!layers.every((layer): layer is string => typeof layer === 'string' && layer.length > 0)
+	) {
+		throw new Error(`Docker image '${imageTag}' is missing ordered rootfs layers.`);
+	}
+
+	return {
+		architecture,
+		layers,
+		os,
+		...(typeof variant === 'string' && variant.length > 0 ? { variant } : {}),
+	};
 }
 
 export async function buildDockerImage(
@@ -74,7 +147,10 @@ export async function buildDockerImage(
 				options.imageTag,
 				dockerBuildContextDirectory,
 			],
-			options.streamPreview ? { streamPreview: options.streamPreview } : {},
+			{
+				...(options.quiet ? { quiet: true } : {}),
+				...(options.streamPreview ? { streamPreview: options.streamPreview } : {}),
+			},
 		);
 	} catch (error) {
 		throw new Error(

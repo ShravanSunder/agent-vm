@@ -161,6 +161,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -202,6 +203,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -218,6 +220,74 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			ok: false,
 			hint: 'Set approvals.plugin.enabled=true and approvals.plugin.mode="session" so MCP Portal tools that require approval can return prompts to the originating chat.',
 		});
+	});
+
+	it('flags OpenAI provider configs that do not explicitly use pi runtime', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: [],
+				runtimeMaterializesPortalEndpoints: true,
+				zoneId: 'shravan',
+				config: {
+					models: {
+						providers: {
+							openai: {
+								apiKey: { provider: 'default', id: 'OPENAI_API_KEY' },
+							},
+						},
+					},
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						entries: {
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+						},
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
+								'/home/openclaw/.openclaw/extensions/mcp-portal',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+					approvals: openClawPluginApprovalSession,
+					tools: openClawSandboxPluginTools,
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-openai-provider-runtime-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI API-key models do not get claimed by the Codex OAuth runtime.',
+		});
+	});
+
+	it('accepts OpenAI provider configs that explicitly use pi runtime', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: [],
+				runtimeMaterializesPortalEndpoints: true,
+				zoneId: 'shravan',
+				config: {
+					models: {
+						providers: {
+							openai: {
+								apiKey: { provider: 'default', id: 'OPENAI_API_KEY' },
+								agentRuntime: { id: 'pi' },
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-openai-provider-runtime-shravan'),
+		).toMatchObject({ ok: true });
 	});
 
 	it('skips MCP Portal plugin readiness checks when MCP Portal is not configured', () => {
@@ -244,7 +314,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							discord: { enabled: true },
 						},
 						load: {
-							paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
+							],
 						},
 						slots: { memory: 'memory-core' },
 					},
@@ -316,6 +389,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -397,7 +471,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-plugin-load-paths-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/gondolin.',
+			hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/gondolin and /pnpm/global/5/node_modules/@openclaw.',
 		});
 		expect(
 			checks.find((check) => check.name === 'openclaw-tool-vm-workspace-shravan-defaults'),
@@ -464,6 +538,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -695,6 +770,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/pnpm/global/5/node_modules/@openclaw',
 								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
@@ -951,6 +1027,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/pnpm/global/5/node_modules/@openclaw',
 							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},
@@ -1063,6 +1140,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/pnpm/global/5/node_modules/@openclaw',
 							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},
@@ -1118,6 +1196,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/pnpm/global/5/node_modules/@openclaw',
 							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},

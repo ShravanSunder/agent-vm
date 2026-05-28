@@ -288,7 +288,9 @@ host stateDir
 host cacheDir
   ~/.agent-vm/cache/
     gateway-images/<imageProfile>/
+      prepared-image.json
     tool-vm-images/<imageProfile>/
+      prepared-image.json
     gateways/<zone>/
       plugin-runtime-deps/
 

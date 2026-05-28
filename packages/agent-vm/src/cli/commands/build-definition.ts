@@ -3,7 +3,7 @@ import { command, flag } from 'cmd-ts';
 
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import { runBuildCommand } from '../build-command.js';
-import { createRunTask } from '../run-task.js';
+import { createRunTask, createRunTaskGroup } from '../run-task.js';
 import { createConfigOption, loadSystemConfigFromOption } from './command-definition-support.js';
 
 export function createBuildCommand(_io: CliIo, dependencies: CliDependencies) {
@@ -20,12 +20,13 @@ export function createBuildCommand(_io: CliIo, dependencies: CliDependencies) {
 		handler: async ({ config, force }) => {
 			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 			const runTask = await createRunTask(_io);
+			const runTaskGroup = await createRunTaskGroup(_io, runTask);
 			await (dependencies.runBuildCommand ?? runBuildCommand)(
 				{
 					forceRebuild: force,
 					systemConfig,
 				},
-				{ runTask },
+				{ runTask, runTaskGroup },
 			);
 		},
 	});

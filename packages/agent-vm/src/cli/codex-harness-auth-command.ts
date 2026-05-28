@@ -39,7 +39,7 @@ function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 		'  done)"',
 		'  if [ -z "$codex_js" ]; then',
 		'    echo "Could not locate the Codex CLI binary in PATH or pnpm global install paths." >&2',
-		'    echo "Install @openai/codex in the OpenClaw gateway image, or add it to the gateway overlay extraOpenClawPackages before running auth codex-harness." >&2',
+		'    echo "Install @openai/codex in the OpenClaw gateway image by updating the agent-vm managed image release before running auth codex-harness." >&2',
 		'    exit 127',
 		'  fi',
 		'  codex_binary="node $codex_js"',

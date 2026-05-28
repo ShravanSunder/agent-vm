@@ -897,6 +897,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				runTask: expect.any(Function),
+				runTaskGroup: expect.any(Function),
 			},
 		);
 	});
@@ -945,6 +946,7 @@ describe('runAgentVmCli', () => {
 			}),
 			{
 				runTask: expect.any(Function),
+				runTaskGroup: expect.any(Function),
 			},
 		);
 	});
@@ -971,6 +973,7 @@ describe('runAgentVmCli', () => {
 			}),
 			{
 				runTask: expect.any(Function),
+				runTaskGroup: expect.any(Function),
 			},
 		);
 	});
