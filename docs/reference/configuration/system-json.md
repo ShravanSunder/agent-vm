@@ -105,12 +105,23 @@ the defaults.
 | `gatewayServiceIntervalMs` | `10000` | Host-side interval for the agent-vm controller to probe each running gateway-service through the gateway VM health check. |
 | `gatewayControlLinkIntervalMs` | `10000` | In-VM interval for the OpenClaw Gondolin plugin to call the agent-vm controller `GET /health` endpoint. |
 | `gatewayControlLinkBackoffCeilingMs` | `120000` | Maximum backoff interval for repeated gateway-to-controller failures. Must be at least `gatewayControlLinkIntervalMs`. |
+| `gatewayServiceAutoRestart.enabled` | `true` | Enables automatic restart for a running OpenClaw gateway VM after repeated gateway-service or gateway-control-link health failures. |
+| `gatewayServiceAutoRestart.consecutiveFailureThreshold` | `10` | Consecutive degraded observations required before restart. A healthy observation resets that boundary's counter. |
+| `gatewayServiceAutoRestart.cooldownMs` | `3660000` | Minimum time between automatic restart attempts for one zone. This is 61 minutes by default. |
+| `gatewayServiceAutoRestart.maxConsecutiveFailedRecoveries` | `3` | Failed automatic restart attempts allowed before the controller suspends further auto-recovery for that zone. |
+| `gatewayServiceAutoRestart.failedRecoveryResetMs` | `86400000` | Suspension reset window after the latest failed recovery attempt. This is 24 hours by default. |
+| `gatewayServiceAutoRestart.restartTimeoutMs` | `600000` | Maximum time the controller waits for one automatic restart before recording failed `gateway-recovery`. |
 | `staleAfterMs` | `30000` | Age after which a latest health event is treated as stale in zone health snapshots. |
 | `eventHistoryLimit` | `500` | Rolling in-memory event history retained by the agent-vm controller. Latest per-boundary state is retained separately. |
 
 Health event history is in-memory controller state. It is useful for live
 diagnostics and zone health snapshots, but it is not durable across an
 agent-vm controller restart.
+
+Automatic gateway VM restart is scoped to running OpenClaw gateway zones. It
+does not cold-start failed or stopped zones. When it fires, the controller first
+force releases that zone's Tool VM leases, then restarts the gateway VM and
+records `gateway-recovery` with old/new VM identity evidence.
 
 Example:
 
@@ -122,6 +133,14 @@ Example:
       "gatewayServiceIntervalMs": 10000,
       "gatewayControlLinkIntervalMs": 10000,
       "gatewayControlLinkBackoffCeilingMs": 120000,
+      "gatewayServiceAutoRestart": {
+        "enabled": true,
+        "consecutiveFailureThreshold": 10,
+        "cooldownMs": 3660000,
+        "maxConsecutiveFailedRecoveries": 3,
+        "failedRecoveryResetMs": 86400000,
+        "restartTimeoutMs": 600000
+      },
       "staleAfterMs": 30000,
       "eventHistoryLimit": 500
     }

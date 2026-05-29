@@ -1,13 +1,14 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import {
 	buildGondolinImage,
 	computeFingerprintFromConfigPath,
+	resolveDefaultGondolinBuildChildModuleUrl,
 	runGondolinBuildChildProcess,
 	runGondolinImageBuildRequest,
 	type GondolinImageBuilderDependencies,
@@ -15,6 +16,23 @@ import {
 } from './gondolin-image-builder.js';
 
 describe('buildGondolinImage', () => {
+	it('resolves the default child-process entrypoint from source modules to built dist output', () => {
+		const packageRootPath = path.resolve('/repo/packages/agent-vm');
+		const sourceModuleUrl = pathToFileURL(
+			path.join(packageRootPath, 'src/build/gondolin-image-builder.ts'),
+		);
+		const distModuleUrl = pathToFileURL(
+			path.join(packageRootPath, 'dist/build/gondolin-image-builder.js'),
+		);
+
+		expect(fileURLToPath(resolveDefaultGondolinBuildChildModuleUrl(sourceModuleUrl))).toBe(
+			path.join(packageRootPath, 'dist/build/gondolin-image-build-child-entrypoint.js'),
+		);
+		expect(fileURLToPath(resolveDefaultGondolinBuildChildModuleUrl(distModuleUrl))).toBe(
+			path.join(packageRootPath, 'dist/build/gondolin-image-build-child-entrypoint.js'),
+		);
+	});
+
 	it('streams child-process output while waiting for the Gondolin build result', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-gondolin-child-'),

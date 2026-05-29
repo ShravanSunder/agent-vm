@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -11,7 +11,10 @@ import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
-import { startControllerRuntime } from './controller-runtime.js';
+import {
+	classifyGatewayRecoveryRestartError,
+	startControllerRuntime,
+} from './controller-runtime.js';
 import type { controllerLeaseCreateRequestSchema } from './http/controller-request-schemas.js';
 import type {
 	ExecuteWorkerTaskOptions,
@@ -20,6 +23,53 @@ import type {
 } from './worker-task-runner.js';
 
 type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequestSchema>;
+
+let previousOnePasswordServiceAccountToken: string | undefined;
+let previousOpenClawGatewayToken: string | undefined;
+
+beforeEach(() => {
+	previousOnePasswordServiceAccountToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
+	previousOpenClawGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+	process.env.OP_SERVICE_ACCOUNT_TOKEN = 'test-op-service-account-token';
+	process.env.OPENCLAW_GATEWAY_TOKEN = 'test-openclaw-gateway-token';
+});
+
+afterEach(() => {
+	if (previousOnePasswordServiceAccountToken === undefined) {
+		delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
+	} else {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOnePasswordServiceAccountToken;
+	}
+	if (previousOpenClawGatewayToken === undefined) {
+		delete process.env.OPENCLAW_GATEWAY_TOKEN;
+	} else {
+		process.env.OPENCLAW_GATEWAY_TOKEN = previousOpenClawGatewayToken;
+	}
+});
+
+describe('classifyGatewayRecoveryRestartError', () => {
+	it('separates disk, secret, and VM creation restart failures for health triage', () => {
+		expect(
+			classifyGatewayRecoveryRestartError(
+				Object.assign(new Error('disk full'), { code: 'ENOSPC' }),
+			),
+		).toBe('restart-disk-failure');
+		expect(
+			classifyGatewayRecoveryRestartError(new Error('Failed to resolve secret from 1Password')),
+		).toBe('restart-secret-failure');
+		expect(classifyGatewayRecoveryRestartError(new Error('Gondolin VM.create failed'))).toBe(
+			'restart-vm-create-failed',
+		);
+		expect(
+			classifyGatewayRecoveryRestartError(
+				Object.assign(new Error('restart timed out'), {
+					code: 'OPENCLAW_GATEWAY_RESTART_TIMEOUT',
+				}),
+			),
+		).toBe('recovery-timeout');
+		expect(classifyGatewayRecoveryRestartError(new Error('unexpected'))).toBe('restart-threw');
+	});
+});
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -38,6 +88,14 @@ const systemConfig = {
 		health: {
 			enabled: true,
 			eventHistoryLimit: 500,
+			gatewayServiceAutoRestart: {
+				cooldownMs: 61 * 60 * 1000,
+				consecutiveFailureThreshold: 10,
+				enabled: true,
+				failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+				maxConsecutiveFailedRecoveries: 3,
+				restartTimeoutMs: 10 * 60 * 1000,
+			},
 			gatewayControlLinkBackoffCeilingMs: 120_000,
 			gatewayControlLinkIntervalMs: 10_000,
 			gatewayServiceIntervalMs: 10_000,
@@ -414,7 +472,7 @@ describe('startControllerRuntime', () => {
 		expect(startGatewayZone).toHaveBeenCalledTimes(3);
 		expect(zone.gateway.port).toBe(18791);
 		expect(closeGatewayVm).toHaveBeenCalledTimes(2);
-		expect(setIntervalMock).toHaveBeenCalledTimes(1);
+		expect(setIntervalMock).toHaveBeenCalledTimes(2);
 		expect(runtime.controllerPort).toBe(18800);
 		expect(runtime.zones).toEqual([
 			expect.objectContaining({
@@ -433,7 +491,322 @@ describe('startControllerRuntime', () => {
 			}),
 		]);
 		await runtime.close();
-		expect(clearIntervalMock).toHaveBeenCalledTimes(1);
+		expect(clearIntervalMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('auto restarts a running OpenClaw gateway VM after repeated gateway-service health failures', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const runtimeSystemConfig = {
+			...systemConfig,
+			controller: {
+				health: {
+					...systemConfig.controller.health,
+					gatewayServiceAutoRestart: {
+						cooldownMs: 61 * 60 * 1000,
+						consecutiveFailureThreshold: 2,
+						enabled: true,
+						failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+						maxConsecutiveFailedRecoveries: 3,
+						restartTimeoutMs: 10 * 60 * 1000,
+					},
+				},
+			},
+		} satisfies LoadedSystemConfig;
+		const zone = runtimeSystemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		let nowMs = Date.parse('2026-05-27T13:00:00.000Z');
+		let gatewayStartCount = 0;
+		const firstGatewayClose = vi.fn(async () => {});
+		const healthProbeCommands: string[] = [];
+		const intervalCallbacks: {
+			readonly callback: () => void | Promise<void>;
+			readonly delayMs: number;
+		}[] = [];
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const fakeInterval = setTimeout(() => undefined, 0);
+		clearTimeout(fakeInterval);
+		const startGatewayZone = vi.fn(async () => {
+			gatewayStartCount += 1;
+			return {
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
+				},
+				ingress: {
+					host: '127.0.0.1',
+					port: 18791,
+				},
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: gatewayStartCount === 1 ? firstGatewayClose : vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn((command: string) => {
+						healthProbeCommands.push(command);
+						return createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '502' });
+					}),
+					fs: createManagedVmFsStub(),
+					getHostPid: vi.fn(() => 48_000 + gatewayStartCount),
+					getVmInstance: vi.fn(),
+					id: `gateway-vm-${gatewayStartCount}`,
+					setIngressRoutes: vi.fn(),
+				},
+				zone,
+			};
+		});
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: runtimeSystemConfig,
+				zoneIds: ['shravan'],
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 12345,
+					getVmInstance: vi.fn(),
+					id: 'tool-vm-auto-recovery',
+					setIngressRoutes: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				now: () => nowMs,
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
+				}),
+				runTask: async (_title, fn) => {
+					await fn();
+				},
+				setIntervalImpl: (callback, delayMs) => {
+					intervalCallbacks.push({ callback, delayMs });
+					return fakeInterval;
+				},
+				startGatewayZone,
+				startHttpServer: async (options) => {
+					startHttpServerArgs = options;
+					return { close: async () => {} };
+				},
+			},
+		);
+		const monitorTick = intervalCallbacks.find(
+			(interval) =>
+				interval.delayMs === runtimeSystemConfig.controller.health.gatewayServiceIntervalMs,
+		)?.callback;
+		if (!monitorTick) {
+			throw new Error('Expected gateway-service monitor interval callback.');
+		}
+
+		await monitorTick();
+		expect(healthProbeCommands).toHaveLength(1);
+		nowMs += 10_000;
+		await monitorTick();
+
+		expect(healthProbeCommands).toHaveLength(2);
+		expect(startGatewayZone).toHaveBeenCalledTimes(2);
+		expect(firstGatewayClose).toHaveBeenCalledOnce();
+		if (!startHttpServerArgs) {
+			throw new Error('Expected startHttpServer to be called.');
+		}
+		const snapshotResponse = await startHttpServerArgs.app.request(
+			'/zones/shravan/health-snapshot',
+		);
+		expect(snapshotResponse.status).toBe(200);
+		await expect(snapshotResponse.json()).resolves.toMatchObject({
+			latestEvents: expect.arrayContaining([
+				expect.objectContaining({
+					kind: 'gateway-recovery',
+					newVmId: 'gateway-vm-2',
+					oldVmId: 'gateway-vm-1',
+					result: 'ok',
+					zoneId: 'shravan',
+				}),
+			]),
+		});
+
+		await runtime.close();
+	});
+
+	it('records failed gateway recovery when restart does not replace the VM identity', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const runtimeSystemConfig = {
+			...systemConfig,
+			controller: {
+				health: {
+					...systemConfig.controller.health,
+					gatewayServiceAutoRestart: {
+						cooldownMs: 61 * 60 * 1000,
+						consecutiveFailureThreshold: 1,
+						enabled: true,
+						failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+						maxConsecutiveFailedRecoveries: 3,
+						restartTimeoutMs: 10 * 60 * 1000,
+					},
+				},
+			},
+		} satisfies LoadedSystemConfig;
+		const zone = runtimeSystemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		let nowMs = Date.parse('2026-05-27T13:00:00.000Z');
+		let gatewayStartCount = 0;
+		const intervalCallbacks: {
+			readonly callback: () => void | Promise<void>;
+			readonly delayMs: number;
+		}[] = [];
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const fakeInterval = setTimeout(() => undefined, 0);
+		clearTimeout(fakeInterval);
+		const startGatewayZone = vi.fn(async () => {
+			gatewayStartCount += 1;
+			return {
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
+				},
+				ingress: {
+					host: '127.0.0.1',
+					port: 18791,
+				},
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(() =>
+						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '502' }),
+					),
+					fs: createManagedVmFsStub(),
+					getHostPid: vi.fn(() => 48_000 + gatewayStartCount),
+					getVmInstance: vi.fn(),
+					id: 'gateway-vm-same',
+					setIngressRoutes: vi.fn(),
+				},
+				zone,
+			};
+		});
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: runtimeSystemConfig,
+				zoneIds: ['shravan'],
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 12345,
+					getVmInstance: vi.fn(),
+					id: 'tool-vm-auto-recovery',
+					setIngressRoutes: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				now: () => nowMs,
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
+				}),
+				runTask: async (_title, fn) => {
+					await fn();
+				},
+				setIntervalImpl: (callback, delayMs) => {
+					intervalCallbacks.push({ callback, delayMs });
+					return fakeInterval;
+				},
+				startGatewayZone,
+				startHttpServer: async (options) => {
+					startHttpServerArgs = options;
+					return { close: async () => {} };
+				},
+			},
+		);
+		const monitorTick = intervalCallbacks.find(
+			(interval) =>
+				interval.delayMs === runtimeSystemConfig.controller.health.gatewayServiceIntervalMs,
+		)?.callback;
+		if (!monitorTick) {
+			throw new Error('Expected gateway-service monitor interval callback.');
+		}
+
+		nowMs += 10_000;
+		await monitorTick();
+
+		expect(startGatewayZone).toHaveBeenCalledTimes(2);
+		if (!startHttpServerArgs) {
+			throw new Error('Expected startHttpServer to be called.');
+		}
+		const snapshotResponse = await startHttpServerArgs.app.request(
+			'/zones/shravan/health-snapshot',
+		);
+		expect(snapshotResponse.status).toBe(200);
+		await expect(snapshotResponse.json()).resolves.toMatchObject({
+			latestEvents: expect.arrayContaining([
+				expect.objectContaining({
+					errorCode: 'restart-verification-failed',
+					kind: 'gateway-recovery',
+					oldVmId: 'gateway-vm-same',
+					result: 'failed',
+					zoneId: 'shravan',
+				}),
+			]),
+		});
+
+		await runtime.close();
 	});
 
 	it('reaps stale active uses before releasing expired idle leases', async () => {
@@ -518,7 +891,7 @@ describe('startControllerRuntime', () => {
 						await fn();
 					},
 					setIntervalImpl: (callback) => {
-						runReaper = callback;
+						runReaper ??= callback;
 						return fakeInterval;
 					},
 					startGatewayZone: vi.fn(async () => ({

@@ -63,10 +63,12 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
 
 ```
   close()
-    |-- 1. Clear reaper interval timer
-    |-- 2. Release all leases (sequential to avoid TCP slot races)
-    |-- 3. Stop gateway zone: vm.close() + delete runtime record
-    |-- 4. Close HTTP server
+    |-- 1. Mark runtime stopping
+    |-- 2. Clear reaper interval timer
+    |-- 3. Stop the gateway-service health monitor and await an in-flight tick
+    |-- 4. Release all leases (sequential to avoid TCP slot races)
+    |-- 5. Stop gateway zone: vm.close() + delete runtime record
+    |-- 6. Close HTTP server
     |-- If any lease release failed, throw after server close
 ```
 
@@ -161,6 +163,10 @@ lease routes
 Tool VM SSH guard
   |-- command, file-bridge, finalize, probe
         -> tool-vm-ssh
+  |
+automatic gateway VM restart
+  |-- repeated gateway-service or gateway-control-link failures
+        -> gateway-recovery
 ```
 
 `lease-heartbeat` is the user-facing name for
@@ -174,6 +180,19 @@ Bounded controller communication is operation-specific, not globally
 aggressive. Health probes use short timeouts and no retry. Git push/pull and
 lease-create operations use longer timeouts because normal work can legitimately
 take longer. Unsafe mutations are not retried without an idempotency proof.
+
+For OpenClaw zones, the controller can automatically restart a running gateway
+VM when either the host-side gateway-service probe or the in-VM
+gateway-control-link observation fails repeatedly. The default is 10
+consecutive degraded observations, a 61 minute per-zone cooldown, and a 10
+minute restart deadline. Recovery is not a cold-start path: the controller
+requires an old running gateway VM identity, force releases that zone's Tool VM
+leases, restarts the gateway, then records old and new VM identity in a
+`gateway-recovery` health event. Failed or timed-out recovery attempts are
+recorded as failed `gateway-recovery` events and do not freeze the monitor loop.
+After 3 consecutive failed automatic recoveries, the controller records
+`gateway-recovery-suspended` and stops automatic restarts for that zone until
+the 24 hour failed-recovery reset window expires.
 
 ---
 

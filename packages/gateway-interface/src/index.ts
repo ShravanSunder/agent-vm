@@ -39,6 +39,7 @@ export type {
 	AgentVmHealthEventKind,
 	AgentVmHealthResultKind,
 	DeriveZoneHealthSnapshotOptions,
+	GatewayRecoveryHealthReason,
 	ToolVmSshHealthOperation,
 	ZoneHealthIssue,
 	ZoneHealthIssueKind,

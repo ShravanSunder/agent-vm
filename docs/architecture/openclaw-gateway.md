@@ -80,7 +80,17 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
   10. Enable ingress
 ```
 
-The gateway stays alive until `controller stop`, `controller destroy`, or process exit.
+The gateway stays alive until `controller stop`, `controller destroy`, process
+exit, or automatic gateway VM recovery. Recovery is only for an already-running
+OpenClaw gateway VM: after repeated gateway-service or gateway-to-controller
+control-link failures, the controller force releases that zone's Tool VM leases,
+restarts the gateway VM, verifies the VM id changed, and records a
+`gateway-recovery` health event. The default trigger is 10 consecutive degraded
+observations with a 61 minute per-zone cooldown, so short Discord reconnect
+churn should not restart the VM unless `/readyz` or the controller control link
+is also persistently unhealthy. After 3 consecutive failed automatic recovery
+attempts, the controller records `gateway-recovery-suspended` and pauses
+auto-recovery for that zone until the failed-recovery reset window expires.
 
 Gateway ingress has two different ports in play. `processSpec.guestListenPort`
 is the OpenClaw HTTP/WebSocket port inside the VM. `zones[].gateway.port` is the

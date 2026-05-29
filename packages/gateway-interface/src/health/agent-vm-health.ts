@@ -12,6 +12,8 @@ export const agentVmHealthEventKinds = [
 	'lease-heartbeat',
 	'tool-vm-ssh',
 	'gateway-plugin-health',
+	'gateway-recovery',
+	'gateway-recovery-suspended',
 ] as const;
 
 export type AgentVmHealthEventKind = (typeof agentVmHealthEventKinds)[number];
@@ -27,6 +29,10 @@ export interface AgentVmHealthEventBase {
 }
 
 export type ToolVmSshHealthOperation = 'command' | 'file-bridge' | 'finalize' | 'probe';
+
+export type GatewayRecoveryHealthReason =
+	| 'gateway-control-link-unhealthy'
+	| 'gateway-service-unhealthy';
 
 export const gatewayControlLinkHealthPins = {
 	controllerHost: 'controller.vm.host',
@@ -86,6 +92,47 @@ export type AgentVmHealthEvent =
 			readonly gatewayService: GatewayType;
 			readonly kind: 'gateway-plugin-health';
 			readonly state: 'starting' | 'ready' | 'stopping' | 'failed';
+	  })
+	| (AgentVmHealthEventBase & {
+			readonly action: 'gateway-vm-restart';
+			readonly consecutiveFailures: number;
+			readonly cooldownMs: number;
+			readonly elapsedMs: number;
+			readonly kind: 'gateway-recovery';
+			readonly leaseReleaseFailureCount: number;
+			readonly newBootedAt: string;
+			readonly newHostPid: number;
+			readonly newVmId: string;
+			readonly oldBootedAt: string;
+			readonly oldHostPid: number;
+			readonly oldVmId: string;
+			readonly reason: GatewayRecoveryHealthReason;
+			readonly result: 'ok';
+	  })
+	| (AgentVmHealthEventBase & {
+			readonly action: 'gateway-vm-restart';
+			readonly consecutiveFailures: number;
+			readonly cooldownMs: number;
+			readonly elapsedMs: number;
+			readonly errorCode: string;
+			readonly kind: 'gateway-recovery';
+			readonly leaseReleaseFailureCount?: number | undefined;
+			readonly oldBootedAt?: string | undefined;
+			readonly oldHostPid?: number | undefined;
+			readonly oldVmId?: string | undefined;
+			readonly reason: GatewayRecoveryHealthReason;
+			readonly result: 'failed';
+	  })
+	| (AgentVmHealthEventBase & {
+			readonly action: 'gateway-vm-restart';
+			readonly consecutiveFailedRecoveries: number;
+			readonly consecutiveFailures: number;
+			readonly cooldownMs: number;
+			readonly errorCode: 'max-failed-recoveries';
+			readonly failedRecoveryResetMs: number;
+			readonly kind: 'gateway-recovery-suspended';
+			readonly reason: GatewayRecoveryHealthReason;
+			readonly result: 'failed';
 	  });
 
 export const zoneHealthStateKinds = ['unknown', 'ok', 'stale', 'failed'] as const;
@@ -100,6 +147,8 @@ export const zoneHealthIssueKinds = [
 	'lease-renew-failing',
 	'tool-vm-ssh-failing',
 	'gateway-plugin-unhealthy',
+	'gateway-recovery-failed',
+	'gateway-recovery-suspended',
 	'health-event-stale',
 ] as const;
 
@@ -168,6 +217,18 @@ function optionalStatusCode(value: unknown): boolean {
 	return value === undefined || Number.isInteger(value);
 }
 
+function optionalNonNegativeInteger(value: unknown): boolean {
+	return value === undefined || (Number.isInteger(value) && Number(value) >= 0);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+	return Number.isInteger(value) && Number(value) >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+	return Number.isInteger(value) && Number(value) > 0;
+}
+
 export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEvent {
 	if (!isRecord(value) || !hasBaseEventFields(value)) {
 		return false;
@@ -225,6 +286,59 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 				isOneOf(gatewayTypeValues, value.gatewayService) &&
 				isOneOf(['starting', 'ready', 'stopping', 'failed'] as const, value.state)
 			);
+		case 'gateway-recovery':
+			if (
+				value.action !== 'gateway-vm-restart' ||
+				!isNonNegativeInteger(value.consecutiveFailures) ||
+				!isPositiveInteger(value.cooldownMs) ||
+				!isNonNegativeFiniteNumber(value.elapsedMs) ||
+				!isOneOf(
+					['gateway-control-link-unhealthy', 'gateway-service-unhealthy'] as const,
+					value.reason,
+				)
+			) {
+				return false;
+			}
+			if (value.result === 'ok') {
+				return (
+					isNonNegativeInteger(value.leaseReleaseFailureCount) &&
+					typeof value.newBootedAt === 'string' &&
+					isNonNegativeInteger(value.newHostPid) &&
+					typeof value.newVmId === 'string' &&
+					typeof value.oldBootedAt === 'string' &&
+					isNonNegativeInteger(value.oldHostPid) &&
+					typeof value.oldVmId === 'string' &&
+					value.errorCode === undefined
+				);
+			}
+			if (value.result === 'failed') {
+				return (
+					typeof value.errorCode === 'string' &&
+					value.errorCode.length > 0 &&
+					optionalNonNegativeInteger(value.leaseReleaseFailureCount) &&
+					optionalString(value.oldBootedAt) &&
+					optionalNonNegativeInteger(value.oldHostPid) &&
+					optionalString(value.oldVmId) &&
+					value.newBootedAt === undefined &&
+					value.newHostPid === undefined &&
+					value.newVmId === undefined
+				);
+			}
+			return false;
+		case 'gateway-recovery-suspended':
+			return (
+				value.action === 'gateway-vm-restart' &&
+				isNonNegativeInteger(value.consecutiveFailedRecoveries) &&
+				isNonNegativeInteger(value.consecutiveFailures) &&
+				isPositiveInteger(value.cooldownMs) &&
+				value.errorCode === 'max-failed-recoveries' &&
+				isPositiveInteger(value.failedRecoveryResetMs) &&
+				isOneOf(
+					['gateway-control-link-unhealthy', 'gateway-service-unhealthy'] as const,
+					value.reason,
+				) &&
+				value.result === 'failed'
+			);
 		default:
 			return false;
 	}
@@ -246,6 +360,10 @@ export function healthEventBucketKey(event: AgentVmHealthEvent): string {
 			return `${event.zoneId}:${event.kind}:${event.leaseId}:${event.operation}`;
 		case 'gateway-plugin-health':
 			return `${event.zoneId}:${event.kind}:${event.gatewayService}`;
+		case 'gateway-recovery':
+			return `${event.zoneId}:${event.kind}:${event.action}`;
+		case 'gateway-recovery-suspended':
+			return `${event.zoneId}:${event.kind}:${event.action}`;
 	}
 	return assertNeverHealthEvent(event);
 }
@@ -266,6 +384,10 @@ function failedIssueKindForEvent(event: AgentVmHealthEvent): ZoneHealthIssueKind
 			return 'tool-vm-ssh-failing';
 		case 'gateway-plugin-health':
 			return 'gateway-plugin-unhealthy';
+		case 'gateway-recovery':
+			return 'gateway-recovery-failed';
+		case 'gateway-recovery-suspended':
+			return 'gateway-recovery-suspended';
 	}
 	return assertNeverHealthEvent(event);
 }

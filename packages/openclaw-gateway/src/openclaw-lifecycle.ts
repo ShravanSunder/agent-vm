@@ -32,6 +32,9 @@ const openClawGatewayBootLogFileVmPath = `${agentVmLogsDirVmPath}/gateway-boot-l
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
+const openClawCommandVmPath = '/usr/local/bin/openclaw';
+const openClawGatewayGuestPath =
+	'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -595,7 +598,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
 				OPENCLAW_STATE_DIR: openClawStateDirVmPath,
-				PATH: `/pnpm:${process.env.PATH ?? ''}`,
+				PATH: openClawGatewayGuestPath,
 				PIP_CACHE_DIR: '/work/cache/pip',
 				PNPM_HOME: '/pnpm',
 				TEMP: '/work/tmp',
@@ -656,7 +659,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 			// FORCE_IPV4_EGRESS_NODE_OPTIONS flags) is visible in the log
 			// stream without SSHing into the VM.  See
 			// FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
-			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && { printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > ${openClawGatewayBootLogFileVmPath}; } && cd /home/openclaw && nohup openclaw gateway --port 18789 >> ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
+			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && { printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > ${openClawGatewayBootLogFileVmPath}; } && cd /home/openclaw && nohup ${openClawCommandVmPath} gateway --port 18789 >> ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
 			healthCheck: {
 				type: 'http',
 				port: 18789,

@@ -347,11 +347,52 @@ const leaseIdleTtlSchema = z
 const defaultControllerHealthConfig = {
 	enabled: true,
 	eventHistoryLimit: 500,
+	gatewayServiceAutoRestart: {
+		cooldownMs: 61 * 60 * 1000,
+		consecutiveFailureThreshold: 10,
+		enabled: true,
+		failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+		maxConsecutiveFailedRecoveries: 3,
+		restartTimeoutMs: 10 * 60 * 1000,
+	},
 	gatewayControlLinkBackoffCeilingMs: 120_000,
 	gatewayControlLinkIntervalMs: 10_000,
 	gatewayServiceIntervalMs: 10_000,
 	staleAfterMs: 30_000,
 } as const;
+
+const gatewayServiceAutoRestartSchema = z
+	.object({
+		cooldownMs: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.gatewayServiceAutoRestart.cooldownMs),
+		consecutiveFailureThreshold: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.gatewayServiceAutoRestart.consecutiveFailureThreshold),
+		enabled: z.boolean().default(defaultControllerHealthConfig.gatewayServiceAutoRestart.enabled),
+		failedRecoveryResetMs: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.gatewayServiceAutoRestart.failedRecoveryResetMs),
+		maxConsecutiveFailedRecoveries: z
+			.number()
+			.int()
+			.positive()
+			.default(
+				defaultControllerHealthConfig.gatewayServiceAutoRestart.maxConsecutiveFailedRecoveries,
+			),
+		restartTimeoutMs: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.gatewayServiceAutoRestart.restartTimeoutMs),
+	})
+	.strict();
 
 const controllerHealthSchema = z
 	.object({
@@ -361,6 +402,9 @@ const controllerHealthSchema = z
 			.int()
 			.positive()
 			.default(defaultControllerHealthConfig.eventHistoryLimit),
+		gatewayServiceAutoRestart: gatewayServiceAutoRestartSchema.default(
+			defaultControllerHealthConfig.gatewayServiceAutoRestart,
+		),
 		gatewayControlLinkBackoffCeilingMs: z
 			.number()
 			.int()

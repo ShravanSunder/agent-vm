@@ -22,7 +22,10 @@ import {
 } from './controller-runtime-types.js';
 import type { PullDefaultRequest } from './git-pull-default-operations.js';
 import type { PushBranchRequest } from './git-push-operations.js';
-import { createGatewayServiceHealthMonitor } from './health/gateway-service-health-monitor.js';
+import {
+	createGatewayServiceHealthMonitor,
+	type GatewayVmRecoveryResult,
+} from './health/gateway-service-health-monitor.js';
 import { HealthEventStore } from './health/health-event-store.js';
 import { createMutableControllerRuntimeReadiness } from './http/controller-http-route-support.js';
 import { createControllerService } from './http/controller-http-routes.js';
@@ -40,7 +43,10 @@ import {
 	type ZoneGitReadConfig,
 } from './zone-git/zone-git-operations.js';
 import { isOpenClawZoneGitConfigured } from './zone-git/zone-git-paths.js';
-import { createOpenClawZoneRuntime } from './zone-runtimes/openclaw-zone-runtime.js';
+import {
+	createOpenClawZoneRuntime,
+	isOpenClawZoneRestartTimeoutError,
+} from './zone-runtimes/openclaw-zone-runtime.js';
 import { createWorkerZoneRuntime } from './zone-runtimes/worker-zone-runtime.js';
 import {
 	ControllerZoneConfigurationError,
@@ -59,6 +65,42 @@ function formatUnknownError(error: unknown): string {
 		return error.message;
 	}
 	return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
+function getUnknownErrorCode(error: unknown): string | undefined {
+	if (typeof error !== 'object' || error === null || !('code' in error)) {
+		return undefined;
+	}
+	return typeof error.code === 'string' ? error.code : undefined;
+}
+
+export function classifyGatewayRecoveryRestartError(error: unknown): string {
+	if (isOpenClawZoneRestartTimeoutError(error)) {
+		return 'recovery-timeout';
+	}
+	const code = getUnknownErrorCode(error);
+	if (
+		code === 'EACCES' ||
+		code === 'EIO' ||
+		code === 'ENOENT' ||
+		code === 'ENOSPC' ||
+		code === 'EROFS'
+	) {
+		return 'restart-disk-failure';
+	}
+	const message = formatUnknownError(error).toLowerCase();
+	if (
+		message.includes('1password') ||
+		message.includes('credential') ||
+		message.includes('op://') ||
+		message.includes('secret')
+	) {
+		return 'restart-secret-failure';
+	}
+	if (message.includes('gondolin') || message.includes('qemu') || message.includes('vm.create')) {
+		return 'restart-vm-create-failed';
+	}
+	return 'restart-threw';
 }
 
 function isOpenClawZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig & {
@@ -384,6 +426,104 @@ export async function startControllerRuntime(
 			zoneGitCapabilityStore.verifyTokenForZone(zoneId, token),
 		stopController,
 	};
+	const recoverGatewayVm = async (request: {
+		readonly consecutiveFailures: number;
+		readonly reason: 'gateway-control-link-unhealthy' | 'gateway-service-unhealthy';
+		readonly zoneId: string;
+	}): Promise<GatewayVmRecoveryResult> => {
+		const startedAtMs = now();
+		const elapsedMs = (): number => now() - startedAtMs;
+		if (runtimeReadiness.get().state === 'stopping') {
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'controller-stopping',
+				result: 'failed',
+			};
+		}
+
+		let runtime: ReturnType<typeof registry.getOpenClawRuntime>;
+		try {
+			runtime = registry.getOpenClawRuntime(request.zoneId);
+		} catch (error) {
+			writeControllerRuntimeLog(
+				`Gateway VM recovery failed to find OpenClaw runtime for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+			);
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'runtime-unavailable',
+				result: 'failed',
+			};
+		}
+
+		const oldSnapshot = runtime.getSnapshot();
+		if (oldSnapshot.lifecycleState !== 'running' || !oldSnapshot.gateway) {
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'old-gateway-not-running',
+				result: 'failed',
+			};
+		}
+		const oldGateway = oldSnapshot.gateway;
+		const oldBootedAt = oldSnapshot.bootedAt;
+		const oldHostPid = oldGateway.vm.hostPid;
+		writeControllerRuntimeLog(
+			`Auto-restarting gateway VM for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
+		);
+
+		let restartResult: { readonly leaseReleaseFailureCount: number };
+		try {
+			restartResult = await runtime.restart({
+				timeoutMs: controllerHealthConfig.gatewayServiceAutoRestart.restartTimeoutMs,
+			});
+		} catch (error) {
+			writeControllerRuntimeLog(
+				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+			);
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: classifyGatewayRecoveryRestartError(error),
+				...(oldBootedAt === undefined ? {} : { oldBootedAt }),
+				...(oldHostPid === undefined ? {} : { oldHostPid }),
+				oldVmId: oldGateway.vm.id,
+				result: 'failed',
+			};
+		}
+
+		const newSnapshot = runtime.getSnapshot();
+		const newBootedAt = newSnapshot.bootedAt;
+		const newGateway = newSnapshot.gateway;
+		if (
+			newSnapshot.lifecycleState !== 'running' ||
+			!newGateway ||
+			oldBootedAt === undefined ||
+			newBootedAt === undefined ||
+			oldHostPid === undefined ||
+			newGateway.vm.hostPid === undefined ||
+			newGateway.vm.id === oldGateway.vm.id ||
+			newGateway.vm.hostPid === oldHostPid ||
+			newBootedAt === oldBootedAt
+		) {
+			return {
+				elapsedMs: elapsedMs(),
+				errorCode: 'restart-verification-failed',
+				...(oldBootedAt === undefined ? {} : { oldBootedAt }),
+				...(oldHostPid === undefined ? {} : { oldHostPid }),
+				oldVmId: oldGateway.vm.id,
+				result: 'failed',
+			};
+		}
+		return {
+			elapsedMs: elapsedMs(),
+			leaseReleaseFailureCount: restartResult.leaseReleaseFailureCount,
+			newBootedAt,
+			newHostPid: newGateway.vm.hostPid,
+			newVmId: newGateway.vm.id,
+			oldBootedAt,
+			oldHostPid,
+			oldVmId: oldGateway.vm.id,
+			result: 'ok',
+		};
+	};
 	const controllerApp = createControllerService({
 		healthEventStore,
 		leaseManager,
@@ -417,6 +557,13 @@ export async function startControllerRuntime(
 
 	const gatewayServiceHealthMonitor = controllerHealthConfig.enabled
 		? createGatewayServiceHealthMonitor({
+				...(dependencies.clearIntervalImpl
+					? { clearIntervalImpl: dependencies.clearIntervalImpl }
+					: {}),
+				...(dependencies.clearTimeoutImpl
+					? { clearTimeoutImpl: dependencies.clearTimeoutImpl }
+					: {}),
+				gatewayServiceAutoRestart: controllerHealthConfig.gatewayServiceAutoRestart,
 				healthEventStore,
 				intervalMs: controllerHealthConfig.gatewayServiceIntervalMs,
 				now,
@@ -435,6 +582,10 @@ export async function startControllerRuntime(
 						zoneId: health.zoneId,
 					};
 				},
+				recoverGatewayVm,
+				...(dependencies.setIntervalImpl ? { setIntervalImpl: dependencies.setIntervalImpl } : {}),
+				...(dependencies.setTimeoutImpl ? { setTimeoutImpl: dependencies.setTimeoutImpl } : {}),
+				staleAfterMs: controllerHealthConfig.staleAfterMs,
 				zoneIds: registry.selectedZoneIds.filter((zoneId) => {
 					const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
 					return zone ? isOpenClawZone(zone) : false;
@@ -446,8 +597,9 @@ export async function startControllerRuntime(
 	const snapshotByZone = registry.getSnapshotByZone();
 	return {
 		async close(): Promise<void> {
+			runtimeReadiness.set('stopping');
 			clearReaperTimer();
-			gatewayServiceHealthMonitor?.stop();
+			await gatewayServiceHealthMonitor?.stop();
 			requestHeartbeatRegistry.stopAll();
 			const releaseError = await releaseAllLeases();
 			let stopError: Error | undefined;
