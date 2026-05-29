@@ -136,17 +136,37 @@ describe('task-state reducer', () => {
 		const state = createInitialState('task-1', TEST_CONFIG);
 		const nextState = applyEvent(state, {
 			event: 'wrapup-result',
-			prUrl: 'https://example.com/pr/1',
+			outcome: 'pr-created',
+			summary: 'opened pull request',
+			reason: null,
+			prUrl: 'https://github.com/acme/widgets/pull/1',
 			branchName: 'agent/task-1',
 			pushedCommits: ['abc123'],
 		});
 
 		expect(nextState.status).toBe('pending');
 		expect(nextState.wrapupResult).toEqual({
-			prUrl: 'https://example.com/pr/1',
+			outcome: 'pr-created',
+			summary: 'opened pull request',
+			reason: null,
+			prUrl: 'https://github.com/acme/widgets/pull/1',
 			branchName: 'agent/task-1',
 			pushedCommits: ['abc123'],
 		});
+	});
+
+	it('ignores wrapup parse failures in durable state while preserving replay progress', () => {
+		const state = createInitialState('task-1', TEST_CONFIG);
+		const nextState = applyEvent(state, {
+			event: 'wrapup-parse-failed',
+			firstError: 'first parse failed',
+			firstResponsePreview: 'not json',
+			secondError: 'second parse failed',
+			secondResponsePreview: 'still not json',
+		});
+
+		expect(nextState.wrapupResult).toBeNull();
+		expect(nextState.status).toBe('pending');
 	});
 
 	it('stores context errors without changing status', () => {

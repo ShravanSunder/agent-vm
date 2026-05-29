@@ -71,6 +71,52 @@ describe('worker-config', () => {
 			expect(workerConfigSchema.safeParse(input).success).toBe(true);
 		});
 
+		it('accepts per-phase reasoning effort and reviewer executor overrides', () => {
+			const input = baseValidConfig();
+			const phases = input.phases as {
+				plan: {
+					reasoningEffort?: string;
+					reviewerExecutor?: {
+						readonly provider: string;
+						readonly model: string;
+						readonly reasoningEffort: string;
+					};
+				};
+				work: {
+					reviewerExecutor?: {
+						readonly provider: string;
+						readonly model: string;
+						readonly reasoningEffort: string;
+					};
+				};
+			};
+			phases.plan.reasoningEffort = 'high';
+			phases.plan.reviewerExecutor = {
+				provider: 'codex',
+				model: 'gpt-5.4-mini',
+				reasoningEffort: 'low',
+			};
+			phases.work.reviewerExecutor = {
+				provider: 'claude',
+				model: 'claude-sonnet-4-6',
+				reasoningEffort: 'medium',
+			};
+
+			const config = workerConfigSchema.parse(input);
+
+			expect(config.phases.plan.reasoningEffort).toBe('high');
+			expect(config.phases.plan.reviewerExecutor).toEqual({
+				provider: 'codex',
+				model: 'gpt-5.4-mini',
+				reasoningEffort: 'low',
+			});
+			expect(config.phases.work.reviewerExecutor).toEqual({
+				provider: 'claude',
+				model: 'claude-sonnet-4-6',
+				reasoningEffort: 'medium',
+			});
+		});
+
 		it('accepts final runtime and common agent instructions', () => {
 			const input = baseValidConfig();
 			input.runtimeInstructions = 'runtime facts from controller';
@@ -236,6 +282,35 @@ describe('worker-config', () => {
 				provider: 'claude',
 				model: 'claude-opus-4-6',
 				reasoningEffort: 'high',
+			});
+		});
+
+		it('uses explicit phase reasoning effort over model alias defaults', () => {
+			const config = workerConfigSchema.parse(baseValidConfig()) satisfies WorkerConfig;
+
+			expect(
+				resolvePhaseExecutor(config, {
+					provider: 'codex',
+					model: 'latest',
+					reasoningEffort: 'low',
+				}),
+			).toEqual({
+				provider: 'codex',
+				model: 'gpt-5.4',
+				reasoningEffort: 'low',
+			});
+		});
+
+		it('uses default reasoning effort for explicit model IDs', () => {
+			const config = workerConfigSchema.parse({
+				...baseValidConfig(),
+				defaults: { provider: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+			}) satisfies WorkerConfig;
+
+			expect(resolvePhaseExecutor(config, {})).toEqual({
+				provider: 'codex',
+				model: 'gpt-5.4',
+				reasoningEffort: 'xhigh',
 			});
 		});
 	});

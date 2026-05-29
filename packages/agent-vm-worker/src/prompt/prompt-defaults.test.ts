@@ -96,6 +96,8 @@ describe('role default content', () => {
 		expect(DEFAULT_WRAPUP_INSTRUCTIONS).toContain('You call git-pull-default');
 		expect(DEFAULT_WRAPUP_INSTRUCTIONS).toContain('You call git-push');
 		expect(DEFAULT_WRAPUP_INSTRUCTIONS).toContain('capture the GitHub PR URL');
-		expect(DEFAULT_WRAPUP_INSTRUCTIONS).toContain('return JSON with prUrl');
+		expect(DEFAULT_WRAPUP_INSTRUCTIONS).toContain('outcome="pr-created"');
+		expect(DEFAULT_WRAPUP_INSTRUCTIONS).toContain('no-pr-needed');
+		expect(DEFAULT_WRAPUP_INSTRUCTIONS).toContain('pr-blocked');
 	});
 });

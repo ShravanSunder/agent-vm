@@ -14,9 +14,13 @@ export const mcpServerSchema = z.object({
 
 export type McpServerConfig = z.infer<typeof mcpServerSchema>;
 
+export const reasoningEffortSchema = z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']);
+export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
+
 export const phaseExecutorSchema = z.object({
 	provider: z.string().min(1).optional(),
 	model: z.string().min(1).optional(),
+	reasoningEffort: reasoningEffortSchema.optional(),
 });
 
 // Cycle semantics:
@@ -62,6 +66,7 @@ type NullableInstructionInput = z.infer<typeof nullableInstructionInputSchema>;
 
 export const planPhaseSchema = z.object({
 	...phaseExecutorSchema.shape,
+	reviewerExecutor: phaseExecutorSchema.optional(),
 	cycle: planCycleSchema,
 	agentInstructions: nullableInstructionTextSchema,
 	reviewerInstructions: nullableInstructionTextSchema,
@@ -80,6 +85,7 @@ export const planPhaseSchema = z.object({
 
 export const workPhaseSchema = z.object({
 	...phaseExecutorSchema.shape,
+	reviewerExecutor: phaseExecutorSchema.optional(),
 	cycle: workCycleSchema,
 	agentInstructions: nullableInstructionTextSchema,
 	reviewerInstructions: nullableInstructionTextSchema,
@@ -128,6 +134,7 @@ export const workerConfigSchema = z
 			.object({
 				provider: z.string().min(1).default('codex'),
 				model: z.string().min(1).default('latest-medium'),
+				reasoningEffort: reasoningEffortSchema.optional(),
 			})
 			.default(() => ({
 				provider: 'codex',
@@ -170,8 +177,6 @@ export function computeTotalTaskTimeoutMs(config: WorkerConfig): number {
 	return baseMs + Math.ceil((baseMs * TOTAL_TIMEOUT_BUFFER_PERCENT) / 100);
 }
 
-export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-
 interface ResolvedModel {
 	readonly model: string;
 	readonly reasoningEffort: ReasoningEffort;
@@ -194,9 +199,17 @@ export function resolveModelAlias(provider: string, model: string): ResolvedMode
 	return MODEL_ALIASES[provider]?.[model] ?? { model, reasoningEffort: 'medium' };
 }
 
+function isModelAlias(provider: string, model: string): boolean {
+	return MODEL_ALIASES[provider]?.[model] !== undefined;
+}
+
 export function resolvePhaseExecutor(
 	config: WorkerConfig,
-	phase: { readonly provider?: string | undefined; readonly model?: string | undefined },
+	phase: {
+		readonly provider?: string | undefined;
+		readonly model?: string | undefined;
+		readonly reasoningEffort?: ReasoningEffort | undefined;
+	},
 ): {
 	readonly provider: string;
 	readonly model: string;
@@ -205,11 +218,14 @@ export function resolvePhaseExecutor(
 	const provider = phase.provider ?? config.defaults.provider;
 	const model = phase.model ?? config.defaults.model;
 	const resolved = resolveModelAlias(provider, model);
+	const defaultReasoningEffort = isModelAlias(provider, model)
+		? undefined
+		: config.defaults.reasoningEffort;
 
 	return {
 		provider,
 		model: resolved.model,
-		reasoningEffort: resolved.reasoningEffort,
+		reasoningEffort: phase.reasoningEffort ?? defaultReasoningEffort ?? resolved.reasoningEffort,
 	};
 }
 

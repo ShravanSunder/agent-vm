@@ -118,7 +118,9 @@ describe('worker runtime integration', () => {
 		);
 		const wrapupExecutor = createMockExecutor(
 			JSON.stringify({
+				outcome: 'no-pr-needed',
 				summary: 'Wrapup complete',
+				reason: 'integration test does not create a PR',
 				prUrl: null,
 				branchName: null,
 				pushedCommits: [],

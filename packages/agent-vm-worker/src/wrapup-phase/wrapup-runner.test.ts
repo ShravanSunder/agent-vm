@@ -6,7 +6,7 @@ import { runWrapup } from './wrapup-runner.js';
 function buildThread(
 	responses:
 		| string
-		| readonly string[] = '{"summary":"ok","prUrl":null,"branchName":"agent/task","pushedCommits":[]}',
+		| readonly string[] = '{"outcome":"no-pr-needed","summary":"ok","reason":"no code changes","prUrl":null,"branchName":"agent/task","pushedCommits":[]}',
 ): {
 	readonly thread: PersistentThread;
 	readonly inputs: string[];
@@ -33,7 +33,9 @@ describe('runWrapup', () => {
 	test('sends wrapup prompt and parses final answer', async () => {
 		const { thread, inputs } = buildThread(
 			JSON.stringify({
+				outcome: 'pr-created',
 				summary: 'pushed and opened PR',
+				reason: null,
 				prUrl: 'https://github.com/org/repo/pull/1',
 				branchName: 'agent/task',
 				pushedCommits: ['abc123'],
@@ -60,9 +62,12 @@ describe('runWrapup', () => {
 		expect(inputs[0]).toContain('Work-agent summary');
 		expect(inputs[0]).toContain('Controller/git context');
 		expect(inputs[0]).toContain('Required output JSON');
+		expect(inputs[0]).toContain('outcome');
 		expect(inputs[0]).toContain('prUrl');
 		expect(result).toEqual({
+			outcome: 'pr-created',
 			summary: 'pushed and opened PR',
+			reason: null,
 			prUrl: 'https://github.com/org/repo/pull/1',
 			branchName: 'agent/task',
 			pushedCommits: ['abc123'],
@@ -78,7 +83,9 @@ describe('runWrapup', () => {
 		const { thread, inputs } = buildThread([
 			'I pushed the branch and opened https://github.com/org/repo/pull/2',
 			JSON.stringify({
+				outcome: 'pr-created',
 				summary: 'pushed on retry',
+				reason: null,
 				prUrl: 'https://github.com/org/repo/pull/2',
 				branchName: 'agent/task',
 				pushedCommits: ['abc123'],
@@ -100,7 +107,9 @@ describe('runWrapup', () => {
 		expect(inputs).toHaveLength(2);
 		expect(inputs[1]).toContain('Return only valid JSON');
 		expect(result).toEqual({
+			outcome: 'pr-created',
 			summary: 'pushed on retry',
+			reason: null,
 			prUrl: 'https://github.com/org/repo/pull/2',
 			branchName: 'agent/task',
 			pushedCommits: ['abc123'],
@@ -112,6 +121,7 @@ describe('runWrapup', () => {
 			'not json',
 			'Created https://github.com/org/repo/pull/3 but forgot JSON',
 		]);
+		const onWrapupParseFailed = vi.fn();
 
 		const result = await runWrapup({
 			wrapupThread: thread,
@@ -123,13 +133,24 @@ describe('runWrapup', () => {
 			validationResults: [],
 			validationSkipped: false,
 			onWrapupTurn: () => {},
+			onWrapupParseFailed,
 		});
 
 		expect(result).toEqual({
+			outcome: 'pr-blocked',
 			summary: 'Created https://github.com/org/repo/pull/3 but forgot JSON',
-			prUrl: 'https://github.com/org/repo/pull/3',
+			reason: expect.stringContaining(
+				'Mentioned URL, not trusted as structured output: https://github.com/org/repo/pull/3',
+			),
+			prUrl: null,
 			branchName: null,
 			pushedCommits: [],
+		});
+		expect(onWrapupParseFailed).toHaveBeenCalledWith({
+			firstError: expect.stringContaining('not valid JSON'),
+			firstResponsePreview: 'not json',
+			secondError: expect.stringContaining('not valid JSON'),
+			secondResponsePreview: 'Created https://github.com/org/repo/pull/3 but forgot JSON',
 		});
 	});
 });

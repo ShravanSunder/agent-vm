@@ -126,7 +126,18 @@ function enqueueHappyPathExecutors(): void {
 				}),
 			]),
 		)
-		.mockReturnValueOnce(createMockExecutor([JSON.stringify({ summary: 'wrapup' })]));
+		.mockReturnValueOnce(
+			createMockExecutor([
+				JSON.stringify({
+					outcome: 'no-pr-needed',
+					summary: 'wrapup',
+					reason: 'test-only task',
+					prUrl: null,
+					branchName: 'agent/test',
+					pushedCommits: ['abc123'],
+				}),
+			]),
+		);
 }
 
 async function readEventNames(stateDir: string, taskId: string): Promise<readonly string[]> {
@@ -290,6 +301,62 @@ describe('coordinator', () => {
 			repos: [],
 			taskId,
 		});
+	});
+
+	it('uses reviewerExecutor for plan and work reviewer threads', async () => {
+		enqueueHappyPathExecutors();
+		const config = makeConfig(stateDir, {
+			phases: {
+				plan: {
+					model: 'plan-model',
+					reviewerExecutor: {
+						provider: 'codex',
+						model: 'plan-review-model',
+						reasoningEffort: 'high',
+					},
+					cycle: { kind: 'review', cycleCount: 1 },
+					agentInstructions: null,
+					reviewerInstructions: null,
+					skills: [],
+				},
+				work: {
+					model: 'work-model',
+					reviewerExecutor: {
+						provider: 'claude',
+						model: 'work-review-model',
+						reasoningEffort: 'low',
+					},
+					cycle: { kind: 'review', cycleCount: 1 },
+					agentInstructions: null,
+					reviewerInstructions: null,
+					skills: [],
+				},
+				wrapup: {
+					model: 'wrapup-model',
+					instructions: null,
+					skills: [],
+				},
+			},
+		});
+		const coordinator = await createCoordinator({ config, workDir: tempDir });
+
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'reviewer-executors',
+			prompt: 'fix the issue',
+		});
+
+		await waitForStatus(coordinator, taskId, 'completed');
+		const executorSelections: Array<readonly [unknown, unknown, unknown]> = [];
+		for (const call of mocks.createWorkExecutor.mock.calls) {
+			executorSelections.push([call[0], call[1], call[4]]);
+		}
+		expect(executorSelections).toEqual([
+			['codex', 'plan-model', 'medium'],
+			['codex', 'plan-review-model', 'high'],
+			['codex', 'work-model', 'medium'],
+			['claude', 'work-review-model', 'low'],
+			['codex', 'wrapup-model', 'medium'],
+		]);
 	});
 
 	it('rejects a second task while one is active', async () => {

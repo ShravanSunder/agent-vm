@@ -62,7 +62,7 @@ For all system config fields, see
 
 ### worker.jsonc — Pipeline Behavior
 
-Controls which LLM models to use, how review cycles run, and what verification commands are available. `agent-vm init --type worker ...` writes the built-in prompt defaults as editable markdown files and references them from `worker.jsonc`:
+Controls which LLM models to use, reasoning effort, optional reviewer-specific executors, how review cycles run, and what verification commands are available. `agent-vm init --type worker ...` writes the built-in prompt defaults as editable markdown files and references them from `worker.jsonc`:
 
 ```json
 {
@@ -70,6 +70,7 @@ Controls which LLM models to use, how review cycles run, and what verification c
   "defaults": { "provider": "codex", "model": "latest-medium" },
   "phases": {
     "plan": {
+      "reviewerExecutor": { "provider": "codex", "model": "latest-mini" },
       "cycle": { "kind": "review", "cycleCount": 2 },
       "agentInstructions": { "path": "./prompts/plan-agent.md" },
       "reviewerInstructions": { "path": "./prompts/plan-reviewer.md" }

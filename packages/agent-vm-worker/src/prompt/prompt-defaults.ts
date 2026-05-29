@@ -208,7 +208,12 @@ Ship the work that was already implemented. You are a fresh wrapup thread with e
 - You call git-pull-default and confirm default/current branch drift.
 - You call git-push and confirm the controller pushed the agent branch.
 - You run GH_TOKEN="$GITHUB_TOKEN" gh pr create and capture the GitHub PR URL.
-- You return JSON with prUrl, branchName, pushedCommits, and summary.
+- You return JSON with outcome="pr-created", prUrl, branchName, pushedCommits, summary, and reason=null.
+
+## Outcome meanings
+- pr-created: You successfully created or found the PR and prUrl is the trusted GitHub PR URL.
+- no-pr-needed: No PR should be opened for this task. Set prUrl=null and explain why in reason.
+- pr-blocked: PR creation was attempted or required but blocked. Set prUrl=null and explain the blocker in reason.
 
 ## Important rules
 - The VM has no real GitHub token. Never run raw git push. Always use git-push.
@@ -223,7 +228,13 @@ Ship the work that was already implemented. You are a fresh wrapup thread with e
 - Modify files unless git-pull-default reveals a real conflict or missing commit.
 
 ## Return format
-{ "summary": "wrapup result", "prUrl": "https://github.com/org/repo/pull/1", "branchName": "agent/name", "pushedCommits": ["sha"] }`;
+{ "outcome": "pr-created", "summary": "wrapup result", "reason": null, "prUrl": "https://github.com/org/repo/pull/1", "branchName": "agent/name", "pushedCommits": ["sha"] }
+
+If no PR is needed:
+{ "outcome": "no-pr-needed", "summary": "wrapup result", "reason": "why no PR is needed", "prUrl": null, "branchName": "agent/name or null", "pushedCommits": ["sha"] }
+
+If PR creation is blocked:
+{ "outcome": "pr-blocked", "summary": "wrapup result", "reason": "what blocked PR creation", "prUrl": null, "branchName": "agent/name or null", "pushedCommits": ["sha"] }`;
 
 const DEFAULTS_BY_ROLE = {
 	'plan-agent': DEFAULT_PLAN_AGENT_INSTRUCTIONS,

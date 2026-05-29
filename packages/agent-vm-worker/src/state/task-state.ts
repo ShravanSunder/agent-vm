@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import type { ReviewResult } from '../shared/review-result.js';
 import { writeStderr } from '../shared/stderr.js';
+import type { WrapupFinalAnswer } from '../shared/wrapup-outcome.js';
 import { replayEvents } from './event-log.js';
 import type {
 	PhaseName,
@@ -58,11 +59,7 @@ export interface TaskState {
 	readonly lastPlanReview: ReviewResult | null;
 	readonly lastWorkReview: ReviewResult | null;
 	readonly lastValidationResults: readonly VerificationCommandResult[] | null;
-	readonly wrapupResult: {
-		readonly prUrl: string | null;
-		readonly branchName: string | null;
-		readonly pushedCommits: readonly string[];
-	} | null;
+	readonly wrapupResult: WrapupFinalAnswer | null;
 	readonly controllerOperations: {
 		readonly gitPushes: readonly ControllerGitPushState[];
 		readonly gitPulls: readonly ControllerGitPullState[];
@@ -218,16 +215,16 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 				wrapupThreadId: event.threadId,
 				updatedAt,
 			};
-		case 'wrapup-result':
+		case 'wrapup-parse-failed':
+			return { ...state, updatedAt };
+		case 'wrapup-result': {
+			const { event: _event, ...wrapupResult } = event;
 			return {
 				...state,
-				wrapupResult: {
-					prUrl: event.prUrl,
-					branchName: event.branchName,
-					pushedCommits: event.pushedCommits,
-				},
+				wrapupResult,
 				updatedAt,
 			};
+		}
 		case 'controller-git-push-started':
 			return {
 				...upsertGitPushState(state, {

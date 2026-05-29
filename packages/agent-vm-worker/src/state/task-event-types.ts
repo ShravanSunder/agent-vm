@@ -4,6 +4,11 @@ import { workerConfigSchema } from '../config/worker-config.js';
 import { phaseNames } from '../shared/phase-names.js';
 import { repoLocationSchema } from '../shared/repo-location.js';
 import { reviewResultSchema } from '../shared/review-result.js';
+import {
+	wrapupNoPrNeededResultSchema,
+	wrapupPrBlockedResultSchema,
+	wrapupPrCreatedResultSchema,
+} from '../shared/wrapup-outcome.js';
 
 export const phaseNameSchema = z.enum(phaseNames);
 export type PhaseName = z.infer<typeof phaseNameSchema>;
@@ -57,7 +62,27 @@ const controllerGitPullBaseSchema = z.object({
 	repoUrl: z.string().min(1),
 });
 
-export const taskEventSchema = z.discriminatedUnion('event', [
+const wrapupResultEventSchemas = [
+	wrapupPrCreatedResultSchema.extend({
+		event: z.literal('wrapup-result'),
+	}),
+	wrapupNoPrNeededResultSchema.extend({
+		event: z.literal('wrapup-result'),
+	}),
+	wrapupPrBlockedResultSchema.extend({
+		event: z.literal('wrapup-result'),
+	}),
+] as const;
+
+const wrapupParseFailedEventSchema = z.object({
+	event: z.literal('wrapup-parse-failed'),
+	firstError: z.string().min(1),
+	firstResponsePreview: z.string(),
+	secondError: z.string().min(1),
+	secondResponsePreview: z.string(),
+});
+
+export const taskEventSchema = z.union([
 	z.object({
 		event: z.literal('task-accepted'),
 		taskId: z.string().min(1),
@@ -112,12 +137,8 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		threadId: z.string(),
 		tokenCount: z.number().int().nonnegative(),
 	}),
-	z.object({
-		event: z.literal('wrapup-result'),
-		prUrl: z.string().url().nullable(),
-		branchName: z.string().nullable(),
-		pushedCommits: z.array(z.string()),
-	}),
+	wrapupParseFailedEventSchema,
+	...wrapupResultEventSchemas,
 	controllerGitPushBaseSchema.extend({
 		event: z.literal('controller-git-push-started'),
 	}),

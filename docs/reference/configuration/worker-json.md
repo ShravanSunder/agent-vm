@@ -20,6 +20,7 @@ commonAgentInstructions
 defaults
   provider
   model
+  reasoningEffort
 
 phases
   plan
@@ -41,10 +42,13 @@ stateDir
   "commonAgentInstructions": { "path": "./prompts/common-agent-instructions.md" },
   "defaults": {
     "provider": "codex",
-    "model": "latest-medium"
+    "model": "latest-medium",
+    "reasoningEffort": "medium"
   },
   "phases": {
     "plan": {
+      "model": "latest-medium",
+      "reviewerExecutor": { "provider": "codex", "model": "latest-mini" },
       "cycle": { "kind": "review", "cycleCount": 2 },
       "agentInstructions": { "path": "./prompts/plan-agent.md" },
       "reviewerInstructions": { "path": "./prompts/plan-reviewer.md" }
@@ -71,6 +75,7 @@ stateDir
 | --- | --- |
 | `defaults.provider` | `codex` |
 | `defaults.model` | `latest-medium` |
+| `defaults.reasoningEffort` | unset |
 | `phases.plan.cycle` | `{ "kind": "review", "cycleCount": 2 }` |
 | `phases.plan.agentTurnTimeoutMs` | `900000` |
 | `phases.plan.reviewerTurnTimeoutMs` | `900000` |
@@ -81,6 +86,60 @@ stateDir
 | `verificationTimeoutMs` | `300000` |
 | `branchPrefix` | `agent/` |
 | `stateDir` | `/state` |
+
+## Executor Selection
+
+`defaults.provider` and `defaults.model` choose the executor for every phase
+unless a phase overrides them with `provider` or `model`. `reasoningEffort` can
+be set at `defaults.reasoningEffort` or per phase:
+
+```json
+{
+  "defaults": {
+    "provider": "codex",
+    "model": "gpt-5.4",
+    "reasoningEffort": "high"
+  },
+  "phases": {
+    "work": {
+      "model": "gpt-5.4-mini",
+      "reasoningEffort": "medium"
+    }
+  }
+}
+```
+
+Allowed `reasoningEffort` values are `minimal`, `low`, `medium`, `high`, and
+`xhigh`. Built-in model aliases such as `latest`, `latest-medium`, and
+`latest-mini` carry their own default reasoning effort. For explicit model IDs,
+`defaults.reasoningEffort` applies unless the phase sets `reasoningEffort`.
+
+Plan and Work reviewers can use a different executor from the agent by setting
+`reviewerExecutor` on the phase:
+
+```json
+{
+  "phases": {
+    "plan": {
+      "reviewerExecutor": {
+        "provider": "codex",
+        "model": "gpt-5.4-mini",
+        "reasoningEffort": "low"
+      }
+    },
+    "work": {
+      "reviewerExecutor": {
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "reasoningEffort": "medium"
+      }
+    }
+  }
+}
+```
+
+`reviewerExecutor` affects only the review thread. The plan/work agent thread
+continues to use the phase's top-level executor fields.
 
 ## Validation Commands
 
@@ -99,6 +158,34 @@ stateDir
 During Work review, the reviewer is instructed to call `run_validation` and
 return the command results. The worker records raw command logs under its state
 directory.
+
+## Wrapup Outcomes
+
+The wrapup phase returns a structured outcome instead of treating any nullable
+PR URL as success:
+
+```json
+{
+  "outcome": "pr-created",
+  "summary": "Opened the PR.",
+  "reason": null,
+  "prUrl": "https://github.com/org/repo/pull/123",
+  "branchName": "agent/task-123",
+  "pushedCommits": ["abc123"]
+}
+```
+
+`outcome` is one of:
+
+| Value | Meaning |
+| --- | --- |
+| `pr-created` | A GitHub PR was created or found. `prUrl` is required and `reason` is `null`. |
+| `no-pr-needed` | The task completed without needing a PR. `prUrl` is `null` and `reason` explains why. |
+| `pr-blocked` | PR creation was required but blocked. `prUrl` is `null` and `reason` explains the blocker. |
+
+If the wrapup agent returns unparseable JSON twice, the worker emits a
+`wrapup-parse-failed` event and stores a `pr-blocked` wrapup result instead of
+trusting a PR URL mentioned only in prose.
 
 ## MCP Servers
 

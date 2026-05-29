@@ -9,7 +9,7 @@ import { bootstrapRepoWorktrees } from '../git/repo-worktree-bootstrap.js';
 import { runPlanCycle } from '../plan-phase/plan-cycle.js';
 import { buildRoleSystemPrompt } from '../prompt/prompt-assembler.js';
 import { writeStderr } from '../shared/stderr.js';
-import type { VerificationCommandResult } from '../state/task-event-types.js';
+import type { TaskEvent, VerificationCommandResult } from '../state/task-event-types.js';
 import type { TaskState } from '../state/task-state.js';
 import { createWorkExecutor } from '../work-executor/executor-factory.js';
 import {
@@ -21,7 +21,7 @@ import { createGitPullDefaultTool } from '../work-phase/controller-tools/git-pul
 import { createGitPushTool } from '../work-phase/controller-tools/git-push-tool.js';
 import { buildValidationTool } from '../work-phase/validation-tool.js';
 import { runWorkCycle } from '../work-phase/work-cycle.js';
-import { runWrapup } from '../wrapup-phase/wrapup-runner.js';
+import { runWrapup, type WrapupRunResult } from '../wrapup-phase/wrapup-runner.js';
 import type { TaskEventRecorder } from './coordinator-helpers.js';
 import { formatTaskFailureReason } from './coordinator-helpers.js';
 import type { CoordinatorDeps } from './coordinator-types.js';
@@ -135,9 +135,48 @@ function buildWorkSummaryRequest(props: {
 	].join('\n\n');
 }
 
+function buildWrapupResultEvent(
+	wrapupResult: WrapupRunResult,
+): Extract<TaskEvent, { readonly event: 'wrapup-result' }> {
+	switch (wrapupResult.outcome) {
+		case 'pr-created':
+			return {
+				event: 'wrapup-result',
+				outcome: 'pr-created',
+				summary: wrapupResult.summary,
+				reason: null,
+				prUrl: wrapupResult.prUrl,
+				branchName: wrapupResult.branchName,
+				pushedCommits: [...wrapupResult.pushedCommits],
+			};
+		case 'no-pr-needed':
+			return {
+				event: 'wrapup-result',
+				outcome: 'no-pr-needed',
+				summary: wrapupResult.summary,
+				reason: wrapupResult.reason,
+				prUrl: null,
+				branchName: wrapupResult.branchName,
+				pushedCommits: [...wrapupResult.pushedCommits],
+			};
+		case 'pr-blocked':
+			return {
+				event: 'wrapup-result',
+				outcome: 'pr-blocked',
+				summary: wrapupResult.summary,
+				reason: wrapupResult.reason,
+				prUrl: null,
+				branchName: wrapupResult.branchName,
+				pushedCommits: [...wrapupResult.pushedCommits],
+			};
+	}
+	const exhaustiveOutcome: never = wrapupResult;
+	throw new Error(`Unhandled wrapup outcome: ${JSON.stringify(exhaustiveOutcome)}`);
+}
+
 function createThreadForPhase(props: {
 	readonly config: WorkerConfig;
-	readonly phase: { readonly provider?: string | undefined; readonly model?: string | undefined };
+	readonly phase: Parameters<typeof resolvePhaseExecutor>[1];
 	readonly tools: Parameters<typeof createWorkExecutor>[2]['tools'];
 	readonly cwd: string;
 	readonly turnTimeoutMs: number;
@@ -216,7 +255,7 @@ export async function runTask(
 		});
 		const planReviewThread = createThreadForPhase({
 			config,
-			phase: config.phases.plan,
+			phase: config.phases.plan.reviewerExecutor ?? config.phases.plan,
 			tools: [],
 			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.plan.reviewerTurnTimeoutMs,
@@ -305,7 +344,7 @@ export async function runTask(
 		});
 		const workReviewThread = createThreadForPhase({
 			config,
-			phase: config.phases.work,
+			phase: config.phases.work.reviewerExecutor ?? config.phases.work,
 			tools: [validationTool],
 			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.work.reviewerTurnTimeoutMs,
@@ -398,13 +437,18 @@ export async function runTask(
 				});
 				throwIfClosed(taskId, eventRecorder);
 			},
+			onWrapupParseFailed: async (failure) => {
+				await eventRecorder.emit(taskId, {
+					event: 'wrapup-parse-failed',
+					firstError: failure.firstError,
+					firstResponsePreview: failure.firstResponsePreview,
+					secondError: failure.secondError,
+					secondResponsePreview: failure.secondResponsePreview,
+				});
+				throwIfClosed(taskId, eventRecorder);
+			},
 		});
-		await eventRecorder.emit(taskId, {
-			event: 'wrapup-result',
-			prUrl: wrapupResult.prUrl ?? null,
-			branchName: wrapupResult.branchName ?? null,
-			pushedCommits: [...wrapupResult.pushedCommits],
-		});
+		await eventRecorder.emit(taskId, buildWrapupResultEvent(wrapupResult));
 		await eventRecorder.emit(taskId, { event: 'phase-completed', phase: 'wrapup' });
 		await eventRecorder.emit(taskId, { event: 'task-completed' });
 	} catch (error) {
