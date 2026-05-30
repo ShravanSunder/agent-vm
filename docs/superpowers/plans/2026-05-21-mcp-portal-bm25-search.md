@@ -270,7 +270,7 @@ export function tokenizeSearchText(text: string): readonly string[] {
 	const normalizedText = text
 		.replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
 		.replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
-		.replace(/[_\-./:@]+/gu, ' ')
+		.replace(/[_\-.\/:@]+/gu, ' ')
 		.replace(/[^\p{L}\p{N}]+/gu, ' ')
 		.toLowerCase();
 
