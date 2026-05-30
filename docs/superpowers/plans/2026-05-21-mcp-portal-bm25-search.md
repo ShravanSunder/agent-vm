@@ -12,14 +12,25 @@
 
 ## Current Repo Shape
 
-The branch is refreshed onto current `origin/master`. MCP Portal now has these package surfaces:
+Reviewed against current `origin/master` on 2026-05-30. MCP Portal now has these package surfaces:
 
+- `packages/mcp-portal/src/bin`
+  - `mcp-portal` executable entrypoint.
+  - Validates catalogs, generates helpers, serves the MCP proxy, prints client config, and performs direct portal calls.
+  - Loads `mcp.config.jsonc` and `mcp-portal.config.jsonc` through `@agent-vm/config-contracts`.
+  - Out of scope except for package export/build verification.
+- `packages/mcp-portal/src/cli`
+  - Server startup, profile policy map construction, 1Password/environment secret resolution, Hono `serve`, and structured server logging.
+  - Out of scope.
 - `packages/mcp-portal/src/core`
   - Native portal core and portal tool handlers.
   - `core/portal-tools.ts` imports `ToolSearchResult` from `../search-index.js`.
+  - `mcp_portal_search` remains request-keyed and controlled by `schemaDetail`.
   - `core/portal-tools.test.ts` covers keyed multi-request search output.
 - `packages/mcp-portal/src/mcp-proxy`
   - MCP protocol adapter over `PortalCore`.
+  - `portal-http-server.ts` owns Hono, `/agents/:agentId/mcp`, bearer auth, auth audit events, active MCP sessions, and session close cleanup.
+  - `portal-mcp-server.ts` owns MCP SDK tool listing/calling and `isError` mapping.
   - Must not know BM25 exists.
 - `packages/mcp-portal/src/portal-auth`
   - HMAC and bearer token helpers.
@@ -30,6 +41,14 @@ The branch is refreshed onto current `origin/master`. MCP Portal now has these p
 - `packages/mcp-portal/src/search-index.ts`
   - Owns MCP-specific catalog document construction.
   - Currently uses lowercase substring scoring and recursive schema string collection.
+- `packages/mcp-portal/src/portal-session.ts`
+  - Builds scoped catalogs after access-policy filtering.
+  - Builds `ToolGraph`.
+  - Creates `createSearchIndex(sortedTools, graph)`.
+  - This is the only runtime caller that should need the search index.
+- `packages/mcp-portal/src/core/provider-runtime.ts`
+  - Converts resolved MCP provider config into upstream runtime server configs.
+  - Out of scope.
 - `packages/mcp-portal/package.json`
   - Already exports package subpaths for core, proxy, CLI, config, auth, and testing.
   - This plan adds a real `./search` subpath for the BM25 mechanism.
@@ -72,12 +91,18 @@ This plan is the current implementation contract.
   - Preserve `SearchIndex`, `SearchQuery`, `SearchResultSet`, and `ToolSearchResult` shapes.
 - Modify: `packages/mcp-portal/src/search-index.test.ts`
   - Add integration tests for tokenized ranking, schema noise exclusion, recursive field names, namespace filters, and deterministic empty-query listing.
+- Inspect: `packages/mcp-portal/src/bin/mcp-portal.test.ts`
+  - Keep CLI argument/config dispatch behavior passing.
+- Inspect: `packages/mcp-portal/src/cli/serve-command.test.ts`
+  - Keep server startup, profile policy, and secret-resolution tests passing.
 - Inspect: `packages/mcp-portal/src/core/portal-tools.test.ts`
   - Keep existing keyed search-output tests passing.
 - Inspect: `packages/mcp-portal/src/core/portal-core.test.ts`
   - Keep core stream/collection tests passing.
 - Inspect: `packages/mcp-portal/src/mcp-proxy/portal-mcp-server.test.ts`
   - Keep MCP adapter tool exposure and error-shape tests passing.
+- Inspect: `packages/mcp-portal/src/mcp-proxy/portal-http-server.test.ts`
+  - Keep Hono Streamable HTTP session/auth behavior passing.
 
 Do not add facets, vector search, search config, config migrations, Hono changes, OpenClaw changes, or tool-hint enrichment in this change.
 
@@ -91,9 +116,12 @@ BM25 is part of the MCP Portal library. The boundary is:
 - `src/search-index.ts` adapts MCP Portal catalog records into generic search documents.
 - `src/core/*` consumes `SearchIndex` results only.
 - `src/mcp-proxy/*` consumes core tool results only.
+- `src/bin/*` and `src/cli/*` launch and operate the portal but do not participate in ranking.
 
 The search library must not import from these files or folders:
 
+- `src/bin`
+- `src/cli`
 - `src/core`
 - `src/mcp-proxy`
 - `src/portal-auth`
@@ -1020,31 +1048,37 @@ Co-authored-by: Codex <noreply@openai.com>"
 
 ---
 
-### Task 8: Guard Current Core And Proxy Surfaces
+### Task 8: Guard Current Runtime Surfaces
 
 **Files:**
+- Inspect: `packages/mcp-portal/src/bin/mcp-portal.test.ts`
+- Inspect: `packages/mcp-portal/src/cli/serve-command.test.ts`
 - Inspect: `packages/mcp-portal/src/core/portal-tools.test.ts`
 - Inspect: `packages/mcp-portal/src/core/portal-core.test.ts`
 - Inspect: `packages/mcp-portal/src/mcp-proxy/portal-mcp-server.test.ts`
+- Inspect: `packages/mcp-portal/src/mcp-proxy/portal-http-server.test.ts`
 
 - [ ] **Step 1: Confirm imports respect the boundary**
 
 Run:
 
 ```bash
-rg -n "from '../search|from '../../search|from './search" packages/mcp-portal/src/core packages/mcp-portal/src/mcp-proxy
+rg -n "from '../search|from '../../search|from './search" packages/mcp-portal/src/bin packages/mcp-portal/src/cli packages/mcp-portal/src/core packages/mcp-portal/src/mcp-proxy
 ```
 
-Expected: no matches. `core` and `mcp-proxy` stay above the search mechanism.
+Expected: no matches. `bin`, `cli`, `core`, and `mcp-proxy` stay above the search mechanism.
 
-- [ ] **Step 2: Run core and proxy regression tests**
+- [ ] **Step 2: Run CLI, core, and proxy regression tests**
 
 Run:
 
 ```bash
+pnpm --filter @agent-vm/mcp-portal test:unit -- bin/mcp-portal.test.ts
+pnpm --filter @agent-vm/mcp-portal test:unit -- cli/serve-command.test.ts
 pnpm --filter @agent-vm/mcp-portal test:unit -- core/portal-tools.test.ts
 pnpm --filter @agent-vm/mcp-portal test:unit -- core/portal-core.test.ts
 pnpm --filter @agent-vm/mcp-portal test:unit -- mcp-proxy/portal-mcp-server.test.ts
+pnpm --filter @agent-vm/mcp-portal test:unit -- mcp-proxy/portal-http-server.test.ts
 ```
 
 Expected: all commands PASS.
@@ -1064,7 +1098,7 @@ Expected: one matching test.
 If Task 8 changed files, run:
 
 ```bash
-git add packages/mcp-portal/src/core/portal-tools.test.ts packages/mcp-portal/src/core/portal-core.test.ts packages/mcp-portal/src/mcp-proxy/portal-mcp-server.test.ts
+git add packages/mcp-portal/src/bin/mcp-portal.test.ts packages/mcp-portal/src/cli/serve-command.test.ts packages/mcp-portal/src/core/portal-tools.test.ts packages/mcp-portal/src/core/portal-core.test.ts packages/mcp-portal/src/mcp-proxy/portal-mcp-server.test.ts packages/mcp-portal/src/mcp-proxy/portal-http-server.test.ts
 git commit -m "test: preserve mcp portal core search surface
 
 Co-authored-by: Codex <noreply@openai.com>"
@@ -1127,7 +1161,7 @@ Expected:
 - no facets,
 - no tool hints,
 - no rank-fusion wiring,
-- no Hono, OpenClaw, core, proxy, auth, or config imports in `src/search/*`.
+- no Hono, OpenClaw, bin, CLI, core, proxy, auth, or config imports in `src/search/*`.
 
 - [ ] **Step 5: Final review checklist**
 
@@ -1145,12 +1179,15 @@ Confirm all items before opening a PR:
 - `search-index.test.ts` covers namespace filters.
 - Empty query remains deterministic list-style search.
 - `mcp_portal_search` response shape remains request-keyed through `core/portal-tools.test.ts`.
+- `mcp-portal` CLI behavior remains covered through `bin/mcp-portal.test.ts`.
+- `mcp-proxy serve` startup behavior remains covered through `cli/serve-command.test.ts`.
+- Hono Streamable HTTP auth/session behavior remains covered through `mcp-proxy/portal-http-server.test.ts`.
 - No facets, search config, vectors, tool hints, or rank fusion are introduced.
 
 ---
 
 ## Self-Review Notes
 
-- Spec coverage: This plan covers the current `/core` + `/mcp-proxy` package layout, a reusable search library mechanism, tokenizer contract, TDD-first red tests, integration rewiring, public-surface exports, and full verification.
+- Spec coverage: This plan covers the current `bin` + `cli` + `/core` + `/mcp-proxy` package layout, a reusable search library mechanism, tokenizer contract, TDD-first red tests, integration rewiring, public-surface exports, and full verification.
 - Type consistency: The search mechanism types are `Bm25Document`, `Bm25IndexProps`, `Bm25SearchQuery`, `Bm25SearchResult`, and `Bm25Index`; later tasks refer to those exact names.
 - Scope guard: v1 is BM25 plus tokenizer only. Facets, vectors, search hints, and config enrichment are intentionally excluded.
