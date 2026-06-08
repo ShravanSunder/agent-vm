@@ -8,7 +8,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { shouldRunWorkerRuntimeSmoke } from './worker-smoke-gates.js';
+import { shouldRunWorkerRuntimeE2e } from './worker-e2e-gates.js';
 
 function hasCommand(command: string): boolean {
 	try {
@@ -19,7 +19,7 @@ function hasCommand(command: string): boolean {
 	}
 }
 
-const runWorkerOnlySmoke = shouldRunWorkerRuntimeSmoke({
+const runWorkerOnlySmoke = shouldRunWorkerRuntimeE2e({
 	commandExists: hasCommand,
 	env: process.env,
 });
@@ -203,7 +203,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 				cwd: repoRoot,
 				env: {
 					...process.env,
-					OPENAI_API_KEY: process.env.OPEN_AI_TEST_KEY ?? '',
+					OPENAI_API_KEY: process.env.AGENT_VM_TEST_OPENAI_API_KEY ?? '',
 					WORK_DIR: workDir,
 				},
 				stdio: ['ignore', workerLogHandle.fd, workerLogHandle.fd],

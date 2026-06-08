@@ -7,9 +7,9 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
+import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
-const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 const wrapperEvidenceSchema = z.object({
 	code: z.literal('controller-request-timeout'),
 	elapsedMs: z.number().nonnegative(),

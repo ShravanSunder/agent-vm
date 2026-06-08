@@ -1,4 +1,4 @@
-/* oxlint-disable eslint/no-await-in-loop -- smoke test steps must be sequential against live VMs */
+/* oxlint-disable eslint/no-await-in-loop -- e2e steps must be sequential against live VMs */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -16,20 +16,20 @@ import {
 } from '../gateway-api-client/gateway-api-client.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
-	canRunGondolinSmoke,
-	currentSmokeArchitecture,
-	removeSmokeTempRoot,
-	scaffoldOpenClawSmokeProject,
-	startSmokeControllerRuntime,
-	type OpenClawSmokeProject,
-	type SmokeHarnessRuntime,
+	canRunGondolinE2e,
+	currentE2eArchitecture,
+	removeE2eTempRoot,
+	scaffoldOpenClawE2eProject,
+	startE2eControllerRuntime,
+	type OpenClawE2eProject,
+	type E2eHarnessRuntime,
 	useLocalOpenClawGatewayImagePackages,
-	writeOpenClawMcpPortalSmokeConfigs,
-} from './smoke-harness.js';
+	writeOpenClawMcpPortalE2eConfigs,
+} from './e2e-harness.js';
 
-const architecture = currentSmokeArchitecture();
+const architecture = currentE2eArchitecture();
 const runOpenClawMcpPortalSmoke =
-	process.env.AGENT_VM_OPENCLAW_SMOKE === '1' && (await canRunGondolinSmoke({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
 const describeOpenClawMcpPortalSmoke = runOpenClawMcpPortalSmoke ? describe : describe.skip;
 const agentId = 'smoke';
 const gatewayToken = 'mcp-portal-smoke-gateway-token';
@@ -72,7 +72,7 @@ async function readManagedEffectiveConfigPair(effectivePortalDir: string): Promi
 	};
 }
 
-function createSmokeGatewayClient(harness: SmokeHarnessRuntime): GatewayApiClient {
+function createSmokeGatewayClient(harness: E2eHarnessRuntime): GatewayApiClient {
 	const gatewayIngress = harness.runtime.zones[0]?.gateway?.ingress;
 	if (!gatewayIngress) {
 		throw new Error('OpenClaw MCP Portal smoke did not expose a gateway ingress URL.');
@@ -141,8 +141,8 @@ function readSingleItem(result: unknown): Record<string, unknown> {
 }
 
 describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => {
-	let harness: SmokeHarnessRuntime | undefined;
-	let project: OpenClawSmokeProject | undefined;
+	let harness: E2eHarnessRuntime | undefined;
+	let project: OpenClawE2eProject | undefined;
 	let upstreamServer: StartedFakeUpstreamMcpServer | undefined;
 	let gatewayClient: GatewayApiClient | undefined;
 
@@ -151,10 +151,10 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		upstreamServer = await startFakeUpstreamMcpServer();
 		const upstreamHost = 'smoke-upstream.vm.host';
 		const upstreamUrl = `http://${upstreamHost}:${String(upstreamServer.port)}/mcp`;
-		project = await scaffoldOpenClawSmokeProject({
+		project = await scaffoldOpenClawE2eProject({
 			agents: [agentId],
 			architecture,
-			prefix: 'openclaw-mcp-portal-smoke-',
+			prefix: 'openclaw-mcp-portal-e2e-',
 			zoneId: 'mcp-portal-smoke',
 		});
 		const systemZone = project.systemConfig.zones[0];
@@ -169,7 +169,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			recursive: true,
 		});
 		await allowPortalNativeToolsInOpenClawConfig(systemZone.gateway.config);
-		await writeOpenClawMcpPortalSmokeConfigs({
+		await writeOpenClawMcpPortalE2eConfigs({
 			agentId,
 			configDir: path.dirname(systemZone.gateway.config),
 			namespace: fakeUpstreamNamespace,
@@ -185,7 +185,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		await runBuildCommand({
 			systemConfig: project.systemConfig,
 		});
-		harness = await startSmokeControllerRuntime({
+		harness = await startE2eControllerRuntime({
 			secrets: {
 				GITHUB_TOKEN: 'mcp-portal-smoke-github-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
@@ -227,7 +227,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 				await upstreamServer?.close();
 			} finally {
 				if (project) {
-					await removeSmokeTempRoot(project.tempRoot);
+					await removeE2eTempRoot(project.tempRoot);
 				}
 			}
 		}

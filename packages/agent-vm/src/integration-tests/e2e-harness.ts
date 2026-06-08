@@ -26,14 +26,14 @@ import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 
-interface OpenClawSmokeZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
+interface OpenClawE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
 	readonly gateway: Extract<
 		LoadedSystemConfig['zones'][number]['gateway'],
 		{ readonly type: 'openclaw' }
 	>;
 }
 
-interface WorkerSmokeZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
+interface WorkerE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
 	readonly gateway: Extract<
 		LoadedSystemConfig['zones'][number]['gateway'],
 		{ readonly type: 'worker' }
@@ -53,82 +53,82 @@ interface LocalDockerPackageTarball {
 const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const execFileAsync = promisify(execFile);
 const openClawMcpPortalPluginName = 'mcp-portal';
-const smokeTempRootPrefixes = [
-	'agent-vm-gateway-smoke-project-',
-	'agent-vm-smoke-harness-',
-	'openclaw-control-link-smoke-',
-	'openclaw-mcp-portal-smoke-',
-	'openclaw-subagent-lease-smoke-',
-	'openclaw-zone-git-smoke-',
-	'worker-loop-smoke-',
+const e2eTempRootPrefixes = [
+	'agent-vm-gateway-e2e-project-',
+	'agent-vm-e2e-harness-',
+	'openclaw-control-link-e2e-',
+	'openclaw-mcp-portal-e2e-',
+	'openclaw-subagent-lease-e2e-',
+	'openclaw-zone-git-e2e-',
+	'worker-loop-e2e-',
 ] as const;
 
-function resolveSmokeCacheRoot(): string {
-	const configuredCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
+function resolveE2eCacheRoot(): string {
+	const configuredCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 	if (configuredCacheRoot !== undefined && configuredCacheRoot.length > 0) {
 		return path.resolve(configuredCacheRoot);
 	}
-	return path.join(os.tmpdir(), 'agent-vm-smoke-cache');
+	return path.join(os.tmpdir(), 'agent-vm-e2e-cache');
 }
 
-export interface SmokeHarnessSecretMap {
+export interface E2eHarnessSecretMap {
 	readonly [secretKey: string]: string;
 }
 
-export interface SmokeHarnessRuntime {
+export interface E2eHarnessRuntime {
 	readonly controllerUrl: string;
 	readonly runtime: ControllerRuntime;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tempRoot: string;
-	close(options?: SmokeHarnessCloseOptions): Promise<void>;
+	close(options?: E2eHarnessCloseOptions): Promise<void>;
 }
 
-export interface SmokeHarnessCloseOptions {
+export interface E2eHarnessCloseOptions {
 	readonly cleanupImages?: boolean;
 }
 
-export interface SmokeHarnessImageCleanupOptions extends SmokeHarnessCloseOptions {
-	readonly env?: Partial<Record<'AGENT_VM_SMOKE_CLEAN_IMAGES', string>>;
+export interface E2eHarnessImageCleanupOptions extends E2eHarnessCloseOptions {
+	readonly env?: Partial<Record<'AGENT_VM_E2E_CLEAN_IMAGES', string>>;
 }
 
-export interface OpenClawSmokeProject {
+export interface OpenClawE2eProject {
 	readonly controllerPort: number;
 	readonly gatewayPort: number;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tempRoot: string;
-	readonly zone: OpenClawSmokeZone;
+	readonly zone: OpenClawE2eZone;
 }
 
-export interface WorkerSmokeProject {
+export interface WorkerE2eProject {
 	readonly controllerPort: number;
 	readonly gatewayPort: number;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tempRoot: string;
-	readonly zone: WorkerSmokeZone;
+	readonly zone: WorkerE2eZone;
 }
 
-export type GatewaySmokeKind = 'openclaw' | 'worker';
+export type GatewayE2eKind = 'openclaw' | 'worker';
 
-export type GatewaySmokeProject = OpenClawSmokeProject | WorkerSmokeProject;
+export type GatewayE2eProject = OpenClawE2eProject | WorkerE2eProject;
 
-export interface ScaffoldGatewaySmokeProjectOptions {
+export interface ScaffoldGatewayE2eProjectOptions {
 	readonly agents?: readonly string[];
 	readonly architecture: ImageArchitecture;
-	readonly kind: GatewaySmokeKind;
+	readonly kind: GatewayE2eKind;
 	readonly prefix: string;
 	readonly zoneId: string;
 }
 
-export interface GondolinSmokePrerequisiteOptions {
+export interface GondolinE2ePrerequisiteOptions {
 	readonly architecture: ImageArchitecture;
 	readonly commandExists?: (command: string) => boolean;
 	readonly resolveRequiredZigVersion?: () => Promise<string>;
 	readonly resolveZigVersion?: () => Promise<string | undefined>;
 }
 
-export interface StartSmokeControllerRuntimeOptions {
+export interface StartE2eControllerRuntimeOptions {
 	readonly onLeaseCreateRequest?: ControllerRuntimeDependencies['onLeaseCreateRequest'];
-	readonly secrets: SmokeHarnessSecretMap;
+	readonly secrets: E2eHarnessSecretMap;
 	readonly startGatewayZone?: typeof startGatewayZone;
 	readonly startHttpServer?: NonNullable<ControllerRuntimeDependencies['startHttpServer']>;
 	readonly startOptions: StartControllerRuntimeOptions;
@@ -136,15 +136,13 @@ export interface StartSmokeControllerRuntimeOptions {
 	readonly vfsMountsOverride?: StartGatewayZoneOptions['vfsMountsOverride'];
 }
 
-export interface RemoveSmokeDockerImagesOptions {
+export interface RemoveE2eDockerImagesOptions {
 	readonly runDockerCommand?: (args: readonly string[]) => Promise<void>;
 }
 
-export function shouldCleanupSmokeDockerImages(
-	options: SmokeHarnessImageCleanupOptions = {},
-): boolean {
+export function shouldCleanupE2eDockerImages(options: E2eHarnessImageCleanupOptions = {}): boolean {
 	const env = options.env ?? process.env;
-	return options.cleanupImages === true || env.AGENT_VM_SMOKE_CLEAN_IMAGES === '1';
+	return options.cleanupImages === true || env.AGENT_VM_E2E_CLEAN_IMAGES === '1';
 }
 
 export function hasCommand(command: string): boolean {
@@ -156,7 +154,7 @@ export function hasCommand(command: string): boolean {
 	}
 }
 
-export function currentSmokeArchitecture(): ImageArchitecture {
+export function currentE2eArchitecture(): ImageArchitecture {
 	return process.arch === 'arm64' ? 'aarch64' : 'x86_64';
 }
 
@@ -164,7 +162,7 @@ export function qemuCommandForArchitecture(architecture: ImageArchitecture): str
 	return architecture === 'aarch64' ? 'qemu-system-aarch64' : 'qemu-system-x86_64';
 }
 
-function isOwnedSmokeTempRoot(tempRoot: string): boolean {
+function isOwnedE2eTempRoot(tempRoot: string): boolean {
 	const resolvedTempRoot = path.resolve(tempRoot);
 	const resolvedSystemTempRoot = path.resolve(os.tmpdir());
 	if (
@@ -174,19 +172,17 @@ function isOwnedSmokeTempRoot(tempRoot: string): boolean {
 		return false;
 	}
 	const basename = path.basename(resolvedTempRoot);
-	return smokeTempRootPrefixes.some((prefix) => basename.startsWith(prefix));
+	return e2eTempRootPrefixes.some((prefix) => basename.startsWith(prefix));
 }
 
-export async function removeSmokeTempRoot(tempRoot: string): Promise<void> {
-	if (!isOwnedSmokeTempRoot(tempRoot)) {
+export async function removeE2eTempRoot(tempRoot: string): Promise<void> {
+	if (!isOwnedE2eTempRoot(tempRoot)) {
 		return;
 	}
 	await fs.rm(tempRoot, { force: true, recursive: true });
 }
 
-export async function canRunGondolinSmoke(
-	options: GondolinSmokePrerequisiteOptions,
-): Promise<boolean> {
+export async function canRunGondolinE2e(options: GondolinE2ePrerequisiteOptions): Promise<boolean> {
 	const commandExists = options.commandExists ?? hasCommand;
 	if (
 		!commandExists(qemuCommandForArchitecture(options.architecture)) ||
@@ -204,22 +200,22 @@ export async function canRunGondolinSmoke(
 	);
 }
 
-export async function shouldRunWorkerGatewaySmoke(options: {
+export async function shouldRunWorkerGatewayE2e(options: {
 	readonly architecture: ImageArchitecture;
 	readonly commandExists?: (command: string) => boolean;
-	readonly env?: Partial<Record<'AGENT_VM_WORKER_SMOKE' | 'OPEN_AI_TEST_KEY', string>>;
+	readonly env?: Partial<Record<'AGENT_VM_WORKER_E2E' | 'AGENT_VM_TEST_OPENAI_API_KEY', string>>;
 	readonly resolveRequiredZigVersion?: () => Promise<string>;
 	readonly resolveZigVersion?: () => Promise<string | undefined>;
 }): Promise<boolean> {
 	const env = options.env ?? process.env;
 	if (
-		env.AGENT_VM_WORKER_SMOKE !== '1' ||
-		typeof env.OPEN_AI_TEST_KEY !== 'string' ||
-		env.OPEN_AI_TEST_KEY.length === 0
+		env.AGENT_VM_WORKER_E2E !== '1' ||
+		typeof env.AGENT_VM_TEST_OPENAI_API_KEY !== 'string' ||
+		env.AGENT_VM_TEST_OPENAI_API_KEY.length === 0
 	) {
 		return false;
 	}
-	return await canRunGondolinSmoke({
+	return await canRunGondolinE2e({
 		architecture: options.architecture,
 		...(options.commandExists ? { commandExists: options.commandExists } : {}),
 		...(options.resolveRequiredZigVersion
@@ -271,29 +267,23 @@ export async function findReusableGatewayImageDirectory(
 	gatewayBuildConfigPath: string,
 	imageProfileName = 'worker',
 ): Promise<string | null> {
-	const explicitSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
-	if (!explicitSmokeCacheRoot) {
+	const explicitE2eCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+	if (!explicitE2eCacheRoot) {
 		return null;
 	}
 	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
-	const tempRootEntries = await fs.readdir(explicitSmokeCacheRoot, { withFileTypes: true });
-	const smokeRunDirectories = tempRootEntries
+	const tempRootEntries = await fs.readdir(explicitE2eCacheRoot, { withFileTypes: true });
+	const e2eRunDirectories = tempRootEntries
 		.filter((entry) => entry.isDirectory())
-		.map((entry) => path.join(explicitSmokeCacheRoot, entry.name));
+		.map((entry) => path.join(explicitE2eCacheRoot, entry.name));
 
-	for (const smokeRunDirectory of smokeRunDirectories) {
-		if (smokeRunDirectory === currentProjectRoot) {
+	for (const e2eRunDirectory of e2eRunDirectories) {
+		if (e2eRunDirectory === currentProjectRoot) {
 			continue;
 		}
 		const candidateImageDirectories = [
-			path.join(smokeRunDirectory, 'gateway-images', imageProfileName, requiredFingerprint),
-			path.join(
-				smokeRunDirectory,
-				'cache',
-				'gateway-images',
-				imageProfileName,
-				requiredFingerprint,
-			),
+			path.join(e2eRunDirectory, 'gateway-images', imageProfileName, requiredFingerprint),
+			path.join(e2eRunDirectory, 'cache', 'gateway-images', imageProfileName, requiredFingerprint),
 		];
 		for (const candidateImageDir of candidateImageDirectories) {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- intentionally searches cache candidates
@@ -340,7 +330,7 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 	await fs.symlink(reusableImageDir, activeImageDir, 'dir');
 }
 
-export function createSmokeSecretResolver(secrets: SmokeHarnessSecretMap): SecretResolver {
+export function createSmokeSecretResolver(secrets: E2eHarnessSecretMap): SecretResolver {
 	const resolve = async (ref: SecretRef): Promise<string> => {
 		if (ref.source === 'config') {
 			return ref.value;
@@ -365,7 +355,7 @@ export function createSmokeSecretResolver(secrets: SmokeHarnessSecretMap): Secre
 	};
 }
 
-function applySmokeEnvironment(secrets: SmokeHarnessSecretMap): () => void {
+function applySmokeEnvironment(secrets: E2eHarnessSecretMap): () => void {
 	const previousValues = new Map<string, string | undefined>();
 	for (const [secretName, secretValue] of Object.entries(secrets)) {
 		previousValues.set(secretName, process.env[secretName]);
@@ -382,9 +372,7 @@ function applySmokeEnvironment(secrets: SmokeHarnessSecretMap): () => void {
 	};
 }
 
-export function getOpenClawSmokeZone(
-	systemConfig: LoadedSystemConfig,
-): OpenClawSmokeProject['zone'] {
+export function getOpenClawE2eZone(systemConfig: LoadedSystemConfig): OpenClawE2eProject['zone'] {
 	const zone = systemConfig.zones[0];
 	if (!zone || zone.gateway.type !== 'openclaw') {
 		throw new Error('Expected smoke system config to contain an OpenClaw zone.');
@@ -392,7 +380,7 @@ export function getOpenClawSmokeZone(
 	return { ...zone, gateway: zone.gateway };
 }
 
-function getWorkerSmokeZone(systemConfig: LoadedSystemConfig): WorkerSmokeProject['zone'] {
+function getWorkerE2eZone(systemConfig: LoadedSystemConfig): WorkerE2eProject['zone'] {
 	const zone = systemConfig.zones[0];
 	if (!zone || zone.gateway.type !== 'worker') {
 		throw new Error('Expected smoke system config to contain a Worker Gateway zone.');
@@ -588,7 +576,7 @@ function localPackageTarballArchiveName(packageName: string): string {
 	return `${packageName}-local.tgz`;
 }
 
-async function writeManagedOpenClawSmokeDockerfileBase(options: {
+async function writeManagedOpenClawE2eDockerfileBase(options: {
 	readonly dockerContextDirectory: string;
 	readonly profileName: string;
 }): Promise<string> {
@@ -619,7 +607,7 @@ async function runDockerCommand(args: readonly string[]): Promise<void> {
 	await execFileAsync('docker', [...args]);
 }
 
-async function readSmokeDockerImageTag(buildConfigPath: string): Promise<string | null> {
+async function readE2eDockerImageTag(buildConfigPath: string): Promise<string | null> {
 	let buildConfig: Record<string, unknown> | undefined;
 	try {
 		buildConfig = mutableJsonRecord(await loadJsonConfigFile(buildConfigPath));
@@ -634,7 +622,7 @@ async function readSmokeDockerImageTag(buildConfigPath: string): Promise<string 
 	return typeof imageTag === 'string' && imageTag.length > 0 ? imageTag : null;
 }
 
-export async function collectSmokeDockerImageTags(
+export async function collectE2eDockerImageTags(
 	systemConfig: LoadedSystemConfig,
 ): Promise<readonly string[]> {
 	const imageProfiles = [
@@ -644,7 +632,7 @@ export async function collectSmokeDockerImageTags(
 	const imageTags: string[] = [];
 	for (const imageProfile of imageProfiles) {
 		// oxlint-disable-next-line eslint/no-await-in-loop -- config files are intentionally read deterministically
-		const imageTag = await readSmokeDockerImageTag(imageProfile.buildConfig);
+		const imageTag = await readE2eDockerImageTag(imageProfile.buildConfig);
 		if (imageTag !== null) {
 			imageTags.push(imageTag);
 		}
@@ -652,9 +640,9 @@ export async function collectSmokeDockerImageTags(
 	return Array.from(new Set(imageTags));
 }
 
-export async function removeSmokeDockerImages(
+export async function removeE2eDockerImages(
 	imageTags: readonly string[],
-	options: RemoveSmokeDockerImagesOptions = {},
+	options: RemoveE2eDockerImagesOptions = {},
 ): Promise<void> {
 	const dockerCommand = options.runDockerCommand ?? runDockerCommand;
 	for (const imageTag of Array.from(new Set(imageTags))) {
@@ -669,14 +657,14 @@ export async function removeSmokeDockerImages(
 	}
 }
 
-export async function removeSmokeDockerImagesForSystemConfig(
+export async function removeE2eDockerImagesForSystemConfig(
 	systemConfig: LoadedSystemConfig,
-	options: RemoveSmokeDockerImagesOptions = {},
+	options: RemoveE2eDockerImagesOptions = {},
 ): Promise<void> {
-	await removeSmokeDockerImages(await collectSmokeDockerImageTags(systemConfig), options);
+	await removeE2eDockerImages(await collectE2eDockerImageTags(systemConfig), options);
 }
 
-function throwIfSmokeHarnessCleanupFailed(errors: readonly unknown[]): void {
+function throwIfE2eHarnessCleanupFailed(errors: readonly unknown[]): void {
 	if (errors.length === 0) {
 		return;
 	}
@@ -790,7 +778,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 			},
 		] satisfies readonly LocalDockerPackageTarball[];
 
-		const dockerfilePath = await writeManagedOpenClawSmokeDockerfileBase({
+		const dockerfilePath = await writeManagedOpenClawE2eDockerfileBase({
 			dockerContextDirectory,
 			profileName: options.profileName,
 		});
@@ -896,7 +884,7 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 			},
 		] satisfies readonly LocalDockerPackageTarball[];
 
-		const dockerfilePath = await writeManagedOpenClawSmokeDockerfileBase({
+		const dockerfilePath = await writeManagedOpenClawE2eDockerfileBase({
 			dockerContextDirectory,
 			profileName: options.profileName,
 		});
@@ -939,12 +927,12 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 	}
 }
 
-export async function scaffoldOpenClawSmokeProject(options: {
+export async function scaffoldOpenClawE2eProject(options: {
 	readonly agents?: readonly string[];
 	readonly architecture: ImageArchitecture;
 	readonly prefix: string;
 	readonly zoneId: string;
-}): Promise<OpenClawSmokeProject> {
+}): Promise<OpenClawE2eProject> {
 	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
 	const controllerPort = await findAvailablePort();
 	const gatewayPort = await findAvailablePort();
@@ -959,8 +947,8 @@ export async function scaffoldOpenClawSmokeProject(options: {
 	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
 	systemConfig.host.controllerPort = controllerPort;
 	systemConfig.host.projectNamespace = 'claw-tests-zone-git';
-	systemConfig.cacheDir = path.join(resolveSmokeCacheRoot(), 'openclaw');
-	const zone = getOpenClawSmokeZone(systemConfig);
+	systemConfig.cacheDir = path.join(resolveE2eCacheRoot(), 'openclaw');
+	const zone = getOpenClawE2eZone(systemConfig);
 	zone.gateway.port = gatewayPort;
 	return {
 		controllerPort,
@@ -991,11 +979,11 @@ export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string)
 	return path.join(packDirectory, packedTarballName);
 }
 
-export async function scaffoldWorkerSmokeProject(options: {
+export async function scaffoldWorkerE2eProject(options: {
 	readonly architecture: ImageArchitecture;
 	readonly prefix: string;
 	readonly zoneId: string;
-}): Promise<WorkerSmokeProject> {
+}): Promise<WorkerE2eProject> {
 	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
 	const controllerPort = await findAvailablePort();
 	const gatewayPort = await findAvailablePort();
@@ -1009,12 +997,12 @@ export async function scaffoldWorkerSmokeProject(options: {
 	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
 	systemConfig.host.controllerPort = controllerPort;
 	systemConfig.host.projectNamespace = 'claw-tests-worker';
-	systemConfig.cacheDir = path.join(resolveSmokeCacheRoot(), 'worker');
+	systemConfig.cacheDir = path.join(resolveE2eCacheRoot(), 'worker');
 	systemConfig.host.secretsProvider = {
 		type: '1password',
-		tokenSource: { type: 'env', envVar: 'OPEN_AI_TEST_KEY' },
+		tokenSource: { type: 'env', envVar: 'AGENT_VM_TEST_OPENAI_API_KEY' },
 	};
-	const zone = getWorkerSmokeZone(systemConfig);
+	const zone = getWorkerE2eZone(systemConfig);
 	zone.gateway.port = gatewayPort;
 	return {
 		controllerPort,
@@ -1025,25 +1013,25 @@ export async function scaffoldWorkerSmokeProject(options: {
 	};
 }
 
-export async function scaffoldGatewaySmokeProject(
-	options: ScaffoldGatewaySmokeProjectOptions,
-): Promise<GatewaySmokeProject> {
+export async function scaffoldGatewayE2eProject(
+	options: ScaffoldGatewayE2eProjectOptions,
+): Promise<GatewayE2eProject> {
 	if (options.kind === 'openclaw') {
-		return await scaffoldOpenClawSmokeProject({
+		return await scaffoldOpenClawE2eProject({
 			architecture: options.architecture,
 			prefix: options.prefix,
 			zoneId: options.zoneId,
 			...(options.agents ? { agents: options.agents } : {}),
 		});
 	}
-	return await scaffoldWorkerSmokeProject({
+	return await scaffoldWorkerE2eProject({
 		architecture: options.architecture,
 		prefix: options.prefix,
 		zoneId: options.zoneId,
 	});
 }
 
-export async function writeOpenClawMcpPortalSmokeConfigs(options: {
+export async function writeOpenClawMcpPortalE2eConfigs(options: {
 	readonly agentId: string;
 	readonly configDir: string;
 	readonly namespace: string;
@@ -1057,7 +1045,7 @@ export async function writeOpenClawMcpPortalSmokeConfigs(options: {
 				$schema: '../../schemas/mcp.schema.json',
 				providers: {
 					upstreamMock: {
-						discovery: { summary: 'Mock upstream MCP server for smoke tests' },
+						discovery: { summary: 'Mock upstream MCP server for e2e tests' },
 						kind: 'mcp',
 						namespace: options.namespace,
 						transport: {
@@ -1104,9 +1092,9 @@ export async function writeOpenClawMcpPortalSmokeConfigs(options: {
 	);
 }
 
-export async function startSmokeControllerRuntime(
-	options: StartSmokeControllerRuntimeOptions,
-): Promise<SmokeHarnessRuntime> {
+export async function startE2eControllerRuntime(
+	options: StartE2eControllerRuntimeOptions,
+): Promise<E2eHarnessRuntime> {
 	const restoreEnvironment = applySmokeEnvironment(options.secrets);
 	const secretResolver = createSmokeSecretResolver(options.secrets);
 	const tempRoot = path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath));
@@ -1154,44 +1142,44 @@ export async function startSmokeControllerRuntime(
 					cleanupErrors.push(error);
 				}
 				if (
-					shouldCleanupSmokeDockerImages({
+					shouldCleanupE2eDockerImages({
 						...closeOptions,
 						env: process.env,
 					})
 				) {
 					try {
-						await removeSmokeDockerImagesForSystemConfig(options.startOptions.systemConfig);
+						await removeE2eDockerImagesForSystemConfig(options.startOptions.systemConfig);
 					} catch (error) {
 						cleanupErrors.push(error);
 					}
 				}
 				try {
-					await removeSmokeTempRoot(tempRoot);
+					await removeE2eTempRoot(tempRoot);
 				} catch (error) {
 					cleanupErrors.push(error);
 				} finally {
 					restoreEnvironment();
 				}
-				throwIfSmokeHarnessCleanupFailed(cleanupErrors);
+				throwIfE2eHarnessCleanupFailed(cleanupErrors);
 			},
 		};
 	} catch (error) {
 		const cleanupErrors: unknown[] = [error];
-		if (shouldCleanupSmokeDockerImages({ env: process.env })) {
+		if (shouldCleanupE2eDockerImages({ env: process.env })) {
 			try {
-				await removeSmokeDockerImagesForSystemConfig(options.startOptions.systemConfig);
+				await removeE2eDockerImagesForSystemConfig(options.startOptions.systemConfig);
 			} catch (cleanupError) {
 				cleanupErrors.push(cleanupError);
 			}
 		}
 		try {
-			await removeSmokeTempRoot(tempRoot);
+			await removeE2eTempRoot(tempRoot);
 		} catch (cleanupError) {
 			cleanupErrors.push(cleanupError);
 		} finally {
 			restoreEnvironment();
 		}
-		throwIfSmokeHarnessCleanupFailed(cleanupErrors);
+		throwIfE2eHarnessCleanupFailed(cleanupErrors);
 		throw error;
 	}
 }

@@ -1,4 +1,4 @@
-/* oxlint-disable eslint/no-await-in-loop -- E2E smoke steps are sequential against live VMs */
+/* oxlint-disable eslint/no-await-in-loop -- E2E steps are sequential against live VMs */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -17,20 +17,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runBuildCommand } from '../cli/build-command.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
-	canRunGondolinSmoke,
-	currentSmokeArchitecture,
+	canRunGondolinE2e,
+	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
-	removeSmokeTempRoot,
-	scaffoldOpenClawSmokeProject,
-	startSmokeControllerRuntime,
-	type OpenClawSmokeProject,
-	type SmokeHarnessRuntime,
+	removeE2eTempRoot,
+	scaffoldOpenClawE2eProject,
+	startE2eControllerRuntime,
+	type OpenClawE2eProject,
+	type E2eHarnessRuntime,
 	useLocalOpenClawPluginGatewayImage,
-} from './smoke-harness.js';
+} from './e2e-harness.js';
 
-const architecture = currentSmokeArchitecture();
+const architecture = currentE2eArchitecture();
 const runOpenClawControlLinkSmoke =
-	process.env.AGENT_VM_OPENCLAW_SMOKE === '1' && (await canRunGondolinSmoke({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
 const describeOpenClawControlLinkSmoke = runOpenClawControlLinkSmoke ? describe : describe.skip;
 const agentId = 'smoke';
 const gatewayToken = 'control-link-smoke-gateway-token';
@@ -240,18 +240,18 @@ NODE`;
 }
 
 describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control link', () => {
-	let harness: SmokeHarnessRuntime | undefined;
-	let project: OpenClawSmokeProject | undefined;
-	let systemConfig: SmokeHarnessRuntime['systemConfig'] | undefined;
+	let harness: E2eHarnessRuntime | undefined;
+	let project: OpenClawE2eProject | undefined;
+	let systemConfig: E2eHarnessRuntime['systemConfig'] | undefined;
 	let gatewayVm: ManagedVm | undefined;
 	const gatewayStarts: ManagedVm[] = [];
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
-		project = await scaffoldOpenClawSmokeProject({
+		project = await scaffoldOpenClawE2eProject({
 			agents: [agentId],
 			architecture,
-			prefix: 'openclaw-control-link-smoke-',
+			prefix: 'openclaw-control-link-e2e-',
 			zoneId,
 		});
 		systemConfig = {
@@ -289,7 +289,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 		await runBuildCommand({
 			systemConfig: loadedSystemConfig,
 		});
-		harness = await startSmokeControllerRuntime({
+		harness = await startE2eControllerRuntime({
 			secrets: {
 				GITHUB_TOKEN: 'unused-control-link-smoke-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
@@ -320,7 +320,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 			await harness?.close();
 		} finally {
 			if (project) {
-				await removeSmokeTempRoot(project.tempRoot);
+				await removeE2eTempRoot(project.tempRoot);
 			}
 		}
 	});

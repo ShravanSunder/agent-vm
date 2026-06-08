@@ -4,7 +4,7 @@
  * This test can only run INSIDE a gateway VM where OpenClaw is installed.
  * Run manually: node --test packages/openclaw-agent-vm-plugin/src/sdk-compat.test.mjs
  *
- * For CI: include in the live-smoke test suite that boots a gateway VM.
+ * For CI: include in the live e2e test suite that boots a gateway VM.
  * The test verifies that our assertSdkShape type guard matches the actual
  * exports from openclaw/plugin-sdk/sandbox. If OpenClaw changes its SDK,
  * this test catches the mismatch.

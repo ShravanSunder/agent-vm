@@ -9,21 +9,21 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';
 import {
-	currentSmokeArchitecture,
+	currentE2eArchitecture,
 	prepareLocalWorkerPackageForGatewayImage,
-	removeSmokeTempRoot,
-	scaffoldWorkerSmokeProject,
+	removeE2eTempRoot,
+	scaffoldWorkerE2eProject,
 	seedGatewayImageCacheIfAvailable,
-	shouldRunWorkerGatewaySmoke,
-	startSmokeControllerRuntime,
-	type SmokeHarnessRuntime,
-	type WorkerSmokeProject,
-} from './smoke-harness.js';
+	shouldRunWorkerGatewayE2e,
+	startE2eControllerRuntime,
+	type E2eHarnessRuntime,
+	type WorkerE2eProject,
+} from './e2e-harness.js';
 
-const architecture = currentSmokeArchitecture();
-const runWorkerSmoke = await shouldRunWorkerGatewaySmoke({ architecture });
+const architecture = currentE2eArchitecture();
+const runWorkerE2e = await shouldRunWorkerGatewayE2e({ architecture });
 
-const describeWorkerSmoke = runWorkerSmoke ? describe : describe.skip;
+const describeWorkerE2e = runWorkerE2e ? describe : describe.skip;
 
 async function createSampleRepo(baseDir: string): Promise<string> {
 	const repoDir = path.join(baseDir, 'sample-repo');
@@ -58,16 +58,16 @@ async function createSampleRepo(baseDir: string): Promise<string> {
 	return repoDir;
 }
 
-describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
-	let harness: SmokeHarnessRuntime | undefined;
-	let project: WorkerSmokeProject | undefined;
+describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
+	let harness: E2eHarnessRuntime | undefined;
+	let project: WorkerE2eProject | undefined;
 
 	afterAll(async () => {
 		try {
 			await harness?.close();
 		} finally {
 			if (project) {
-				await removeSmokeTempRoot(project.tempRoot);
+				await removeE2eTempRoot(project.tempRoot);
 			}
 		}
 	});
@@ -75,10 +75,10 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 	it('runs a real worker task to completed through the controller route', async () => {
 		const repoRoot = path.resolve(process.cwd());
 
-		project = await scaffoldWorkerSmokeProject({
+		project = await scaffoldWorkerE2eProject({
 			architecture,
-			prefix: 'worker-loop-smoke-',
-			zoneId: 'worker-smoke',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
 		});
 		const repoDir = await createSampleRepo(project.tempRoot);
 		const gatewayBuildConfigPath = path.join(
@@ -130,33 +130,33 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 		process.env.AGENT_VM_WORKER_TARBALL_PATH = localWorkerTarballPath;
 		try {
 			const secretResolver: SecretResolver = {
-				resolve: async (_ref: SecretRef) => process.env.OPEN_AI_TEST_KEY ?? '',
+				resolve: async (_ref: SecretRef) => process.env.AGENT_VM_TEST_OPENAI_API_KEY ?? '',
 				resolveAll: async (refs: Record<string, SecretRef>) =>
 					Object.fromEntries(
-						Object.keys(refs).map((key) => [key, process.env.OPEN_AI_TEST_KEY ?? '']),
+						Object.keys(refs).map((key) => [key, process.env.AGENT_VM_TEST_OPENAI_API_KEY ?? '']),
 					),
 			};
-			harness = await startSmokeControllerRuntime({
+			harness = await startE2eControllerRuntime({
 				secrets: {
-					OPEN_AI_TEST_KEY: process.env.OPEN_AI_TEST_KEY ?? '',
-					'op://agent-vm/github-token/credential': process.env.OPEN_AI_TEST_KEY ?? '',
+					AGENT_VM_TEST_OPENAI_API_KEY: process.env.AGENT_VM_TEST_OPENAI_API_KEY ?? '',
+					'op://agent-vm/github-token/credential': process.env.AGENT_VM_TEST_OPENAI_API_KEY ?? '',
 				},
 				startOptions: {
 					systemConfig: project.systemConfig,
-					zoneIds: ['worker-smoke'],
+					zoneIds: ['worker-e2e'],
 				},
 			});
 			const repoUrl = pathToFileURL(repoDir).href;
 
 			const prepared = await prepareWorkerTask({
 				input: {
-					requestTaskId: 'request-worker-smoke',
+					requestTaskId: 'request-worker-e2e',
 					prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
 					repos: [{ repoUrl, baseBranch: 'main' }],
 					context: { source: 'smoke-test' },
 				},
 				systemConfig: project.systemConfig,
-				zoneId: 'worker-smoke',
+				zoneId: 'worker-e2e',
 			});
 			const result = await executeWorkerTask(prepared, {
 				secretResolver,

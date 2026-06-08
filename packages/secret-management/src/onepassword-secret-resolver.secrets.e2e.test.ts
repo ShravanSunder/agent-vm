@@ -3,18 +3,17 @@ import { execFile, type ExecFileException } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SecretRef } from './contracts.js';
+import { shouldRunOnePasswordSecretResolverE2e } from './e2e-test-gates.js';
+import {
+	readOnePasswordE2eTestConfig,
+	type OnePasswordE2eTestConfig,
+} from './onepassword-e2e-test-config.js';
 import {
 	createSecretResolver,
 	type ExecFileOptions,
 	type ExecFileResult,
 	type SecretResolverClient,
 } from './onepassword-secret-resolver.js';
-import { shouldRunOnePasswordSecretResolverSmoke } from './smoke-test-gates.js';
-
-interface OnePasswordSmokeConfig {
-	readonly secretReferences: readonly string[];
-	readonly serviceAccountToken: string;
-}
 
 interface RecordedOpCall {
 	readonly args: readonly string[];
@@ -32,58 +31,9 @@ const unsafeAmbientOnePasswordAuthEnvNames = [
 	'OP_SESSION',
 ] satisfies readonly string[];
 
-const defaultOnePasswordSmokeSecretReferences = [
-	'op://agent-vm-testing/smoke-test-item1/ref1',
-	'op://agent-vm-testing/smoke-test-item1/ref2',
-	'op://agent-vm-testing/smoke-test-item1/password',
-	'op://agent-vm-testing/smoke-test-item2/password',
-] satisfies readonly string[];
-
-const describeOnePasswordSecretResolverSmoke = shouldRunOnePasswordSecretResolverSmoke()
+const describeOnePasswordSecretResolverE2e = shouldRunOnePasswordSecretResolverE2e()
 	? describe
 	: describe.skip;
-
-describe('smoke: 1Password default refs', () => {
-	it('covers both smoke items and item1 fields in one batch', () => {
-		expect(defaultOnePasswordSmokeSecretReferences).toEqual([
-			'op://agent-vm-testing/smoke-test-item1/ref1',
-			'op://agent-vm-testing/smoke-test-item1/ref2',
-			'op://agent-vm-testing/smoke-test-item1/password',
-			'op://agent-vm-testing/smoke-test-item2/password',
-		]);
-	});
-});
-
-function readSmokeSecretReferences(): readonly string[] {
-	const configuredReferences = process.env.AGENT_VM_1PASSWORD_SMOKE_REFS;
-	if (!configuredReferences) {
-		return defaultOnePasswordSmokeSecretReferences;
-	}
-
-	return configuredReferences
-		.split(',')
-		.map((secretReference) => secretReference.trim())
-		.filter((secretReference) => secretReference.length > 0);
-}
-
-function readOnePasswordSmokeConfig(): OnePasswordSmokeConfig {
-	const serviceAccountToken = process.env.TEST_OP_SERVICE_ACCOUNT_TOKEN;
-	const secretReferences = readSmokeSecretReferences();
-
-	if (!serviceAccountToken) {
-		throw new Error('Set TEST_OP_SERVICE_ACCOUNT_TOKEN when AGENT_VM_1PASSWORD_SMOKE=1.');
-	}
-	if (secretReferences.length === 0) {
-		throw new Error('Set AGENT_VM_1PASSWORD_SMOKE_REFS to at least one op:// reference.');
-	}
-	for (const secretReference of secretReferences) {
-		if (!secretReference.startsWith('op://')) {
-			throw new Error('Every AGENT_VM_1PASSWORD_SMOKE_REFS entry must be an op:// reference.');
-		}
-	}
-
-	return { secretReferences, serviceAccountToken };
-}
 
 function copyExecEnv(
 	env: Readonly<Record<string, string | undefined>> | undefined,
@@ -243,7 +193,7 @@ function expectResolvedSmokeSecrets(
 
 function expectSafeRecordedOpCall(
 	opCall: RecordedOpCall | undefined,
-	config: OnePasswordSmokeConfig,
+	config: OnePasswordE2eTestConfig,
 ): RecordedOpCall {
 	if (!opCall) {
 		throw new Error('Expected the smoke resolver to record an op subprocess call.');
@@ -255,7 +205,7 @@ function expectSafeRecordedOpCall(
 }
 
 function expectOpInjectBatchCall(options: {
-	readonly config: OnePasswordSmokeConfig;
+	readonly config: OnePasswordE2eTestConfig;
 	readonly opCall: RecordedOpCall | undefined;
 }): void {
 	const opInjectCall = expectSafeRecordedOpCall(options.opCall, options.config);
@@ -265,9 +215,9 @@ function expectOpInjectBatchCall(options: {
 	expect(opInjectCall.templateSecretReferences).toEqual(options.config.secretReferences);
 }
 
-describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', () => {
+describeOnePasswordSecretResolverE2e('e2e: 1Password op inject fallback', () => {
 	it('resolves live refs through one op inject batch when the SDK fails', async () => {
-		const config = readOnePasswordSmokeConfig();
+		const config = readOnePasswordE2eTestConfig();
 		const refs = createSmokeSecretRefs(config.secretReferences);
 		const batchOpCalls: RecordedOpCall[] = [];
 		const stderrWriteSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
@@ -294,7 +244,7 @@ describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', ()
 	});
 
 	it('throws when both the SDK and op inject fail (no further fallback)', async () => {
-		const config = readOnePasswordSmokeConfig();
+		const config = readOnePasswordE2eTestConfig();
 		const refs = createSmokeSecretRefs(config.secretReferences);
 		const opCalls: RecordedOpCall[] = [];
 		const failingResolver = await createSecretResolver(

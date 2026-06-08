@@ -18,13 +18,14 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
 }
 
-function canReadSecretRef(secretRef: string | undefined): boolean {
+function canReadSecretRef(secretRef: string | undefined, serviceAccountToken: string): boolean {
 	if (typeof secretRef !== 'string' || secretRef.length === 0) {
 		return false;
 	}
 
 	try {
 		execFileSync('op', ['read', secretRef], {
+			env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: serviceAccountToken },
 			stdio: 'ignore',
 		});
 		return true;
@@ -33,7 +34,7 @@ function canReadSecretRef(secretRef: string | undefined): boolean {
 	}
 }
 
-function canReadConfiguredZoneSecretRefs(): boolean {
+function canReadConfiguredZoneSecretRefs(serviceAccountToken: string): boolean {
 	let rawSystemConfig: unknown;
 	try {
 		rawSystemConfig = JSON.parse(fs.readFileSync('config/system.json', 'utf8')) as unknown;
@@ -62,18 +63,19 @@ function canReadConfiguredZoneSecretRefs(): boolean {
 	};
 
 	return (
-		canReadSecretRef(readRef('DISCORD_BOT_TOKEN')) &&
-		canReadSecretRef(readRef('PERPLEXITY_API_KEY')) &&
-		canReadSecretRef(readRef('OPENCLAW_GATEWAY_TOKEN'))
+		canReadSecretRef(readRef('DISCORD_BOT_TOKEN'), serviceAccountToken) &&
+		canReadSecretRef(readRef('PERPLEXITY_API_KEY'), serviceAccountToken) &&
+		canReadSecretRef(readRef('OPENCLAW_GATEWAY_TOKEN'), serviceAccountToken)
 	);
 }
 
+const testOpServiceAccountToken = process.env.AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN;
 const runLiveModelRoundtrip =
-	typeof process.env.OP_SERVICE_ACCOUNT_TOKEN === 'string' &&
-	process.env.OP_SERVICE_ACCOUNT_TOKEN.length > 0 &&
-	canReadConfiguredZoneSecretRefs() &&
-	typeof process.env.OPEN_AI_TEST_KEY === 'string' &&
-	process.env.OPEN_AI_TEST_KEY.length > 0;
+	typeof testOpServiceAccountToken === 'string' &&
+	testOpServiceAccountToken.length > 0 &&
+	canReadConfiguredZoneSecretRefs(testOpServiceAccountToken) &&
+	typeof process.env.AGENT_VM_TEST_OPENAI_API_KEY === 'string' &&
+	process.env.AGENT_VM_TEST_OPENAI_API_KEY.length > 0;
 
 const describeLiveModelRoundtrip = runLiveModelRoundtrip ? describe : describe.skip;
 
@@ -207,40 +209,46 @@ describe('live integration: agent model roundtrip deployment config', () => {
 
 describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 	it('boots the controller and performs a real gateway exec roundtrip', async () => {
-		const systemConfig = await loadSystemConfig('config/system.json');
-		const controllerPort = await findAvailablePort();
-		const gatewayPort = await findAvailablePort();
-		const toolSshPort = await findAvailablePort();
-		const deploymentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-live-roundtrip-'));
-		const liveSystemConfig = createLiveRoundtripDeploymentConfig({
-			controllerPort,
-			deploymentRoot,
-			gatewayPort,
-			systemConfig,
-			toolSshPort,
-		});
-		const zone = liveSystemConfig.zones[0];
-		if (!zone) {
-			throw new Error('Expected at least one zone in system config');
+		if (typeof testOpServiceAccountToken !== 'string') {
+			throw new Error('AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN is required for llm e2e.');
 		}
-		await runBuildCommand(
-			{
-				systemConfig: liveSystemConfig,
-			},
-			{
-				runTask: async (_title, fn) => await fn(),
-			},
-		);
-
-		const runtime = await startControllerRuntime(
-			{
-				systemConfig: liveSystemConfig,
-				zoneIds: [zone.id],
-			},
-			{},
-		);
+		const previousOpToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = testOpServiceAccountToken;
+		const deploymentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-live-roundtrip-'));
+		let runtime: Awaited<ReturnType<typeof startControllerRuntime>> | undefined;
 
 		try {
+			const systemConfig = await loadSystemConfig('config/system.json');
+			const controllerPort = await findAvailablePort();
+			const gatewayPort = await findAvailablePort();
+			const toolSshPort = await findAvailablePort();
+			const liveSystemConfig = createLiveRoundtripDeploymentConfig({
+				controllerPort,
+				deploymentRoot,
+				gatewayPort,
+				systemConfig,
+				toolSshPort,
+			});
+			const zone = liveSystemConfig.zones[0];
+			if (!zone) {
+				throw new Error('Expected at least one zone in system config');
+			}
+			await runBuildCommand(
+				{
+					systemConfig: liveSystemConfig,
+				},
+				{
+					runTask: async (_title, fn) => await fn(),
+				},
+			);
+
+			runtime = await startControllerRuntime(
+				{
+					systemConfig: liveSystemConfig,
+					zoneIds: [zone.id],
+				},
+				{},
+			);
 			await waitForControllerHealth(runtime.controllerPort);
 
 			const commandResponse = await fetch(
@@ -283,7 +291,12 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 			}
 			expect(leasesBody.length).toBeGreaterThan(0);
 		} finally {
-			await runtime.close();
+			await runtime?.close();
+			if (previousOpToken === undefined) {
+				delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
+			} else {
+				process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOpToken;
+			}
 			fs.rmSync(deploymentRoot, { force: true, recursive: true });
 		}
 	}, 300_000);

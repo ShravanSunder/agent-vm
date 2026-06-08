@@ -1,26 +1,85 @@
+import http, { type Server } from 'node:http';
+
 import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
+import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const TEST_SECRET_VALUE = 'agent-vm-http-mediation-test-secret';
-const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+const mediationHost = 'mediation-test.vm.host';
+const mediationUpstreamHost = '127.0.0.1';
+const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
+
+async function createHeaderEchoServer(): Promise<{
+	readonly port: number;
+	readonly server: Server;
+}> {
+	const server = http.createServer((request, response) => {
+		response.setHeader('content-type', 'application/json');
+		response.end(
+			JSON.stringify({
+				headers: {
+					Authorization: request.headers.authorization ?? '',
+				},
+			}),
+		);
+	});
+
+	await new Promise<void>((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', () => {
+			server.off('error', reject);
+			resolve();
+		});
+	});
+	const address = server.address();
+	if (address === null || typeof address === 'string') {
+		server.close();
+		throw new Error('Failed to start local HTTP mediation echo server.');
+	}
+	return { port: address.port, server };
+}
+
+function rewriteMediationHostToLoopback(
+	port: number,
+): (request: Request) => Promise<Request | void> {
+	return async (request: Request): Promise<Request | void> => {
+		const url = new URL(request.url);
+		if (url.hostname !== mediationHost) {
+			return;
+		}
+
+		url.hostname = mediationUpstreamHost;
+		url.port = String(port);
+		return new Request(url, {
+			headers: request.headers,
+			method: request.method,
+		});
+	};
+}
 
 describeLiveVmIntegration('live HTTP mediation', () => {
+	let echoServer: Server | null = null;
 	let vm: ManagedVm | null = null;
 
 	beforeAll(async () => {
+		const headerEchoServer = await createHeaderEchoServer();
+		echoServer = headerEchoServer.server;
 		vm = await createManagedVm({
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
 			rootfsMode: 'cow',
-			allowedHosts: ['httpbin.org'],
+			allowedHosts: [mediationHost, mediationUpstreamHost],
 			secrets: {
 				TEST_TOKEN: {
-					hosts: ['httpbin.org'],
+					hosts: [mediationHost, mediationUpstreamHost],
 					value: TEST_SECRET_VALUE,
 				},
+			},
+			onRequest: rewriteMediationHostToLoopback(headerEchoServer.port),
+			tcpHosts: {
+				[`${mediationUpstreamHost}:${String(headerEchoServer.port)}`]: `${mediationUpstreamHost}:${String(headerEchoServer.port)}`,
 			},
 			vfsMounts: {},
 			sessionLabel: 'agent-vm-live-http-mediation-test',
@@ -32,6 +91,19 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 			await vm.close();
 			vm = null;
 		}
+		await new Promise<void>((resolve, reject) => {
+			if (echoServer === null) {
+				resolve();
+				return;
+			}
+			echoServer.close((error) => {
+				if (error) {
+					reject(error);
+					return;
+				}
+				resolve();
+			});
+		});
 	});
 
 	it('keeps the real secret out of the VM env and injects it for an allowed host', async () => {
@@ -44,7 +116,7 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 		expect(envCheck.stdout.trim()).not.toBe(TEST_SECRET_VALUE);
 
 		const curlResult = await vm.exec(
-			'curl -sS --max-time 10 -H "Authorization: Bearer $TEST_TOKEN" https://httpbin.org/headers',
+			`curl -sS --max-time 10 -H "Authorization: Bearer $TEST_TOKEN" http://${mediationHost}/headers`,
 		);
 
 		expect(curlResult.exitCode).toBe(0);

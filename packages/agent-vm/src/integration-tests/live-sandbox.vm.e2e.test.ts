@@ -19,9 +19,9 @@ import { Hono } from 'hono';
  */
 import { afterAll, describe, it, expect } from 'vitest';
 
-import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
+import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
-const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 
 async function findAvailablePort(): Promise<number> {
 	return await new Promise((resolve, reject) => {

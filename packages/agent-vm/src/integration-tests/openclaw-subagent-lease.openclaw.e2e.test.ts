@@ -1,4 +1,4 @@
-/* oxlint-disable eslint/no-await-in-loop -- E2E smoke steps are sequential against live VMs */
+/* oxlint-disable eslint/no-await-in-loop -- E2E steps are sequential against live VMs */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -9,24 +9,24 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runBuildCommand } from '../cli/build-command.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
-	canRunGondolinSmoke,
-	currentSmokeArchitecture,
-	removeSmokeTempRoot,
-	scaffoldOpenClawSmokeProject,
-	startSmokeControllerRuntime,
-	type OpenClawSmokeProject,
-	type SmokeHarnessRuntime,
+	canRunGondolinE2e,
+	currentE2eArchitecture,
+	removeE2eTempRoot,
+	scaffoldOpenClawE2eProject,
+	startE2eControllerRuntime,
+	type OpenClawE2eProject,
+	type E2eHarnessRuntime,
 	useLocalOpenClawGatewayImagePackages,
-} from './smoke-harness.js';
+} from './e2e-harness.js';
 
-const architecture = currentSmokeArchitecture();
-const runOpenClawSubagentSmoke =
-	process.env.AGENT_VM_OPENCLAW_SMOKE === '1' && (await canRunGondolinSmoke({ architecture }));
-const describeOpenClawSubagentSmoke = runOpenClawSubagentSmoke ? describe : describe.skip;
+const architecture = currentE2eArchitecture();
+const runOpenClawSubagentE2e =
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+const describeOpenClawSubagentE2e = runOpenClawSubagentE2e ? describe : describe.skip;
 const agentId = 'smoke';
 const gatewayToken = 'subagent-lease-smoke-gateway-token';
 const mockOpenAiPort = 18231;
-const subagentSmokeResultPrefix = 'AGENT_VM_SUBAGENT_SMOKE_RESULT ';
+const subagentE2eResultPrefix = 'AGENT_VM_SUBAGENT_E2E_RESULT ';
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -55,13 +55,13 @@ function shellSingleQuote(value: string): string {
 }
 
 function parseSubagentSpawnProbeResult(stdout: string): OpenClawSubagentSpawnProbeResult {
-	const resultLine = stdout.split('\n').find((line) => line.startsWith(subagentSmokeResultPrefix));
+	const resultLine = stdout.split('\n').find((line) => line.startsWith(subagentE2eResultPrefix));
 	if (resultLine === undefined) {
-		throw new Error(`OpenClaw subagent smoke did not emit ${subagentSmokeResultPrefix.trim()}.`);
+		throw new Error(`OpenClaw subagent e2e did not emit ${subagentE2eResultPrefix.trim()}.`);
 	}
-	const parsed: unknown = JSON.parse(resultLine.slice(subagentSmokeResultPrefix.length));
+	const parsed: unknown = JSON.parse(resultLine.slice(subagentE2eResultPrefix.length));
 	if (!isObjectRecord(parsed)) {
-		throw new Error('OpenClaw subagent smoke result was not a JSON object.');
+		throw new Error('OpenClaw subagent e2e result was not a JSON object.');
 	}
 	if (
 		(parsed.status !== 'accepted' && parsed.status !== 'error') ||
@@ -72,7 +72,7 @@ function parseSubagentSpawnProbeResult(stdout: string): OpenClawSubagentSpawnPro
 		!('historyResponse' in parsed) ||
 		!('waitResponse' in parsed)
 	) {
-		throw new Error(`Unexpected OpenClaw subagent smoke result: ${JSON.stringify(parsed)}`);
+		throw new Error(`Unexpected OpenClaw subagent e2e result: ${JSON.stringify(parsed)}`);
 	}
 	return {
 		agentResponse: parsed.agentResponse,
@@ -412,7 +412,7 @@ const contextWorkspaceDir = process.env.OPENCLAW_SUBAGENT_SMOKE_CONTEXT_WORKSPAC
 const marker = process.env.OPENCLAW_SUBAGENT_SMOKE_MARKER;
 
 if (!packageRoot || !gatewayToken || !guestPort || !agentId || !contextWorkspaceDir || !marker) {
-	throw new Error('Missing OpenClaw subagent smoke environment.');
+	throw new Error('Missing OpenClaw subagent e2e environment.');
 }
 
 function readWebSocketText(data) {
@@ -657,7 +657,7 @@ try {
 } finally {
 	gatewayClient.close();
 }
-console.log('AGENT_VM_SUBAGENT_SMOKE_RESULT ' + JSON.stringify({
+console.log('AGENT_VM_SUBAGENT_E2E_RESULT ' + JSON.stringify({
 	agentResponse,
 	childSessionKey: spawnResult.childSessionKey,
 	contextWorkspaceDir,
@@ -671,7 +671,7 @@ NODE`;
 	const result = await options.gatewayVm.exec(command);
 	if (result.exitCode !== 0) {
 		throw new Error(
-			`OpenClaw subagent smoke probe failed with exit ${String(result.exitCode)}.\nstdout:\n${
+			`OpenClaw subagent e2e probe failed with exit ${String(result.exitCode)}.\nstdout:\n${
 				result.stdout
 			}\nstderr:\n${result.stderr}`,
 		);
@@ -679,24 +679,24 @@ NODE`;
 	return parseSubagentSpawnProbeResult(result.stdout);
 }
 
-describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () => {
-	let harness: SmokeHarnessRuntime | undefined;
-	let project: OpenClawSmokeProject | undefined;
+describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
+	let harness: E2eHarnessRuntime | undefined;
+	let project: OpenClawE2eProject | undefined;
 	let gatewayVm: ManagedVm | undefined;
 	let gatewayGuestListenPort: number | undefined;
 	const observedLeaseRequests: ObservedLeaseCreateRequest[] = [];
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
-		project = await scaffoldOpenClawSmokeProject({
+		project = await scaffoldOpenClawE2eProject({
 			agents: [agentId],
 			architecture,
-			prefix: 'openclaw-subagent-lease-smoke-',
+			prefix: 'openclaw-subagent-lease-e2e-',
 			zoneId: 'subagent-lease-smoke',
 		});
 		const systemZone = project.systemConfig.zones[0];
 		if (!systemZone || systemZone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw subagent smoke project to contain an OpenClaw zone.');
+			throw new Error('Expected OpenClaw subagent e2e project to contain an OpenClaw zone.');
 		}
 		await configureOpenClawMockModel({
 			configPath: systemZone.gateway.config,
@@ -724,7 +724,7 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 		await runBuildCommand({
 			systemConfig: project.systemConfig,
 		});
-		harness = await startSmokeControllerRuntime({
+		harness = await startE2eControllerRuntime({
 			onLeaseCreateRequest: (request) => {
 				observedLeaseRequests.push({
 					agentId: request.agentId,
@@ -764,7 +764,7 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 			await harness?.close();
 		} finally {
 			if (project) {
-				await removeSmokeTempRoot(project.tempRoot);
+				await removeE2eTempRoot(project.tempRoot);
 			}
 		}
 	});

@@ -232,16 +232,16 @@ Intent verification is future work. A future draft-confirm-commit flow should
 remain server-side and must not turn model-visible fields into proof of
 approval.
 
-## Local Smoke Verification
+## Local E2E Verification
 
-`packages/agent-vm/src/integration-tests/openclaw-mcp-portal.smoke.test.ts`
+`packages/agent-vm/src/integration-tests/openclaw-mcp-portal.openclaw.e2e.test.ts`
 boots a real controller, a real OpenClaw gateway VM, the OpenClaw plugin loader,
 native MCP Portal tools, and a fake upstream MCP server. Run it explicitly:
 
 ```bash
-AGENT_VM_OPENCLAW_SMOKE=1 pnpm vitest run --config vitest.smoke.config.ts packages/agent-vm/src/integration-tests/openclaw-mcp-portal.smoke.test.ts
+mise exec -- pnpm test:e2e:openclaw
 ```
 
-The smoke proves the gateway can load the plugin, register native portal tools,
+The e2e proof shows the gateway can load the plugin, register native portal tools,
 discover fake upstream tools, call read-only tools, and reject approval-gated
 writes without approval. It intentionally avoids real upstream credentials.

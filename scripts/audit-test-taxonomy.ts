@@ -1,13 +1,19 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const allowedTestSuffixes = [
 	'.unit.test.ts',
 	'.unit.spec.ts',
 	'.integration.test.ts',
-	'.llm.integration.test.ts',
-	'.smoke.test.ts',
+	'.vm.e2e.test.ts',
+	'.openclaw.e2e.test.ts',
+	'.worker.e2e.test.ts',
+	'.secrets.e2e.test.ts',
+	'.llm.e2e.test.ts',
 ] as const;
+
+const forbiddenTestSuffixes = ['.smoke.test.ts', '.llm.integration.test.ts'] as const;
 
 const unitBoundaryPatterns: readonly RegExp[] = [
 	/^import\s+.*\s+from\s+['"]execa['"]/mu,
@@ -55,11 +61,14 @@ async function listTrackedTestFiles(): Promise<readonly string[]> {
 	return testFiles.sort((leftPath, rightPath) => leftPath.localeCompare(rightPath));
 }
 
-function hasAllowedSuffix(filePath: string): boolean {
+export function hasAllowedTestSuffix(filePath: string): boolean {
+	if (forbiddenTestSuffixes.some((suffix) => filePath.endsWith(suffix))) {
+		return false;
+	}
 	return allowedTestSuffixes.some((suffix) => filePath.endsWith(suffix));
 }
 
-function isUnitTest(filePath: string): boolean {
+export function isUnitTest(filePath: string): boolean {
 	return filePath.endsWith('.unit.test.ts') || filePath.endsWith('.unit.spec.ts');
 }
 
@@ -68,9 +77,9 @@ async function collectViolations(): Promise<readonly string[]> {
 	const fileViolations = await Promise.all(
 		testFiles.map(async (filePath): Promise<readonly string[]> => {
 			const violations: string[] = [];
-			if (!hasAllowedSuffix(filePath)) {
+			if (!hasAllowedTestSuffix(filePath)) {
 				violations.push(
-					`${filePath}: test files must use .unit.test.ts, .integration.test.ts, .llm.integration.test.ts, or .smoke.test.ts`,
+					`${filePath}: test files must use .unit.test.ts, .integration.test.ts, .vm.e2e.test.ts, .openclaw.e2e.test.ts, .worker.e2e.test.ts, .secrets.e2e.test.ts, or .llm.e2e.test.ts`,
 				);
 				return violations;
 			}
@@ -97,13 +106,19 @@ async function collectViolations(): Promise<readonly string[]> {
 	return fileViolations.flat();
 }
 
-const violations = await collectViolations();
-if (violations.length > 0) {
-	process.stderr.write('Test taxonomy audit failed:\n');
-	for (const violation of violations) {
-		process.stderr.write(`- ${violation}\n`);
+async function main(): Promise<void> {
+	const violations = await collectViolations();
+	if (violations.length > 0) {
+		process.stderr.write('Test taxonomy audit failed:\n');
+		for (const violation of violations) {
+			process.stderr.write(`- ${violation}\n`);
+		}
+		process.exit(1);
 	}
-	process.exit(1);
+
+	process.stdout.write('Test taxonomy audit passed.\n');
 }
 
-process.stdout.write('Test taxonomy audit passed.\n');
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+	await main();
+}

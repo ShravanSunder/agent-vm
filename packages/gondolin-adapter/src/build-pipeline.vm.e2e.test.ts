@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildImage } from './build-pipeline.js';
 import type { BuildConfig } from './build-pipeline.js';
-import { shouldRunGondolinBuildPipelineSmoke } from './smoke-test-gates.js';
+import { shouldRunGondolinBuildPipelineE2e } from './e2e-test-gates.js';
 import { createManagedVm, type ManagedVm } from './vm-adapter.js';
 
 const temporaryDirectories: string[] = [];
-const describeGondolinBuildPipelineSmoke = shouldRunGondolinBuildPipelineSmoke()
+const describeGondolinBuildPipelineSmoke = shouldRunGondolinBuildPipelineE2e()
 	? describe
 	: describe.skip;
 
@@ -28,7 +28,7 @@ function resolveHostCompatibleGuestArchitecture(): 'aarch64' | 'x86_64' {
 		return 'x86_64';
 	}
 
-	throw new Error(`Unsupported smoke test host architecture: ${process.arch}`);
+	throw new Error(`Unsupported e2e test host architecture: ${process.arch}`);
 }
 
 afterEach(async () => {

@@ -13,22 +13,22 @@ import {
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import {
-	collectSmokeDockerImageTags,
+	collectE2eDockerImageTags,
 	disableOpenClawMcpPortalPlugin,
 	findReusableGatewayImageDirectory,
 	prepareLocalWorkerPackageForGatewayImage,
-	removeSmokeDockerImagesForSystemConfig,
-	removeSmokeTempRoot,
-	scaffoldGatewaySmokeProject,
-	scaffoldOpenClawSmokeProject,
-	scaffoldWorkerSmokeProject,
+	removeE2eDockerImagesForSystemConfig,
+	removeE2eTempRoot,
+	scaffoldGatewayE2eProject,
+	scaffoldOpenClawE2eProject,
+	scaffoldWorkerE2eProject,
 	seedGatewayImageCacheIfAvailable,
-	shouldCleanupSmokeDockerImages,
-	shouldRunWorkerGatewaySmoke,
+	shouldCleanupE2eDockerImages,
+	shouldRunWorkerGatewayE2e,
 	useLocalOpenClawGatewayImagePackages,
 	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
-} from './smoke-harness.js';
+} from './e2e-harness.js';
 
 const temporaryRoots: string[] = [];
 
@@ -46,13 +46,13 @@ afterEach(async () => {
 	);
 });
 
-describe('shouldRunWorkerGatewaySmoke', () => {
+describe('shouldRunWorkerGatewayE2e', () => {
 	it('requires explicit opt-in even when credentials and commands are available', async () => {
 		expect(
-			await shouldRunWorkerGatewaySmoke({
+			await shouldRunWorkerGatewayE2e({
 				architecture: 'aarch64',
 				commandExists: () => true,
-				env: { OPEN_AI_TEST_KEY: 'test-token' },
+				env: { AGENT_VM_TEST_OPENAI_API_KEY: 'test-token' },
 				resolveRequiredZigVersion: async () => '0.16.0',
 				resolveZigVersion: async () => '0.16.0',
 			}),
@@ -61,10 +61,10 @@ describe('shouldRunWorkerGatewaySmoke', () => {
 
 	it('requires a model credential when explicitly enabled', async () => {
 		expect(
-			await shouldRunWorkerGatewaySmoke({
+			await shouldRunWorkerGatewayE2e({
 				architecture: 'aarch64',
 				commandExists: () => true,
-				env: { AGENT_VM_WORKER_SMOKE: '1' },
+				env: { AGENT_VM_WORKER_E2E: '1' },
 				resolveRequiredZigVersion: async () => '0.16.0',
 				resolveZigVersion: async () => '0.16.0',
 			}),
@@ -73,12 +73,12 @@ describe('shouldRunWorkerGatewaySmoke', () => {
 
 	it('requires QEMU and Docker when explicitly enabled', async () => {
 		expect(
-			await shouldRunWorkerGatewaySmoke({
+			await shouldRunWorkerGatewayE2e({
 				architecture: 'aarch64',
 				commandExists: (command) => command !== 'docker',
 				env: {
-					AGENT_VM_WORKER_SMOKE: '1',
-					OPEN_AI_TEST_KEY: 'test-token',
+					AGENT_VM_WORKER_E2E: '1',
+					AGENT_VM_TEST_OPENAI_API_KEY: 'test-token',
 				},
 				resolveRequiredZigVersion: async () => '0.16.0',
 				resolveZigVersion: async () => '0.16.0',
@@ -88,12 +88,12 @@ describe('shouldRunWorkerGatewaySmoke', () => {
 
 	it('requires a compatible Zig version when explicitly enabled', async () => {
 		expect(
-			await shouldRunWorkerGatewaySmoke({
+			await shouldRunWorkerGatewayE2e({
 				architecture: 'aarch64',
 				commandExists: () => true,
 				env: {
-					AGENT_VM_WORKER_SMOKE: '1',
-					OPEN_AI_TEST_KEY: 'test-token',
+					AGENT_VM_WORKER_E2E: '1',
+					AGENT_VM_TEST_OPENAI_API_KEY: 'test-token',
 				},
 				resolveRequiredZigVersion: async () => '0.16.0',
 				resolveZigVersion: async () => '0.15.2',
@@ -103,12 +103,12 @@ describe('shouldRunWorkerGatewaySmoke', () => {
 
 	it('allows the worker gateway smoke when opt-in, credentials, commands, and Zig are compatible', async () => {
 		expect(
-			await shouldRunWorkerGatewaySmoke({
+			await shouldRunWorkerGatewayE2e({
 				architecture: 'aarch64',
 				commandExists: () => true,
 				env: {
-					AGENT_VM_WORKER_SMOKE: '1',
-					OPEN_AI_TEST_KEY: 'test-token',
+					AGENT_VM_WORKER_E2E: '1',
+					AGENT_VM_TEST_OPENAI_API_KEY: 'test-token',
 				},
 				resolveRequiredZigVersion: async () => '0.16.0',
 				resolveZigVersion: async () => '0.16.0',
@@ -117,22 +117,22 @@ describe('shouldRunWorkerGatewaySmoke', () => {
 	});
 });
 
-describe('scaffoldGatewaySmokeProject', () => {
+describe('scaffoldGatewayE2eProject', () => {
 	it('uses a shared smoke cache root instead of rebuilding images under each temp project', async () => {
-		const previousSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
-		process.env.AGENT_VM_SMOKE_CACHE_DIR = smokeCacheRoot;
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
 		try {
-			const openClawProject = await scaffoldOpenClawSmokeProject({
+			const openClawProject = await scaffoldOpenClawE2eProject({
 				architecture: 'aarch64',
-				prefix: 'openclaw-control-link-smoke-',
+				prefix: 'openclaw-control-link-e2e-',
 				zoneId: 'openclaw-smoke',
 			});
-			const workerProject = await scaffoldWorkerSmokeProject({
+			const workerProject = await scaffoldWorkerE2eProject({
 				architecture: 'aarch64',
-				prefix: 'worker-loop-smoke-',
-				zoneId: 'worker-smoke',
+				prefix: 'worker-loop-e2e-',
+				zoneId: 'worker-e2e',
 			});
 			temporaryRoots.push(openClawProject.tempRoot, workerProject.tempRoot);
 
@@ -142,19 +142,19 @@ describe('scaffoldGatewaySmokeProject', () => {
 			expect(workerProject.systemConfig.cacheDir).not.toContain(workerProject.tempRoot);
 		} finally {
 			if (previousSmokeCacheRoot === undefined) {
-				delete process.env.AGENT_VM_SMOKE_CACHE_DIR;
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
 			} else {
-				process.env.AGENT_VM_SMOKE_CACHE_DIR = previousSmokeCacheRoot;
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
 			}
 		}
 	});
 
 	it('dispatches through the typed OpenClaw gateway smoke project scaffold', async () => {
-		const project = await scaffoldGatewaySmokeProject({
+		const project = await scaffoldGatewayE2eProject({
 			agents: ['smoke-agent'],
 			architecture: 'aarch64',
 			kind: 'openclaw',
-			prefix: 'agent-vm-gateway-smoke-project-',
+			prefix: 'agent-vm-gateway-e2e-project-',
 			zoneId: 'smoke-zone',
 		});
 		temporaryRoots.push(project.tempRoot);
@@ -164,27 +164,27 @@ describe('scaffoldGatewaySmokeProject', () => {
 	});
 });
 
-describe('startSmokeControllerRuntime', () => {
+describe('startE2eControllerRuntime', () => {
 	it('preserves smoke Docker images by default so one suite can reuse the built cache', () => {
-		expect(shouldCleanupSmokeDockerImages({ env: {} })).toBe(false);
+		expect(shouldCleanupE2eDockerImages({ env: {} })).toBe(false);
 		expect(
-			shouldCleanupSmokeDockerImages({
-				env: { AGENT_VM_SMOKE_CLEAN_IMAGES: '0' },
+			shouldCleanupE2eDockerImages({
+				env: { AGENT_VM_E2E_CLEAN_IMAGES: '0' },
 			}),
 		).toBe(false);
 	});
 
 	it('only removes smoke Docker images when cleanup is requested explicitly', () => {
-		expect(shouldCleanupSmokeDockerImages({ cleanupImages: true })).toBe(true);
+		expect(shouldCleanupE2eDockerImages({ cleanupImages: true })).toBe(true);
 		expect(
-			shouldCleanupSmokeDockerImages({
-				env: { AGENT_VM_SMOKE_CLEAN_IMAGES: '1' },
+			shouldCleanupE2eDockerImages({
+				env: { AGENT_VM_E2E_CLEAN_IMAGES: '1' },
 			}),
 		).toBe(true);
 	});
 
 	it('passes TCP host and VFS mount overrides into the gateway zone startup dependency', async () => {
-		const { startSmokeControllerRuntime } = await import('./smoke-harness.js');
+		const { startE2eControllerRuntime } = await import('./e2e-harness.js');
 		const capturedGatewayStarts: StartGatewayZoneOptions[] = [];
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		const zone = systemConfig.zones[0];
@@ -192,9 +192,9 @@ describe('startSmokeControllerRuntime', () => {
 			throw new Error('Expected smoke system config to contain a zone.');
 		}
 
-		const harness = await startSmokeControllerRuntime({
+		const harness = await startE2eControllerRuntime({
 			secrets: {
-				OPEN_AI_TEST_KEY: 'test-service-account-token',
+				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
 				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
 			startGatewayZone: async (options) => {
@@ -247,17 +247,17 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('removes owned smoke temp roots when the harness closes', async () => {
-		const { startSmokeControllerRuntime } = await import('./smoke-harness.js');
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const { startE2eControllerRuntime } = await import('./e2e-harness.js');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const systemConfig = createMinimalOpenClawSystemConfig(temporaryRoot);
 		const zone = systemConfig.zones[0];
 		if (!zone || zone.gateway.type !== 'openclaw') {
 			throw new Error('Expected smoke system config to contain an OpenClaw zone.');
 		}
 
-		const harness = await startSmokeControllerRuntime({
+		const harness = await startE2eControllerRuntime({
 			secrets: {
-				OPEN_AI_TEST_KEY: 'test-service-account-token',
+				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
 				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
 			startGatewayZone: async () => ({
@@ -288,9 +288,9 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('removes OpenClaw control-link smoke temp roots', async () => {
-		const temporaryRoot = await createTemporaryRoot('openclaw-control-link-smoke-');
+		const temporaryRoot = await createTemporaryRoot('openclaw-control-link-e2e-');
 
-		await removeSmokeTempRoot(temporaryRoot);
+		await removeE2eTempRoot(temporaryRoot);
 
 		await expect(fs.access(temporaryRoot)).rejects.toThrow();
 	});
@@ -298,20 +298,20 @@ describe('startSmokeControllerRuntime', () => {
 	it('does not remove unrelated temp roots through the smoke cleanup helper', async () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-not-smoke-');
 
-		await removeSmokeTempRoot(temporaryRoot);
+		await removeE2eTempRoot(temporaryRoot);
 
 		await expect(fs.access(temporaryRoot)).resolves.toBeUndefined();
 	});
 
 	it('removes Docker images declared by smoke build configs', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const gatewayBuildConfigPath = path.join(temporaryRoot, 'gateway-build.jsonc');
 		const toolBuildConfigPath = path.join(temporaryRoot, 'tool-build.jsonc');
 		const systemConfig = createMinimalOpenClawSystemConfig(temporaryRoot);
 		const gatewayProfile = systemConfig.imageProfiles.gateways.openclaw;
 		const toolVmProfile = systemConfig.imageProfiles.toolVms.tool;
 		if (gatewayProfile === undefined || toolVmProfile === undefined) {
-			throw new Error('Expected smoke test fixture to define gateway and Tool VM profiles.');
+			throw new Error('Expected e2e test fixture to define gateway and Tool VM profiles.');
 		}
 		gatewayProfile.buildConfig = gatewayBuildConfigPath;
 		toolVmProfile.buildConfig = toolBuildConfigPath;
@@ -327,11 +327,11 @@ describe('startSmokeControllerRuntime', () => {
 		);
 		const dockerCommands: string[][] = [];
 
-		expect(await collectSmokeDockerImageTags(systemConfig)).toEqual([
+		expect(await collectE2eDockerImageTags(systemConfig)).toEqual([
 			'agent-vm-gateway:latest',
 			'agent-vm-tool:latest',
 		]);
-		await removeSmokeDockerImagesForSystemConfig(systemConfig, {
+		await removeE2eDockerImagesForSystemConfig(systemConfig, {
 			runDockerCommand: async (args) => {
 				dockerCommands.push([...args]);
 			},
@@ -346,7 +346,7 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('writes a local OpenClaw gateway smoke Dockerfile that installs both portal packages', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		systemConfig.imageProfiles.gateways.openclaw = {
@@ -421,7 +421,7 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('writes plugin-only OpenClaw smoke images without mutating Tool VM MCP Portal profiles', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		systemConfig.imageProfiles.gateways.openclaw = {
@@ -463,7 +463,7 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('writes local MCP Portal Tool VM smoke images only when requested explicitly', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		const originalGatewayProfile = { ...systemConfig.imageProfiles.gateways.openclaw };
@@ -499,7 +499,7 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('fails local package image setup before packing when declared package files are missing', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		const packageDir = path.join(repoRoot, 'packages', 'mcp-portal');
@@ -531,7 +531,7 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('removes MCP Portal plugin loading from OpenClaw smokes that do not exercise portal tools', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const configPath = path.join(temporaryRoot, 'openclaw.json');
 		await fs.writeFile(
 			configPath,
@@ -569,24 +569,24 @@ describe('startSmokeControllerRuntime', () => {
 
 describe('findReusableGatewayImageDirectory', () => {
 	it('does not scan random system temp smoke directories unless an explicit cache root is configured', async () => {
-		const previousSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
-		delete process.env.AGENT_VM_SMOKE_CACHE_DIR;
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		delete process.env.AGENT_VM_E2E_CACHE_DIR;
 		try {
 			await expect(
 				findReusableGatewayImageDirectory('/tmp/current-smoke', '/tmp/build-config.jsonc'),
 			).resolves.toBeNull();
 		} finally {
 			if (previousSmokeCacheRoot === undefined) {
-				delete process.env.AGENT_VM_SMOKE_CACHE_DIR;
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
 			} else {
-				process.env.AGENT_VM_SMOKE_CACHE_DIR = previousSmokeCacheRoot;
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
 			}
 		}
 	});
 
 	it('seeds the current profile-local gateway image cache from an explicit smoke cache root', async () => {
-		const previousSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
-		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
 		const currentProjectRoot = path.join(temporaryRoot, 'current-smoke');
 		const previousCacheDir = path.join(smokeCacheRoot, 'previous-run', 'cache');
@@ -611,7 +611,7 @@ describe('findReusableGatewayImageDirectory', () => {
 				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
 			}),
 		);
-		process.env.AGENT_VM_SMOKE_CACHE_DIR = smokeCacheRoot;
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
 		try {
 			await seedGatewayImageCacheIfAvailable({
 				activeCacheDir,
@@ -621,9 +621,9 @@ describe('findReusableGatewayImageDirectory', () => {
 			});
 		} finally {
 			if (previousSmokeCacheRoot === undefined) {
-				delete process.env.AGENT_VM_SMOKE_CACHE_DIR;
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
 			} else {
-				process.env.AGENT_VM_SMOKE_CACHE_DIR = previousSmokeCacheRoot;
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
 			}
 		}
 
@@ -689,7 +689,7 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 			projectNamespace: 'smoke-tests',
 			secretsProvider: {
 				type: '1password',
-				tokenSource: { type: 'env', envVar: 'OPEN_AI_TEST_KEY' },
+				tokenSource: { type: 'env', envVar: 'AGENT_VM_TEST_OPENAI_API_KEY' },
 			},
 		},
 		imageProfiles: {

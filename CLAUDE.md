@@ -49,7 +49,8 @@ fast formatting and linting.
 - Install/build: `pnpm install`, then `pnpm build`.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
-- Smoke tests: `pnpm test:smoke`.
+- E2E inventory: `pnpm test:e2e:inventory`.
+- Default non-secret E2E proof: `mise exec -- pnpm test:e2e`.
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
   publish script.

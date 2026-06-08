@@ -117,6 +117,7 @@ $AGENT_VM validate --config config/system.json
 pnpm build
 pnpm test:unit
 pnpm test:integration
-pnpm test:smoke
+pnpm test:e2e:inventory
+pnpm test:e2e
 pnpm check
 ```

@@ -1,33 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldRunWorkerRuntimeSmoke } from './worker-smoke-gates.js';
+import { shouldRunWorkerRuntimeE2e } from './worker-e2e-gates.js';
 
-describe('shouldRunWorkerRuntimeSmoke', () => {
+describe('shouldRunWorkerRuntimeE2e', () => {
 	it('requires explicit opt-in even when credentials and codex are available', () => {
 		expect(
-			shouldRunWorkerRuntimeSmoke({
+			shouldRunWorkerRuntimeE2e({
 				commandExists: () => true,
-				env: { OPEN_AI_TEST_KEY: 'test-token' },
+				env: { AGENT_VM_TEST_OPENAI_API_KEY: 'test-token' },
 			}),
 		).toBe(false);
 	});
 
 	it('requires a model credential when explicitly enabled', () => {
 		expect(
-			shouldRunWorkerRuntimeSmoke({
+			shouldRunWorkerRuntimeE2e({
 				commandExists: () => true,
-				env: { AGENT_VM_WORKER_SMOKE: '1' },
+				env: { AGENT_VM_WORKER_E2E: '1' },
 			}),
 		).toBe(false);
 	});
 
 	it('requires the codex command when explicitly enabled', () => {
 		expect(
-			shouldRunWorkerRuntimeSmoke({
+			shouldRunWorkerRuntimeE2e({
 				commandExists: () => false,
 				env: {
-					AGENT_VM_WORKER_SMOKE: '1',
-					OPEN_AI_TEST_KEY: 'test-token',
+					AGENT_VM_WORKER_E2E: '1',
+					AGENT_VM_TEST_OPENAI_API_KEY: 'test-token',
 				},
 			}),
 		).toBe(false);
@@ -35,11 +35,11 @@ describe('shouldRunWorkerRuntimeSmoke', () => {
 
 	it('allows the worker runtime smoke when opt-in, credentials, and codex are present', () => {
 		expect(
-			shouldRunWorkerRuntimeSmoke({
+			shouldRunWorkerRuntimeE2e({
 				commandExists: () => true,
 				env: {
-					AGENT_VM_WORKER_SMOKE: '1',
-					OPEN_AI_TEST_KEY: 'test-token',
+					AGENT_VM_WORKER_E2E: '1',
+					AGENT_VM_TEST_OPENAI_API_KEY: 'test-token',
 				},
 			}),
 		).toBe(true);

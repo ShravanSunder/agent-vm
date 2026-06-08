@@ -4,7 +4,7 @@ import { createManagedVm } from '@agent-vm/gondolin-adapter';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { describe, it, expect, afterAll } from 'vitest';
 
-import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
+import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 /**
  * Live cross-VM SSH test — validates the gateway VM to Tool VM data path.
@@ -21,7 +21,7 @@ import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
  * Requires: QEMU/Gondolin runtime assets. Current Gondolin maps tcp.hosts flows
  * as raw TCP via allowRawTcp, so SSH protocol sniffing is intentionally bypassed.
  */
-const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 
 describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 	let toolVm: ManagedVm | null = null;

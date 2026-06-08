@@ -45,7 +45,7 @@ describe('publish workflow', () => {
 		expect(workflow).toContain('source_managed_image_tag');
 		expect(workflow).toContain('default: false');
 		expect(workflow).toContain('Cache apt packages');
-		expect(workflow).toContain('Install Zig for Gondolin smoke tests');
+		expect(workflow).toContain('Install Zig for Gondolin e2e tests');
 		expect(workflow).toContain('Detect managed base image changes');
 		expect(workflow).toContain(
 			"PUBLISH_NPM: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_npm }}",

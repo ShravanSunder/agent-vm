@@ -3,7 +3,7 @@ import net from 'node:net';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 /**
- * Live smoke test: gateway API client → controller lease API round-trip.
+ * Live e2e test: gateway API client → controller lease API round-trip.
  *
  * This test verifies the gateway API client and controller lease API work
  * together over real HTTP, without requiring a gateway VM or QEMU.
@@ -12,7 +12,7 @@ import { Hono } from 'hono';
  * validated manually via scripts/live-sandbox-manual.mjs or by sending
  * a message through WhatsApp/Discord and checking controller logs.
  *
- * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-api-smoke.integration.test.ts
+ * Run: pnpm vitest run packages/agent-vm/src/integration-tests/gateway-api-http.integration.test.ts
  */
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { z } from 'zod';
@@ -64,7 +64,7 @@ async function findAvailablePort(): Promise<number> {
 	});
 }
 
-describe('live smoke: API client → controller over real HTTP', () => {
+describe('live integration: API client → controller over real HTTP', () => {
 	let controllerServer: { close: (cb?: () => void) => void } | null = null;
 	let gatewayServer: { close: (cb?: () => void) => void } | null = null;
 	let activeGatewayPort: number | null = null;

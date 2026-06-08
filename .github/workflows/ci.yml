@@ -66,7 +66,7 @@ jobs:
           path: .cache/zig
           key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}
 
-      - name: Install Zig for Gondolin smoke tests
+      - name: Install Zig for Gondolin e2e tests
         env:
           ZIG_ARCH: ${{ steps.zig-version.outputs.arch }}
           ZIG_VERSION: ${{ steps.zig-version.outputs.version }}
@@ -125,8 +125,10 @@ jobs:
       - name: Integration tests
         run: pnpm test:integration
 
-      - name: Default smoke tests
-        run: pnpm test:smoke
+      - name: E2E inventory
+        run: pnpm test:e2e:inventory
 
-      - name: Gondolin rootfs smoke test
-        run: pnpm vitest run --config vitest.smoke.config.ts packages/gondolin-adapter/src/build-pipeline.smoke.test.ts
+      - name: Non-secret E2E proofs
+        run: |
+          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm
+          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm-mediation

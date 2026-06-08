@@ -12,13 +12,13 @@ export interface CreateLiveRoundtripDeploymentConfigOptions {
 }
 
 export function resolveLiveRoundtripCacheDir(
-	env: Partial<Record<'AGENT_VM_SMOKE_CACHE_DIR', string>> = process.env,
+	env: Partial<Record<'AGENT_VM_E2E_CACHE_DIR', string>> = process.env,
 ): string {
-	const configuredCacheRoot = env.AGENT_VM_SMOKE_CACHE_DIR;
+	const configuredCacheRoot = env.AGENT_VM_E2E_CACHE_DIR;
 	const cacheRoot =
 		configuredCacheRoot !== undefined && configuredCacheRoot.length > 0
 			? path.resolve(configuredCacheRoot)
-			: path.join(os.tmpdir(), 'agent-vm-smoke-cache');
+			: path.join(os.tmpdir(), 'agent-vm-e2e-cache');
 	return path.join(cacheRoot, 'live-roundtrip');
 }
 

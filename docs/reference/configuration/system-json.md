@@ -372,11 +372,11 @@ Important fields in `mcp.config.jsonc` provider entries:
   `AGENT_VM_MCP_*` placeholder environment variable, while the raw value stays
   in host-side mediated secret state.
 
-Local smoke coverage uses a fake Streamable HTTP MCP provider and the
-controller smoke harness `tcpHostsOverride` path to make that host-side provider
-reachable from inside the OpenClaw gateway VM. The smoke does not require
+Local OpenClaw e2e coverage uses a fake Streamable HTTP MCP provider and the
+controller e2e harness `tcpHostsOverride` path to make that host-side provider
+reachable from inside the OpenClaw gateway VM. The e2e proof does not require
 DeepWiki, Tavily, 1Password, or real upstream MCP credentials; credentialed
-upstream providers belong in an explicit deployment smoke outside the default
+upstream providers belong in an explicit deployment e2e outside the default
 local suite.
 
 `agent-vm init --type openclaw --openclaw-agents sun,shravan,alevtina` scaffolds

@@ -231,12 +231,19 @@ describe('createManagedVm', () => {
 
 	it('uses OpenClaw-compatible synthetic DNS ranges when TCP host mapping is enabled', async () => {
 		let capturedVmOptions: VMOptions | undefined;
-		const dependencies = createBaseDependencies({
-			createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
-				capturedVmOptions = vmOptions;
-				return createFakeVmInstance();
+		const createHttpHooksMock = vi.fn(() => ({
+			env: { HTTPS_PROXY: 'http://proxy.vm.host:8080' },
+			httpHooks: {} satisfies HttpHooks,
+		}));
+		const dependencies = {
+			...createBaseDependencies({
+				createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
+					capturedVmOptions = vmOptions;
+					return createFakeVmInstance();
+				}),
 			}),
-		});
+			createHttpHooks: createHttpHooksMock,
+		} satisfies ManagedVmDependencies;
 
 		await createManagedVm(
 			{
@@ -260,6 +267,11 @@ describe('createManagedVm', () => {
 			syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
 			syntheticIPv6: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 			syntheticHostMapping: 'per-host',
+		});
+		expect(createHttpHooksMock).toHaveBeenCalledWith({
+			allowedHosts: [],
+			allowedInternalHosts: ['controller.vm.host'],
+			secrets: {},
 		});
 	});
 

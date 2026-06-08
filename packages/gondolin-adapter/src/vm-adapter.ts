@@ -82,6 +82,7 @@ export interface ManagedVmDependencies {
 	createVm(vmOptions: VMOptions): Promise<ManagedVmInstance>;
 	createHttpHooks(options: {
 		readonly allowedHosts: readonly string[];
+		readonly allowedInternalHosts?: readonly string[];
 		readonly secrets: Record<string, MediatedSecretSpec>;
 		readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
 		readonly onResponse?: (response: Response) => Promise<Response | void>;
@@ -146,6 +147,9 @@ function createDefaultDependencies(): ManagedVmDependencies {
 		createHttpHooks: (hookOptions) =>
 			createHttpHooks({
 				allowedHosts: [...hookOptions.allowedHosts],
+				...(hookOptions.allowedInternalHosts
+					? { allowedInternalHosts: [...hookOptions.allowedInternalHosts] }
+					: {}),
 				secrets: Object.fromEntries(
 					Object.entries(hookOptions.secrets).map(([secretName, secretSpec]) => [
 						secretName,
@@ -334,17 +338,51 @@ function resolveManagedVmIngressOptions(
 	return resolvedOptions;
 }
 
+function deriveAllowedInternalHostsFromTcpHosts(
+	tcpHosts: Record<string, string> | undefined,
+): readonly string[] {
+	if (!tcpHosts) {
+		return [];
+	}
+
+	const hostnames: string[] = [];
+	for (const tcpHostKey of Object.keys(tcpHosts)) {
+		const hostname = parseTcpHostKeyHostname(tcpHostKey);
+		if (hostname.length > 0 && !hostnames.includes(hostname)) {
+			hostnames.push(hostname);
+		}
+	}
+	return hostnames;
+}
+
+function parseTcpHostKeyHostname(tcpHostKey: string): string {
+	if (tcpHostKey.startsWith('[')) {
+		const closingBracketIndex = tcpHostKey.indexOf(']');
+		if (closingBracketIndex > 1) {
+			return tcpHostKey.slice(1, closingBracketIndex);
+		}
+	}
+
+	const portSeparatorIndex = tcpHostKey.lastIndexOf(':');
+	if (portSeparatorIndex <= 0) {
+		return tcpHostKey;
+	}
+	return tcpHostKey.slice(0, portSeparatorIndex);
+}
+
 export async function createManagedVm(
 	options: CreateVmOptions,
 	dependencies: ManagedVmDependencies = createDefaultDependencies(),
 ): Promise<ManagedVm> {
 	dependencies.configureHostNetworkDefaults?.();
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
+	const allowedInternalHosts = deriveAllowedInternalHostsFromTcpHosts(options.tcpHosts);
 	const pinnedRealFsRoots = collectPinnedRealFsRoots(options.vfsMounts);
 	let vmInstance: ManagedVmInstance;
 	try {
 		const hookBundle = dependencies.createHttpHooks({
 			allowedHosts: options.allowedHosts,
+			...(allowedInternalHosts.length > 0 ? { allowedInternalHosts } : {}),
 			secrets: options.secrets,
 			...(options.onRequest ? { onRequest: options.onRequest } : {}),
 			...(options.onResponse ? { onResponse: options.onResponse } : {}),

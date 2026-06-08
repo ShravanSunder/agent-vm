@@ -1,4 +1,4 @@
-/* oxlint-disable eslint/no-await-in-loop -- smoke test steps must be sequential against live VMs */
+/* oxlint-disable eslint/no-await-in-loop -- e2e steps must be sequential against live VMs */
 import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -10,21 +10,21 @@ import { runBuildCommand } from '../cli/build-command.js';
 import { ensureZoneGitRepository } from '../controller/zone-git/zone-git-operations.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
-	canRunGondolinSmoke,
-	currentSmokeArchitecture,
+	canRunGondolinE2e,
+	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
-	removeSmokeTempRoot,
-	scaffoldOpenClawSmokeProject,
-	startSmokeControllerRuntime,
-	type OpenClawSmokeProject,
-	type SmokeHarnessRuntime,
+	removeE2eTempRoot,
+	scaffoldOpenClawE2eProject,
+	startE2eControllerRuntime,
+	type OpenClawE2eProject,
+	type E2eHarnessRuntime,
 	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
-} from './smoke-harness.js';
+} from './e2e-harness.js';
 
-const architecture = currentSmokeArchitecture();
+const architecture = currentE2eArchitecture();
 const runOpenClawZoneGitSmoke =
-	process.env.AGENT_VM_OPENCLAW_SMOKE === '1' && (await canRunGondolinSmoke({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
 const describeOpenClawZoneGitSmoke = runOpenClawZoneGitSmoke ? describe : describe.skip;
 
 interface ControllerLeaseResponse {
@@ -217,15 +217,15 @@ async function execGitInToolVm(options: {
 }
 
 describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
-	let harness: SmokeHarnessRuntime | undefined;
-	let project: OpenClawSmokeProject | undefined;
+	let harness: E2eHarnessRuntime | undefined;
+	let project: OpenClawE2eProject | undefined;
 
 	afterAll(async () => {
 		try {
 			await harness?.close();
 		} finally {
 			if (project) {
-				await removeSmokeTempRoot(project.tempRoot);
+				await removeE2eTempRoot(project.tempRoot);
 			}
 		}
 	});
@@ -233,10 +233,10 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 	it('lets an agent commit in /zone and push through the OpenClaw zone_git_push tool', async () => {
 		const repoRoot = path.resolve(process.cwd());
 
-		project = await scaffoldOpenClawSmokeProject({
+		project = await scaffoldOpenClawE2eProject({
 			agents: ['smoke'],
 			architecture,
-			prefix: 'openclaw-zone-git-smoke-',
+			prefix: 'openclaw-zone-git-e2e-',
 			zoneId: 'zone-git-smoke',
 		});
 		await useLocalOpenClawPluginGatewayImage({
@@ -255,7 +255,7 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		await execa('git', ['init', '--bare', remoteGitDir]);
 		project.systemConfig.host.githubToken = {
 			source: 'environment',
-			envVar: 'AGENT_VM_ZONE_GIT_SMOKE_GITHUB_TOKEN',
+			envVar: 'AGENT_VM_TEST_ZONE_GIT_TOKEN',
 		};
 		project.zone.gateway.zoneGit = {
 			remote: {
@@ -277,9 +277,9 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			systemConfig: project.systemConfig,
 		});
 
-		harness = await startSmokeControllerRuntime({
+		harness = await startE2eControllerRuntime({
 			secrets: {
-				AGENT_VM_ZONE_GIT_SMOKE_GITHUB_TOKEN: 'local-remote-token-not-for-tool-vm',
+				AGENT_VM_TEST_ZONE_GIT_TOKEN: 'local-remote-token-not-for-tool-vm',
 				GITHUB_TOKEN: 'local-remote-token-not-for-tool-vm',
 				MCP_PORTAL_SERVER_SECRET: 'zone-git-smoke-portal-secret',
 				OPENCLAW_GATEWAY_TOKEN: 'zone-git-smoke-gateway-token',
@@ -335,8 +335,7 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		).resolves.toBe('/zone');
 		await expect(
 			execSsh({
-				command:
-					'test -z "${AGENT_VM_ZONE_GIT_SMOKE_GITHUB_TOKEN:-}" && test -z "${GITHUB_TOKEN:-}"',
+				command: 'test -z "${AGENT_VM_TEST_ZONE_GIT_TOKEN:-}" && test -z "${GITHUB_TOKEN:-}"',
 				identityFilePath,
 				ssh: leasePeek.ssh,
 			}),
