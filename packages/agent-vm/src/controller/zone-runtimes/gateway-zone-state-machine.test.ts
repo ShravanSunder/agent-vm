@@ -190,6 +190,12 @@ describe('classifyGatewayStartError', () => {
 
 		expect(classifyGatewayStartError(error).code).toBe('secret-resolution-failed');
 	});
+
+	it('does not classify generic operation failures as secret resolution failures', () => {
+		const error = new Error('Bootstrap op failed while starting gateway process.');
+
+		expect(classifyGatewayStartError(error).code).toBe('vm-start-failed');
+	});
 });
 
 describe('GatewayRecoveryErrorCode', () => {

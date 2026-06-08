@@ -344,10 +344,10 @@ describe('createGatewayServiceHealthMonitor', () => {
 			classifyRecoveryBudgetClass: () => 'gateway-vm-cold-start',
 			gatewayServiceAutoRestart: {
 				...gatewayServiceAutoRestart,
-				consecutiveFailureThreshold: 1,
+				consecutiveFailureThreshold: 3,
 				channelProviderHealth: {
 					enabled: true,
-					consecutiveFailureThreshold: 1,
+					consecutiveFailureThreshold: 3,
 					restartGatewayOnRecoverable: true,
 					restartGatewayOnUnrecoverable: false,
 					transitioningTimeoutMs: 120_000,
@@ -370,9 +370,15 @@ describe('createGatewayServiceHealthMonitor', () => {
 
 		nowMs = 10_000;
 		await monitor.tick();
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+		nowMs = 20_000;
+		await monitor.tick();
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+		nowMs = 30_000;
+		await monitor.tick();
 
 		expect(recoverGatewayVm).toHaveBeenCalledWith({
-			consecutiveFailures: 1,
+			consecutiveFailures: 3,
 			reason: 'agent-channel-provider-unhealthy',
 			zoneId: 'sunfam',
 		});
@@ -660,10 +666,10 @@ describe('createGatewayServiceHealthMonitor', () => {
 		const monitor = createGatewayServiceHealthMonitor({
 			gatewayServiceAutoRestart: {
 				...gatewayServiceAutoRestart,
-				consecutiveFailureThreshold: 1,
+				consecutiveFailureThreshold: 3,
 				channelProviderHealth: {
 					enabled: true,
-					consecutiveFailureThreshold: 1,
+					consecutiveFailureThreshold: 3,
 					restartGatewayOnRecoverable: true,
 					restartGatewayOnUnrecoverable: false,
 					transitioningTimeoutMs: 120_000,
@@ -686,9 +692,15 @@ describe('createGatewayServiceHealthMonitor', () => {
 
 		nowMs = 10_000;
 		await monitor.tick();
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+		nowMs = 20_000;
+		await monitor.tick();
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+		nowMs = 30_000;
+		await monitor.tick();
 
 		expect(recoverGatewayVm).toHaveBeenCalledWith({
-			consecutiveFailures: 1,
+			consecutiveFailures: 3,
 			reason: 'agent-channel-provider-unhealthy',
 			zoneId: 'sunfam',
 		});

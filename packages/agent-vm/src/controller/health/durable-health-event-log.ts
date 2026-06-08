@@ -51,7 +51,15 @@ export async function readDurableHealthEvents(
 	options: ReadDurableHealthEventsOptions,
 ): Promise<readonly DurableHealthEventRecord[]> {
 	const logPath = controllerHealthEventLogPath(options.runtimeDir);
-	const logText = await readFile(logPath, 'utf8');
+	let logText: string;
+	try {
+		logText = await readFile(logPath, 'utf8');
+	} catch (error) {
+		if (isNodeFileSystemError(error) && error.code === 'ENOENT') {
+			return [];
+		}
+		throw error;
+	}
 	return logText
 		.split('\n')
 		.filter((line) => line.trim().length > 0)
@@ -88,6 +96,12 @@ function isDurableHealthEventRecord(value: unknown): value is DurableHealthEvent
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNodeFileSystemError(value: unknown): value is { readonly code: string } {
+	return (
+		typeof value === 'object' && value !== null && 'code' in value && typeof value.code === 'string'
+	);
 }
 
 function operationIdForHealthEvent(event: AgentVmHealthEvent): string | undefined {

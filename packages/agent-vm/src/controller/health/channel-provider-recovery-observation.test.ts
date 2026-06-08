@@ -15,6 +15,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		).toEqual({
 			kind: 'record-observation',
 			observation: {
+				channelProviderId: 'primary-channel',
 				observedAtMs: 1_000,
 				result: 'ok',
 				zoneId: 'sunfam',
@@ -55,6 +56,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		).toEqual({
 			kind: 'record-observation',
 			observation: {
+				channelProviderId: 'primary-channel',
 				observedAtMs: 40_001,
 				result: 'failed',
 				zoneId: 'sunfam',
@@ -89,6 +91,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		expect(discordClose).toEqual({
 			kind: 'record-observation',
 			observation: {
+				channelProviderId: 'primary-channel',
 				observedAtMs: 1_000,
 				result: 'failed',
 				zoneId: 'sunfam',
@@ -162,6 +165,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		).toEqual({
 			kind: 'record-observation',
 			observation: {
+				channelProviderId: 'primary-channel',
 				observedAtMs: 31_001,
 				result: 'stale',
 				zoneId: 'sunfam',

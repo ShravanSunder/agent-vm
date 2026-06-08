@@ -98,6 +98,12 @@ describe('durable health event log', () => {
 			operationId: 'op-from-event',
 		});
 	});
+
+	it('returns an empty list when the durable health log has not been created yet', async () => {
+		const runtimeDir = await createTemporaryDirectory();
+
+		await expect(readDurableHealthEvents({ runtimeDir })).resolves.toEqual([]);
+	});
 });
 
 async function createTemporaryDirectory(): Promise<string> {

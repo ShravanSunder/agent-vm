@@ -354,4 +354,58 @@ describe('createGatewayVmRecoveryTracker', () => {
 			}),
 		).toEqual({ consecutiveFailures: 11, kind: 'none', reason: 'in-flight' });
 	});
+
+	it('tracks channel-provider failures per provider so healthy providers do not mask unhealthy ones', () => {
+		const tracker = createGatewayVmRecoveryTracker({
+			policy: {
+				...policy,
+				channelProviderHealth: {
+					consecutiveFailureThreshold: 3,
+					enabled: true,
+					restartGatewayOnRecoverable: true,
+					restartGatewayOnUnrecoverable: false,
+					transitioningTimeoutMs: 120_000,
+				},
+			},
+		});
+
+		expect(
+			tracker.recordAgentChannelProviderObservation({
+				channelProviderId: 'primary-channel',
+				observedAtMs: 10_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({ consecutiveFailures: 1, kind: 'none' });
+		expect(
+			tracker.recordAgentChannelProviderObservation({
+				channelProviderId: 'secondary-channel',
+				observedAtMs: 11_000,
+				result: 'ok',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({ consecutiveFailures: 0, kind: 'none' });
+		expect(
+			tracker.recordAgentChannelProviderObservation({
+				channelProviderId: 'primary-channel',
+				observedAtMs: 20_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({ consecutiveFailures: 2, kind: 'none' });
+
+		expect(
+			tracker.recordAgentChannelProviderObservation({
+				channelProviderId: 'primary-channel',
+				observedAtMs: 30_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 3,
+			kind: 'restart',
+			reason: 'agent-channel-provider-unhealthy',
+			zoneId: 'sunfam',
+		});
+	});
 });

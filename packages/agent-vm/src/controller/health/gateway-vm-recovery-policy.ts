@@ -41,6 +41,7 @@ export interface CreateGatewayVmRecoveryTrackerOptions {
 }
 
 export interface GatewayVmRecoveryObservation {
+	readonly channelProviderId?: string | undefined;
 	readonly observedAtMs: number;
 	readonly recoveryBudgetClass?: GatewayVmRecoveryBudgetClass | undefined;
 	readonly result: GatewayVmRecoveryObservationResult;
@@ -89,7 +90,7 @@ export interface GatewayVmRecoveryTracker {
 }
 
 interface GatewayVmRecoveryTrackerState {
-	agentChannelProviderConsecutiveFailures: number;
+	agentChannelProviderConsecutiveFailuresById: Map<string, number>;
 	gatewayControlLinkConsecutiveFailures: number;
 	gatewayServiceConsecutiveFailures: number;
 	recoveryBudgets: Record<GatewayVmRecoveryBudgetClass, GatewayVmRecoveryBudgetState>;
@@ -109,7 +110,7 @@ function createInitialGatewayVmRecoveryBudgetState(): GatewayVmRecoveryBudgetSta
 }
 
 const createInitialGatewayVmRecoveryTrackerState = (): GatewayVmRecoveryTrackerState => ({
-	agentChannelProviderConsecutiveFailures: 0,
+	agentChannelProviderConsecutiveFailuresById: new Map(),
 	gatewayControlLinkConsecutiveFailures: 0,
 	gatewayServiceConsecutiveFailures: 0,
 	recoveryBudgets: {
@@ -168,6 +169,10 @@ function resetFailedRecoveriesIfSuspensionExpired(
 	) {
 		budgetState.consecutiveFailedRecoveries = 0;
 	}
+}
+
+function channelProviderCounterKey(observation: GatewayVmRecoveryObservation): string {
+	return observation.channelProviderId ?? '(unknown-channel-provider)';
 }
 
 function decideRecovery(props: {
@@ -230,7 +235,7 @@ export function createGatewayVmRecoveryTracker(
 			const state = getStateForZone(event.zoneId);
 			state.recoveryInFlight = false;
 			if (event.result === 'ok') {
-				state.agentChannelProviderConsecutiveFailures = 0;
+				state.agentChannelProviderConsecutiveFailuresById.clear();
 				state.gatewayControlLinkConsecutiveFailures = 0;
 				state.gatewayServiceConsecutiveFailures = 0;
 				for (const budgetState of Object.values(state.recoveryBudgets)) {
@@ -252,22 +257,27 @@ export function createGatewayVmRecoveryTracker(
 			const channelProviderPolicy =
 				options.policy.channelProviderHealth ?? defaultGatewayVmChannelProviderRecoveryPolicy;
 			const state = getStateForZone(observation.zoneId);
+			const counterKey = channelProviderCounterKey(observation);
+			const currentConsecutiveFailures =
+				state.agentChannelProviderConsecutiveFailuresById.get(counterKey) ?? 0;
 			if (observation.result === 'unobserved') {
 				return {
-					consecutiveFailures: state.agentChannelProviderConsecutiveFailures,
+					consecutiveFailures: currentConsecutiveFailures,
 					kind: 'none',
 					reason: 'unobserved',
 				};
 			}
 			if (isHealthyObservation(observation.result)) {
-				state.agentChannelProviderConsecutiveFailures = 0;
+				state.agentChannelProviderConsecutiveFailuresById.set(counterKey, 0);
 				return { consecutiveFailures: 0, kind: 'none' };
 			}
+			let consecutiveFailures = currentConsecutiveFailures;
 			if (isDegradedObservation(observation.result)) {
-				state.agentChannelProviderConsecutiveFailures += 1;
+				consecutiveFailures += 1;
+				state.agentChannelProviderConsecutiveFailuresById.set(counterKey, consecutiveFailures);
 			}
 			return decideRecovery({
-				consecutiveFailures: state.agentChannelProviderConsecutiveFailures,
+				consecutiveFailures,
 				observedAtMs: observation.observedAtMs,
 				policy: {
 					...options.policy,

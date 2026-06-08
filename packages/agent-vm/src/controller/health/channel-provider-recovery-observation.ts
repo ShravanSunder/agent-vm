@@ -39,11 +39,12 @@ export function deriveChannelProviderRecoveryObservation(
 	switch (options.event.health) {
 		case 'healthy':
 			if (isStaleChannelProviderEvent(options)) {
-				return staleChannelProviderObservation(options.nowMs, options.event.zoneId);
+				return staleChannelProviderObservation(options.nowMs, options.event);
 			}
 			return {
 				kind: 'record-observation',
 				observation: {
+					channelProviderId: options.event.channelProviderId,
 					observedAtMs: options.event.observedAtMs,
 					result: 'ok',
 					zoneId: options.event.zoneId,
@@ -53,14 +54,14 @@ export function deriveChannelProviderRecoveryObservation(
 			return deriveTransitioningChannelProviderObservation(options);
 		case 'unhealthy-recoverable':
 			if (isStaleChannelProviderEvent(options)) {
-				return staleChannelProviderObservation(options.nowMs, options.event.zoneId);
+				return staleChannelProviderObservation(options.nowMs, options.event);
 			}
 			return options.restartGatewayOnRecoverable === false
 				? { kind: 'observe-only', reason: 'channel-provider-restart-disabled' }
-				: failedChannelProviderObservation(options.event.observedAtMs, options.event.zoneId);
+				: failedChannelProviderObservation(options.event.observedAtMs, options.event);
 		case 'unhealthy-unrecoverable':
 			return options.allowRestartWhenUnrecoverable === true
-				? failedChannelProviderObservation(options.event.observedAtMs, options.event.zoneId)
+				? failedChannelProviderObservation(options.event.observedAtMs, options.event)
 				: { kind: 'observe-only', reason: 'channel-provider-unrecoverable' };
 	}
 	return assertNeverAgentChannelProviderHealth(options.event.health);
@@ -79,19 +80,20 @@ function deriveTransitioningChannelProviderObservation(
 	if (options.nowMs - transitionStartedAtMs <= options.transitioningTimeoutMs) {
 		return { kind: 'observe-only', reason: 'channel-provider-transitioning' };
 	}
-	return failedChannelProviderObservation(options.nowMs, options.event.zoneId);
+	return failedChannelProviderObservation(options.nowMs, options.event);
 }
 
 function failedChannelProviderObservation(
 	observedAtMs: number,
-	zoneId: string,
+	event: AgentChannelProviderHealthEvent,
 ): ChannelProviderRecoveryObservation {
 	return {
 		kind: 'record-observation',
 		observation: {
+			channelProviderId: event.channelProviderId,
 			observedAtMs,
 			result: 'failed',
-			zoneId,
+			zoneId: event.zoneId,
 		},
 		reason: 'agent-channel-provider-unhealthy',
 	};
@@ -99,14 +101,15 @@ function failedChannelProviderObservation(
 
 function staleChannelProviderObservation(
 	observedAtMs: number,
-	zoneId: string,
+	event: AgentChannelProviderHealthEvent,
 ): ChannelProviderRecoveryObservation {
 	return {
 		kind: 'record-observation',
 		observation: {
+			channelProviderId: event.channelProviderId,
 			observedAtMs,
 			result: 'stale',
-			zoneId,
+			zoneId: event.zoneId,
 		},
 		reason: 'agent-channel-provider-unhealthy',
 	};

@@ -174,7 +174,7 @@ export function classifyGatewayStartError(error: unknown): GatewayLifecycleError
 	if (
 		normalizedMessage.includes('secret') ||
 		normalizedMessage.includes('resolveall') ||
-		normalizedMessage.includes('op failed') ||
+		normalizedMessage.includes('op://') ||
 		normalizedMessage.includes('1password')
 	) {
 		return { code: 'secret-resolution-failed', message };
