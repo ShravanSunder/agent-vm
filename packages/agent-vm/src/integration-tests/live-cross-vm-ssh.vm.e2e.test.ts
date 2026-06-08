@@ -4,6 +4,7 @@ import { createManagedVm } from '@agent-vm/gondolin-adapter';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { describe, it, expect, afterAll } from 'vitest';
 
+import { currentE2eArchitecture } from './e2e-harness.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 /**
@@ -22,6 +23,7 @@ import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
  * as raw TCP via allowRawTcp, so SSH protocol sniffing is intentionally bypassed.
  */
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
+const expectedGuestArchitecture = currentE2eArchitecture();
 
 describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 	let toolVm: ManagedVm | null = null;
@@ -114,7 +116,7 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		expect(sshResult.exitCode).toBe(0);
 		expect(sshResult.stdout).toContain('cross_vm_ok');
 		expect(sshResult.stdout).toContain('tool_vm_marker');
-		expect(sshResult.stdout).toContain('aarch64');
+		expect(sshResult.stdout).toContain(expectedGuestArchitecture);
 
 		// Step 5: Verify the two VMs are different (different exec channels)
 		const gwHostname = await gatewayVm.exec('cat /proc/sys/kernel/hostname');
