@@ -80,7 +80,15 @@ export interface SmokeHarnessRuntime {
 	readonly runtime: ControllerRuntime;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tempRoot: string;
-	close(): Promise<void>;
+	close(options?: SmokeHarnessCloseOptions): Promise<void>;
+}
+
+export interface SmokeHarnessCloseOptions {
+	readonly cleanupImages?: boolean;
+}
+
+export interface SmokeHarnessImageCleanupOptions extends SmokeHarnessCloseOptions {
+	readonly env?: Partial<Record<'AGENT_VM_SMOKE_CLEAN_IMAGES', string>>;
 }
 
 export interface OpenClawSmokeProject {
@@ -130,6 +138,13 @@ export interface StartSmokeControllerRuntimeOptions {
 
 export interface RemoveSmokeDockerImagesOptions {
 	readonly runDockerCommand?: (args: readonly string[]) => Promise<void>;
+}
+
+export function shouldCleanupSmokeDockerImages(
+	options: SmokeHarnessImageCleanupOptions = {},
+): boolean {
+	const env = options.env ?? process.env;
+	return options.cleanupImages === true || env.AGENT_VM_SMOKE_CLEAN_IMAGES === '1';
 }
 
 export function hasCommand(command: string): boolean {
@@ -1131,17 +1146,24 @@ export async function startSmokeControllerRuntime(
 			runtime,
 			systemConfig: options.startOptions.systemConfig,
 			tempRoot,
-			close: async () => {
+			close: async (closeOptions = {}) => {
 				const cleanupErrors: unknown[] = [];
 				try {
 					await runtime.close();
 				} catch (error) {
 					cleanupErrors.push(error);
 				}
-				try {
-					await removeSmokeDockerImagesForSystemConfig(options.startOptions.systemConfig);
-				} catch (error) {
-					cleanupErrors.push(error);
+				if (
+					shouldCleanupSmokeDockerImages({
+						...closeOptions,
+						env: process.env,
+					})
+				) {
+					try {
+						await removeSmokeDockerImagesForSystemConfig(options.startOptions.systemConfig);
+					} catch (error) {
+						cleanupErrors.push(error);
+					}
 				}
 				try {
 					await removeSmokeTempRoot(tempRoot);
@@ -1155,10 +1177,12 @@ export async function startSmokeControllerRuntime(
 		};
 	} catch (error) {
 		const cleanupErrors: unknown[] = [error];
-		try {
-			await removeSmokeDockerImagesForSystemConfig(options.startOptions.systemConfig);
-		} catch (cleanupError) {
-			cleanupErrors.push(cleanupError);
+		if (shouldCleanupSmokeDockerImages({ env: process.env })) {
+			try {
+				await removeSmokeDockerImagesForSystemConfig(options.startOptions.systemConfig);
+			} catch (cleanupError) {
+				cleanupErrors.push(cleanupError);
+			}
 		}
 		try {
 			await removeSmokeTempRoot(tempRoot);

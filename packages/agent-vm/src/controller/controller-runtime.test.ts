@@ -27,6 +27,10 @@ type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequ
 
 let previousOnePasswordServiceAccountToken: string | undefined;
 let previousOpenClawGatewayToken: string | undefined;
+const controllerRuntimeTestRoot = path.join(
+	tmpdir(),
+	`agent-vm-controller-runtime-test-${process.pid}`,
+);
 
 const defaultGatewayServiceAutoRestart = {
 	channelProviderHealth: {
@@ -51,7 +55,7 @@ beforeEach(() => {
 	process.env.OPENCLAW_GATEWAY_TOKEN = 'test-openclaw-gateway-token';
 });
 
-afterEach(() => {
+afterEach(async () => {
 	if (previousOnePasswordServiceAccountToken === undefined) {
 		delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
 	} else {
@@ -62,6 +66,7 @@ afterEach(() => {
 	} else {
 		process.env.OPENCLAW_GATEWAY_TOKEN = previousOpenClawGatewayToken;
 	}
+	await rm(controllerRuntimeTestRoot, { force: true, recursive: true });
 });
 
 describe('classifyGatewayRecoveryRestartError', () => {
@@ -88,11 +93,16 @@ describe('classifyGatewayRecoveryRestartError', () => {
 	});
 });
 
+function isPathInsideDirectory(candidatePath: string, directoryPath: string): boolean {
+	const relativePath = path.relative(path.resolve(directoryPath), path.resolve(candidatePath));
+	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
 const systemConfig = {
 	schemaVersion: 1,
-	cacheDir: './cache',
-	runtimeDir: './runtime',
-	systemConfigPath: './config/system.json',
+	cacheDir: path.join(controllerRuntimeTestRoot, 'cache'),
+	runtimeDir: path.join(controllerRuntimeTestRoot, 'runtime'),
+	systemConfigPath: path.join(controllerRuntimeTestRoot, 'config', 'system.json'),
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -144,8 +154,8 @@ const systemConfig = {
 				cpus: 2,
 				port: 18791,
 				config: './config/shravan/openclaw.json',
-				stateDir: './state/shravan',
-				zoneFilesDir: './zone-files/shravan',
+				stateDir: path.join(controllerRuntimeTestRoot, 'state', 'shravan'),
+				zoneFilesDir: path.join(controllerRuntimeTestRoot, 'zone-files', 'shravan'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -173,6 +183,26 @@ const systemConfig = {
 		size: 5,
 	},
 } satisfies LoadedSystemConfig;
+
+describe('controller runtime test fixture paths', () => {
+	it('keeps generated runtime, state, and zone files outside the repository checkout', () => {
+		const repositoryRoot = process.cwd();
+		const generatedPaths = [
+			systemConfig.cacheDir,
+			systemConfig.runtimeDir,
+			...systemConfig.zones.flatMap((zone) => [
+				zone.gateway.stateDir,
+				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
+			]),
+		];
+
+		expect(
+			generatedPaths.filter((generatedPath) =>
+				isPathInsideDirectory(path.resolve(generatedPath), repositoryRoot),
+			),
+		).toEqual([]);
+	});
+});
 
 function createLeaseRequestBody(
 	overrides: Partial<ControllerLeaseCreateRequestBody> = {},

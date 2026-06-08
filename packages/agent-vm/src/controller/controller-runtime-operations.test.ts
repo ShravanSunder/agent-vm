@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import {
@@ -9,10 +13,15 @@ import type { ControllerZoneAdminAuthError } from './zone-runtimes/zone-runtime-
 import { ControllerZoneNotFoundError } from './zone-runtimes/zone-runtime-errors.js';
 import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
+const controllerRuntimeOperationsTestRoot = path.join(
+	tmpdir(),
+	`agent-vm-controller-runtime-operations-test-${process.pid}`,
+);
+
 const systemConfig = {
 	schemaVersion: 1,
-	cacheDir: './cache',
-	runtimeDir: './runtime',
+	cacheDir: path.join(controllerRuntimeOperationsTestRoot, 'cache'),
+	runtimeDir: path.join(controllerRuntimeOperationsTestRoot, 'runtime'),
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -48,9 +57,9 @@ const systemConfig = {
 				cpus: 2,
 				port: 18791,
 				config: './config/shravan/openclaw.json',
-				stateDir: './state/shravan',
+				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'state', 'shravan'),
 				ssh: { secretEnv: 'explicit' },
-				zoneFilesDir: './zone-files/shravan',
+				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'zone-files', 'shravan'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -79,9 +88,9 @@ const systemConfig = {
 				cpus: 2,
 				port: 18792,
 				config: './config/alevtina/openclaw.json',
-				stateDir: './state/alevtina',
+				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'state', 'alevtina'),
 				ssh: { secretEnv: 'explicit' },
-				zoneFilesDir: './zone-files/alevtina',
+				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'zone-files', 'alevtina'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -110,10 +119,38 @@ const systemConfig = {
 	},
 } satisfies SystemConfig;
 
+afterEach(async () => {
+	await rm(controllerRuntimeOperationsTestRoot, { force: true, recursive: true });
+});
+
+function isPathInsideDirectory(candidatePath: string, directoryPath: string): boolean {
+	const relativePath = path.relative(path.resolve(directoryPath), path.resolve(candidatePath));
+	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
 const baseZone = systemConfig.zones[0];
 if (!baseZone) {
 	throw new Error('Expected test system config to include a zone.');
 }
+
+describe('controller runtime operations test fixture paths', () => {
+	it('keeps generated runtime and state paths outside the repository checkout', () => {
+		const generatedPaths = [
+			systemConfig.cacheDir,
+			systemConfig.runtimeDir,
+			...systemConfig.zones.flatMap((zone) => [
+				zone.gateway.stateDir,
+				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
+			]),
+		];
+
+		expect(
+			generatedPaths.filter((generatedPath) =>
+				isPathInsideDirectory(path.resolve(generatedPath), process.cwd()),
+			),
+		).toEqual([]);
+	});
+});
 
 describe('createControllerRuntimeOperations', () => {
 	it('dispatches OpenClaw operations to the requested zone runtime', async () => {

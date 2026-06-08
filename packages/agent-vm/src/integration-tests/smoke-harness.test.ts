@@ -23,6 +23,7 @@ import {
 	scaffoldOpenClawSmokeProject,
 	scaffoldWorkerSmokeProject,
 	seedGatewayImageCacheIfAvailable,
+	shouldCleanupSmokeDockerImages,
 	shouldRunWorkerGatewaySmoke,
 	useLocalOpenClawGatewayImagePackages,
 	useLocalOpenClawPluginGatewayImage,
@@ -164,6 +165,24 @@ describe('scaffoldGatewaySmokeProject', () => {
 });
 
 describe('startSmokeControllerRuntime', () => {
+	it('preserves smoke Docker images by default so one suite can reuse the built cache', () => {
+		expect(shouldCleanupSmokeDockerImages({ env: {} })).toBe(false);
+		expect(
+			shouldCleanupSmokeDockerImages({
+				env: { AGENT_VM_SMOKE_CLEAN_IMAGES: '0' },
+			}),
+		).toBe(false);
+	});
+
+	it('only removes smoke Docker images when cleanup is requested explicitly', () => {
+		expect(shouldCleanupSmokeDockerImages({ cleanupImages: true })).toBe(true);
+		expect(
+			shouldCleanupSmokeDockerImages({
+				env: { AGENT_VM_SMOKE_CLEAN_IMAGES: '1' },
+			}),
+		).toBe(true);
+	});
+
 	it('passes TCP host and VFS mount overrides into the gateway zone startup dependency', async () => {
 		const { startSmokeControllerRuntime } = await import('./smoke-harness.js');
 		const capturedGatewayStarts: StartGatewayZoneOptions[] = [];

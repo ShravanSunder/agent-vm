@@ -1,5 +1,9 @@
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 import type { SecretResolver } from '@agent-vm/secret-management';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import { GatewayOwnershipUnsafeError } from '../../gateway/gateway-ownership-evidence.js';
@@ -11,10 +15,15 @@ import {
 import type { GatewayLifecycleOperationRecord } from './gateway-lifecycle-operation-record.js';
 import { createOpenClawZoneRuntime } from './openclaw-zone-runtime.js';
 
+const openClawZoneRuntimeTestRoot = path.join(
+	tmpdir(),
+	`agent-vm-openclaw-zone-runtime-test-${process.pid}`,
+);
+
 const systemConfig = {
 	schemaVersion: 1,
-	cacheDir: './cache',
-	runtimeDir: './runtime',
+	cacheDir: path.join(openClawZoneRuntimeTestRoot, 'cache'),
+	runtimeDir: path.join(openClawZoneRuntimeTestRoot, 'runtime'),
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'gateway-runtime-tests',
@@ -41,8 +50,8 @@ const systemConfig = {
 				cpus: 2,
 				port: 18791,
 				config: './shravan/openclaw.json',
-				stateDir: './state/shravan',
-				zoneFilesDir: './zone-files/shravan',
+				stateDir: path.join(openClawZoneRuntimeTestRoot, 'state', 'shravan'),
+				zoneFilesDir: path.join(openClawZoneRuntimeTestRoot, 'zone-files', 'shravan'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -70,8 +79,17 @@ const systemConfig = {
 
 const loadedSystemConfig = {
 	...systemConfig,
-	systemConfigPath: '/tmp/system.json',
+	systemConfigPath: path.join(openClawZoneRuntimeTestRoot, 'config', 'system.json'),
 } satisfies LoadedSystemConfig;
+
+afterEach(async () => {
+	await rm(openClawZoneRuntimeTestRoot, { force: true, recursive: true });
+});
+
+function isPathInsideDirectory(candidatePath: string, directoryPath: string): boolean {
+	const relativePath = path.relative(path.resolve(directoryPath), path.resolve(candidatePath));
+	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
 
 function getOpenClawZone(): GatewayZone & {
 	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'openclaw' }>;
@@ -82,6 +100,23 @@ function getOpenClawZone(): GatewayZone & {
 	}
 	return zone;
 }
+
+describe('OpenClaw zone runtime test fixture paths', () => {
+	it('keeps generated lifecycle records outside the repository checkout', () => {
+		const generatedPaths = [
+			systemConfig.cacheDir,
+			systemConfig.runtimeDir,
+			getOpenClawZone().gateway.stateDir,
+			getOpenClawZone().gateway.zoneFilesDir,
+		];
+
+		expect(
+			generatedPaths.filter((generatedPath) =>
+				isPathInsideDirectory(path.resolve(generatedPath), process.cwd()),
+			),
+		).toEqual([]);
+	});
+});
 
 describe('createOpenClawZoneRuntime host process liveness', () => {
 	it('normalizes managed VM exec processes into command results', async () => {

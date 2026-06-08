@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import type { GatewayZone } from '../../gateway/gateway-zone-support.js';
@@ -22,10 +22,15 @@ import type {
 	WorkerZoneRuntime,
 } from './zone-runtime-types.js';
 
+const zoneRuntimeRegistryTestRoot = path.join(
+	os.tmpdir(),
+	`agent-vm-zone-runtime-registry-test-${process.pid}`,
+);
+
 const systemConfig = {
 	schemaVersion: 1,
-	cacheDir: './cache',
-	runtimeDir: './runtime',
+	cacheDir: path.join(zoneRuntimeRegistryTestRoot, 'cache'),
+	runtimeDir: path.join(zoneRuntimeRegistryTestRoot, 'runtime'),
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'multi-zone-test',
@@ -53,8 +58,8 @@ const systemConfig = {
 				cpus: 2,
 				port: 18791,
 				config: './shravan/openclaw.json',
-				stateDir: './state/shravan',
-				zoneFilesDir: './zone-files/shravan',
+				stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'shravan'),
+				zoneFilesDir: path.join(zoneRuntimeRegistryTestRoot, 'zone-files', 'shravan'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -82,8 +87,8 @@ const systemConfig = {
 				cpus: 2,
 				port: 18792,
 				config: './alevtina/openclaw.json',
-				stateDir: './state/alevtina',
-				zoneFilesDir: './zone-files/alevtina',
+				stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'alevtina'),
+				zoneFilesDir: path.join(zoneRuntimeRegistryTestRoot, 'zone-files', 'alevtina'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -107,7 +112,7 @@ const systemConfig = {
 				cpus: 2,
 				port: 18793,
 				config: './worker/worker.json',
-				stateDir: './state/worker',
+				stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'worker'),
 			},
 			secrets: {},
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
@@ -126,8 +131,17 @@ const systemConfig = {
 
 const loadedSystemConfig = {
 	...systemConfig,
-	systemConfigPath: '/tmp/system.json',
+	systemConfigPath: path.join(zoneRuntimeRegistryTestRoot, 'config', 'system.json'),
 } satisfies LoadedSystemConfig;
+
+afterEach(async () => {
+	await rm(zoneRuntimeRegistryTestRoot, { force: true, recursive: true });
+});
+
+function isPathInsideDirectory(candidatePath: string, directoryPath: string): boolean {
+	const relativePath = path.relative(path.resolve(directoryPath), path.resolve(candidatePath));
+	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
 
 const openClawZone = systemConfig.zones.find((zone) => zone.id === 'shravan');
 if (!openClawZone || openClawZone.gateway.type !== 'openclaw') {
@@ -170,6 +184,25 @@ function getOpenClawZone(): GatewayZone & {
 	}
 	return zone;
 }
+
+describe('zone runtime registry test fixture paths', () => {
+	it('keeps generated runtime and state paths outside the repository checkout', () => {
+		const generatedPaths = [
+			systemConfig.cacheDir,
+			systemConfig.runtimeDir,
+			...systemConfig.zones.flatMap((zone) => [
+				zone.gateway.stateDir,
+				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
+			]),
+		];
+
+		expect(
+			generatedPaths.filter((generatedPath) =>
+				isPathInsideDirectory(path.resolve(generatedPath), process.cwd()),
+			),
+		).toEqual([]);
+	});
+});
 
 function createPreparedWorkerTask(input: WorkerTaskInput): PreparedWorkerTask {
 	const zone = getWorkerZone();

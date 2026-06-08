@@ -54,6 +54,7 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: path.join(temporaryDirectory, 'cache'),
+			runtimeDir: path.join(temporaryDirectory, 'runtime'),
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',

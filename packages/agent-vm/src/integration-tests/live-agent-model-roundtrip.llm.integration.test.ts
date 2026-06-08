@@ -7,8 +7,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { runBuildCommand } from '../cli/build-command.js';
-import { loadSystemConfig } from '../config/system-config.js';
+import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import {
+	createLiveRoundtripDeploymentConfig,
+	resolveLiveRoundtripCacheDir,
+} from './live-agent-model-roundtrip-deployment.js';
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
@@ -73,6 +77,70 @@ const runLiveModelRoundtrip =
 
 const describeLiveModelRoundtrip = runLiveModelRoundtrip ? describe : describe.skip;
 
+const liveRoundtripFixtureSystemConfig = {
+	schemaVersion: 1,
+	cacheDir: './cache',
+	runtimeDir: './runtime',
+	systemConfigPath: './config/system.json',
+	host: {
+		controllerPort: 18_800,
+		projectNamespace: 'live-roundtrip-fixture',
+		secretsProvider: {
+			type: '1password',
+			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+		},
+	},
+	imageProfiles: {
+		gateways: {
+			openclaw: {
+				type: 'openclaw',
+				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			},
+		},
+		toolVms: {
+			default: {
+				type: 'toolVm',
+				buildConfig: './vm-images/tool-vms/default/build-config.json',
+			},
+		},
+	},
+	zones: [
+		{
+			id: 'shravan',
+			gateway: {
+				type: 'openclaw',
+				config: './config/shravan/openclaw.json',
+				controlAuth: {
+					mode: 'token',
+					secret: 'OPENCLAW_GATEWAY_TOKEN',
+				},
+				cpus: 2,
+				imageProfile: 'openclaw',
+				memory: '2G',
+				port: 18_791,
+				stateDir: './state/shravan',
+				zoneFilesDir: './zone-files/shravan',
+			},
+			secrets: {},
+			egressHosts: [],
+			websocketBypass: [],
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
+		},
+	],
+	toolVmProfiles: {
+		standard: {
+			cpus: 1,
+			imageProfile: 'default',
+			memory: '1G',
+		},
+	},
+	tcpPool: {
+		basePort: 19_000,
+		size: 1,
+	},
+} satisfies LoadedSystemConfig;
+
 async function findAvailablePort(): Promise<number> {
 	return await new Promise((resolve, reject) => {
 		const server = net.createServer();
@@ -110,42 +178,54 @@ async function waitForControllerHealth(controllerPort: number): Promise<void> {
 	await poll(0);
 }
 
+describe('live integration: agent model roundtrip deployment config', () => {
+	it('keeps generated deployment state in a temp root while reusing a shared image cache', () => {
+		const deploymentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-live-roundtrip-'));
+		try {
+			const liveConfig = createLiveRoundtripDeploymentConfig({
+				controllerPort: 18_801,
+				gatewayPort: 18_789,
+				systemConfig: liveRoundtripFixtureSystemConfig,
+				toolSshPort: 19_000,
+				deploymentRoot,
+			});
+
+			expect(liveConfig.cacheDir).toBe(resolveLiveRoundtripCacheDir());
+			expect(path.resolve(liveConfig.cacheDir)).not.toContain(path.resolve(deploymentRoot));
+			expect(path.resolve(liveConfig.runtimeDir)).toContain(path.resolve(deploymentRoot));
+			for (const zone of liveConfig.zones) {
+				expect(path.resolve(zone.gateway.stateDir)).toContain(path.resolve(deploymentRoot));
+				if (zone.gateway.type === 'openclaw') {
+					expect(path.resolve(zone.gateway.zoneFilesDir)).toContain(path.resolve(deploymentRoot));
+				}
+			}
+		} finally {
+			fs.rmSync(deploymentRoot, { force: true, recursive: true });
+		}
+	});
+});
+
 describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 	it('boots the controller and performs a real gateway exec roundtrip', async () => {
 		const systemConfig = await loadSystemConfig('config/system.json');
 		const controllerPort = await findAvailablePort();
 		const gatewayPort = await findAvailablePort();
 		const toolSshPort = await findAvailablePort();
-		const isolatedCacheDir = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'agent-vm-live-roundtrip-cache-'),
-		);
-		const isolatedSystemConfig = {
-			...systemConfig,
-			cacheDir: isolatedCacheDir,
-			host: {
-				...systemConfig.host,
-				controllerPort,
-			},
-			tcpPool: {
-				basePort: toolSshPort,
-				size: 1,
-			},
-			zones: systemConfig.zones.map((configuredZone) => ({
-				...configuredZone,
-				gateway: {
-					...configuredZone.gateway,
-					port: gatewayPort,
-				},
-			})),
-		};
-		const zone = isolatedSystemConfig.zones[0];
+		const deploymentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-live-roundtrip-'));
+		const liveSystemConfig = createLiveRoundtripDeploymentConfig({
+			controllerPort,
+			deploymentRoot,
+			gatewayPort,
+			systemConfig,
+			toolSshPort,
+		});
+		const zone = liveSystemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected at least one zone in system config');
 		}
 		await runBuildCommand(
 			{
-				forceRebuild: true,
-				systemConfig: isolatedSystemConfig,
+				systemConfig: liveSystemConfig,
 			},
 			{
 				runTask: async (_title, fn) => await fn(),
@@ -154,7 +234,7 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 
 		const runtime = await startControllerRuntime(
 			{
-				systemConfig: isolatedSystemConfig,
+				systemConfig: liveSystemConfig,
 				zoneIds: [zone.id],
 			},
 			{},
@@ -204,7 +284,7 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 			expect(leasesBody.length).toBeGreaterThan(0);
 		} finally {
 			await runtime.close();
-			fs.rmSync(isolatedCacheDir, { force: true, recursive: true });
+			fs.rmSync(deploymentRoot, { force: true, recursive: true });
 		}
 	}, 300_000);
 });
