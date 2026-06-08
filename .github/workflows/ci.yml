@@ -104,8 +104,14 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Test taxonomy audit
+        run: pnpm test:taxonomy
+
       - name: Lint
         run: pnpm lint
+
+      - name: Type-aware lint
+        run: pnpm lint:types
 
       - name: Format check
         run: pnpm fmt:check
@@ -114,7 +120,13 @@ jobs:
       # and not available in CI. Run `pnpm check` locally to verify types.
 
       - name: Unit tests
-        run: pnpm test
+        run: pnpm test:unit
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: Default smoke tests
+        run: pnpm test:smoke
 
       - name: Gondolin rootfs smoke test
         run: pnpm vitest run --config vitest.smoke.config.ts packages/gondolin-adapter/src/build-pipeline.smoke.test.ts
