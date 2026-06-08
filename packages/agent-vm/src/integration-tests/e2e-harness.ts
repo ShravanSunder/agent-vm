@@ -419,13 +419,17 @@ async function assertLocalPackageFilesExist(props: LocalNpmPackageTarball): Prom
 	);
 }
 
+export function resolveLocalPackagePackArgs(packDirectory: string): readonly string[] {
+	return ['pack', '--pack-destination', packDirectory, '--config.ignore-scripts=true'];
+}
+
 async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<string> {
 	const packageJsonPath = path.join(props.packageDirectory, 'package.json');
 	await fs.access(packageJsonPath);
 	await assertLocalPackageFilesExist(props);
 	const packDirectory = await fs.mkdtemp(path.join(os.tmpdir(), `${props.packageName}-pack-`));
 	try {
-		execFileSync('pnpm', ['pack', '--pack-destination', packDirectory], {
+		execFileSync('pnpm', [...resolveLocalPackagePackArgs(packDirectory)], {
 			cwd: props.packageDirectory,
 			stdio: 'pipe',
 		});
@@ -578,6 +582,7 @@ function localPackageTarballArchiveName(packageName: string): string {
 
 async function writeManagedOpenClawE2eDockerfileBase(options: {
 	readonly dockerContextDirectory: string;
+	readonly openClawAgentVmPackageInstallMode?: 'managed-packages' | 'local-overlay' | undefined;
 	readonly profileName: string;
 }): Promise<string> {
 	const managedImageRelease = await resolveManagedImageRelease();
@@ -586,6 +591,7 @@ async function writeManagedOpenClawE2eDockerfileBase(options: {
 		imageTargetFamily: 'gateway',
 		imageTargetName: options.profileName,
 		managedImageRelease,
+		openClawAgentVmPackageInstallMode: options.openClawAgentVmPackageInstallMode,
 		outputDirectory: options.dockerContextDirectory,
 		requiredOpenClawPackageNames: ['@openclaw/discord'],
 	});
@@ -781,6 +787,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		const dockerfilePath = await writeManagedOpenClawE2eDockerfileBase({
 			dockerContextDirectory,
 			profileName: options.profileName,
+			openClawAgentVmPackageInstallMode: 'local-overlay',
 		});
 		await copyLocalPackageTarballsToDockerContext({
 			dockerContextDirectory,
@@ -809,7 +816,9 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 				'    rm -f ' +
 					localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' '),
 				'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
-				'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
+				'    global_package_root="$(pnpm root -g)" && \\',
+				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
+				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
 				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin && \\',
 				'    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" /home/openclaw/.openclaw/extensions/mcp-portal',
 				'',
@@ -887,6 +896,7 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		const dockerfilePath = await writeManagedOpenClawE2eDockerfileBase({
 			dockerContextDirectory,
 			profileName: options.profileName,
+			openClawAgentVmPackageInstallMode: 'local-overlay',
 		});
 		await copyLocalPackageTarballsToDockerContext({
 			dockerContextDirectory,
@@ -908,7 +918,9 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 				'    rm -f ' +
 					localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' '),
 				'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
-				'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
+				'    global_package_root="$(pnpm root -g)" && \\',
+				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
+				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
 				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
 				'',
 			].join('\n'),

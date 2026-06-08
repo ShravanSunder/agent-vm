@@ -13,6 +13,7 @@ import {
 	createLiveRoundtripDeploymentConfig,
 	resolveLiveRoundtripCacheDir,
 } from './live-agent-model-roundtrip-deployment.js';
+import { shouldRunLiveModelRoundtripE2e } from './live-agent-model-roundtrip-gates.js';
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
@@ -34,7 +35,10 @@ function canReadSecretRef(secretRef: string | undefined, serviceAccountToken: st
 	}
 }
 
-function canReadConfiguredZoneSecretRefs(serviceAccountToken: string): boolean {
+function canReadConfiguredZoneSecretRefs(options: {
+	readonly serviceAccountToken: string;
+	readonly vaultPrefix: string;
+}): boolean {
 	let rawSystemConfig: unknown;
 	try {
 		rawSystemConfig = JSON.parse(fs.readFileSync('config/system.json', 'utf8')) as unknown;
@@ -61,21 +65,31 @@ function canReadConfiguredZoneSecretRefs(serviceAccountToken: string): boolean {
 		}
 		return typeof secretValue.ref === 'string' ? secretValue.ref : undefined;
 	};
+	const requiredRefs = [
+		readRef('DISCORD_BOT_TOKEN'),
+		readRef('PERPLEXITY_API_KEY'),
+		readRef('OPENCLAW_GATEWAY_TOKEN'),
+	];
+	if (
+		requiredRefs.some(
+			(secretRef) => typeof secretRef !== 'string' || !secretRef.startsWith(options.vaultPrefix),
+		)
+	) {
+		return false;
+	}
 
 	return (
-		canReadSecretRef(readRef('DISCORD_BOT_TOKEN'), serviceAccountToken) &&
-		canReadSecretRef(readRef('PERPLEXITY_API_KEY'), serviceAccountToken) &&
-		canReadSecretRef(readRef('OPENCLAW_GATEWAY_TOKEN'), serviceAccountToken)
+		canReadSecretRef(requiredRefs[0], options.serviceAccountToken) &&
+		canReadSecretRef(requiredRefs[1], options.serviceAccountToken) &&
+		canReadSecretRef(requiredRefs[2], options.serviceAccountToken)
 	);
 }
 
 const testOpServiceAccountToken = process.env.AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN;
-const runLiveModelRoundtrip =
-	typeof testOpServiceAccountToken === 'string' &&
-	testOpServiceAccountToken.length > 0 &&
-	canReadConfiguredZoneSecretRefs(testOpServiceAccountToken) &&
-	typeof process.env.AGENT_VM_TEST_OPENAI_API_KEY === 'string' &&
-	process.env.AGENT_VM_TEST_OPENAI_API_KEY.length > 0;
+const runLiveModelRoundtrip = shouldRunLiveModelRoundtripE2e({
+	canReadConfiguredZoneSecretRefs,
+	env: process.env,
+});
 
 const describeLiveModelRoundtrip = runLiveModelRoundtrip ? describe : describe.skip;
 

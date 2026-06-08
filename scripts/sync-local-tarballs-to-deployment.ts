@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -29,6 +29,12 @@ export const OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES = [
 	'@agent-vm/openclaw-mcp-portal-plugin',
 ] as const;
 
+export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
+	'@agent-vm/config-contracts',
+	'@agent-vm/secret-management',
+	'@agent-vm/mcp-portal',
+] as const;
+
 type AgentVmPackageName = (typeof AGENT_VM_PACKAGE_NAMES)[number];
 
 interface BetaTarballPackageEntry {
@@ -43,6 +49,7 @@ export interface BetaTarballSyncPlan {
 	readonly hostPackageSpecifier: string;
 	readonly packages: readonly BetaTarballPackageEntry[];
 	readonly tarballDirectoryReference: string;
+	readonly toolVmPackages: readonly BetaTarballPackageEntry[];
 	readonly version: string;
 }
 
@@ -73,6 +80,7 @@ interface OpenClawGatewayOverlay {
 	readonly copy?: readonly OverlayCopyEntry[];
 	readonly extraAptPackages?: readonly string[];
 	readonly extraOpenClawPackages?: readonly string[];
+	readonly openClawPackageOverrides?: readonly string[];
 	readonly runAfterBase?: readonly string[];
 	readonly [key: string]: unknown;
 }
@@ -141,6 +149,13 @@ export function createBetaTarballSyncPlan(
 		}
 		return packageEntry;
 	});
+	const toolVmPackages = TOOL_VM_TARBALL_PACKAGE_NAMES.map((packageName) => {
+		const packageEntry = packageEntryByName.get(packageName);
+		if (!packageEntry) {
+			throw new Error(`Internal error: ${packageName} is missing from package plan.`);
+		}
+		return packageEntry;
+	});
 	const hostPackageEntry = packages.find(
 		(packageEntry) => packageEntry.name === '@agent-vm/agent-vm',
 	);
@@ -152,6 +167,7 @@ export function createBetaTarballSyncPlan(
 		hostPackageSpecifier: hostPackageEntry.specifier,
 		packages,
 		tarballDirectoryReference: options.tarballDirectoryReference,
+		toolVmPackages,
 		version: options.version,
 	};
 }
@@ -220,34 +236,101 @@ function renderLocalPackageManifest(packageEntries: readonly BetaTarballPackageE
 	)}\n`;
 }
 
-export function renderOpenClawGatewayOverlay(
-	options: RenderOpenClawGatewayOverlayOptions,
-): OpenClawGatewayOverlay {
-	const copyEntries: OverlayCopyEntry[] = [
-		...(options.existingOverlay.copy ?? []).filter(
-			(copyEntry) => !isAgentVmLocalCopyEntry(copyEntry),
-		),
-		...options.plan.gatewayPackages.map((packageEntry) => ({
+function renderLocalPackageCopyEntries(
+	existingCopyEntries: readonly OverlayCopyEntry[] | undefined,
+	packageEntries: readonly BetaTarballPackageEntry[],
+): readonly OverlayCopyEntry[] {
+	return [
+		...(existingCopyEntries ?? []).filter((copyEntry) => !isAgentVmLocalCopyEntry(copyEntry)),
+		...packageEntries.map((packageEntry) => ({
 			from: `local-agent-vm/${packageEntry.overlayFileName}`,
 			to: `/tmp/${packageEntry.overlayFileName}`,
 		})),
 	];
-	const tarballPaths = options.plan.gatewayPackages.map(
-		(packageEntry) => `/tmp/${packageEntry.overlayFileName}`,
+}
+
+function renderLocalPackageTarballPaths(
+	packageEntries: readonly BetaTarballPackageEntry[],
+): readonly string[] {
+	return packageEntries.map((packageEntry) => `/tmp/${packageEntry.overlayFileName}`);
+}
+
+function renderLocalPackageInstallStartCommands(
+	packageEntries: readonly BetaTarballPackageEntry[],
+): readonly string[] {
+	const localPackageManifest = renderLocalPackageManifest(packageEntries);
+	return [
+		'mkdir -p /opt/agent-vm/local-packages',
+		`cat > /opt/agent-vm/local-packages/package.json <<'JSON'\n${localPackageManifest}JSON`,
+		'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
+	];
+}
+
+function renderLocalPackageCleanupCommand(
+	packageEntries: readonly BetaTarballPackageEntry[],
+): string {
+	return `rm -f ${renderLocalPackageTarballPaths(packageEntries).join(' ')}`;
+}
+
+function resolveOpenClawPackageOverrides(
+	existingOverlay: OpenClawGatewayOverlay,
+): readonly string[] | undefined {
+	return existingOverlay.openClawPackageOverrides ?? existingOverlay.extraOpenClawPackages;
+}
+
+export function migrateLegacyOpenClawPackageOverrides(
+	existingOverlay: OpenClawGatewayOverlay,
+): OpenClawGatewayOverlay {
+	const { extraOpenClawPackages: _legacyOpenClawPackageOverrides, ...baseOverlay } =
+		existingOverlay;
+	const openClawPackageOverrides = resolveOpenClawPackageOverrides(existingOverlay);
+	return {
+		...baseOverlay,
+		...(openClawPackageOverrides ? { openClawPackageOverrides } : {}),
+	};
+}
+
+export function renderOpenClawGatewayOverlay(
+	options: RenderOpenClawGatewayOverlayOptions,
+): OpenClawGatewayOverlay {
+	const baseOverlay = migrateLegacyOpenClawPackageOverrides(options.existingOverlay);
+	const copyEntries = renderLocalPackageCopyEntries(
+		options.existingOverlay.copy,
+		options.plan.gatewayPackages,
 	);
-	const localPackageManifest = renderLocalPackageManifest(options.plan.gatewayPackages);
 	const runAfterBase = [
 		...(options.existingOverlay.runAfterBase ?? []).filter(
 			(command) => !isAgentVmLocalInstallCommand(command),
 		),
-		'mkdir -p /opt/agent-vm/local-packages',
-		`cat > /opt/agent-vm/local-packages/package.json <<'JSON'\n${localPackageManifest}JSON`,
-		'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
+		...renderLocalPackageInstallStartCommands(options.plan.gatewayPackages),
 		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin "$package_root/@agent-vm/openclaw-agent-vm-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-mcp-portal-plugin "$package_root/@agent-vm/openclaw-mcp-portal-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal"',
-		`rm -f ${tarballPaths.join(' ')}`,
+		renderLocalPackageCleanupCommand(options.plan.gatewayPackages),
 	];
 	return {
-		...options.existingOverlay,
+		...baseOverlay,
+		copy: copyEntries,
+		runAfterBase,
+	};
+}
+
+export function renderToolVmOverlay(
+	options: RenderOpenClawGatewayOverlayOptions,
+): OpenClawGatewayOverlay {
+	const baseOverlay = migrateLegacyOpenClawPackageOverrides(options.existingOverlay);
+	const copyEntries = renderLocalPackageCopyEntries(
+		options.existingOverlay.copy,
+		options.plan.toolVmPackages,
+	);
+	const runAfterBase = [
+		...(options.existingOverlay.runAfterBase ?? []).filter(
+			(command) => !isAgentVmLocalInstallCommand(command),
+		),
+		...renderLocalPackageInstallStartCommands(options.plan.toolVmPackages),
+		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal" && ln -sfn /opt/agent-vm/local-packages/node_modules/.bin/mcp-portal /pnpm/mcp-portal',
+		renderLocalPackageCleanupCommand(options.plan.toolVmPackages),
+	];
+	return {
+		...baseOverlay,
 		copy: copyEntries,
 		runAfterBase,
 	};
@@ -268,6 +351,46 @@ async function readJsonFile(filePath: string): Promise<JsonRecord> {
 
 async function writeJsonFile(filePath: string, value: JsonRecord): Promise<void> {
 	await writeFile(filePath, `${JSON.stringify(value, null, '\t')}\n`);
+}
+
+async function listManagedImageOverlayPaths(directoryPath: string): Promise<readonly string[]> {
+	let directoryEntries;
+	try {
+		directoryEntries = await readdir(directoryPath, { withFileTypes: true });
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			return [];
+		}
+		throw error;
+	}
+	const nestedOverlayPaths = await Promise.all(
+		directoryEntries.map(async (directoryEntry) => {
+			const entryPath = path.join(directoryPath, directoryEntry.name);
+			if (directoryEntry.isDirectory()) {
+				return listManagedImageOverlayPaths(entryPath);
+			}
+			if (directoryEntry.isFile() && directoryEntry.name === 'overlay.jsonc') {
+				return [entryPath];
+			}
+			return [];
+		}),
+	);
+	return nestedOverlayPaths.flat();
+}
+
+async function migrateDeploymentOverlayFieldNames(deploymentDirectory: string): Promise<void> {
+	const overlayPaths = await listManagedImageOverlayPaths(
+		path.join(deploymentDirectory, 'vm-images'),
+	);
+	await Promise.all(
+		overlayPaths.map(async (overlayPath) => {
+			const overlay = (await readJsonFile(overlayPath)) as OpenClawGatewayOverlay;
+			if (overlay.extraOpenClawPackages === undefined) {
+				return;
+			}
+			await writeJsonFile(overlayPath, migrateLegacyOpenClawPackageOverrides(overlay));
+		}),
+	);
 }
 
 function readOnlyBuiltDependencies(manifest: JsonRecord): readonly string[] {
@@ -341,6 +464,23 @@ async function packPackage(
 	);
 }
 
+async function copyOverlayPackageTarballs(options: {
+	readonly overlayDirectory: string;
+	readonly packageEntries: readonly BetaTarballPackageEntry[];
+	readonly tarballDirectory: string;
+}): Promise<void> {
+	const localAgentVmDirectory = path.join(options.overlayDirectory, 'local-agent-vm');
+	await mkdir(localAgentVmDirectory, { recursive: true });
+	await Promise.all(
+		options.packageEntries.map((packageEntry) =>
+			cp(
+				path.join(options.tarballDirectory, packageEntry.fileName),
+				path.join(localAgentVmDirectory, packageEntry.overlayFileName),
+			),
+		),
+	);
+}
+
 async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void> {
 	const hash = options.hash ?? (await getGitShortHash(options.repositoryDirectory));
 	const version = await readWorkspacePackageVersion(options.repositoryDirectory);
@@ -374,6 +514,7 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 	if (!options.skipInstall) {
 		await runCommand('pnpm', ['install'], { cwd: options.deploymentDirectory });
 	}
+	await migrateDeploymentOverlayFieldNames(options.deploymentDirectory);
 
 	const overlayDirectory = path.join(
 		options.deploymentDirectory,
@@ -382,20 +523,33 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 		'openclaw',
 	);
 	const overlayPath = path.join(overlayDirectory, 'overlay.jsonc');
-	const localAgentVmDirectory = path.join(overlayDirectory, 'local-agent-vm');
-	await mkdir(localAgentVmDirectory, { recursive: true });
-	await Promise.all(
-		plan.gatewayPackages.map((packageEntry) =>
-			cp(
-				path.join(tarballDirectory, packageEntry.fileName),
-				path.join(localAgentVmDirectory, packageEntry.overlayFileName),
-			),
-		),
-	);
+	await copyOverlayPackageTarballs({
+		overlayDirectory,
+		packageEntries: plan.gatewayPackages,
+		tarballDirectory,
+	});
 	const overlay = (await readJsonFile(overlayPath)) as OpenClawGatewayOverlay;
 	await writeJsonFile(
 		overlayPath,
 		renderOpenClawGatewayOverlay({ existingOverlay: overlay, plan }),
+	);
+
+	const toolVmOverlayDirectory = path.join(
+		options.deploymentDirectory,
+		'vm-images',
+		'tool-vms',
+		'default',
+	);
+	const toolVmOverlayPath = path.join(toolVmOverlayDirectory, 'overlay.jsonc');
+	await copyOverlayPackageTarballs({
+		overlayDirectory: toolVmOverlayDirectory,
+		packageEntries: plan.toolVmPackages,
+		tarballDirectory,
+	});
+	const toolVmOverlay = (await readJsonFile(toolVmOverlayPath)) as OpenClawGatewayOverlay;
+	await writeJsonFile(
+		toolVmOverlayPath,
+		renderToolVmOverlay({ existingOverlay: toolVmOverlay, plan }),
 	);
 }
 

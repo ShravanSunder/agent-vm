@@ -26,6 +26,7 @@ import {
 	type OpenClawE2eProject,
 	type E2eHarnessRuntime,
 	useLocalOpenClawPluginGatewayImage,
+	useLocalToolVmMcpPortalPackage,
 } from './e2e-harness.js';
 
 const architecture = currentE2eArchitecture();
@@ -282,6 +283,11 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 		});
 		await useLocalOpenClawPluginGatewayImage({
 			profileName: systemZone.gateway.imageProfile,
+			projectRoot: project.tempRoot,
+			repoRoot,
+			systemConfig: loadedSystemConfig,
+		});
+		await useLocalToolVmMcpPortalPackage({
 			projectRoot: project.tempRoot,
 			repoRoot,
 			systemConfig: loadedSystemConfig,

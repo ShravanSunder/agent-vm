@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldRunWorkerRuntimeE2e } from './worker-e2e-gates.js';
+import { resolveWorkerRuntimeEntrypoint, shouldRunWorkerRuntimeE2e } from './worker-e2e-gates.js';
+
+describe('resolveWorkerRuntimeEntrypoint', () => {
+	it('points worker e2e at the built artifact instead of rebuilding in the test body', () => {
+		expect(resolveWorkerRuntimeEntrypoint('/repo/agent-vm')).toBe(
+			'/repo/agent-vm/packages/agent-vm-worker/dist/main.js',
+		);
+	});
+});
 
 describe('shouldRunWorkerRuntimeE2e', () => {
 	it('requires explicit opt-in even when credentials and codex are available', () => {

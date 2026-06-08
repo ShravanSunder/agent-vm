@@ -357,6 +357,114 @@ describe('managed image release', () => {
 		});
 	});
 
+	it('uses local overlay packages for Tool VM MCP Portal during beta tarball sync builds', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-tool-vm-local-'));
+		const overlayDirectory = path.join(temporaryDirectory, 'overlay-source');
+		const localPackageDirectory = path.join(overlayDirectory, 'local-agent-vm');
+		const overlayPath = path.join(overlayDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.mkdir(localPackageDirectory, { recursive: true });
+		await fs.writeFile(path.join(localPackageDirectory, 'agent-vm-mcp-portal-0.0.93-local.tgz'), '');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "copy": [',
+				'    {',
+				'      "from": "local-agent-vm/agent-vm-mcp-portal-0.0.93-local.tgz",',
+				'      "to": "/tmp/agent-vm-mcp-portal-0.0.93-local.tgz"',
+				'    }',
+				'  ],',
+				'  "runAfterBase": [',
+				'    "cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts",',
+				'    "ln -sfn /opt/agent-vm/local-packages/node_modules/.bin/mcp-portal /pnpm/mcp-portal"',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'tool-vm',
+			imageTargetFamily: 'toolVm',
+			imageTargetName: 'default',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).not.toContain('RUN pnpm add -g "@agent-vm/mcp-portal@');
+		expect(generatedDockerfile).toContain(
+			'COPY overlay/local-agent-vm/agent-vm-mcp-portal-0.0.93-local.tgz /tmp/agent-vm-mcp-portal-0.0.93-local.tgz',
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn /opt/agent-vm/local-packages/node_modules/.bin/mcp-portal /pnpm/mcp-portal',
+		);
+		expect(result.plan.mcpPortalPackage).toMatchObject({
+			name: '@agent-vm/mcp-portal',
+			source: 'local-overlay',
+			spec: 'local-agent-vm',
+		});
+	});
+
+	it('uses local overlay packages for OpenClaw agent-vm plugins during beta tarball sync builds', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-openclaw-local-'));
+		const overlayDirectory = path.join(temporaryDirectory, 'overlay-source');
+		const localPackageDirectory = path.join(overlayDirectory, 'local-agent-vm');
+		const overlayPath = path.join(overlayDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.mkdir(localPackageDirectory, { recursive: true });
+		await fs.writeFile(
+			path.join(localPackageDirectory, 'agent-vm-openclaw-agent-vm-plugin-0.0.93-local.tgz'),
+			'',
+		);
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "copy": [',
+				'    {',
+				'      "from": "local-agent-vm/agent-vm-openclaw-agent-vm-plugin-0.0.93-local.tgz",',
+				'      "to": "/tmp/agent-vm-openclaw-agent-vm-plugin-0.0.93-local.tgz"',
+				'    }',
+				'  ],',
+				'  "runAfterBase": [',
+				'    "cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts",',
+				'    "ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin \\"$package_root/@agent-vm/openclaw-agent-vm-plugin\\""',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+			requiredOpenClawPackageNames: ['@openclaw/discord'],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).not.toContain(
+			'@agent-vm/openclaw-agent-vm-plugin@0.0.93',
+		);
+		expect(generatedDockerfile).not.toContain('@agent-vm/mcp-portal@0.0.93');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g "@openai/codex@0.134.0"');
+		expect(generatedDockerfile).toContain(
+			'COPY overlay/local-agent-vm/agent-vm-openclaw-agent-vm-plugin-0.0.93-local.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.93-local.tgz',
+		);
+		expect(result.plan.openClawAgentVmPluginPackage).toBeUndefined();
+		expect(result.plan.mcpPortalPackage).toBeUndefined();
+	});
+
 	it('warns when OpenClaw package family versions differ', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-warning-'));
 		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');

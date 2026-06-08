@@ -117,11 +117,14 @@ fast formatting and linting.
   is only for callers that already ran `pnpm build` and want build-once,
   test-many behavior.
 - Secret/model e2e lanes use test-only env names:
-  `AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN`, `AGENT_VM_TEST_OP_REFS`,
-  `AGENT_VM_TEST_OP_VAULT_PREFIX`, `AGENT_VM_TEST_OPENAI_API_KEY`, and
-  `AGENT_VM_TEST_ZONE_GIT_TOKEN`. `AGENT_VM_TEST_OP_REFS` must contain only
-  refs from the test vault prefix, defaulting to `op://agent-vm-testing/`.
-  Never use personal or deployment 1Password refs for repo tests.
+  `AGENT_VM_LLM_E2E`, `AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN`,
+  `AGENT_VM_TEST_OP_REFS`, `AGENT_VM_TEST_OP_VAULT_PREFIX`,
+  `AGENT_VM_TEST_OPENAI_API_KEY`, and `AGENT_VM_TEST_ZONE_GIT_TOKEN`.
+  `AGENT_VM_LLM_E2E=1` is required before the LLM/model roundtrip lane can
+  run; credentials alone must not make inventory execute live model work.
+  `AGENT_VM_TEST_OP_REFS` must contain only refs from the test vault prefix,
+  defaulting to `op://agent-vm-testing/`. Never use personal or deployment
+  1Password refs for repo tests.
 
 ### Test File Naming And Classification
 

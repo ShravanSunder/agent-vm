@@ -19,6 +19,7 @@ import {
 	prepareLocalWorkerPackageForGatewayImage,
 	removeE2eDockerImagesForSystemConfig,
 	removeE2eTempRoot,
+	resolveLocalPackagePackArgs,
 	scaffoldGatewayE2eProject,
 	scaffoldOpenClawE2eProject,
 	scaffoldWorkerE2eProject,
@@ -161,6 +162,17 @@ describe('scaffoldGatewayE2eProject', () => {
 
 		expect(project.zone.gateway.type).toBe('openclaw');
 		expect(project.systemConfig.zones[0]?.agents).toEqual([{ id: 'smoke-agent' }]);
+	});
+});
+
+describe('resolveLocalPackagePackArgs', () => {
+	it('packs e2e overlay tarballs without running package prepack scripts', () => {
+		expect(resolveLocalPackagePackArgs('/tmp/agent-vm-pack')).toEqual([
+			'pack',
+			'--pack-destination',
+			'/tmp/agent-vm-pack',
+			'--config.ignore-scripts=true',
+		]);
 	});
 });
 
@@ -395,8 +407,15 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).toContain('npm install --omit=dev --no-audit --no-fund');
 		expect(dockerfile).toContain('RUN pnpm add -g "openclaw@');
 		expect(dockerfile).toContain('"@openclaw/codex@');
+		expect(dockerfile).toContain('"@openai/codex@');
+		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-agent-vm-plugin@/u);
+		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-mcp-portal-plugin@/u);
+		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/mcp-portal@/u);
 		expect(dockerfile).toContain('/usr/local/bin/openclaw');
 		expect(dockerfile).toContain('package_root="/opt/agent-vm/local-packages/node_modules"');
+		expect(dockerfile).toContain(
+			'ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm"',
+		);
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/gondolin');
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
 		expect(dockerfile).not.toContain('portal-server.js');
@@ -456,7 +475,14 @@ describe('startE2eControllerRuntime', () => {
 		);
 		expect(dockerfile).toContain('RUN pnpm add -g "openclaw@');
 		expect(dockerfile).toContain('"@openclaw/codex@');
+		expect(dockerfile).toContain('"@openai/codex@');
+		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-agent-vm-plugin@/u);
+		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-mcp-portal-plugin@/u);
+		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/mcp-portal@/u);
 		expect(dockerfile).toContain('/usr/local/bin/openclaw');
+		expect(dockerfile).toContain(
+			'ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm"',
+		);
 		expect(dockerfile).not.toContain('mcp-portal-local.tgz');
 		expect(dockerfile).not.toContain('openclaw-mcp-portal-plugin-local.tgz');
 		expect(systemConfig.imageProfiles.toolVms.tool).toEqual(originalToolVmProfile);

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { shouldRunWorkerRuntimeE2e } from './worker-e2e-gates.js';
+import { resolveWorkerRuntimeEntrypoint, shouldRunWorkerRuntimeE2e } from './worker-e2e-gates.js';
 
 function hasCommand(command: string): boolean {
 	try {
@@ -137,10 +137,8 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 
 	it('runs a real task directly against the worker server to completed', async () => {
 		const repoRoot = path.resolve(process.cwd());
-		execFileSync('pnpm', ['--filter', 'agent-vm-worker', 'build'], {
-			cwd: repoRoot,
-			stdio: 'inherit',
-		});
+		const workerEntrypoint = resolveWorkerRuntimeEntrypoint(repoRoot);
+		await fs.access(workerEntrypoint);
 
 		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runtime-smoke-'));
 		const stateDir = path.join(tempRoot, 'state');
@@ -191,14 +189,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 		const workerLogHandle = await fs.open(workerLogPath, 'a');
 		workerProcess = spawn(
 			'node',
-			[
-				path.join(repoRoot, 'packages', 'agent-vm-worker', 'dist', 'main.js'),
-				'serve',
-				'--port',
-				String(port),
-				'--config',
-				configPath,
-			],
+			[workerEntrypoint, 'serve', '--port', String(port), '--config', configPath],
 			{
 				cwd: repoRoot,
 				env: {

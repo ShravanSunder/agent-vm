@@ -33,7 +33,7 @@
 		"build": "tsdown && cp openclaw.plugin.json dist/",
 		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "vitest run --root ../../ --config vitest.config.ts packages/openclaw-mcp-portal-plugin/src"
+		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/openclaw-mcp-portal-plugin/src"
 	},
 	"dependencies": {
 		"@agent-vm/config-contracts": "workspace:*",

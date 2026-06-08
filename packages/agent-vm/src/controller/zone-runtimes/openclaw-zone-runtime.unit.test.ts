@@ -666,6 +666,69 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 });
 
 describe('createOpenClawZoneRuntime cold-start recovery', () => {
+	it('closes a stale in-memory gateway handle before cold-starting after VM process death', async () => {
+		const liveHostPids = new Set([48_284, 48_285]);
+		const callOrder: string[] = [];
+		const firstGatewayClose = vi.fn(async () => {
+			callOrder.push('close-gateway-1');
+		});
+		let gatewayStartCount = 0;
+		const restartGatewayZone = vi.fn(async (): Promise<GatewayZoneStartResult> => {
+			gatewayStartCount += 1;
+			callOrder.push(`start-gateway-${String(gatewayStartCount)}`);
+			const hostPid = 48_283 + gatewayStartCount;
+			return {
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					startCommand: 'start',
+				},
+				vm: {
+					close: gatewayStartCount === 1 ? firstGatewayClose : vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => hostPid,
+					getVmInstance: vi.fn(),
+					id: `gateway-vm-${String(gatewayStartCount)}`,
+					setIngressRoutes: vi.fn(),
+				},
+				zone: getOpenClawZone(),
+			};
+		});
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: (pid) => liveHostPids.has(pid),
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone,
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		liveHostPids.delete(48_284);
+		expect(runtime.getLifecycleState()).toMatchObject({
+			error: { code: 'vm-process-missing' },
+			kind: 'failed',
+		});
+
+		await expect(runtime.coldStart()).resolves.toMatchObject({ leaseReleaseFailureCount: 0 });
+
+		expect(firstGatewayClose).toHaveBeenCalledOnce();
+		expect(callOrder).toEqual(['start-gateway-1', 'close-gateway-1', 'start-gateway-2']);
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { hostPid: 48_285, id: 'gateway-vm-2' } },
+			lifecycleState: 'running',
+		});
+	});
+
 	it('starts a failed gateway without deleting the runtime record before ownership preflight', async () => {
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
 		const restartGatewayZone = vi

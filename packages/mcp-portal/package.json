@@ -68,7 +68,7 @@
 		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test": "pnpm test:unit",
-		"test:unit": "vitest run --root ../../ --config vitest.config.ts packages/mcp-portal/src"
+		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/mcp-portal/src"
 	},
 	"dependencies": {
 		"@agent-vm/config-contracts": "workspace:*",

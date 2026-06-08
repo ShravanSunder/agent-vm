@@ -9,12 +9,19 @@ describe('shouldBuildWorkspaceForE2e', () => {
 	it('skips the workspace build for ordinary ungated e2e inventory runs', () => {
 		expect(shouldBuildWorkspaceForE2e({})).toBe(false);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_1PASSWORD_E2E: '1' })).toBe(false);
+		expect(
+			shouldBuildWorkspaceForE2e({
+				AGENT_VM_TEST_OPENAI_API_KEY: 'test-model-token',
+				AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN: 'test-op-token',
+			}),
+		).toBe(false);
 	});
 
 	it('requires one workspace build before live VM e2e runs', () => {
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_OPENCLAW_E2E: '1' })).toBe(true);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_WORKER_E2E: '1' })).toBe(true);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_GONDOLIN_E2E: '1' })).toBe(true);
+		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_LLM_E2E: '1' })).toBe(true);
 	});
 
 	it('skips the workspace build when the caller already built once', () => {

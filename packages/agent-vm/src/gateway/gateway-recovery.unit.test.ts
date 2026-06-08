@@ -82,6 +82,19 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		).resolves.toEqual({ kind: 'clear' });
 	});
 
+	it('reports clear missing-record ingress preflight when the current controller owns the configured port', async () => {
+		await expect(
+			checkMissingGatewayRuntimeRecordPortPreflight({
+				expectedControllerPid: process.pid,
+				gatewayIngressPort: 18_791,
+				readTcpListenPortOwner: async () => ({
+					command: 'node agent-vm controller start',
+					pid: process.pid,
+				}),
+			}),
+		).resolves.toEqual({ kind: 'clear' });
+	});
+
 	it('reports owner-unsafe evidence when the runtime record is missing and configured ingress port is occupied', async () => {
 		await expect(
 			checkMissingGatewayRuntimeRecordPortPreflight({
@@ -333,6 +346,33 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			}),
 		).rejects.toThrow(/port 18891 is held by pid 222/u);
 		expect(killProcess).not.toHaveBeenCalled();
+	});
+
+	it('deletes a stale gateway record during in-process recovery when the current controller owns ingress', async () => {
+		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
+		const killProcess = vi.fn();
+		const record = createGatewayRuntimeRecord({ ingressPort: 18_891, qemuPid: 111 });
+
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				createGatewayRecoveryOptions({ mode: 'in-process-recovery' }),
+				{
+					deleteGatewayRuntimeRecord,
+					isProcessAlive: () => false,
+					killProcess,
+					loadGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
+					readTcpListenPortOwner: async () => ({
+						command: 'node agent-vm controller start',
+						pid: process.pid,
+					}),
+				},
+			),
+		).resolves.toEqual({
+			cleanedUp: true,
+			killedPid: null,
+		});
+		expect(killProcess).not.toHaveBeenCalled();
+		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
 	});
 
 	it('kills the recorded gateway process before deleting when its ingress port is already free', async () => {

@@ -565,7 +565,7 @@ export function healthEventBucketKey(event: AgentVmHealthEvent): string {
 		case 'gateway-control-link':
 			return `${event.zoneId}:${event.kind}`;
 		case 'gateway-service-health':
-			return `${event.zoneId}:${event.kind}:${event.port}:${event.path}`;
+			return `${event.zoneId}:${event.kind}`;
 		case 'controller-request':
 			return `${event.zoneId}:${event.kind}:${event.operation}`;
 		case 'lease-heartbeat':

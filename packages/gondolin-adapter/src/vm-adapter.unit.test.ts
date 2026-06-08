@@ -231,10 +231,13 @@ describe('createManagedVm', () => {
 
 	it('uses OpenClaw-compatible synthetic DNS ranges when TCP host mapping is enabled', async () => {
 		let capturedVmOptions: VMOptions | undefined;
-		const createHttpHooksMock = vi.fn(() => ({
-			env: { HTTPS_PROXY: 'http://proxy.vm.host:8080' },
-			httpHooks: {} satisfies HttpHooks,
-		}));
+		let capturedIsIpAllowed: HttpHooks['isIpAllowed'] | undefined;
+		const createHttpHooksMock = vi.fn(
+			(_hookOptions: Parameters<ManagedVmDependencies['createHttpHooks']>[0]) => ({
+				env: { HTTPS_PROXY: 'http://proxy.vm.host:8080' },
+				httpHooks: {} satisfies HttpHooks,
+			}),
+		);
 		const dependencies = {
 			...createBaseDependencies({
 				createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
@@ -244,6 +247,13 @@ describe('createManagedVm', () => {
 			}),
 			createHttpHooks: createHttpHooksMock,
 		} satisfies ManagedVmDependencies;
+		createHttpHooksMock.mockImplementation((hookOptions) => {
+			capturedIsIpAllowed = hookOptions.isIpAllowed;
+			return {
+				env: { HTTPS_PROXY: 'http://proxy.vm.host:8080' },
+				httpHooks: {} satisfies HttpHooks,
+			};
+		});
 
 		await createManagedVm(
 			{
@@ -269,8 +279,77 @@ describe('createManagedVm', () => {
 			syntheticHostMapping: 'per-host',
 		});
 		expect(createHttpHooksMock).toHaveBeenCalledWith({
-			allowedHosts: [],
-			allowedInternalHosts: ['controller.vm.host'],
+			allowedHosts: ['controller.vm.host'],
+			isIpAllowed: expect.any(Function),
+			secrets: {},
+		});
+		if (!capturedIsIpAllowed) {
+			throw new Error('Expected port-aware internal host policy.');
+		}
+		await expect(
+			Promise.resolve(
+				capturedIsIpAllowed({
+					family: 4,
+					hostname: 'controller.vm.host',
+					ip: '127.0.0.1',
+					port: 18_800,
+					protocol: 'http',
+				}),
+			),
+		).resolves.toBe(true);
+		await expect(
+			Promise.resolve(
+				capturedIsIpAllowed({
+					family: 4,
+					hostname: 'controller.vm.host',
+					ip: '127.0.0.1',
+					port: 18_801,
+					protocol: 'http',
+				}),
+			),
+		).resolves.toBe(false);
+		await expect(
+			Promise.resolve(
+				capturedIsIpAllowed({
+					family: 4,
+					hostname: 'unmapped.vm.host',
+					ip: '127.0.0.1',
+					port: 18_800,
+					protocol: 'http',
+				}),
+			),
+		).resolves.toBe(false);
+	});
+
+	it('does not turn public raw TCP bypass hosts into HTTP allowed hosts', async () => {
+		const createHttpHooksMock = vi.fn(() => ({
+			env: { HTTPS_PROXY: 'http://proxy.vm.host:8080' },
+			httpHooks: {} satisfies HttpHooks,
+		}));
+		const dependencies = {
+			...createBaseDependencies(),
+			createHttpHooks: createHttpHooksMock,
+		} satisfies ManagedVmDependencies;
+
+		await createManagedVm(
+			{
+				allowedHosts: ['api.openai.com'],
+				cpus: 1,
+				env: {},
+				imagePath: '',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				tcpHosts: {
+					'gateway.discord.gg:443': 'gateway.discord.gg:443',
+				},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(createHttpHooksMock).toHaveBeenCalledWith({
+			allowedHosts: ['api.openai.com'],
 			secrets: {},
 		});
 	});

@@ -214,6 +214,7 @@ export function createOpenClawZoneRuntime(
 	let lifecycleState: GatewayZoneLifecycleState = { kind: 'stopped' };
 	let lifecycleOperation: Promise<void> = Promise.resolve();
 	let lifecycleGeneration = 0;
+	let staleGatewayPendingClose: GatewayZoneRuntimeHandle | undefined;
 
 	const startGateway = async (
 		startOptions: GatewayZoneStartOptions = {},
@@ -318,6 +319,12 @@ export function createOpenClawZoneRuntime(
 	const markGatewayHostPidMissing = (
 		message: string,
 	): Extract<GatewayZoneLifecycleState, { readonly kind: 'failed' }> => {
+		if (
+			staleGatewayPendingClose === undefined &&
+			(lifecycleState.kind === 'running' || lifecycleState.kind === 'running-degraded')
+		) {
+			staleGatewayPendingClose = lifecycleState.gateway;
+		}
 		const errorMessage = `vm-process-missing: ${message}`;
 		setOriginalOutageCauseIfUnknown('vm-process-missing');
 		gateway = undefined;
@@ -329,6 +336,51 @@ export function createOpenClawZoneRuntime(
 			kind: 'failed',
 		};
 		return lifecycleState;
+	};
+
+	const closeStaleGatewayBeforeColdStart = async (
+		operationContext: GatewayLifecycleOperationContext,
+	): Promise<void> => {
+		const staleGateway = staleGatewayPendingClose;
+		if (!staleGateway) {
+			return;
+		}
+		staleGatewayPendingClose = undefined;
+		try {
+			await recordLifecycleOperation({
+				kind: 'vm-close-started',
+				operationId: operationContext.operationId,
+				operationTrigger: operationContext.operationTrigger,
+				previousGateway: gatewayIdentityFor(staleGateway),
+			});
+			await closeGatewayWithDeadline(staleGateway);
+			await recordLifecycleOperation({
+				kind: 'vm-close-finished',
+				operationId: operationContext.operationId,
+				operationTrigger: operationContext.operationTrigger,
+				previousGateway: gatewayIdentityFor(staleGateway),
+			});
+		} catch (error) {
+			staleGatewayPendingClose = staleGateway;
+			lastError = formatUnknownError(error);
+			lifecycleState = {
+				coldStartEligible: false,
+				error: {
+					code: 'owner-unsafe',
+					message: lastError,
+				},
+				kind: 'failed',
+			};
+			await recordLifecycleOperation({
+				errorCode: 'owner-unsafe',
+				errorMessage: lastError,
+				kind: 'operation-failed',
+				operationId: operationContext.operationId,
+				operationTrigger: operationContext.operationTrigger,
+				previousGateway: gatewayIdentityFor(staleGateway),
+			});
+			throw error;
+		}
 	};
 
 	const classifyLastError = (message: string): GatewayZoneLifecycleState => {
@@ -754,6 +806,7 @@ export function createOpenClawZoneRuntime(
 								operationTrigger: operationContext.operationTrigger,
 							});
 							const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
+							await closeStaleGatewayBeforeColdStart(operationContext);
 							await startNow(operationGeneration, startOptions, operationContext);
 							if (operationGeneration !== lifecycleGeneration) {
 								throw new OpenClawZoneRestartTimeoutError(
@@ -799,12 +852,14 @@ export function createOpenClawZoneRuntime(
 					operationMetadata.operationTrigger ?? restartOptions.operationTrigger ?? 'auto-recovery',
 			};
 			const coldStartOperation = (async (): Promise<OpenClawZoneRestartResult> => {
+				getLifecycleState();
 				await recordLifecycleOperation({
 					kind: 'cold-start-requested',
 					operationId: operationContext.operationId,
 					operationTrigger: operationContext.operationTrigger,
 				});
 				const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
+				await closeStaleGatewayBeforeColdStart(operationContext);
 				await startNow(operationGeneration, startOptions, operationContext);
 				if (operationGeneration !== lifecycleGeneration) {
 					throw new OpenClawZoneRestartTimeoutError(options.zone.id, restartOptions.timeoutMs ?? 0);

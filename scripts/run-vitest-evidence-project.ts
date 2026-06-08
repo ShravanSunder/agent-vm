@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
@@ -27,6 +27,20 @@ interface EvidenceValidationResult {
 }
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+export function resolveVitestJsonOutputFilePath(
+	rootDirectory: string,
+	projectName: string,
+	runId: string,
+): string {
+	return path.join(
+		rootDirectory,
+		'tmp',
+		'vitest-results',
+		`${projectName}-${runId}`,
+		'results.json',
+	);
+}
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
@@ -151,12 +165,19 @@ export async function runEvidenceProject(
 ): Promise<EvidenceValidationResult> {
 	const outputDirectory = path.resolve(repositoryRoot, 'tmp', 'vitest-results');
 	await mkdir(outputDirectory, { recursive: true });
-	const outputFilePath = path.join(outputDirectory, `${projectName}.json`);
+	const runDirectory = await mkdtemp(path.join(outputDirectory, `${projectName}-${process.pid}-`));
+	const runId = path.basename(runDirectory).slice(`${projectName}-`.length);
+	const outputFilePath = resolveVitestJsonOutputFilePath(repositoryRoot, projectName, runId);
+	await mkdir(path.dirname(outputFilePath), { recursive: true });
 
 	await runVitestProject(projectName, outputFilePath, filters);
 
 	const results = parseVitestJsonResults(await readFile(outputFilePath, 'utf8'));
 	return validateProofProjectResults(projectName, results);
+}
+
+export function normalizeVitestFilters(filters: readonly string[]): readonly string[] {
+	return filters[0] === '--' ? filters.slice(1) : filters;
 }
 
 async function main(): Promise<void> {
@@ -168,7 +189,10 @@ async function main(): Promise<void> {
 		process.exit(1);
 	}
 
-	const result = await runEvidenceProject(projectName, process.argv.slice(3));
+	const result = await runEvidenceProject(
+		projectName,
+		normalizeVitestFilters(process.argv.slice(3)),
+	);
 	if (!result.ok) {
 		process.stderr.write('Vitest evidence project failed:\n');
 		for (const message of result.messages) {

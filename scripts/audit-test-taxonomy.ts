@@ -72,6 +72,48 @@ export function isUnitTest(filePath: string): boolean {
 	return filePath.endsWith('.unit.test.ts') || filePath.endsWith('.unit.spec.ts');
 }
 
+export function resolveTestFileProjectNames(filePath: string): readonly string[] {
+	const projectNames: string[] = [];
+	if (filePath.startsWith('packages/')) {
+		if (isUnitTest(filePath)) {
+			projectNames.push('unit');
+		}
+		if (filePath.endsWith('.integration.test.ts')) {
+			projectNames.push('integration');
+		}
+		if (
+			filePath.endsWith('.vm.e2e.test.ts') &&
+			!filePath.endsWith('/live-gondolin-http-mediation.vm.e2e.test.ts') &&
+			!filePath.endsWith('/live-http-mediation.vm.e2e.test.ts')
+		) {
+			projectNames.push('e2e-vm');
+		}
+		if (
+			filePath.endsWith('/live-gondolin-http-mediation.vm.e2e.test.ts') ||
+			filePath.endsWith('/live-http-mediation.vm.e2e.test.ts')
+		) {
+			projectNames.push('e2e-vm-mediation');
+		}
+		if (filePath.endsWith('.openclaw.e2e.test.ts')) {
+			projectNames.push('e2e-openclaw');
+		}
+		if (filePath.endsWith('.worker.e2e.test.ts')) {
+			projectNames.push('e2e-worker');
+		}
+		if (filePath.endsWith('.secrets.e2e.test.ts')) {
+			projectNames.push('e2e-secrets');
+		}
+		if (filePath.endsWith('.llm.e2e.test.ts')) {
+			projectNames.push('e2e-llm');
+		}
+		return projectNames;
+	}
+	if (filePath.startsWith('scripts/') && filePath.endsWith('.unit.test.ts')) {
+		return ['unit'];
+	}
+	return [];
+}
+
 async function collectViolations(): Promise<readonly string[]> {
 	const testFiles = await listTrackedTestFiles();
 	const fileViolations = await Promise.all(
@@ -80,6 +122,17 @@ async function collectViolations(): Promise<readonly string[]> {
 			if (!hasAllowedTestSuffix(filePath)) {
 				violations.push(
 					`${filePath}: test files must use .unit.test.ts, .integration.test.ts, .vm.e2e.test.ts, .openclaw.e2e.test.ts, .worker.e2e.test.ts, .secrets.e2e.test.ts, or .llm.e2e.test.ts`,
+				);
+				return violations;
+			}
+			const projectNames = resolveTestFileProjectNames(filePath);
+			if (projectNames.length === 0) {
+				violations.push(`${filePath}: test file is not included by any Vitest project`);
+				return violations;
+			}
+			if (projectNames.length > 1) {
+				violations.push(
+					`${filePath}: test file is included by multiple Vitest projects: ${projectNames.join(', ')}`,
 				);
 				return violations;
 			}

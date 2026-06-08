@@ -27,7 +27,7 @@
 		"test:e2e:openclaw": "AGENT_VM_OPENCLAW_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-openclaw",
 		"test:e2e:worker": "AGENT_VM_WORKER_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-worker",
 		"test:e2e:secrets": "AGENT_VM_1PASSWORD_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-secrets",
-		"test:e2e:llm": "tsx scripts/run-vitest-evidence-project.ts e2e-llm",
+		"test:e2e:llm": "AGENT_VM_LLM_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-llm",
 		"test:e2e": "pnpm build && AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm && AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm-mediation",
 		"test:watch": "vitest",
 		"dev:sync-tarballs": "tsx scripts/sync-local-tarballs-to-deployment.ts",

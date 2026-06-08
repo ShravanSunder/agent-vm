@@ -45,6 +45,40 @@ describe('agent-vm health events', () => {
 		expect(isAgentVmHealthEvent(workerEvent)).toBe(true);
 	});
 
+	it('treats gateway service health as one zone-level bucket', () => {
+		const failedUnknownServiceHealth = {
+			kind: 'gateway-service-health',
+			observedAtMs: 1_000,
+			path: '(unknown)',
+			port: 0,
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+		const okServiceHealth = {
+			kind: 'gateway-service-health',
+			observedAtMs: 34_000,
+			path: '/readyz',
+			port: 18789,
+			result: 'ok',
+			statusCode: 200,
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		expect(healthEventBucketKey(failedUnknownServiceHealth)).toBe('beta:gateway-service-health');
+		expect(healthEventBucketKey(okServiceHealth)).toBe('beta:gateway-service-health');
+		expect(
+			deriveZoneHealthSnapshot([failedUnknownServiceHealth, okServiceHealth], {
+				nowMs: 35_000,
+				staleAfterMs: 30_000,
+				zoneId: 'beta',
+			}),
+		).toEqual({
+			kind: 'ok',
+			latestEvents: [okServiceHealth],
+			zoneId: 'beta',
+		});
+	});
+
 	it('accepts generic agent channel-provider health events with provider details only in payload', () => {
 		const event = {
 			channelProviderId: 'primary-channel',

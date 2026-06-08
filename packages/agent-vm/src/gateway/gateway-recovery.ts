@@ -150,11 +150,15 @@ export type MissingGatewayRuntimeRecordPortPreflight =
 	  };
 
 export async function checkMissingGatewayRuntimeRecordPortPreflight(options: {
+	readonly expectedControllerPid?: number | undefined;
 	readonly gatewayIngressPort: number;
 	readonly readTcpListenPortOwner: (port: number) => Promise<PortOwner | null>;
 }): Promise<MissingGatewayRuntimeRecordPortPreflight> {
 	const portOwner = await options.readTcpListenPortOwner(options.gatewayIngressPort);
 	if (portOwner === null) {
+		return { kind: 'clear' };
+	}
+	if (portOwner.pid === options.expectedControllerPid) {
 		return { kind: 'clear' };
 	}
 	return {
@@ -169,12 +173,16 @@ export async function checkMissingGatewayRuntimeRecordPortPreflight(options: {
 }
 
 async function verifyGatewayPortOwnership(options: {
+	readonly expectedControllerPid?: number | undefined;
 	readonly readTcpListenPortOwner: (port: number) => Promise<PortOwner | null>;
 	readonly runtimeRecord: GatewayRuntimeRecord;
 }): Promise<GatewayPortOwnershipProof> {
 	const portOwner = await options.readTcpListenPortOwner(options.runtimeRecord.ingressPort);
 	if (portOwner === null) {
 		return { kind: 'record-stale' };
+	}
+	if (portOwner.pid === options.expectedControllerPid) {
+		return { kind: 'owned' };
 	}
 	if (portOwner.pid !== options.runtimeRecord.qemuPid) {
 		return {
@@ -236,9 +244,11 @@ export async function cleanupOrphanedGatewayIfPresent(
 	const runtimeRecordResult = await (
 		dependencies.loadGatewayRuntimeRecordResult ?? loadGatewayRuntimeRecordResult
 	)(options.stateDir);
+	const expectedControllerPid = options.mode === 'in-process-recovery' ? process.pid : undefined;
 	if (runtimeRecordResult.kind === 'missing') {
 		if (options.configuredIngressPort !== undefined) {
 			const portPreflight = await checkMissingGatewayRuntimeRecordPortPreflight({
+				...(expectedControllerPid === undefined ? {} : { expectedControllerPid }),
 				gatewayIngressPort: options.configuredIngressPort,
 				readTcpListenPortOwner:
 					dependencies.readTcpListenPortOwner ?? defaultReadTcpListenPortOwner,
@@ -296,6 +306,7 @@ export async function cleanupOrphanedGatewayIfPresent(
 	);
 
 	const portOwnershipProof = await verifyGatewayPortOwnership({
+		...(expectedControllerPid === undefined ? {} : { expectedControllerPid }),
 		readTcpListenPortOwner: dependencies.readTcpListenPortOwner ?? defaultReadTcpListenPortOwner,
 		runtimeRecord,
 	});

@@ -8,7 +8,10 @@ type E2eWorkspaceBuildEnvironment = Partial<
 		| 'AGENT_VM_GONDOLIN_E2E'
 		| 'AGENT_VM_1PASSWORD_E2E'
 		| 'AGENT_VM_E2E_SKIP_WORKSPACE_BUILD'
+		| 'AGENT_VM_LLM_E2E'
 		| 'AGENT_VM_OPENCLAW_E2E'
+		| 'AGENT_VM_TEST_OPENAI_API_KEY'
+		| 'AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN'
 		| 'AGENT_VM_WORKER_E2E',
 		string
 	>
@@ -38,6 +41,7 @@ export function shouldBuildWorkspaceForE2e(
 	return (
 		env.AGENT_VM_OPENCLAW_E2E === '1' ||
 		env.AGENT_VM_WORKER_E2E === '1' ||
+		env.AGENT_VM_LLM_E2E === '1' ||
 		env.AGENT_VM_GONDOLIN_E2E === '1'
 	);
 }
