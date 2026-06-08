@@ -1,3 +1,5 @@
+import net from 'node:net';
+
 import type { MediatedSecretSpec } from '@agent-vm/secret-management';
 import {
 	MemoryProvider,
@@ -13,6 +15,7 @@ import {
 	type ExecOptions as GondolinExecOptions,
 	type ExecProcess as GondolinExecProcess,
 	type ExecResult as GondolinExecResult,
+	type HttpHooks,
 	type IngressRoute as GondolinIngressRoute,
 	type ShadowPredicate,
 	type ShadowProviderOptions,
@@ -82,6 +85,7 @@ export interface ManagedVmDependencies {
 	createVm(vmOptions: VMOptions): Promise<ManagedVmInstance>;
 	createHttpHooks(options: {
 		readonly allowedHosts: readonly string[];
+		readonly isIpAllowed?: HttpHooks['isIpAllowed'];
 		readonly secrets: Record<string, MediatedSecretSpec>;
 		readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
 		readonly onResponse?: (response: Response) => Promise<Response | void>;
@@ -146,6 +150,9 @@ function createDefaultDependencies(): ManagedVmDependencies {
 		createHttpHooks: (hookOptions) =>
 			createHttpHooks({
 				allowedHosts: [...hookOptions.allowedHosts],
+				...(hookOptions.isIpAllowed
+					? { blockInternalRanges: false, isIpAllowed: hookOptions.isIpAllowed }
+					: {}),
 				secrets: Object.fromEntries(
 					Object.entries(hookOptions.secrets).map(([secretName, secretSpec]) => [
 						secretName,
@@ -334,17 +341,173 @@ function resolveManagedVmIngressOptions(
 	return resolvedOptions;
 }
 
+interface TcpHostEndpoint {
+	readonly hostname: string;
+	readonly port: number;
+}
+
+interface InternalTcpHostRule extends TcpHostEndpoint {}
+
+function normalizePolicyHostname(hostname: string): string {
+	return hostname.toLowerCase();
+}
+
+function parseTcpHostEndpoint(endpoint: string): TcpHostEndpoint | undefined {
+	if (endpoint.startsWith('[')) {
+		const closingBracketIndex = endpoint.indexOf(']');
+		if (closingBracketIndex > 1) {
+			const portValue = Number.parseInt(endpoint.slice(closingBracketIndex + 2), 10);
+			if (!Number.isFinite(portValue)) {
+				return undefined;
+			}
+			return {
+				hostname: normalizePolicyHostname(endpoint.slice(1, closingBracketIndex)),
+				port: portValue,
+			};
+		}
+	}
+
+	const portSeparatorIndex = endpoint.lastIndexOf(':');
+	if (portSeparatorIndex <= 0) {
+		return undefined;
+	}
+	const portValue = Number.parseInt(endpoint.slice(portSeparatorIndex + 1), 10);
+	if (!Number.isFinite(portValue)) {
+		return undefined;
+	}
+	return {
+		hostname: normalizePolicyHostname(endpoint.slice(0, portSeparatorIndex)),
+		port: portValue,
+	};
+}
+
+function ipv4AddressIsInternal(ipAddress: string): boolean {
+	const octets = ipAddress.split('.').map((segment) => Number.parseInt(segment, 10));
+	if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet))) {
+		return false;
+	}
+	const firstOctet = octets[0];
+	const secondOctet = octets[1];
+	if (firstOctet === undefined || secondOctet === undefined) {
+		return false;
+	}
+	return (
+		firstOctet === 10 ||
+		firstOctet === 127 ||
+		(firstOctet === 169 && secondOctet === 254) ||
+		(firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31) ||
+		(firstOctet === 192 && secondOctet === 168) ||
+		(firstOctet === 100 && secondOctet >= 64 && secondOctet <= 127)
+	);
+}
+
+function ipAddressIsInternal(ipAddress: string): boolean {
+	if (net.isIP(ipAddress) === 4) {
+		return ipv4AddressIsInternal(ipAddress);
+	}
+	const normalizedIpAddress = ipAddress.toLowerCase();
+	if (normalizedIpAddress.startsWith('::ffff:')) {
+		return ipv4AddressIsInternal(normalizedIpAddress.slice('::ffff:'.length));
+	}
+	return (
+		normalizedIpAddress === '::1' ||
+		normalizedIpAddress.startsWith('fc') ||
+		normalizedIpAddress.startsWith('fd') ||
+		normalizedIpAddress.startsWith('fe80:')
+	);
+}
+
+function endpointHostnameIsInternal(hostname: string): boolean {
+	const normalizedHostname = normalizePolicyHostname(hostname);
+	return (
+		normalizedHostname === 'localhost' ||
+		normalizedHostname === 'host.docker.internal' ||
+		ipAddressIsInternal(normalizedHostname)
+	);
+}
+
+function deriveInternalTcpHostRules(
+	tcpHosts: Record<string, string> | undefined,
+): readonly InternalTcpHostRule[] {
+	if (!tcpHosts) {
+		return [];
+	}
+
+	const rules: InternalTcpHostRule[] = [];
+	for (const [tcpHostKey, tcpHostTarget] of Object.entries(tcpHosts)) {
+		const exposedEndpoint = parseTcpHostEndpoint(tcpHostKey);
+		const targetEndpoint = parseTcpHostEndpoint(tcpHostTarget);
+		if (
+			!exposedEndpoint ||
+			!targetEndpoint ||
+			!endpointHostnameIsInternal(targetEndpoint.hostname)
+		) {
+			continue;
+		}
+		if (
+			!rules.some(
+				(rule) => rule.hostname === exposedEndpoint.hostname && rule.port === exposedEndpoint.port,
+			)
+		) {
+			rules.push(exposedEndpoint);
+		}
+	}
+	return rules;
+}
+
+function mergeUniqueHosts(
+	hosts: readonly string[],
+	additionalHosts: readonly string[],
+): readonly string[] {
+	const mergedHosts = [...hosts];
+	for (const host of additionalHosts) {
+		if (!mergedHosts.includes(host)) {
+			mergedHosts.push(host);
+		}
+	}
+	return mergedHosts;
+}
+
+function createInternalTcpHostPolicy(
+	rules: readonly InternalTcpHostRule[],
+): HttpHooks['isIpAllowed'] | undefined {
+	if (rules.length === 0) {
+		return undefined;
+	}
+	const ruleHostnames = new Set(rules.map((rule) => rule.hostname));
+	return (info) => {
+		const hostname = normalizePolicyHostname(info.hostname);
+		const exactRuleMatched = rules.some(
+			(rule) => rule.hostname === hostname && rule.port === info.port,
+		);
+		if (ruleHostnames.has(hostname)) {
+			return exactRuleMatched;
+		}
+		if (ipAddressIsInternal(info.ip)) {
+			return false;
+		}
+		return true;
+	};
+}
+
 export async function createManagedVm(
 	options: CreateVmOptions,
 	dependencies: ManagedVmDependencies = createDefaultDependencies(),
 ): Promise<ManagedVm> {
 	dependencies.configureHostNetworkDefaults?.();
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
+	const internalTcpHostRules = deriveInternalTcpHostRules(options.tcpHosts);
+	const allowedHosts = mergeUniqueHosts(
+		options.allowedHosts,
+		internalTcpHostRules.map((rule) => rule.hostname),
+	);
+	const isIpAllowed = createInternalTcpHostPolicy(internalTcpHostRules);
 	const pinnedRealFsRoots = collectPinnedRealFsRoots(options.vfsMounts);
 	let vmInstance: ManagedVmInstance;
 	try {
 		const hookBundle = dependencies.createHttpHooks({
-			allowedHosts: options.allowedHosts,
+			allowedHosts,
+			...(isIpAllowed ? { isIpAllowed } : {}),
 			secrets: options.secrets,
 			...(options.onRequest ? { onRequest: options.onRequest } : {}),
 			...(options.onResponse ? { onResponse: options.onResponse } : {}),

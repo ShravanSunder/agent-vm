@@ -46,6 +46,7 @@ coverage/
 .pytest_cache/
 .ruff_cache/
 /state/
+/runtime/
 workspaces/
 tmp/
 /tmp/

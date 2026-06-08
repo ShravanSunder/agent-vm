@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/openclaw-mcp-portal-plugin",
-	"version": "0.0.92",
+	"version": "0.0.93",
 	"description": "OpenClaw plugin that registers native MCP Portal tools over configured upstream MCP servers.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -33,7 +33,7 @@
 		"build": "tsdown && cp openclaw.plugin.json dist/",
 		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "vitest run --root ../../ --config vitest.config.ts packages/openclaw-mcp-portal-plugin/src"
+		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/openclaw-mcp-portal-plugin/src"
 	},
 	"dependencies": {
 		"@agent-vm/config-contracts": "workspace:*",

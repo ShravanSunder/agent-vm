@@ -131,12 +131,24 @@ export class ControllerZoneRuntimeUnavailableError extends Error {
 }
 
 export class ControllerZoneRuntimeStartError extends Error {
+	public readonly gatewayLifecycleErrorCode: GatewayLifecycleErrorCode | undefined;
+	public readonly operationId: string | undefined;
 	public readonly zoneId: string;
 
-	public constructor(zoneId: string, cause: unknown) {
+	public constructor(
+		zoneId: string,
+		cause: unknown,
+		options: {
+			readonly gatewayLifecycleErrorCode?: GatewayLifecycleErrorCode | undefined;
+			readonly operationId?: string | undefined;
+		} = {},
+	) {
 		const message = cause instanceof Error ? cause.message : String(cause);
 		super(`Failed to start zone '${zoneId}': ${message}`, { cause });
 		this.name = 'ControllerZoneRuntimeStartError';
+		this.gatewayLifecycleErrorCode = options.gatewayLifecycleErrorCode;
+		this.operationId = options.operationId;
 		this.zoneId = zoneId;
 	}
 }
+import type { GatewayLifecycleErrorCode } from './gateway-zone-state-machine.js';

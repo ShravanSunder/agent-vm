@@ -73,7 +73,7 @@ with progressive disclosure:
 
 1. Update the canonical repo doc that explains the system or subsystem.
 2. Update the generated manual template with the short operational guidance.
-3. Update `manual-templates.test.ts` and run a built-CLI `agent-vm manual update`
+3. Update `manual-templates.unit.test.ts` and run a built-CLI `agent-vm manual update`
    smoke check when the generated output matters.
 
 Keep manuals concise, procedural, and safe-by-default. Do not teach forbidden
@@ -86,36 +86,119 @@ This is a pnpm TypeScript monorepo targeting Node 24. It uses the OXC stack for
 fast formatting and linting.
 
 - Use `mise exec -- <command>` for commands that depend on pinned local tools.
-  The repo `mise.toml` pins Zig for Gondolin image builds and smoke tests.
+  The repo `mise.toml` pins Zig for Gondolin image builds and e2e tests.
 - Install/build: `pnpm install`, then `pnpm build`.
+- Test taxonomy audit: `pnpm test:taxonomy`.
+  This is part of `pnpm test:unit` and `pnpm check`. It fails when test files
+  use an ambiguous suffix or when a unit test crosses a real host/process
+  boundary.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
-- Smoke tests: `pnpm test:smoke`.
-  This runs `vitest.smoke.config.ts` and includes only
-  `packages/**/*.smoke.test.ts`. Smoke tests are live or production-shaped
-  end-to-end checks, not fake-client contract tests. CLI/manual/resource
-  generation checks and startup/config contract checks belong in integration
-  tests unless they boot the production path they claim to prove. Current smoke
-  types:
-  - Live OpenClaw/Gondolin smoke: gated by `AGENT_VM_OPENCLAW_SMOKE=1`; boots
-    real OpenClaw/Gondolin VM flows and requires Docker, QEMU, and pinned Zig.
-    For Tool VM lease/path changes, this must exercise a real controller,
-    OpenClaw gateway, plugin, lease request, and Tool VM command path. Plugin
-    factory tests are integration tests, not smoke.
-  - Live Worker/Gondolin smoke: gated by `AGENT_VM_WORKER_SMOKE=1` or
-    `AGENT_VM_GONDOLIN_SMOKE=1`; boots worker/runtime or Gondolin image paths.
-  - Live 1Password smoke: gated by `AGENT_VM_1PASSWORD_SMOKE=1` plus explicit
-    1Password smoke refs and token env.
-  Use `mise exec -- pnpm test:smoke` for smoke tests so the repo-pinned Zig
-  version in `mise.toml` is active. Live Gondolin/OpenClaw smokes depend on
-  that toolchain selection and may silently skip under a stale system `zig`.
-  Skipped live smoke tests are not evidence that their live path was exercised.
-  When a change claims to fix live VM, Gondolin, OpenClaw gateway, Tool VM SSH,
-  or controller control-link behavior, enable the relevant smoke flag and run
-  the targeted smoke test before calling the feature tested. For example,
-  `AGENT_VM_OPENCLAW_SMOKE=1 mise exec -- pnpm vitest --config
-  vitest.smoke.config.ts run <specific-smoke-file>`. A skipped smoke only
-  proves the gate works; it does not prove the feature works.
+- E2E inventory: `pnpm test:e2e:inventory`.
+  This discovers e2e files with gates closed. It may report skips and is not
+  proof that a VM, gateway, provider, secret resolver, or model path worked.
+- Default non-secret E2E proof: `mise exec -- pnpm test:e2e`.
+  This runs `pnpm build` once, then runs the VM/Gondolin proof lane with
+  `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1`.
+- Additional E2E proof lanes:
+  - VM/Gondolin: `mise exec -- pnpm test:e2e:vm`.
+  - VM/Gondolin HTTP mediation: `mise exec -- pnpm test:e2e:vm-mediation`.
+  - OpenClaw gateway: `mise exec -- pnpm test:e2e:openclaw`.
+  - Worker gateway/runtime: `mise exec -- pnpm test:e2e:worker`.
+  - 1Password test account: `pnpm test:e2e:secrets`.
+  - LLM/model roundtrip: `pnpm test:e2e:llm`.
+  Proof lanes run through `scripts/run-vitest-evidence-project.ts` and must
+  fail on zero tests, skipped tests, or todo tests. Only `test:e2e:inventory`
+  may skip.
+- E2E VM/OpenClaw/Worker lanes require Docker, QEMU, and the pinned Zig from
+  `mise.toml`. Use `mise exec --` for those lanes. The e2e harness uses a
+  shared rebuildable image cache by default and honors `AGENT_VM_E2E_CACHE_DIR`
+  when you want to pin that cache location. `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1`
+  is only for callers that already ran `pnpm build` and want build-once,
+  test-many behavior.
+- Secret/model e2e lanes use test-only env names:
+  `AGENT_VM_LLM_E2E`, `AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN`,
+  `AGENT_VM_TEST_OP_REFS`, `AGENT_VM_TEST_OP_VAULT_PREFIX`,
+  `AGENT_VM_TEST_OPENAI_API_KEY`, and `AGENT_VM_TEST_ZONE_GIT_TOKEN`.
+  `AGENT_VM_LLM_E2E=1` is required before the LLM/model roundtrip lane can
+  run; credentials alone must not make inventory execute live model work.
+  `AGENT_VM_TEST_OP_REFS` must contain only refs from the test vault prefix,
+  defaulting to `op://agent-vm-testing/`. Never use personal or deployment
+  1Password refs for repo tests.
+
+### Test File Naming And Classification
+
+The suffix is the contract. Do not use plain `*.test.ts` for new tests.
+
+- Unit tests must use `*.unit.test.ts` or `*.unit.spec.ts`.
+- Integration tests must use `*.integration.test.ts`.
+- VM e2e tests must use `*.vm.e2e.test.ts`.
+- OpenClaw e2e tests must use `*.openclaw.e2e.test.ts`.
+- Worker e2e tests must use `*.worker.e2e.test.ts`.
+- 1Password e2e tests must use `*.secrets.e2e.test.ts`.
+- LLM-gated e2e tests must use `*.llm.e2e.test.ts`.
+
+Coverage must not be deleted or weakened to make a layer faster. If a slow
+real-boundary test leaves the unit lane, keep the real coverage in integration
+and add or keep pure unit coverage for the underlying decision logic.
+
+Unit tests are process-local and deterministic. They may use mocks, stubs, fake
+timers, pure temp-file serialization, and injected clocks. They must not run real
+`git`, `pnpm`, `npm`, `tar`, `docker`, `qemu`, `ssh`, `op`, or shell commands;
+bind real TCP/HTTP listeners; boot a controller; build packages or images; or
+wait on wall-clock time for internal logic. Use fake timers or injected clocks
+for retry, timeout, heartbeat, polling, and reaper behavior.
+
+Integration tests prove boundaries between modules and real host facilities:
+real CLI/process execution, real Git, real archive/encryption tools, HTTP server
+wiring, temp deployment roots, and lifecycle orchestration with fake VM/provider
+edges. Integration tests should run in parallel by default; tests that require
+exclusive host resources must isolate with temp dirs, ephemeral ports, and unique
+names rather than disabling the whole lane.
+
+E2E tests prove production-shaped behavior from outside the system. E2E tests
+should also be parallel-safe through temp roots, dynamic ports, shared build
+caches, and explicit setup/teardown. If an e2e test cannot be parallel safe,
+document the exact shared resource in the test and keep that exception narrow.
+
+### Testing Pyramid And Evidence Names
+
+Name test evidence by the highest real layer it exercised. Do not relabel lower
+layers as e2e.
+
+- Unit: pure functions, reducers, schemas, config parsing, policy decisions,
+  error classification, and deterministic helpers. No real controller process,
+  VM, network service, provider, real host command, or wall-clock wait is
+  required.
+- Integration: real Node/controller wiring, HTTP routes, temp state dirs,
+  lifecycle orchestration with fake or stubbed VM/provider boundaries, built
+  CLI/manual generation, and config validation. These tests prove contracts
+  between modules, but they are not e2e if the VM/provider/product path is
+  fake.
+- Real VM integration: boots the real Gondolin/QEMU path or a real managed image
+  path and proves host/guest wiring, ingress, control link, runtime records, or
+  Tool VM SSH with the pinned toolchain active through `mise exec --`.
+- E2E: proves production-shaped behavior from the outside of the system.
+  For OpenClaw reliability, this means a real controller, real OpenClaw gateway
+  VM, real plugin path, real lease/tool path when relevant, and observable user
+  or operator behavior. Fake clients, fake VM factories, schema-only checks, and
+  manual-template checks are useful tests, but they are not e2e evidence.
+
+When a change claims to fix VM, OpenClaw gateway, Tool VM SSH, lease lifecycle,
+gateway recovery, control-link, or provider runtime behavior, the final report
+must climb the pyramid explicitly:
+
+```text
+unit          -> exact command and pass/fail count
+integration   -> exact command and pass/fail count
+e2e inventory -> exact command and pass/fail/skip count, marked inventory only
+e2e proof     -> exact no-skip command, pass/fail count, and prerequisites
+```
+
+If a layer cannot run, name the blocker and keep the claim scoped to the layer
+that actually ran. Skipped e2e tests prove only that the inventory gate works;
+they do not prove the live feature.
+
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
   publish script.
@@ -137,9 +220,10 @@ Prefer targeted commands while iterating, then run the broad gate before
 claiming done. Do not use `npm` or `yarn` in this repo.
 
 For CLI, scaffold, default-value, and generated-config changes, add a local
-black-box smoke test in a temporary directory. Exercise the actual command a
-user would run, inspect the generated files, and run the relevant validation
-command against that generated output before claiming the default is safe.
+black-box integration/e2e test in a temporary directory. Exercise the actual
+command a user would run, inspect the generated files, and run the relevant
+validation command against that generated output before claiming the default is
+safe.
 
 ## MCP Portal Fast Loop
 
@@ -151,9 +235,9 @@ a default profile.
 
 Use targeted tests first:
 
-- Config shape: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.test.ts`.
-- Portal tool result shapes: `pnpm vitest run packages/mcp-portal/src/core/portal-tools.test.ts`.
-- Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.test.ts`.
+- Config shape: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.unit.test.ts`.
+- Portal tool result shapes: `pnpm vitest run packages/mcp-portal/src/core/portal-tools.unit.test.ts`.
+- Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.unit.test.ts`.
 
 When testing a deployment, run static validation before boot work, then live MCP
 validation after provider/profile edits:

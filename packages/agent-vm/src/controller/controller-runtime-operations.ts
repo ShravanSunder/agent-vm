@@ -71,13 +71,16 @@ export function createControllerRuntimeOperations(options: {
 		readonly zoneId: string;
 	}>;
 	readonly getRuntimeStatusByZone: () => ControllerRuntimeStatus['zones'];
+	readonly getRuntimeDiagnosisByZone?: () => ControllerRuntimeStatus['diagnoses'];
 	readonly secretResolver: SecretResolver;
 	readonly systemConfig: SystemConfig;
 }): ControllerRuntimeOperations {
 	const buildRuntimeStatus = (): ControllerRuntimeStatus => {
 		const zones = options.getRuntimeStatusByZone();
+		const diagnoses = options.getRuntimeDiagnosisByZone?.();
 		return {
 			activeLeases: options.getActiveLeases(),
+			...(diagnoses ? { diagnoses } : {}),
 			...(zones ? { zones } : {}),
 		};
 	};

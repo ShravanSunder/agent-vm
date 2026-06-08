@@ -66,7 +66,7 @@ jobs:
           path: .cache/zig
           key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}
 
-      - name: Install Zig for Gondolin smoke tests
+      - name: Install Zig for Gondolin e2e tests
         env:
           ZIG_ARCH: ${{ steps.zig-version.outputs.arch }}
           ZIG_VERSION: ${{ steps.zig-version.outputs.version }}
@@ -104,8 +104,14 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Test taxonomy audit
+        run: pnpm test:taxonomy
+
       - name: Lint
         run: pnpm lint
+
+      - name: Type-aware lint
+        run: pnpm lint:types
 
       - name: Format check
         run: pnpm fmt:check
@@ -114,7 +120,15 @@ jobs:
       # and not available in CI. Run `pnpm check` locally to verify types.
 
       - name: Unit tests
-        run: pnpm test
+        run: pnpm test:unit
 
-      - name: Gondolin rootfs smoke test
-        run: pnpm vitest run --config vitest.smoke.config.ts packages/gondolin-adapter/src/build-pipeline.smoke.test.ts
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: E2E inventory
+        run: pnpm test:e2e:inventory
+
+      - name: Non-secret E2E proofs
+        run: |
+          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm
+          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm-mediation

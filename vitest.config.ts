@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +9,29 @@ const repositoryRoot = path.dirname(fileURLToPath(import.meta.url));
 function repoPath(relativePath: string): string {
 	return path.resolve(repositoryRoot, relativePath);
 }
+
+function loadDotEnvLocal(): void {
+	const envLocalPath = repoPath('.env.local');
+	if (!fs.existsSync(envLocalPath)) {
+		return;
+	}
+
+	for (const line of fs.readFileSync(envLocalPath, 'utf8').split('\n')) {
+		const trimmedLine = line.trim();
+		if (trimmedLine.length === 0 || trimmedLine.startsWith('#') || !trimmedLine.includes('=')) {
+			continue;
+		}
+
+		const delimiterIndex = trimmedLine.indexOf('=');
+		const key = trimmedLine.slice(0, delimiterIndex).trim();
+		const value = trimmedLine.slice(delimiterIndex + 1).trim();
+		if (key.length > 0 && process.env[key] === undefined) {
+			process.env[key] = value;
+		}
+	}
+}
+
+loadDotEnvLocal();
 
 export default defineConfig({
 	resolve: {
@@ -53,18 +77,120 @@ export default defineConfig({
 		testTimeout: 300_000,
 		hookTimeout: 120_000,
 		pool: 'forks',
-		fileParallelism: false,
-		// Default suite runs unit-style tests. Live integration coverage uses
-		// the explicit .integration.test.ts suffix and runs separately.
-		include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts', 'scripts/**/*.test.ts'],
-		exclude: [
-			'**/node_modules/**',
-			'**/*.smoke.test.ts',
-			'**/*.integration.test.ts',
-			'**/*.llm.integration.test.ts',
-			'**/tests/integration/**',
-			'**/tests/e2e/**',
+		fileParallelism: true,
+		maxWorkers: '75%',
+		exclude: ['**/node_modules/**'],
+		globalSetup: [
+			repoPath('packages/agent-vm/src/integration-tests/e2e-workspace-build-global-setup.ts'),
 		],
 		setupFiles: [repoPath('vitest.setup.ts')],
+		projects: [
+			{
+				extends: true,
+				test: {
+					name: 'unit',
+					include: [
+						'packages/**/*.unit.test.ts',
+						'packages/**/*.unit.spec.ts',
+						'scripts/**/*.unit.test.ts',
+					],
+					exclude: [
+						'**/node_modules/**',
+						'**/*.integration.test.ts',
+						'**/*.e2e.test.ts',
+						'**/tests/integration/**',
+						'**/tests/e2e/**',
+					],
+					maxWorkers: '75%',
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'integration',
+					include: ['packages/**/*.integration.test.ts'],
+					exclude: ['**/node_modules/**', '**/*.e2e.test.ts'],
+					maxWorkers: '50%',
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-inventory',
+					include: ['packages/**/*.e2e.test.ts'],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 2,
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-vm',
+					include: ['packages/**/*.vm.e2e.test.ts'],
+					exclude: [
+						'**/node_modules/**',
+						'**/live-gondolin-http-mediation.vm.e2e.test.ts',
+						'**/live-http-mediation.vm.e2e.test.ts',
+					],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 1,
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-vm-mediation',
+					include: [
+						'packages/**/live-gondolin-http-mediation.vm.e2e.test.ts',
+						'packages/**/live-http-mediation.vm.e2e.test.ts',
+					],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 1,
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-openclaw',
+					include: ['packages/**/*.openclaw.e2e.test.ts'],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 1,
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-worker',
+					include: ['packages/**/*.worker.e2e.test.ts'],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 2,
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-secrets',
+					include: ['packages/**/*.secrets.e2e.test.ts'],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 2,
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-llm',
+					include: ['packages/**/*.llm.e2e.test.ts'],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 2,
+				},
+			},
+		],
 	},
 });

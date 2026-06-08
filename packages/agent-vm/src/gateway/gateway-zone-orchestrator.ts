@@ -21,6 +21,7 @@ import {
 	type GatewayImageBuilderDependencies,
 } from './gateway-image-builder.js';
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';
+import { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
 import { cleanupOrphanedGatewayIfPresent } from './gateway-recovery.js';
 import {
 	buildGatewayRuntimeRecord,
@@ -235,15 +236,63 @@ export async function startGatewayZone(
 	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 
-	// Phase A: collect host-side prerequisites in parallel.
+	// Phase A: prove ownership before doing any other startup work.
 	//
-	// All five branches operate on disjoint paths and have no shared in-process
+	// This phase is ordered ahead of secret resolution and image work so
+	// owner-unsafe evidence cannot be masked by a faster 1Password, config,
+	// or build failure. Safety beats diagnostic speed here: if an unknown
+	// process owns the gateway ingress, the controller must report that as
+	// the current blocker and must not proceed toward a second gateway.
+	//
+	// Tool VM children are cleaned before the gateway so an old gateway
+	// cannot continue issuing work while child recovery runs.
+	const cleanupOrphanedGateway = async (): Promise<void> => {
+		const cleanupResult = await (
+			dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent
+		)({
+			configuredIngressPort: zone.gateway.port,
+			expectedConfigPath: options.systemConfig.systemConfigPath,
+			expectedControllerPort: options.systemConfig.host.controllerPort,
+			mode: 'in-process-recovery',
+			projectNamespace: options.systemConfig.host.projectNamespace,
+			stateDir: zone.gateway.stateDir,
+			zoneId: zone.id,
+		});
+		if (cleanupResult.ownershipEvidence !== undefined) {
+			throw new GatewayOwnershipUnsafeError({
+				evidence: cleanupResult.ownershipEvidence,
+				message: `Gateway ownership is unsafe for zone '${zone.id}': ${cleanupResult.ownershipEvidence.kind}.`,
+			});
+		}
+	};
+	const cleanupOrphanedToolVms = async (): Promise<void> => {
+		if (zone.gateway.type !== 'openclaw') {
+			return;
+		}
+		await (dependencies.cleanupOrphanedToolVmsIfPresent ?? cleanupOrphanedToolVmsIfPresent)({
+			expectedConfigPath: options.systemConfig.systemConfigPath,
+			expectedControllerPort: options.systemConfig.host.controllerPort,
+			mode: 'in-process-recovery',
+			projectNamespace: options.systemConfig.host.projectNamespace,
+			stateDir: zone.gateway.stateDir,
+			tcpBasePort: options.systemConfig.tcpPool.basePort,
+			zoneId: zone.id,
+		});
+	};
+	if (zone.gateway.type === 'openclaw') {
+		await runTaskStep('Cleaning orphaned tool VMs', async () => {
+			await cleanupOrphanedToolVms();
+			await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
+		});
+	} else {
+		await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
+	}
+
+	// Phase B: collect non-ownership host-side prerequisites in parallel.
+	//
+	// All four branches operate on disjoint paths and have no shared in-process
 	// state:
 	//   - mcpPortalMaterialization writes $cacheDir/gateways/$zoneId/mcp-portal-effective/
-	//   - recovery cleanup reads/deletes $stateDir/tool-leases/*.json and
-	//     $stateDir/gateway-runtime.json after ownership checks; tool VM
-	//     children are cleaned before the gateway so the old gateway cannot
-	//     continue issuing work while child recovery runs.
 	//   - assertions reads $zone.gateway.config (pure validation)
 	//   - resolveZoneSecrets reads zone.secrets (no IO beyond secretResolver)
 	//   - buildGatewayImage operates on $cacheDir/gateway-images/$profile
@@ -262,42 +311,6 @@ export async function startGatewayZone(
 		secretResolver: options.secretResolver,
 		zone,
 	});
-	const cleanupOrphanedGateway = async (): Promise<void> => {
-		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({
-			expectedConfigPath: options.systemConfig.systemConfigPath,
-			expectedControllerPort: options.systemConfig.host.controllerPort,
-			mode: 'in-process-recovery',
-			projectNamespace: options.systemConfig.host.projectNamespace,
-			stateDir: zone.gateway.stateDir,
-			zoneId: zone.id,
-		});
-	};
-	// Tool VM orphan cleanup runs in-process-recovery mode only for OpenClaw
-	// zones — worker zones never spawn tool VMs, so there is no
-	// $stateDir/tool-leases/ subtree to scan. Same five-fence + ps-command
-	// discipline as the gateway cleanup above: any scope mismatch skips the
-	// record instead of signaling its PID.
-	const cleanupOrphanedToolVms = async (): Promise<void> => {
-		if (zone.gateway.type !== 'openclaw') {
-			return;
-		}
-		await (dependencies.cleanupOrphanedToolVmsIfPresent ?? cleanupOrphanedToolVmsIfPresent)({
-			expectedConfigPath: options.systemConfig.systemConfigPath,
-			expectedControllerPort: options.systemConfig.host.controllerPort,
-			mode: 'in-process-recovery',
-			projectNamespace: options.systemConfig.host.projectNamespace,
-			stateDir: zone.gateway.stateDir,
-			tcpBasePort: options.systemConfig.tcpPool.basePort,
-			zoneId: zone.id,
-		});
-	};
-	const recoveryCleanupPromise =
-		zone.gateway.type === 'openclaw'
-			? runTaskStep('Cleaning orphaned tool VMs', async () => {
-					await cleanupOrphanedToolVms();
-					await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
-				})
-			: runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
 	const assertionsPromise =
 		zone.gateway.type === 'openclaw'
 			? runTaskStep('Validating OpenClaw Tool VM requirements', async () => {
@@ -345,16 +358,15 @@ export async function startGatewayZone(
 	//     same op-CLI timeout (~30s). Promise.all surfaces the first; that's
 	//     diagnostically sufficient.
 	//   - Phase C uses allSettled for a DIFFERENT reason: it has a live
-	//     QEMU resource to close on partial failure. Phase A produces no
+	//     QEMU resource to close on partial failure. Phase B produces no
 	//     such resource.
 	//
 	// Cost of fail-fast: if multiple branches reject simultaneously, the
 	// other reasons are lost (only the first reaches the caller). Background
-	// completion of the other branches is harmless — no Phase A branch
+	// completion of the other branches is harmless — no Phase B branch
 	// produces a host-visible resource that needs cleanup.
-	const [mcpPortalMaterialization, , , resolvedSecrets, image] = await Promise.all([
+	const [mcpPortalMaterialization, , resolvedSecrets, image] = await Promise.all([
 		mcpPortalMaterializationPromise,
-		recoveryCleanupPromise,
 		assertionsPromise,
 		resolvedSecretsPromise,
 		imagePromise,

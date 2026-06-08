@@ -6,6 +6,9 @@ import {
 } from '@agent-vm/gateway-interface';
 
 export interface HealthEventStoreOptions {
+	readonly durableEventLog?:
+		| { readonly append: (event: AgentVmHealthEvent) => Promise<void> }
+		| undefined;
 	readonly eventHistoryLimit: number;
 	readonly latestBucketLimit?: number | undefined;
 	readonly staleAfterMs: number;
@@ -21,9 +24,12 @@ export class HealthEventStore {
 	readonly #latestBucketLimit: number;
 	readonly #latestByBucket = new Map<string, AgentVmHealthEvent>();
 	readonly #history: AgentVmHealthEvent[] = [];
+	readonly #durableEventLog: HealthEventStoreOptions['durableEventLog'];
+	#durableWriteQueue: Promise<void> = Promise.resolve();
 	readonly #staleAfterMs: number;
 
 	constructor(options: HealthEventStoreOptions) {
+		this.#durableEventLog = options.durableEventLog;
 		this.#eventHistoryLimit = options.eventHistoryLimit;
 		this.#latestBucketLimit = options.latestBucketLimit ?? 1_000;
 		this.#staleAfterMs = options.staleAfterMs;
@@ -41,6 +47,7 @@ export class HealthEventStore {
 			this.#latestByBucket.set(key, event);
 		}
 		this.#evictOldestLatestBuckets();
+		this.#queueDurableWrite(event);
 	}
 
 	#evictOldestLatestBuckets(): void {
@@ -61,6 +68,10 @@ export class HealthEventStore {
 		return [...this.#history];
 	}
 
+	async flushDurableWrites(): Promise<void> {
+		await this.#durableWriteQueue;
+	}
+
 	listLatestEventsForZone(zoneId: string): readonly AgentVmHealthEvent[] {
 		return [...this.#latestByBucket.values()]
 			.filter((event) => event.zoneId === zoneId)
@@ -73,5 +84,18 @@ export class HealthEventStore {
 			staleAfterMs: this.#staleAfterMs,
 			zoneId: options.zoneId,
 		});
+	}
+
+	#queueDurableWrite(event: AgentVmHealthEvent): void {
+		if (!this.#durableEventLog) {
+			return;
+		}
+		this.#durableWriteQueue = this.#durableWriteQueue
+			.then(async () => {
+				await this.#durableEventLog?.append(event);
+			})
+			.catch(() => {
+				// Durable logs are evidence. In-memory health remains the serving path.
+			});
 	}
 }

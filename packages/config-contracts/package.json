@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/config-contracts",
-	"version": "0.0.92",
+	"version": "0.0.93",
 	"description": "Shared agent-vm JSONC config schemas and TypeScript contracts.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -32,7 +32,7 @@
 		"build": "tsdown",
 		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "vitest run --root ../../ --config vitest.config.ts packages/config-contracts/src"
+		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/config-contracts/src"
 	},
 	"dependencies": {
 		"jsonc-parser": "^3.3.1",

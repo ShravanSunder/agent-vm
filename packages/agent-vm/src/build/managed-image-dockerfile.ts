@@ -35,6 +35,7 @@ export interface GenerateManagedDockerfileOptions {
 	readonly base: ManagedImageBase;
 	readonly imageTargetFamily: 'gateway' | 'toolVm';
 	readonly imageTargetName: string;
+	readonly openClawAgentVmPackageInstallMode?: 'managed-packages' | 'local-overlay' | undefined;
 	readonly outputDirectory: string;
 	readonly overlayPath?: string | undefined;
 	readonly managedImageRelease: ManagedImageRelease;
@@ -43,6 +44,7 @@ export interface GenerateManagedDockerfileOptions {
 
 export type ManagedDockerfilePlanSource =
 	| 'installed-package'
+	| 'local-overlay'
 	| 'managed-default'
 	| 'managed-images.json'
 	| 'overlay';
@@ -241,6 +243,7 @@ function renderManagedDockerfile(props: {
 	readonly overlay: ManagedImageOverlay;
 	readonly mcpPortalPackageSpec?: string;
 	readonly openAiCodexCliPackageSpec?: string;
+	readonly openClawAgentVmPackageInstallMode?: 'managed-packages' | 'local-overlay' | undefined;
 	readonly openClawAgentVmPluginPackageSpec?: string;
 	readonly openClawMcpPortalPluginPackageSpec?: string;
 	readonly openClawPackages: readonly ManagedDockerfilePackagePlanEntry[];
@@ -271,10 +274,9 @@ function renderManagedDockerfile(props: {
 		);
 	}
 	if (props.base === 'tool-vm') {
-		if (!props.mcpPortalPackageSpec) {
-			throw new Error('Tool VM managed Dockerfiles require the MCP Portal package spec.');
+		if (props.mcpPortalPackageSpec) {
+			lines.push('RUN pnpm add -g ' + shellJoin([props.mcpPortalPackageSpec]));
 		}
-		lines.push('RUN pnpm add -g ' + shellJoin([props.mcpPortalPackageSpec]));
 	}
 	if (props.openClawPackages.length > 0) {
 		lines.push('RUN pnpm add -g ' + shellJoin(props.openClawPackages.map((entry) => entry.spec)));
@@ -302,24 +304,36 @@ function renderManagedDockerfile(props: {
 		);
 	}
 	if (props.base === 'openclaw-gateway') {
-		if (
-			!props.openClawAgentVmPluginPackageSpec ||
-			!props.openClawMcpPortalPluginPackageSpec ||
-			!props.mcpPortalPackageSpec ||
-			!props.openAiCodexCliPackageSpec
-		) {
-			throw new Error('OpenClaw gateway managed Dockerfiles require all managed OpenClaw plugin package specs.');
+		if (!props.openAiCodexCliPackageSpec) {
+			throw new Error('OpenClaw gateway managed Dockerfiles require the Codex CLI package spec.');
+		}
+		const openClawAgentVmPackageInstallMode =
+			props.openClawAgentVmPackageInstallMode ?? 'managed-packages';
+		let finalStagePackageSpecs: readonly string[];
+		if (openClawAgentVmPackageInstallMode === 'managed-packages') {
+			const openClawAgentVmPluginPackageSpec = props.openClawAgentVmPluginPackageSpec;
+			const openClawMcpPortalPluginPackageSpec = props.openClawMcpPortalPluginPackageSpec;
+			const mcpPortalPackageSpec = props.mcpPortalPackageSpec;
+			if (
+				!openClawAgentVmPluginPackageSpec ||
+				!openClawMcpPortalPluginPackageSpec ||
+				!mcpPortalPackageSpec
+			) {
+				throw new Error(
+					'OpenClaw gateway managed Dockerfiles require all managed OpenClaw plugin package specs.',
+				);
+			}
+			finalStagePackageSpecs = [
+				openClawAgentVmPluginPackageSpec,
+				openClawMcpPortalPluginPackageSpec,
+				mcpPortalPackageSpec,
+				props.openAiCodexCliPackageSpec,
+			];
+		} else {
+			finalStagePackageSpecs = [props.openAiCodexCliPackageSpec];
 		}
 		lines.push('', 'FROM openclaw-runtime');
-		lines.push(
-			'RUN pnpm add -g ' +
-				shellJoin([
-					props.openClawAgentVmPluginPackageSpec,
-					props.openClawMcpPortalPluginPackageSpec,
-					props.mcpPortalPackageSpec,
-					props.openAiCodexCliPackageSpec,
-				]),
-		);
+		lines.push('RUN pnpm add -g ' + shellJoin(finalStagePackageSpecs));
 	}
 	for (const copy of props.overlay.copy) {
 		lines.push(`COPY overlay/${copy.from} ${copy.to}`);
@@ -422,10 +436,15 @@ function assertOverlayCopySourceIsSafe(sourcePath: string): void {
 	}
 }
 
+function hasLocalAgentVmPackageOverlay(overlay: ManagedImageOverlay): boolean {
+	return overlay.copy.some((copyEntry) => copyEntry.from.startsWith('local-agent-vm/agent-vm-'));
+}
+
 export async function generateManagedDockerfile(
 	options: GenerateManagedDockerfileOptions,
 ): Promise<GenerateManagedDockerfileResult> {
 	const overlay = await loadManagedImageOverlay(options.overlayPath);
+	const usesLocalAgentVmPackageOverlay = hasLocalAgentVmPackageOverlay(overlay);
 	const baseImage = options.managedImageRelease.baseImages[options.base];
 	const openClawPackages =
 		options.base === 'openclaw-gateway'
@@ -436,20 +455,38 @@ export async function generateManagedDockerfile(
 						options.requiredOpenClawPackageNames ?? [],
 					),
 				})
-			: [];
+				: [];
 	const warnings = collectOpenClawPackagePlanWarnings(openClawPackages);
+	const openClawAgentVmPackageInstallMode =
+		options.openClawAgentVmPackageInstallMode ??
+		(usesLocalAgentVmPackageOverlay ? 'local-overlay' : 'managed-packages');
 	const openClawAgentVmPluginPackageSpec =
-		options.base === 'openclaw-gateway'
+		options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages'
 			? await resolveManagedOpenClawAgentVmPluginPackageSpec()
 			: undefined;
 	const openClawMcpPortalPluginPackageSpec =
-		options.base === 'openclaw-gateway'
+		options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages'
 			? await resolveManagedPackageSpec(managedOpenClawMcpPortalPluginPackageName)
 			: undefined;
 	const mcpPortalPackageSpec =
-		options.base === 'openclaw-gateway' || options.base === 'tool-vm'
+		(options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages') ||
+		(options.base === 'tool-vm' && !usesLocalAgentVmPackageOverlay)
 			? await resolveManagedPackageSpec(managedMcpPortalPackageName)
 			: undefined;
+	const mcpPortalPackagePlan =
+		options.base === 'tool-vm' && usesLocalAgentVmPackageOverlay
+			? ({
+					name: managedMcpPortalPackageName,
+					source: 'local-overlay',
+					spec: 'local-agent-vm',
+				} satisfies ManagedDockerfilePackagePlanEntry)
+			: mcpPortalPackageSpec === undefined
+				? undefined
+				: ({
+						name: managedMcpPortalPackageName,
+						source: 'installed-package',
+						spec: mcpPortalPackageSpec,
+					} satisfies ManagedDockerfilePackagePlanEntry);
 	const openAiCodexCliPackage =
 		options.base === 'openclaw-gateway'
 			? {
@@ -486,6 +523,7 @@ export async function generateManagedDockerfile(
 				? {}
 				: { openAiCodexCliPackageSpec: openAiCodexCliPackage.spec }),
 			overlay,
+			openClawAgentVmPackageInstallMode,
 			...(openClawAgentVmPluginPackageSpec === undefined
 				? {}
 				: { openClawAgentVmPluginPackageSpec }),
@@ -527,15 +565,7 @@ export async function generateManagedDockerfile(
 							spec: openClawMcpPortalPluginPackageSpec,
 						},
 					}),
-			...(mcpPortalPackageSpec === undefined
-				? {}
-				: {
-						mcpPortalPackage: {
-							name: managedMcpPortalPackageName,
-							source: 'installed-package',
-							spec: mcpPortalPackageSpec,
-						},
-					}),
+			...(mcpPortalPackagePlan === undefined ? {} : { mcpPortalPackage: mcpPortalPackagePlan }),
 			...(openAiCodexCliPackage === undefined
 				? {}
 				: { openAiCodexCliPackage }),

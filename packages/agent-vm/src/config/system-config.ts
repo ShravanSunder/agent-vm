@@ -348,6 +348,13 @@ const defaultControllerHealthConfig = {
 	enabled: true,
 	eventHistoryLimit: 500,
 	gatewayServiceAutoRestart: {
+		channelProviderHealth: {
+			consecutiveFailureThreshold: 3,
+			enabled: true,
+			restartGatewayOnRecoverable: true,
+			restartGatewayOnUnrecoverable: false,
+			transitioningTimeoutMs: 120_000,
+		},
 		cooldownMs: 61 * 60 * 1000,
 		consecutiveFailureThreshold: 10,
 		enabled: true,
@@ -363,6 +370,44 @@ const defaultControllerHealthConfig = {
 
 const gatewayServiceAutoRestartSchema = z
 	.object({
+		channelProviderHealth: z
+			.object({
+				consecutiveFailureThreshold: z
+					.number()
+					.int()
+					.positive()
+					.default(
+						defaultControllerHealthConfig.gatewayServiceAutoRestart.channelProviderHealth
+							.consecutiveFailureThreshold,
+					),
+				enabled: z
+					.boolean()
+					.default(
+						defaultControllerHealthConfig.gatewayServiceAutoRestart.channelProviderHealth.enabled,
+					),
+				restartGatewayOnRecoverable: z
+					.boolean()
+					.default(
+						defaultControllerHealthConfig.gatewayServiceAutoRestart.channelProviderHealth
+							.restartGatewayOnRecoverable,
+					),
+				restartGatewayOnUnrecoverable: z
+					.boolean()
+					.default(
+						defaultControllerHealthConfig.gatewayServiceAutoRestart.channelProviderHealth
+							.restartGatewayOnUnrecoverable,
+					),
+				transitioningTimeoutMs: z
+					.number()
+					.int()
+					.positive()
+					.default(
+						defaultControllerHealthConfig.gatewayServiceAutoRestart.channelProviderHealth
+							.transitioningTimeoutMs,
+					),
+			})
+			.strict()
+			.default(defaultControllerHealthConfig.gatewayServiceAutoRestart.channelProviderHealth),
 		cooldownMs: z
 			.number()
 			.int()
