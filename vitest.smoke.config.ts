@@ -60,7 +60,8 @@ export default defineConfig({
 		testTimeout: 900_000,
 		hookTimeout: 300_000,
 		pool: 'forks',
-		fileParallelism: false,
+		fileParallelism: true,
+		maxWorkers: 2,
 		include: ['packages/**/*.smoke.test.ts'],
 		exclude: ['**/node_modules/**'],
 		globalSetup: [

@@ -53,10 +53,13 @@ export default defineConfig({
 		testTimeout: 300_000,
 		hookTimeout: 120_000,
 		pool: 'forks',
-		fileParallelism: false,
-		// Default suite runs unit-style tests. Live integration coverage uses
-		// the explicit .integration.test.ts suffix and runs separately.
-		include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts', 'scripts/**/*.test.ts'],
+		fileParallelism: true,
+		maxWorkers: '75%',
+		include: [
+			'packages/**/*.unit.test.ts',
+			'packages/**/*.unit.spec.ts',
+			'scripts/**/*.unit.test.ts',
+		],
 		exclude: [
 			'**/node_modules/**',
 			'**/*.smoke.test.ts',

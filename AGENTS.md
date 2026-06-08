@@ -73,7 +73,7 @@ with progressive disclosure:
 
 1. Update the canonical repo doc that explains the system or subsystem.
 2. Update the generated manual template with the short operational guidance.
-3. Update `manual-templates.test.ts` and run a built-CLI `agent-vm manual update`
+3. Update `manual-templates.unit.test.ts` and run a built-CLI `agent-vm manual update`
    smoke check when the generated output matters.
 
 Keep manuals concise, procedural, and safe-by-default. Do not teach forbidden
@@ -88,6 +88,10 @@ fast formatting and linting.
 - Use `mise exec -- <command>` for commands that depend on pinned local tools.
   The repo `mise.toml` pins Zig for Gondolin image builds and smoke tests.
 - Install/build: `pnpm install`, then `pnpm build`.
+- Test taxonomy audit: `pnpm test:taxonomy`.
+  This is part of `pnpm test:unit` and `pnpm check`. It fails when test files
+  use an ambiguous suffix or when a unit test crosses a real host/process
+  boundary.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
 - Smoke tests: `pnpm test:smoke`.
@@ -124,6 +128,39 @@ fast formatting and linting.
   vitest.smoke.config.ts run <specific-smoke-file>`. A skipped smoke only
   proves the gate works; it does not prove the feature works.
 
+### Test File Naming And Classification
+
+The suffix is the contract. Do not use plain `*.test.ts` for new tests.
+
+- Unit tests must use `*.unit.test.ts` or `*.unit.spec.ts`.
+- Integration tests must use `*.integration.test.ts`.
+- LLM-gated integration tests must use `*.llm.integration.test.ts`.
+- Smoke/e2e tests must use `*.smoke.test.ts`.
+
+Coverage must not be deleted or weakened to make a layer faster. If a slow
+real-boundary test leaves the unit lane, keep the real coverage in integration
+and add or keep pure unit coverage for the underlying decision logic.
+
+Unit tests are process-local and deterministic. They may use mocks, stubs, fake
+timers, pure temp-file serialization, and injected clocks. They must not run real
+`git`, `pnpm`, `npm`, `tar`, `docker`, `qemu`, `ssh`, `op`, or shell commands;
+bind real TCP/HTTP listeners; boot a controller; build packages or images; or
+wait on wall-clock time for internal logic. Use fake timers or injected clocks
+for retry, timeout, heartbeat, polling, and reaper behavior.
+
+Integration tests prove boundaries between modules and real host facilities:
+real CLI/process execution, real Git, real archive/encryption tools, HTTP server
+wiring, temp deployment roots, and lifecycle orchestration with fake VM/provider
+edges. Integration tests should run in parallel by default; tests that require
+exclusive host resources must isolate with temp dirs, ephemeral ports, and unique
+names rather than disabling the whole lane.
+
+Smoke tests prove production-shaped behavior from outside the system. Smoke
+tests should also be parallel-safe through temp roots, dynamic ports, shared
+build caches, and explicit setup/teardown. If a smoke test cannot be parallel
+safe, document the exact shared resource in the test and keep that exception
+narrow.
+
 ### Testing Pyramid And Evidence Names
 
 Name test evidence by the highest real layer it exercised. Do not relabel lower
@@ -131,7 +168,8 @@ layers as smoke.
 
 - Unit: pure functions, reducers, schemas, config parsing, policy decisions,
   error classification, and deterministic helpers. No real controller process,
-  VM, network service, or provider is required.
+  VM, network service, provider, real host command, or wall-clock wait is
+  required.
 - Integration: real Node/controller wiring, HTTP routes, temp state dirs,
   lifecycle orchestration with fake or stubbed VM/provider boundaries, built
   CLI/manual generation, and config validation. These tests prove contracts
@@ -196,9 +234,9 @@ a default profile.
 
 Use targeted tests first:
 
-- Config shape: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.test.ts`.
-- Portal tool result shapes: `pnpm vitest run packages/mcp-portal/src/core/portal-tools.test.ts`.
-- Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.test.ts`.
+- Config shape: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.unit.test.ts`.
+- Portal tool result shapes: `pnpm vitest run packages/mcp-portal/src/core/portal-tools.unit.test.ts`.
+- Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.unit.test.ts`.
 
 When testing a deployment, run static validation before boot work, then live MCP
 validation after provider/profile edits:
