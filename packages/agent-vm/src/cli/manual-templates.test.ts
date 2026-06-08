@@ -295,6 +295,18 @@ describe('manual templates', () => {
 		);
 		expect(operationsManual).toContain('61 minute cooldown');
 		expect(operationsManual).toContain('3 consecutive failed automatic recoveries');
+		expect(operationsManual).toContain(
+			'gateway infrastructure, gateway service, channel-provider, and Tool VM lease health',
+		);
+		expect(operationsManual).toContain('agent-channel-provider-health');
+		expect(operationsManual).toContain('unhealthy-recoverable');
+		expect(operationsManual).toContain('unhealthy-unrecoverable');
+		expect(operationsManual).toContain('secret-resolution-failed is a recovery blocker');
+		expect(operationsManual).toContain('<runtimeDir>/controller-health/events.jsonl');
+		expect(operationsManual).toContain('runtime records plus current process/port checks');
+		expect(operationsManual).toContain(
+			'Tool VM lease failures retire or quarantine one lease before gateway restart',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
 			'Health timeouts are operation-specific',
 		);
@@ -306,6 +318,12 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
 			'gateway-to-Tool-VM SSH data path',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
+			'Channel-provider details stay inside OpenClaw/plugin payloads',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
+			'The controller branches only on generic channel-provider health',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('tool-access.md'))?.content).toContain(
 			'agentToolVmProfiles',

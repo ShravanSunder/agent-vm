@@ -18,7 +18,6 @@ import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinSmoke,
 	currentSmokeArchitecture,
-	rebuildWorkspacePackages,
 	removeSmokeTempRoot,
 	scaffoldOpenClawSmokeProject,
 	startSmokeControllerRuntime,
@@ -149,7 +148,6 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
-		rebuildWorkspacePackages(repoRoot);
 		upstreamServer = await startFakeUpstreamMcpServer();
 		const upstreamHost = 'smoke-upstream.vm.host';
 		const upstreamUrl = `http://${upstreamHost}:${String(upstreamServer.port)}/mcp`;
@@ -185,7 +183,6 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			systemConfig: project.systemConfig,
 		});
 		await runBuildCommand({
-			forceRebuild: true,
 			systemConfig: project.systemConfig,
 		});
 		harness = await startSmokeControllerRuntime({

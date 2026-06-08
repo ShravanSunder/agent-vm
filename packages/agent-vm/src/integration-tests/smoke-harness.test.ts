@@ -2,9 +2,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import { buildImageAssetFileNames, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
@@ -19,6 +20,9 @@ import {
 	removeSmokeDockerImagesForSystemConfig,
 	removeSmokeTempRoot,
 	scaffoldGatewaySmokeProject,
+	scaffoldOpenClawSmokeProject,
+	scaffoldWorkerSmokeProject,
+	seedGatewayImageCacheIfAvailable,
 	shouldRunWorkerGatewaySmoke,
 	useLocalOpenClawGatewayImagePackages,
 	useLocalOpenClawPluginGatewayImage,
@@ -113,6 +117,37 @@ describe('shouldRunWorkerGatewaySmoke', () => {
 });
 
 describe('scaffoldGatewaySmokeProject', () => {
+	it('uses a shared smoke cache root instead of rebuilding images under each temp project', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		process.env.AGENT_VM_SMOKE_CACHE_DIR = smokeCacheRoot;
+		try {
+			const openClawProject = await scaffoldOpenClawSmokeProject({
+				architecture: 'aarch64',
+				prefix: 'openclaw-control-link-smoke-',
+				zoneId: 'openclaw-smoke',
+			});
+			const workerProject = await scaffoldWorkerSmokeProject({
+				architecture: 'aarch64',
+				prefix: 'worker-loop-smoke-',
+				zoneId: 'worker-smoke',
+			});
+			temporaryRoots.push(openClawProject.tempRoot, workerProject.tempRoot);
+
+			expect(openClawProject.systemConfig.cacheDir).toBe(path.join(smokeCacheRoot, 'openclaw'));
+			expect(workerProject.systemConfig.cacheDir).toBe(path.join(smokeCacheRoot, 'worker'));
+			expect(openClawProject.systemConfig.cacheDir).not.toContain(openClawProject.tempRoot);
+			expect(workerProject.systemConfig.cacheDir).not.toContain(workerProject.tempRoot);
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_SMOKE_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_SMOKE_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+	});
+
 	it('dispatches through the typed OpenClaw gateway smoke project scaffold', async () => {
 		const project = await scaffoldGatewaySmokeProject({
 			agents: ['smoke-agent'],
@@ -528,6 +563,60 @@ describe('findReusableGatewayImageDirectory', () => {
 				process.env.AGENT_VM_SMOKE_CACHE_DIR = previousSmokeCacheRoot;
 			}
 		}
+	});
+
+	it('seeds the current profile-local gateway image cache from an explicit smoke cache root', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const currentProjectRoot = path.join(temporaryRoot, 'current-smoke');
+		const previousCacheDir = path.join(smokeCacheRoot, 'previous-run', 'cache');
+		const activeCacheDir = path.join(smokeCacheRoot, 'active-run-cache');
+		const gatewayBuildConfigPath = path.join(currentProjectRoot, 'build-config.jsonc');
+		await fs.mkdir(path.dirname(gatewayBuildConfigPath), { recursive: true });
+		await fs.writeFile(
+			gatewayBuildConfigPath,
+			`${JSON.stringify({ rootfs: { kind: 'empty' } })}\n`,
+			'utf8',
+		);
+		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+		const reusableImageDirectory = path.join(
+			previousCacheDir,
+			'gateway-images',
+			'openclaw',
+			fingerprint,
+		);
+		await fs.mkdir(reusableImageDirectory, { recursive: true });
+		await Promise.all(
+			buildImageAssetFileNames.map(async (fileName) => {
+				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
+			}),
+		);
+		process.env.AGENT_VM_SMOKE_CACHE_DIR = smokeCacheRoot;
+		try {
+			await seedGatewayImageCacheIfAvailable({
+				activeCacheDir,
+				currentProjectRoot,
+				gatewayBuildConfigPath,
+				imageProfileName: 'openclaw',
+			});
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_SMOKE_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_SMOKE_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+
+		const activeImageDirectory = path.join(
+			activeCacheDir,
+			'gateway-images',
+			'openclaw',
+			fingerprint,
+		);
+		await expect(
+			fs.readFile(path.join(activeImageDirectory, 'manifest.json'), 'utf8'),
+		).resolves.toBe('manifest.json\n');
 	});
 });
 

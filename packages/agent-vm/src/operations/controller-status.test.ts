@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
-import { buildControllerStatus, buildControllerZoneStatus } from './controller-status.js';
+import {
+	buildControllerStatus,
+	buildControllerZoneStatus,
+	type ControllerZoneDiagnosisStatus,
+} from './controller-status.js';
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -123,7 +127,7 @@ const systemConfig = {
 
 describe('buildControllerStatus', () => {
 	it('summarizes zones, tool VM profiles, and controller port', () => {
-		expect(buildControllerStatus(systemConfig)).toEqual({
+		expect(buildControllerStatus(systemConfig)).toMatchObject({
 			controllerPort: 18800,
 			toolVmProfiles: ['standard'],
 			zones: [
@@ -184,7 +188,7 @@ describe('buildControllerStatus', () => {
 					},
 				},
 			}),
-		).toEqual({
+		).toMatchObject({
 			controllerPort: 18800,
 			toolVmProfiles: ['standard'],
 			zones: [
@@ -239,4 +243,104 @@ describe('buildControllerStatus', () => {
 			running: false,
 		});
 	});
+
+	it('reports selected-zone readiness running when controller liveness and gateway infrastructure are running', () => {
+		const diagnosis = runningDiagnosis();
+
+		const status = buildControllerZoneStatus(systemConfig, 'shravan', {
+			diagnoses: { shravan: diagnosis },
+			zones: {
+				shravan: {
+					bootedAt: '2026-04-30T10:00:00.000Z',
+					gateway: {
+						ingress: { host: '127.0.0.1', port: 18791 },
+						vm: { hostPid: 48_282, id: 'gateway-vm-1' },
+					},
+					lifecycleState: 'running',
+				},
+			},
+		});
+
+		expect(status.diagnosis).toEqual(diagnosis);
+		expect(status.readiness).toBe('running');
+	});
+
+	it('reports selected-zone readiness failed when controller liveness is ok but the zone failed', () => {
+		const status = buildControllerZoneStatus(systemConfig, 'shravan', {
+			diagnoses: {
+				shravan: {
+					...runningDiagnosis(),
+					currentRecoveryBlocker: 'secret-resolution-failed',
+					gatewayInfrastructure: 'failed',
+					selectedZoneReadiness: 'failed',
+				},
+			},
+			zones: {
+				shravan: {
+					lastError: 'Failed to resolve zone secrets',
+					lifecycleState: 'failed',
+				},
+			},
+		});
+
+		expect(status.readiness).toBe('failed');
+		expect(status.diagnosis).toMatchObject({
+			currentRecoveryBlocker: 'secret-resolution-failed',
+			originalOutageCause: { kind: 'unknown' },
+			selectedZoneReadiness: 'failed',
+		});
+	});
+
+	it('reports owner-unsafe readiness without loosening diagnosis unions', () => {
+		const diagnosis = {
+			...runningDiagnosis(),
+			currentRecoveryBlocker: 'owner-unsafe',
+			gatewayInfrastructure: 'owner-unsafe',
+			selectedZoneReadiness: 'owner-unsafe',
+		} satisfies ControllerZoneDiagnosisStatus;
+
+		const status = buildControllerZoneStatus(systemConfig, 'shravan', {
+			diagnoses: { shravan: diagnosis },
+		});
+
+		expect(status.readiness).toBe('owner-unsafe');
+		expect(status.diagnosis.currentRecoveryBlocker).toBe('owner-unsafe');
+	});
+
+	it('degrades readiness when a running zone has a current recovery blocker', () => {
+		const status = buildControllerZoneStatus(systemConfig, 'shravan', {
+			diagnoses: {
+				shravan: {
+					...runningDiagnosis(),
+					currentRecoveryBlocker: 'gateway-control-link-unhealthy',
+					selectedZoneReadiness: 'degraded',
+				},
+			},
+			zones: {
+				shravan: {
+					gateway: {
+						ingress: { host: '127.0.0.1', port: 18791 },
+						vm: { hostPid: 48_282, id: 'gateway-vm-1' },
+					},
+					lifecycleState: 'running',
+				},
+			},
+		});
+
+		expect(status.running).toBe(true);
+		expect(status.readiness).toBe('degraded');
+	});
 });
+
+function runningDiagnosis(): ControllerZoneDiagnosisStatus {
+	return {
+		channelProviderPlane: 'ok',
+		controllerLiveness: 'ok',
+		currentRecoveryBlocker: 'none',
+		gatewayInfrastructure: 'running',
+		lastOperation: 'none',
+		originalOutageCause: { kind: 'unknown' },
+		selectedZoneReadiness: 'running',
+		toolVmPlane: 'unknown',
+	};
+}

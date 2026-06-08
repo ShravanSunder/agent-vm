@@ -177,17 +177,25 @@ Health model:
 - GET /health is the global agent-vm controller liveness endpoint.
 - GET /zones/<zoneId>/health is an on-demand live gateway-service probe.
 - GET /zones/<zoneId>/health-snapshot is an in-memory zone health view.
+- Health snapshots separate gateway infrastructure, gateway service, channel-provider, and Tool VM lease health.
 - gateway-service-health means the agent-vm controller can probe the gateway service through the gateway VM runtime.
 - gateway-control-link means the gateway VM can call back to the agent-vm controller through controller.vm.host:18800.
+- agent-channel-provider-health means the gateway/plugin reports whether an agent channel provider can communicate. The controller reads only generic health values such as healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable.
 - gateway-recovery means the controller attempted an automatic gateway VM restart after repeated gateway-service or gateway-control-link failures.
 - gateway-recovery-suspended means repeated automatic restarts failed and the controller paused further auto-recovery for that zone until the reset window expires.
 - lease-heartbeat means an active Tool VM operation can refresh its active use.
 - lease-renew means an idle cached Tool VM lease can be reused.
 - tool-vm-ssh means command, file-bridge, finalize, or probe SSH operations on the gateway-to-Tool-VM path.
 
-Health event history is in-memory controller state. It is useful for live diagnosis but is lost on agent-vm controller restart.
+Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <runtimeDir>/controller-health/events.jsonl as diagnostic evidence; that log is not ownership authority and recovery still uses runtime records plus current process/port checks.
 
-By default, controller.health.gatewayServiceAutoRestart restarts a running OpenClaw gateway VM after 10 consecutive gateway-service or gateway-control-link failures. It has a 61 minute cooldown per zone and a 10 minute restart deadline. Restart releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
+By default, controller.health.gatewayServiceAutoRestart restarts a running OpenClaw gateway VM after 10 consecutive gateway-service or gateway-control-link failures. The same recovery path can cold-start a failed or stopped gateway when current ownership checks prove it is safe. It has a 61 minute cooldown per zone and a 10 minute restart deadline. Restart releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
+
+Channel-provider failures are gateway-service input only through the generic contract. A channel provider marked unhealthy-recoverable can trigger gateway restart when controller health policy allows it. A channel provider marked unhealthy-unrecoverable is surfaced for operator diagnosis and does not restart the gateway by default. Provider-specific details stay in the event payload; the controller must not branch on Discord, Slack, or other platform-specific names.
+
+secret-resolution-failed is a recovery blocker, not proof of the original outage cause. Show it as the reason a start, restart, credentials refresh, or cold-start cannot proceed now unless durable lifecycle evidence proves the outage began during that operation.
+
+Tool VM lease failures retire or quarantine one lease before gateway restart. A tool-vm-ssh failure should not be treated as gateway infrastructure failure unless lease-manager or gateway control-link health also proves a broader gateway problem.
 
 Health timeouts are operation-specific. Short health probes should fail quickly; git push/pull and lease-create get longer budgets. Do not assume every abort means the work should be killed.
 `,
@@ -202,6 +210,7 @@ Agent-vm provides VM lifecycle, storage mounts, TCP/HTTP mediation, image build,
 OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
 The controller is the control plane: it issues leases and tracks active uses. Command stdout, stderr, and file bridge traffic stay on the gateway-to-Tool-VM SSH data path.
 OpenClaw application heartbeat turns are not infrastructure health checks. Use agent-vm health snapshots to distinguish gateway-service health, gateway-to-controller control link, lease-heartbeat, lease-renew, and Tool VM SSH health.
+Channel-provider details stay inside OpenClaw/plugin payloads. The controller branches only on generic channel-provider health: healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable.
 
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
 OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.

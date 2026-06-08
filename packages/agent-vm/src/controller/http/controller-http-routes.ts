@@ -370,6 +370,12 @@ export function createControllerApp(options: {
 	});
 
 	registerControllerHealthEventRoutes(app, {
+		leaseRemediation: {
+			getLeaseOwner: (leaseId) => {
+				const lease = options.leaseManager.peekLease(leaseId)?.lease;
+				return lease === undefined ? undefined : { agentId: lease.agentId, zoneId: lease.zoneId };
+			},
+		},
 		now: () => Date.now(),
 		store: healthEventStore,
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),

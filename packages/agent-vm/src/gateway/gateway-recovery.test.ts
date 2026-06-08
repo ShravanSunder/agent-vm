@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { cleanupOrphanedGatewayIfPresent } from './gateway-recovery.js';
+import type { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
+import {
+	checkMissingGatewayRuntimeRecordPortPreflight,
+	cleanupOrphanedGatewayIfPresent,
+} from './gateway-recovery.js';
 import type {
 	GatewayRuntimeRecord,
 	GatewayRuntimeRecordLoadResult,
@@ -69,6 +73,67 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		).resolves.toEqual({ cleanedUp: false, killedPid: null });
 	});
 
+	it('reports clear missing-record ingress preflight when the configured port is free', async () => {
+		await expect(
+			checkMissingGatewayRuntimeRecordPortPreflight({
+				gatewayIngressPort: 18_791,
+				readTcpListenPortOwner: async () => null,
+			}),
+		).resolves.toEqual({ kind: 'clear' });
+	});
+
+	it('reports owner-unsafe evidence when the runtime record is missing and configured ingress port is occupied', async () => {
+		await expect(
+			checkMissingGatewayRuntimeRecordPortPreflight({
+				gatewayIngressPort: 18_791,
+				readTcpListenPortOwner: async () => ({
+					command: 'qemu-system-aarch64 -m 4G',
+					pid: 98_765,
+				}),
+			}),
+		).resolves.toEqual({
+			evidence: {
+				kind: 'missing-record-port-owned',
+				ownerCommand: 'qemu-system-aarch64 -m 4G',
+				ownerPid: 98_765,
+				port: 18_791,
+			},
+			kind: 'blocked',
+		});
+	});
+
+	it('blocks cold-start cleanup when the runtime record is missing and configured ingress port is occupied', async () => {
+		const killProcess = vi.fn();
+
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				createGatewayRecoveryOptions({
+					configuredIngressPort: 18_791,
+					mode: 'in-process-recovery',
+				}),
+				{
+					killProcess,
+					loadGatewayRuntimeRecordResult: async () => ({
+						kind: 'missing',
+						path: '/state/shravan/gateway-runtime.json',
+					}),
+					readTcpListenPortOwner: async () => ({
+						command: 'qemu-system-aarch64 -m 4G',
+						pid: 98_765,
+					}),
+				},
+			),
+		).rejects.toMatchObject({
+			evidence: {
+				kind: 'missing-record-port-owned',
+				ownerCommand: 'qemu-system-aarch64 -m 4G',
+				ownerPid: 98_765,
+				port: 18_791,
+			},
+		} satisfies Pick<GatewayOwnershipUnsafeError, 'evidence'>);
+		expect(killProcess).not.toHaveBeenCalled();
+	});
+
 	it('warns and skips malformed records during in-process recovery without mutating', async () => {
 		const logMessages: string[] = [];
 
@@ -90,6 +155,11 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			cleanedUp: false,
 			cleanupWarning: expect.stringContaining('Malformed gateway runtime record'),
 			killedPid: null,
+			ownershipEvidence: {
+				kind: 'record-parse-error',
+				message: 'expected schemaVersion',
+				path: '/state/shravan/gateway-runtime.json',
+			},
 		});
 		expect(logMessages.join('\n')).toContain('Malformed gateway runtime record');
 	});
@@ -163,6 +233,11 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			cleanedUp: false,
 			cleanupWarning: expect.stringContaining('Skipping the stale runtime record'),
 			killedPid: null,
+			ownershipEvidence: {
+				actualScope: 'projectNamespace:shravan-claw-463c3e5f',
+				expectedScope: 'projectNamespace:shravan-claw-beta-25319b68',
+				kind: 'record-scope-mismatch',
+			},
 		});
 
 		expect(killProcess).not.toHaveBeenCalled();
@@ -201,6 +276,9 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 				cleanedUp: false,
 				cleanupWarning: expect.stringMatching(expectedReason),
 				killedPid: null,
+				ownershipEvidence: expect.objectContaining({
+					kind: 'record-scope-mismatch',
+				}),
 			});
 			expect(killProcess).not.toHaveBeenCalled();
 			expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
@@ -230,6 +308,12 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			cleanedUp: false,
 			cleanupWarning: expect.stringContaining('held by pid 222'),
 			killedPid: null,
+			ownershipEvidence: {
+				expectedPid: 111,
+				kind: 'port-owner-mismatch',
+				ownerPid: 222,
+				port: 18_891,
+			},
 		});
 		expect(killProcess).not.toHaveBeenCalled();
 		expect(logMessages.join('\n')).toContain('held by pid 222');
@@ -363,6 +447,12 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			cleanedUp: false,
 			cleanupWarning: expect.stringContaining('not a managed VM process'),
 			killedPid: null,
+			ownershipEvidence: {
+				kind: 'unmanaged-port-owner',
+				ownerCommand: '/usr/bin/python3',
+				ownerPid: 111,
+				port: 18_791,
+			},
 		});
 		expect(killProcess).not.toHaveBeenCalled();
 	});

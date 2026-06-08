@@ -17,6 +17,7 @@ import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
+import { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
 interface DeferredPromise<TResult> {
@@ -465,16 +466,15 @@ describe('startGatewayZone', () => {
 			bufferResponseBody: false,
 			listenPort: 18791,
 		});
-		// Phase A runs five branches in parallel via Promise.all. Recovery
-		// cleanup is one branch; for OpenClaw it titles child Tool VM cleanup
-		// first, then gateway cleanup after the child cleanup resolves.
-		// (The mcpPortalMaterialization branch does not push a title.)
+		// Phase A proves ownership first. Phase B then runs the remaining
+		// host-side prerequisites in parallel. The mcpPortalMaterialization
+		// branch does not push a title.
 		expect(taskTitles).toEqual([
 			'Cleaning orphaned tool VMs',
+			'Cleaning orphaned gateway runtime',
 			'Validating OpenClaw Tool VM requirements',
 			'Resolving zone secrets',
 			'Building gateway image',
-			'Cleaning orphaned gateway runtime',
 			'Preparing host state',
 			'Booting gateway VM',
 			'Configuring gateway',
@@ -754,6 +754,7 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 
 		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
+			configuredIngressPort: 18791,
 			expectedConfigPath: systemConfig.systemConfigPath,
 			expectedControllerPort: systemConfig.host.controllerPort,
 			mode: 'in-process-recovery',
@@ -761,6 +762,104 @@ describe('startGatewayZone', () => {
 			stateDir: zone.gateway.stateDir,
 			zoneId: 'shravan',
 		});
+		expect(buildImage).not.toHaveBeenCalled();
+	});
+
+	it('does not create a gateway VM when orphan gateway cleanup blocks cold-start ownership', async () => {
+		const systemConfig = await createSystemConfig();
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
+			throw new Error('createManagedVm should not be called');
+		});
+		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => {
+			throw new Error(
+				'Gateway runtime record is missing but configured ingress port 18791 is owned by pid 98765.',
+			);
+		});
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'resolved-discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+					}),
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					cleanupOrphanedGatewayIfPresent,
+					createManagedVm,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow(/configured ingress port 18791/u);
+
+		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				configuredIngressPort: 18791,
+				zoneId: 'shravan',
+			}),
+		);
+		expect(createManagedVm).not.toHaveBeenCalled();
+	});
+
+	it('reports owner-unsafe before secret resolution when both startup preflights fail', async () => {
+		const systemConfig = await createSystemConfig();
+		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			throw new GatewayOwnershipUnsafeError({
+				evidence: {
+					kind: 'missing-record-port-owned',
+					ownerCommand: 'qemu-system-aarch64',
+					ownerPid: 98_765,
+					port: 18_791,
+				},
+				message:
+					'Gateway runtime record is missing but configured ingress port 18791 is owned by pid 98765.',
+			});
+		});
+		const secretResolver: SecretResolver = {
+			resolve: async () => {
+				throw new Error('Failed to resolve zone secrets: op failed');
+			},
+			resolveAll: async () => {
+				throw new Error('Failed to resolve zone secrets: op failed');
+			},
+		};
+		const buildImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fp',
+			imagePath: '/tmp/img',
+		}));
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver,
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage,
+					cleanupOrphanedGatewayIfPresent,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toMatchObject({
+			code: 'GATEWAY_OWNERSHIP_UNSAFE',
+			evidence: {
+				kind: 'missing-record-port-owned',
+				ownerPid: 98_765,
+				port: 18_791,
+			},
+		});
+
 		expect(buildImage).not.toHaveBeenCalled();
 	});
 

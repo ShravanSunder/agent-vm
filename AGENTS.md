@@ -109,6 +109,13 @@ fast formatting and linting.
   Use `mise exec -- pnpm test:smoke` for smoke tests so the repo-pinned Zig
   version in `mise.toml` is active. Live Gondolin/OpenClaw smokes depend on
   that toolchain selection and may silently skip under a stale system `zig`.
+  The smoke harness uses a shared rebuildable image cache by default and honors
+  `AGENT_VM_SMOKE_CACHE_DIR` when you want to pin that cache location. Do not
+  force a cold image rebuild in every smoke file; reserve forced rebuilds for
+  explicit cold-cache/package-build coverage. The normal live recovery loop
+  should let `vitest.smoke.config.ts` run the workspace package build once per
+  live smoke command through global setup, reuse prepared Gondolin image assets
+  by fingerprint, then boot the real VM path.
   Skipped live smoke tests are not evidence that their live path was exercised.
   When a change claims to fix live VM, Gondolin, OpenClaw gateway, Tool VM SSH,
   or controller control-link behavior, enable the relevant smoke flag and run
@@ -116,6 +123,44 @@ fast formatting and linting.
   `AGENT_VM_OPENCLAW_SMOKE=1 mise exec -- pnpm vitest --config
   vitest.smoke.config.ts run <specific-smoke-file>`. A skipped smoke only
   proves the gate works; it does not prove the feature works.
+
+### Testing Pyramid And Evidence Names
+
+Name test evidence by the highest real layer it exercised. Do not relabel lower
+layers as smoke.
+
+- Unit: pure functions, reducers, schemas, config parsing, policy decisions,
+  error classification, and deterministic helpers. No real controller process,
+  VM, network service, or provider is required.
+- Integration: real Node/controller wiring, HTTP routes, temp state dirs,
+  lifecycle orchestration with fake or stubbed VM/provider boundaries, built
+  CLI/manual generation, and config validation. These tests prove contracts
+  between modules, but they are not smoke if the VM/provider/product path is
+  fake.
+- Real VM integration: boots the real Gondolin/QEMU path or a real managed image
+  path and proves host/guest wiring, ingress, control link, runtime records, or
+  Tool VM SSH with the pinned toolchain active through `mise exec --`.
+- Smoke/e2e: proves production-shaped behavior from the outside of the system.
+  For OpenClaw reliability, this means a real controller, real OpenClaw gateway
+  VM, real plugin path, real lease/tool path when relevant, and observable user
+  or operator behavior. Fake clients, fake VM factories, schema-only checks, and
+  manual-template checks are useful tests, but they are not smoke evidence.
+
+When a change claims to fix VM, OpenClaw gateway, Tool VM SSH, lease lifecycle,
+gateway recovery, control-link, or provider runtime behavior, the final report
+must climb the pyramid explicitly:
+
+```text
+unit          -> exact command and pass/fail count
+integration   -> exact command and pass/fail count
+real VM path  -> exact gated command, pass/fail/skip count, and prerequisites
+smoke/e2e     -> exact user/operator behavior proven
+```
+
+If a layer cannot run, name the blocker and keep the claim scoped to the layer
+that actually ran. Skipped live smoke tests prove only that the gate works; they
+do not prove the live feature.
+
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
   publish script.

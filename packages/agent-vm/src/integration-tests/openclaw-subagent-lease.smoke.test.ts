@@ -11,7 +11,6 @@ import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinSmoke,
 	currentSmokeArchitecture,
-	rebuildWorkspacePackages,
 	removeSmokeTempRoot,
 	scaffoldOpenClawSmokeProject,
 	startSmokeControllerRuntime,
@@ -34,6 +33,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 }
 
 interface OpenClawSubagentSpawnProbeResult {
+	readonly agentResponse: unknown;
 	readonly childSessionKey: string;
 	readonly contextWorkspaceDir: string;
 	readonly error?: string;
@@ -68,12 +68,14 @@ function parseSubagentSpawnProbeResult(stdout: string): OpenClawSubagentSpawnPro
 		typeof parsed.childSessionKey !== 'string' ||
 		typeof parsed.runId !== 'string' ||
 		(parsed.error !== undefined && typeof parsed.error !== 'string') ||
+		!('agentResponse' in parsed) ||
 		!('historyResponse' in parsed) ||
 		!('waitResponse' in parsed)
 	) {
 		throw new Error(`Unexpected OpenClaw subagent smoke result: ${JSON.stringify(parsed)}`);
 	}
 	return {
+		agentResponse: parsed.agentResponse,
 		childSessionKey: parsed.childSessionKey,
 		contextWorkspaceDir:
 			typeof parsed.contextWorkspaceDir === 'string' ? parsed.contextWorkspaceDir : '',
@@ -400,9 +402,7 @@ export OPENCLAW_SUBAGENT_SMOKE_CONTEXT_WORKSPACE=${shellSingleQuote(options.cont
 export OPENCLAW_SUBAGENT_SMOKE_MARKER=${shellSingleQuote(options.marker)}
 cd "$OPENCLAW_PACKAGE_ROOT"
 node --input-type=module <<'NODE'
-import { readdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const packageRoot = process.env.OPENCLAW_PACKAGE_ROOT;
 const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
@@ -415,77 +415,250 @@ if (!packageRoot || !gatewayToken || !guestPort || !agentId || !contextWorkspace
 	throw new Error('Missing OpenClaw subagent smoke environment.');
 }
 
-const configPath = process.env.OPENCLAW_CONFIG_PATH ?? '/home/openclaw/.openclaw/state/effective-openclaw.json';
-const parsedConfig = JSON.parse(await readFile(configPath, 'utf8'));
-const distDir = path.join(packageRoot, 'dist');
-const distFiles = await readdir(distDir);
-const subagentChunk = distFiles.find((fileName) =>
-	fileName.startsWith('subagent-spawn-') && fileName.endsWith('.js')
-);
-if (!subagentChunk) {
-	throw new Error('Unable to locate OpenClaw subagent-spawn chunk.');
+function readWebSocketText(data) {
+	if (typeof data === 'string') {
+		return data;
+	}
+	if (data instanceof ArrayBuffer) {
+		return Buffer.from(data).toString('utf8');
+	}
+	if (ArrayBuffer.isView(data)) {
+		return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8');
+	}
+	return String(data);
 }
 
-const subagentModule = await import(pathToFileURL(path.join(distDir, subagentChunk)).href);
-const { callGateway } = await import('openclaw/plugin-sdk/testing');
-void gatewayToken;
-void guestPort;
-void parsedConfig;
-const spawnSubagentDirect = subagentModule.spawnSubagentDirect ?? subagentModule.t;
-if (typeof spawnSubagentDirect !== 'function') {
-	throw new Error('OpenClaw subagent-spawn chunk does not export spawnSubagentDirect.');
+function createGatewayError(message, details) {
+	const error = new Error(message);
+	if (details !== undefined) {
+		error.details = details;
+	}
+	return error;
 }
-const spawnResult = await spawnSubagentDirect({
-	agentId,
-	cleanup: 'keep',
-	context: 'isolated',
-	expectsCompletionMessage: false,
-	mode: 'run',
-	runTimeoutSeconds: 120,
-	task: \`Reply exactly \${marker} and nothing else.\`,
-	thinking: 'low',
-}, {
-	agentSessionKey: \`agent:\${agentId}:main\`,
-	workspaceDir: contextWorkspaceDir,
+
+function createGatewayClient({ token, url }) {
+	let nextId = 1;
+	let handshakeComplete = false;
+	let connectChallengeSeen = false;
+	const pendingRequests = new Map();
+	const socket = new WebSocket(url);
+	let resolveConnected;
+	let rejectConnected;
+	const connected = new Promise((resolve, reject) => {
+		resolveConnected = resolve;
+		rejectConnected = reject;
+	});
+	const challengeTimer = setTimeout(() => {
+		rejectConnected(new Error('gateway connect challenge timeout'));
+		try {
+			socket.close(1008, 'connect challenge timeout');
+		} catch {}
+	}, 20000);
+
+	function rejectAll(error) {
+		clearTimeout(challengeTimer);
+		rejectConnected(error);
+		for (const request of pendingRequests.values()) {
+			clearTimeout(request.timer);
+			request.reject(error);
+		}
+		pendingRequests.clear();
+	}
+
+	function request(method, params, options = {}) {
+		const id = String(nextId);
+		nextId += 1;
+		const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 20000;
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				pendingRequests.delete(id);
+				reject(new Error('gateway request timeout for ' + method));
+			}, timeoutMs);
+			pendingRequests.set(id, { method, reject, resolve, timer });
+			socket.send(JSON.stringify({ type: 'req', id, method, params }));
+		});
+	}
+
+	socket.addEventListener('error', () => {
+		rejectAll(new Error('gateway websocket error'));
+	});
+	socket.addEventListener('close', (event) => {
+		rejectAll(new Error('gateway websocket closed code=' + String(event.code) + ' reason=' + String(event.reason ?? '')));
+	});
+	socket.addEventListener('message', (event) => {
+		let frame;
+		try {
+			frame = JSON.parse(readWebSocketText(event.data));
+		} catch (error) {
+			rejectAll(error instanceof Error ? error : new Error(String(error)));
+			return;
+		}
+		if (!frame || typeof frame !== 'object') {
+			return;
+		}
+		if (frame.type === 'event' && frame.event === 'connect.challenge') {
+			if (connectChallengeSeen) {
+				return;
+			}
+			connectChallengeSeen = true;
+			clearTimeout(challengeTimer);
+			request(
+				'connect',
+				{
+					minProtocol: 4,
+					maxProtocol: 4,
+					client: {
+						id: 'gateway-client',
+						displayName: 'agent-vm-subagent-smoke',
+						version: 'agent-vm-smoke',
+						platform: process.platform,
+						mode: 'backend',
+						instanceId: randomUUID(),
+					},
+					caps: [],
+					commands: [],
+					permissions: {},
+					auth: { token },
+					role: 'operator',
+					scopes: ['operator.read', 'operator.write', 'operator.admin'],
+				},
+				{ timeoutMs: 20000 },
+			)
+				.then((helloOk) => {
+					handshakeComplete = true;
+					resolveConnected(helloOk);
+				})
+				.catch((error) => {
+					rejectConnected(error instanceof Error ? error : new Error(String(error)));
+				});
+			return;
+		}
+		if (frame.type !== 'res' || typeof frame.id !== 'string') {
+			return;
+		}
+		const requestEntry = pendingRequests.get(frame.id);
+		if (!requestEntry) {
+			return;
+		}
+		pendingRequests.delete(frame.id);
+		clearTimeout(requestEntry.timer);
+		if (frame.ok === true) {
+			requestEntry.resolve(frame.payload);
+			return;
+		}
+		requestEntry.reject(
+			createGatewayError(
+				frame.error && typeof frame.error.message === 'string'
+					? frame.error.message
+					: 'gateway request failed for ' + requestEntry.method,
+				frame.error,
+			),
+		);
+	});
+
+	return {
+		async request(method, params, options = {}) {
+			if (!handshakeComplete) {
+				await connected;
+			}
+			return await request(method, params, options);
+		},
+		close() {
+			clearTimeout(challengeTimer);
+			socket.close();
+		},
+		connected,
+	};
+}
+
+const gatewayClient = createGatewayClient({
+	token: gatewayToken,
+	url: process.env.OPENCLAW_GATEWAY_URL ?? 'ws://127.0.0.1:' + guestPort,
 });
+await gatewayClient.connected;
+
+const childSessionKey = 'agent:' + agentId + ':subagent:agent-vm-smoke-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 let waitResponse = null;
 let historyResponse = null;
-if (spawnResult.status === 'accepted') {
-	const deadline = Date.now() + 120_000;
-	while (Date.now() < deadline) {
-		waitResponse = await callGateway({
-			method: 'agent.wait',
-			mode: 'backend',
-			params: {
-				runId: spawnResult.runId,
-				timeoutMs: 15000,
-			},
-			timeoutMs: 20000,
-			token: gatewayToken,
-			url: \`ws://127.0.0.1:\${guestPort}\`,
-		});
-		historyResponse = await callGateway({
-			method: 'chat.history',
-			mode: 'backend',
-			params: {
-				limit: 20,
-				maxChars: 20000,
-				sessionKey: spawnResult.childSessionKey,
-			},
-			timeoutMs: 20000,
-			token: gatewayToken,
-			url: \`ws://127.0.0.1:\${guestPort}\`,
-		});
-		if (JSON.stringify(historyResponse).includes(marker)) {
-			break;
-		}
-		if (waitResponse && typeof waitResponse === 'object' && waitResponse.status === 'error') {
-			break;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 1000));
+let agentResponse = null;
+let spawnResult;
+try {
+	const lineagePatchResponse = await gatewayClient.request(
+		'sessions.patch',
+		{
+			key: childSessionKey,
+			spawnDepth: 1,
+			spawnedBy: 'agent:' + agentId + ':main',
+			spawnedWorkspaceDir: contextWorkspaceDir,
+			subagentControlScope: 'none',
+			subagentRole: 'leaf',
+		},
+		{ timeoutMs: 20000 },
+	);
+	if (!lineagePatchResponse || typeof lineagePatchResponse !== 'object' || lineagePatchResponse.ok !== true) {
+		throw new Error('OpenClaw sessions.patch returned an unexpected result: ' + JSON.stringify(lineagePatchResponse));
 	}
+	agentResponse = await gatewayClient.request(
+		'agent',
+		{
+			agentId,
+			cleanupBundleMcpOnRunEnd: true,
+			idempotencyKey: 'agent-vm-subagent-smoke-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2),
+			label: 'agent-vm-subagent-lease-smoke',
+			lane: 'subagent',
+			message: 'Reply exactly ' + marker + ' and nothing else.',
+			sessionKey: childSessionKey,
+			thinking: 'off',
+			timeout: 120,
+		},
+		{ timeoutMs: 125000 },
+	);
+	spawnResult = {
+		childSessionKey,
+		error: agentResponse && typeof agentResponse === 'object' && typeof agentResponse.summary === 'string'
+			? agentResponse.summary
+			: undefined,
+		runId: agentResponse && typeof agentResponse === 'object' && typeof agentResponse.runId === 'string'
+			? agentResponse.runId
+			: undefined,
+		status: agentResponse && typeof agentResponse === 'object' && typeof agentResponse.runId === 'string'
+			? 'accepted'
+			: 'error',
+	};
+	if (spawnResult.status === 'accepted') {
+		const deadline = Date.now() + 120000;
+		while (Date.now() < deadline) {
+			waitResponse = await gatewayClient.request(
+				'agent.wait',
+				{
+					runId: spawnResult.runId,
+					timeoutMs: 15000,
+				},
+				{ timeoutMs: 20000 },
+			);
+			historyResponse = await gatewayClient.request(
+				'chat.history',
+				{
+					limit: 20,
+					maxChars: 20000,
+					sessionKey: spawnResult.childSessionKey,
+				},
+				{ timeoutMs: 20000 },
+			);
+			if (JSON.stringify(historyResponse).includes(marker)) {
+				break;
+			}
+			if (waitResponse && typeof waitResponse === 'object' && waitResponse.status === 'error') {
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+		}
+	}
+} finally {
+	gatewayClient.close();
 }
 console.log('AGENT_VM_SUBAGENT_SMOKE_RESULT ' + JSON.stringify({
+	agentResponse,
 	childSessionKey: spawnResult.childSessionKey,
 	contextWorkspaceDir,
 	error: spawnResult.error,
@@ -515,7 +688,6 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
-		rebuildWorkspacePackages(repoRoot);
 		project = await scaffoldOpenClawSmokeProject({
 			agents: [agentId],
 			architecture,
@@ -550,7 +722,6 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 			systemConfig: project.systemConfig,
 		});
 		await runBuildCommand({
-			forceRebuild: true,
 			systemConfig: project.systemConfig,
 		});
 		harness = await startSmokeControllerRuntime({
@@ -631,10 +802,13 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 		}
 
 		for (const spawnResult of spawnResults) {
+			const spawnResultDiagnostic = JSON.stringify(spawnResult);
 			expect(spawnResult.childSessionKey).toContain(`agent:${agentId}:subagent:`);
 			expect(spawnResult.error ?? '').not.toContain('outside-allowed-roots');
 			expect(spawnResult.error ?? '').not.toContain('/workspace');
-			expect(JSON.stringify(spawnResult.historyResponse)).toContain('SUBAGENT_LEASE_SMOKE_OK');
+			expect(JSON.stringify(spawnResult.historyResponse), spawnResultDiagnostic).toContain(
+				'SUBAGENT_LEASE_SMOKE_OK',
+			);
 		}
 
 		const leasePayload = await waitForControllerLease({

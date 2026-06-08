@@ -258,6 +258,7 @@ describe('live integration: controller restart persistence', () => {
 						resolve: async () => '',
 						resolveAll: async () => ({}),
 					}),
+					isProcessAlive: () => true,
 					readProcessIdentity: async () => ({
 						command: 'qemu-system-aarch64 -m 1G',
 						lstart: 'Fri May 22 10:00:00 2026',
@@ -288,10 +289,18 @@ describe('live integration: controller restart persistence', () => {
 
 		const runtime = await startRuntime();
 
-		await fetch(`http://127.0.0.1:${controllerPort}/zones/shravan/execute-command`, {
-			body: JSON.stringify({ command: 'write-state persistence.txt persistent-value' }),
-			headers: { 'content-type': 'application/json' },
-			method: 'POST',
+		const writeResponse = await fetch(
+			`http://127.0.0.1:${controllerPort}/zones/shravan/execute-command`,
+			{
+				body: JSON.stringify({ command: 'write-state persistence.txt persistent-value' }),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			},
+		);
+		expect(await writeResponse.json()).toMatchObject({
+			exitCode: 0,
+			stderr: '',
+			stdout: '',
 		});
 
 		const stopResponse = await fetch(`http://127.0.0.1:${controllerPort}/stop-controller`, {
@@ -312,6 +321,7 @@ describe('live integration: controller restart persistence', () => {
 				method: 'POST',
 			},
 		);
+		expect(readResponse.status).toBe(200);
 		const readBody = (await readResponse.json()) as {
 			readonly stdout: string;
 		};

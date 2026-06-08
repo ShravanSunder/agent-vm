@@ -1,3 +1,4 @@
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { configureHostNetworkDefaults, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
@@ -22,10 +23,14 @@ import {
 } from './controller-runtime-types.js';
 import type { PullDefaultRequest } from './git-pull-default-operations.js';
 import type { PushBranchRequest } from './git-push-operations.js';
-import {
-	createGatewayServiceHealthMonitor,
-	type GatewayVmRecoveryResult,
-} from './health/gateway-service-health-monitor.js';
+import { appendDurableHealthEvent } from './health/durable-health-event-log.js';
+import { classifyGatewayRecoveryAction } from './health/gateway-recovery-actions.js';
+import { createGatewayServiceHealthMonitor } from './health/gateway-service-health-monitor.js';
+import type {
+	GatewayVmRecoveryBudgetClass,
+	GatewayVmRecoveryReason,
+} from './health/gateway-vm-recovery-policy.js';
+import { createGatewayVmRecoveryRunner } from './health/gateway-vm-recovery-runner.js';
 import { HealthEventStore } from './health/health-event-store.js';
 import { createMutableControllerRuntimeReadiness } from './http/controller-http-route-support.js';
 import { createControllerService } from './http/controller-http-routes.js';
@@ -43,10 +48,13 @@ import {
 	type ZoneGitReadConfig,
 } from './zone-git/zone-git-operations.js';
 import { isOpenClawZoneGitConfigured } from './zone-git/zone-git-paths.js';
-import {
-	createOpenClawZoneRuntime,
-	isOpenClawZoneRestartTimeoutError,
-} from './zone-runtimes/openclaw-zone-runtime.js';
+import type {
+	GatewayChannelProviderPlane,
+	GatewayDiagnosisSnapshot,
+	GatewaySelectedZoneReadiness,
+	GatewayToolVmPlane,
+} from './zone-runtimes/gateway-zone-state-machine.js';
+import { createOpenClawZoneRuntime } from './zone-runtimes/openclaw-zone-runtime.js';
 import { createWorkerZoneRuntime } from './zone-runtimes/worker-zone-runtime.js';
 import {
 	ControllerZoneConfigurationError,
@@ -55,6 +63,8 @@ import {
 } from './zone-runtimes/zone-runtime-errors.js';
 import { createZoneRuntimeRegistry } from './zone-runtimes/zone-runtime-registry.js';
 import type { ControllerZoneConfig } from './zone-runtimes/zone-runtime-types.js';
+
+export { classifyGatewayRecoveryRestartError } from './health/gateway-vm-recovery-runner.js';
 
 function writeControllerRuntimeLog(message: string): void {
 	process.stderr.write(`[agent-vm] ${message}\n`);
@@ -65,42 +75,6 @@ function formatUnknownError(error: unknown): string {
 		return error.message;
 	}
 	return typeof error === 'string' ? error : JSON.stringify(error);
-}
-
-function getUnknownErrorCode(error: unknown): string | undefined {
-	if (typeof error !== 'object' || error === null || !('code' in error)) {
-		return undefined;
-	}
-	return typeof error.code === 'string' ? error.code : undefined;
-}
-
-export function classifyGatewayRecoveryRestartError(error: unknown): string {
-	if (isOpenClawZoneRestartTimeoutError(error)) {
-		return 'recovery-timeout';
-	}
-	const code = getUnknownErrorCode(error);
-	if (
-		code === 'EACCES' ||
-		code === 'EIO' ||
-		code === 'ENOENT' ||
-		code === 'ENOSPC' ||
-		code === 'EROFS'
-	) {
-		return 'restart-disk-failure';
-	}
-	const message = formatUnknownError(error).toLowerCase();
-	if (
-		message.includes('1password') ||
-		message.includes('credential') ||
-		message.includes('op://') ||
-		message.includes('secret')
-	) {
-		return 'restart-secret-failure';
-	}
-	if (message.includes('gondolin') || message.includes('qemu') || message.includes('vm.create')) {
-		return 'restart-vm-create-failed';
-	}
-	return 'restart-threw';
 }
 
 function isOpenClawZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig & {
@@ -135,6 +109,183 @@ function buildOpenClawRuntimePluginConfig(options: {
 			},
 		},
 	};
+}
+
+function channelProviderPlaneForHealth(
+	health: 'healthy' | 'transitioning' | 'unhealthy-recoverable' | 'unhealthy-unrecoverable',
+): GatewayChannelProviderPlane {
+	switch (health) {
+		case 'healthy':
+			return 'ok';
+		case 'transitioning':
+			return 'transitioning';
+		case 'unhealthy-recoverable':
+			return 'degraded';
+		case 'unhealthy-unrecoverable':
+			return 'failed';
+	}
+	return assertNeverChannelProviderHealth(health);
+}
+
+function channelProviderPlaneRank(plane: GatewayChannelProviderPlane): number {
+	switch (plane) {
+		case 'failed':
+			return 4;
+		case 'degraded':
+			return 3;
+		case 'transitioning':
+			return 2;
+		case 'unknown':
+			return 1;
+		case 'ok':
+			return 0;
+	}
+	return assertNeverChannelProviderPlane(plane);
+}
+
+function aggregateChannelProviderPlane(
+	events: readonly Extract<
+		AgentVmHealthEvent,
+		{ readonly kind: 'agent-channel-provider-health' }
+	>[],
+	options: { readonly nowMs: number; readonly staleAfterMs: number },
+): GatewayChannelProviderPlane {
+	if (events.length === 0) {
+		return 'unknown';
+	}
+	return (
+		events
+			.map((event) =>
+				isHealthEventStale(event, options)
+					? 'degraded'
+					: channelProviderPlaneForHealth(event.health),
+			)
+			.toSorted(
+				(leftPlane, rightPlane) =>
+					channelProviderPlaneRank(rightPlane) - channelProviderPlaneRank(leftPlane),
+			)[0] ?? 'unknown'
+	);
+}
+
+function isHealthEventStale(
+	event: Pick<AgentVmHealthEvent, 'observedAtMs'>,
+	options: { readonly nowMs: number; readonly staleAfterMs: number },
+): boolean {
+	return options.nowMs - event.observedAtMs > options.staleAfterMs;
+}
+
+type ToolVmPlaneHealthEvent = Extract<
+	AgentVmHealthEvent,
+	{ readonly kind: 'lease-heartbeat' | 'lease-renew' | 'tool-vm-ssh' }
+>;
+
+function isToolVmPlaneHealthEvent(event: AgentVmHealthEvent): event is ToolVmPlaneHealthEvent {
+	return (
+		event.kind === 'lease-heartbeat' || event.kind === 'lease-renew' || event.kind === 'tool-vm-ssh'
+	);
+}
+
+function toolVmPlaneForResult(result: ToolVmPlaneHealthEvent['result']): GatewayToolVmPlane {
+	switch (result) {
+		case 'ok':
+			return 'ok';
+		case 'failed':
+			return 'failed';
+		case 'stale':
+		case 'timeout':
+			return 'degraded';
+	}
+	return assertNeverToolVmHealthResult(result);
+}
+
+function toolVmPlaneRank(plane: GatewayToolVmPlane): number {
+	switch (plane) {
+		case 'failed':
+			return 3;
+		case 'degraded':
+			return 2;
+		case 'ok':
+			return 1;
+		case 'unknown':
+			return 0;
+	}
+	return assertNeverToolVmPlane(plane);
+}
+
+function aggregateToolVmPlane(
+	events: readonly ToolVmPlaneHealthEvent[],
+	options: { readonly nowMs: number; readonly staleAfterMs: number },
+): GatewayToolVmPlane {
+	if (events.length === 0) {
+		return 'unknown';
+	}
+	return (
+		events
+			.map((event) =>
+				isHealthEventStale(event, options) ? 'degraded' : toolVmPlaneForResult(event.result),
+			)
+			.toSorted(
+				(leftPlane, rightPlane) => toolVmPlaneRank(rightPlane) - toolVmPlaneRank(leftPlane),
+			)[0] ?? 'unknown'
+	);
+}
+
+function assertNeverChannelProviderHealth(health: never): never {
+	throw new Error(`Unhandled channel provider health: ${String(health)}`);
+}
+
+function assertNeverChannelProviderPlane(plane: never): never {
+	throw new Error(`Unhandled channel provider plane: ${String(plane)}`);
+}
+
+function assertNeverToolVmHealthResult(result: never): never {
+	throw new Error(`Unhandled Tool VM health result: ${String(result)}`);
+}
+
+function assertNeverToolVmPlane(plane: never): never {
+	throw new Error(`Unhandled Tool VM plane: ${String(plane)}`);
+}
+
+function readinessWithHealthPlanes(options: {
+	readonly channelProviderPlane: GatewayChannelProviderPlane;
+	readonly gatewayRuntimeHealthDegraded: boolean;
+	readonly toolVmPlane: GatewayToolVmPlane;
+	readonly readiness: GatewaySelectedZoneReadiness;
+}): GatewaySelectedZoneReadiness {
+	if (options.readiness === 'failed' || options.readiness === 'owner-unsafe') {
+		return options.readiness;
+	}
+	if (
+		options.channelProviderPlane === 'transitioning' ||
+		options.channelProviderPlane === 'degraded' ||
+		options.channelProviderPlane === 'failed'
+	) {
+		return 'degraded';
+	}
+	if (options.toolVmPlane === 'degraded' || options.toolVmPlane === 'failed') {
+		return 'degraded';
+	}
+	if (options.gatewayRuntimeHealthDegraded) {
+		return 'degraded';
+	}
+	return options.readiness;
+}
+
+function hasGatewayRuntimeHealthIssue(
+	events: readonly AgentVmHealthEvent[],
+	options: { readonly nowMs: number; readonly staleAfterMs: number },
+): boolean {
+	return events.some((event) => {
+		if (event.kind !== 'gateway-control-link' && event.kind !== 'gateway-service-health') {
+			return false;
+		}
+		return (
+			isHealthEventStale(event, options) ||
+			event.result === 'failed' ||
+			event.result === 'stale' ||
+			event.result === 'timeout'
+		);
+	});
 }
 
 function resolveZoneGitOperationConfig(options: {
@@ -193,6 +344,16 @@ export async function startControllerRuntime(
 				dependencies.createSecretResolver ?? createOnePasswordSecretResolver,
 			),
 	);
+	const createFreshSecretResolver = async (): Promise<typeof secretResolver> =>
+		await runTaskWithResult(
+			runTaskStep,
+			'Refreshing 1Password secret resolver',
+			async () =>
+				await createSecretResolver(
+					options.systemConfig,
+					dependencies.createSecretResolver ?? createOnePasswordSecretResolver,
+				),
+		);
 	const controllerGithubToken = await resolveControllerGithubToken(
 		options.systemConfig,
 		secretResolver,
@@ -218,6 +379,16 @@ export async function startControllerRuntime(
 	const zoneGitOperationLocks = dependencies.zoneGitOperationLocks ?? new ZoneGitOperationLocks();
 	const controllerHealthConfig = resolveControllerHealthConfig(options.systemConfig);
 	const healthEventStore = new HealthEventStore({
+		durableEventLog: {
+			append: async (event) => {
+				await (dependencies.appendDurableHealthEvent ?? appendDurableHealthEvent)({
+					controllerPid: process.pid,
+					controllerPort: options.systemConfig.host.controllerPort,
+					event,
+					runtimeDir: options.systemConfig.runtimeDir,
+				});
+			},
+		},
 		eventHistoryLimit: controllerHealthConfig.eventHistoryLimit,
 		staleAfterMs: controllerHealthConfig.staleAfterMs,
 	});
@@ -306,9 +477,11 @@ export async function startControllerRuntime(
 						...(dependencies.deleteGatewayRuntimeRecord
 							? { deleteGatewayRuntimeRecord: dependencies.deleteGatewayRuntimeRecord }
 							: {}),
+						createFreshSecretResolver,
+						...(dependencies.isProcessAlive ? { isProcessAlive: dependencies.isProcessAlive } : {}),
 						leaseManager,
 						now,
-						restartGatewayZone: async (zoneId) =>
+						restartGatewayZone: async (zoneId, startOptions) =>
 							await (dependencies.startGatewayZone ?? startGatewayZone)({
 								runTask: runTaskStep,
 								runtimeEnvironment: zoneGitCapabilityStore.buildRuntimeEnvironment(zoneId),
@@ -317,7 +490,7 @@ export async function startControllerRuntime(
 									zoneGitCapabilityStore,
 									zoneId,
 								}),
-								secretResolver,
+								secretResolver: startOptions?.secretResolver ?? secretResolver,
 								systemConfig: options.systemConfig,
 								zoneId,
 							}),
@@ -382,6 +555,70 @@ export async function startControllerRuntime(
 			destroyZoneRuntime: async (zoneId, purge) => await registry.destroyZone(zoneId, purge),
 			getActiveLeases: () => leaseManager.listLeases(),
 			getOpenClawRuntime: (zoneId) => registry.getOpenClawRuntime(zoneId),
+			getRuntimeDiagnosisByZone: () => {
+				const diagnoses = registry.getDiagnosisByZone();
+				const nowMs = now();
+				return Object.fromEntries(
+					Object.entries(diagnoses).map(([zoneId, diagnosis]) => {
+						const latestHealthEvents = healthEventStore.listLatestEventsForZone(zoneId);
+						const latestChannelProviderEvents = latestHealthEvents.filter(
+							(
+								event,
+							): event is Extract<
+								AgentVmHealthEvent,
+								{ readonly kind: 'agent-channel-provider-health' }
+							> => event.kind === 'agent-channel-provider-health',
+						);
+						const latestToolVmPlaneEvents = latestHealthEvents.filter(isToolVmPlaneHealthEvent);
+						const latestGatewayRuntimeHealthEvents = latestHealthEvents.filter(
+							(event) =>
+								event.kind === 'gateway-control-link' || event.kind === 'gateway-service-health',
+						);
+						if (
+							latestChannelProviderEvents.length === 0 &&
+							latestToolVmPlaneEvents.length === 0 &&
+							latestGatewayRuntimeHealthEvents.length === 0
+						) {
+							return [zoneId, diagnosis];
+						}
+						const channelProviderPlane =
+							latestChannelProviderEvents.length === 0
+								? diagnosis.channelProviderPlane
+								: aggregateChannelProviderPlane(latestChannelProviderEvents, {
+										nowMs,
+										staleAfterMs: controllerHealthConfig.staleAfterMs,
+									});
+						const toolVmPlane =
+							latestToolVmPlaneEvents.length === 0
+								? diagnosis.toolVmPlane
+								: aggregateToolVmPlane(latestToolVmPlaneEvents, {
+										nowMs,
+										staleAfterMs: controllerHealthConfig.staleAfterMs,
+									});
+						const gatewayRuntimeHealthDegraded = hasGatewayRuntimeHealthIssue(
+							latestGatewayRuntimeHealthEvents,
+							{
+								nowMs,
+								staleAfterMs: controllerHealthConfig.staleAfterMs,
+							},
+						);
+						return [
+							zoneId,
+							{
+								...diagnosis,
+								channelProviderPlane,
+								selectedZoneReadiness: readinessWithHealthPlanes({
+									channelProviderPlane,
+									gatewayRuntimeHealthDegraded,
+									readiness: diagnosis.selectedZoneReadiness,
+									toolVmPlane,
+								}),
+								toolVmPlane,
+							} satisfies GatewayDiagnosisSnapshot,
+						];
+					}),
+				);
+			},
 			getRuntimeStatusByZone: () => registry.getSnapshotByZone(),
 			secretResolver,
 			systemConfig: options.systemConfig,
@@ -426,103 +663,38 @@ export async function startControllerRuntime(
 			zoneGitCapabilityStore.verifyTokenForZone(zoneId, token),
 		stopController,
 	};
-	const recoverGatewayVm = async (request: {
+	const recoverGatewayVm = createGatewayVmRecoveryRunner({
+		getRecoverableGatewayRuntime: (zoneId) => registry.getOpenClawRuntime(zoneId),
+		getRuntimeReadiness: () => runtimeReadiness.get(),
+		now,
+		restartTimeoutMs: controllerHealthConfig.gatewayServiceAutoRestart.restartTimeoutMs,
+		writeLog: writeControllerRuntimeLog,
+	});
+	const classifyRecoveryBudgetClass = (request: {
 		readonly consecutiveFailures: number;
-		readonly reason: 'gateway-control-link-unhealthy' | 'gateway-service-unhealthy';
+		readonly reason: GatewayVmRecoveryReason;
 		readonly zoneId: string;
-	}): Promise<GatewayVmRecoveryResult> => {
-		const startedAtMs = now();
-		const elapsedMs = (): number => now() - startedAtMs;
-		if (runtimeReadiness.get().state === 'stopping') {
-			return {
-				elapsedMs: elapsedMs(),
-				errorCode: 'controller-stopping',
-				result: 'failed',
-			};
-		}
-
-		let runtime: ReturnType<typeof registry.getOpenClawRuntime>;
+	}): GatewayVmRecoveryBudgetClass => {
 		try {
-			runtime = registry.getOpenClawRuntime(request.zoneId);
-		} catch (error) {
-			writeControllerRuntimeLog(
-				`Gateway VM recovery failed to find OpenClaw runtime for zone '${request.zoneId}': ${formatUnknownError(error)}`,
-			);
-			return {
-				elapsedMs: elapsedMs(),
-				errorCode: 'runtime-unavailable',
-				result: 'failed',
-			};
-		}
-
-		const oldSnapshot = runtime.getSnapshot();
-		if (oldSnapshot.lifecycleState !== 'running' || !oldSnapshot.gateway) {
-			return {
-				elapsedMs: elapsedMs(),
-				errorCode: 'old-gateway-not-running',
-				result: 'failed',
-			};
-		}
-		const oldGateway = oldSnapshot.gateway;
-		const oldBootedAt = oldSnapshot.bootedAt;
-		const oldHostPid = oldGateway.vm.hostPid;
-		writeControllerRuntimeLog(
-			`Auto-restarting gateway VM for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
-		);
-
-		let restartResult: { readonly leaseReleaseFailureCount: number };
-		try {
-			restartResult = await runtime.restart({
-				timeoutMs: controllerHealthConfig.gatewayServiceAutoRestart.restartTimeoutMs,
+			const runtime = registry.getOpenClawRuntime(request.zoneId);
+			const action = classifyGatewayRecoveryAction({
+				lifecycleState: runtime.getLifecycleState(),
+				recoveryDecision: {
+					consecutiveFailures: request.consecutiveFailures,
+					kind: 'restart',
+					reason: request.reason,
+					zoneId: request.zoneId,
+				},
 			});
+			return action.kind === 'cold-start-gateway' || action.kind === 'refresh-secret-resolver'
+				? 'gateway-vm-cold-start'
+				: 'gateway-vm-restart';
 		} catch (error) {
 			writeControllerRuntimeLog(
-				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+				`Gateway VM recovery budget classification failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
 			);
-			return {
-				elapsedMs: elapsedMs(),
-				errorCode: classifyGatewayRecoveryRestartError(error),
-				...(oldBootedAt === undefined ? {} : { oldBootedAt }),
-				...(oldHostPid === undefined ? {} : { oldHostPid }),
-				oldVmId: oldGateway.vm.id,
-				result: 'failed',
-			};
+			return 'gateway-vm-restart';
 		}
-
-		const newSnapshot = runtime.getSnapshot();
-		const newBootedAt = newSnapshot.bootedAt;
-		const newGateway = newSnapshot.gateway;
-		if (
-			newSnapshot.lifecycleState !== 'running' ||
-			!newGateway ||
-			oldBootedAt === undefined ||
-			newBootedAt === undefined ||
-			oldHostPid === undefined ||
-			newGateway.vm.hostPid === undefined ||
-			newGateway.vm.id === oldGateway.vm.id ||
-			newGateway.vm.hostPid === oldHostPid ||
-			newBootedAt === oldBootedAt
-		) {
-			return {
-				elapsedMs: elapsedMs(),
-				errorCode: 'restart-verification-failed',
-				...(oldBootedAt === undefined ? {} : { oldBootedAt }),
-				...(oldHostPid === undefined ? {} : { oldHostPid }),
-				oldVmId: oldGateway.vm.id,
-				result: 'failed',
-			};
-		}
-		return {
-			elapsedMs: elapsedMs(),
-			leaseReleaseFailureCount: restartResult.leaseReleaseFailureCount,
-			newBootedAt,
-			newHostPid: newGateway.vm.hostPid,
-			newVmId: newGateway.vm.id,
-			oldBootedAt,
-			oldHostPid,
-			oldVmId: oldGateway.vm.id,
-			result: 'ok',
-		};
 	};
 	const controllerApp = createControllerService({
 		healthEventStore,
@@ -560,11 +732,9 @@ export async function startControllerRuntime(
 				...(dependencies.clearIntervalImpl
 					? { clearIntervalImpl: dependencies.clearIntervalImpl }
 					: {}),
-				...(dependencies.clearTimeoutImpl
-					? { clearTimeoutImpl: dependencies.clearTimeoutImpl }
-					: {}),
 				gatewayServiceAutoRestart: controllerHealthConfig.gatewayServiceAutoRestart,
 				healthEventStore,
+				classifyRecoveryBudgetClass,
 				intervalMs: controllerHealthConfig.gatewayServiceIntervalMs,
 				now,
 				probeZoneHealth: async (zoneId) => {
@@ -584,7 +754,6 @@ export async function startControllerRuntime(
 				},
 				recoverGatewayVm,
 				...(dependencies.setIntervalImpl ? { setIntervalImpl: dependencies.setIntervalImpl } : {}),
-				...(dependencies.setTimeoutImpl ? { setTimeoutImpl: dependencies.setTimeoutImpl } : {}),
 				staleAfterMs: controllerHealthConfig.staleAfterMs,
 				zoneIds: registry.selectedZoneIds.filter((zoneId) => {
 					const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
@@ -600,6 +769,7 @@ export async function startControllerRuntime(
 			runtimeReadiness.set('stopping');
 			clearReaperTimer();
 			await gatewayServiceHealthMonitor?.stop();
+			await healthEventStore.flushDurableWrites();
 			requestHeartbeatRegistry.stopAll();
 			const releaseError = await releaseAllLeases();
 			let stopError: Error | undefined;

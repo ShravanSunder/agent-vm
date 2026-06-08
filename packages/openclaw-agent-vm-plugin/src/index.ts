@@ -5,6 +5,7 @@ export * from './controller-lease-client.js';
 export { createGatewayControlLinkMonitor } from './gateway-control-link-monitor.js';
 export * from './openclaw-plugin-registration.js';
 export * from './openclaw-gondolin-contract.js';
+export * from './provider-health/agent-channel-provider-health.js';
 export { buildOpenClawRuntimeStatusReport } from './openclaw-runtime-status.js';
 export { default } from './openclaw-plugin-registration.js';
 

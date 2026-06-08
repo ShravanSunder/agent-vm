@@ -81,16 +81,25 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
 ```
 
 The gateway stays alive until `controller stop`, `controller destroy`, process
-exit, or automatic gateway VM recovery. Recovery is only for an already-running
-OpenClaw gateway VM: after repeated gateway-service or gateway-to-controller
-control-link failures, the controller force releases that zone's Tool VM leases,
-restarts the gateway VM, verifies the VM id changed, and records a
-`gateway-recovery` health event. The default trigger is 10 consecutive degraded
-observations with a 61 minute per-zone cooldown, so short Discord reconnect
-churn should not restart the VM unless `/readyz` or the controller control link
-is also persistently unhealthy. After 3 consecutive failed automatic recovery
-attempts, the controller records `gateway-recovery-suspended` and pauses
-auto-recovery for that zone until the failed-recovery reset window expires.
+exit, or automatic gateway VM recovery. Recovery has two infrastructure actions:
+restart a known running gateway VM, or cold-start a failed/stopped gateway when
+current ownership checks prove it is safe. For running-gateway recovery, the
+controller force releases that zone's Tool VM leases, restarts the gateway VM,
+verifies the VM id changed, and records a `gateway-recovery` health event. For
+cold-start recovery, the controller verifies that the old record/port state is
+safe before creating a new gateway. The default trigger is 10 consecutive
+degraded observations with a 61 minute per-zone cooldown. After 3 consecutive
+failed automatic recovery attempts, the controller records
+`gateway-recovery-suspended` and pauses auto-recovery for that zone until the
+failed-recovery reset window expires.
+
+OpenClaw/provider details stay below the plugin boundary. The plugin may publish
+generic `agent-channel-provider-health` events with redacted details such as a
+provider type or status code, but controller recovery branches only on
+`healthy`, `transitioning`, `unhealthy-recoverable`, and
+`unhealthy-unrecoverable`. Recoverable channel-provider failures can feed
+gateway recovery when policy allows it; unrecoverable provider failures are
+surfaced for diagnosis and do not restart the gateway by default.
 
 Gateway ingress has two different ports in play. `processSpec.guestListenPort`
 is the OpenClaw HTTP/WebSocket port inside the VM. `zones[].gateway.port` is the
@@ -425,7 +434,7 @@ The controller exposes operations for managing the OpenClaw Gateway:
 |-----------|----------|-------------|
 | Status | `GET /controller-status` | System config and zone health |
 | Health | `GET /zones/:id/health` | Live gateway health probe from inside the VM |
-| Health snapshot | `GET /zones/:id/health-snapshot` | In-memory zone health state derived from controller, gateway, lease, and Tool VM SSH events |
+| Health snapshot | `GET /zones/:id/health-snapshot` | In-memory zone health state derived from controller, gateway, channel-provider, lease, and Tool VM SSH events |
 | Logs | `GET /zones/:id/logs` | Gateway boot log plus OpenClaw runtime log tail from `/agent-vm/logs` in the VM |
 | Credentials | `POST /zones/:id/credentials/refresh` | Re-resolve secrets, restart gateway |
 | Destroy | `POST /zones/:id/destroy` | Stop gateway, release leases, purge state |
@@ -438,7 +447,8 @@ For implementation details, see [subsystems/controller.md](../subsystems/control
 The OpenClaw application heartbeat is not the same thing as infrastructure
 health. A scheduled OpenClaw agent turn can prove that OpenClaw app logic ran,
 but it does not by itself prove that the gateway-to-agent-vm-controller link,
-lease-heartbeat path, lease-renew path, or Tool VM SSH path is healthy.
+channel-provider communication path, lease-heartbeat path, lease-renew path, or
+Tool VM SSH path is healthy.
 
 ---
 

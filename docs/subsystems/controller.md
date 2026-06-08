@@ -141,18 +141,23 @@ Tool VM SSH, or worker controller-tool requests.
 not emit a zone-scoped `controller-runtime` event because it has no zone
 context.
 
-Health events are in-memory controller state. They are not backup state and are
-lost on agent-vm controller restart. The latest event per boundary is retained
-separately from the bounded rolling history.
+Health snapshots and the bounded event history are in-memory controller state
+for fast live reads. Accepted health and recovery events are also appended to
+`<runtimeDir>/controller-health/events.jsonl` as diagnostic evidence. That
+durable JSONL log is not backup state and is not authority for ownership or
+recovery decisions; runtime records plus current process/port checks remain the
+authority.
 
 ```text
 agent-vm controller
   |-- probes gateway-service through the zone runtime health check
   |     -> gateway-service-health
   |
-gateway VM / OpenClaw Gondolin plugin
+gateway VM / gateway plugin
   |-- calls GET /health over controller.vm.host:18800
   |     -> gateway-control-link
+  |-- may POST /zones/:zoneId/health-events when it has a stable source
+  |     -> agent-channel-provider-health
   |
 lease routes
   |-- POST /lease/:leaseId/renew
@@ -181,18 +186,30 @@ aggressive. Health probes use short timeouts and no retry. Git push/pull and
 lease-create operations use longer timeouts because normal work can legitimately
 take longer. Unsafe mutations are not retried without an idempotency proof.
 
-For OpenClaw zones, the controller can automatically restart a running gateway
-VM when either the host-side gateway-service probe or the in-VM
-gateway-control-link observation fails repeatedly. The default is 10
-consecutive degraded observations, a 61 minute per-zone cooldown, and a 10
-minute restart deadline. Recovery is not a cold-start path: the controller
-requires an old running gateway VM identity, force releases that zone's Tool VM
-leases, restarts the gateway, then records old and new VM identity in a
-`gateway-recovery` health event. Failed or timed-out recovery attempts are
-recorded as failed `gateway-recovery` events and do not freeze the monitor loop.
-After 3 consecutive failed automatic recoveries, the controller records
-`gateway-recovery-suspended` and stops automatic restarts for that zone until
+For OpenClaw zones, the controller can automatically recover a gateway when the
+host-side gateway-service probe, the in-VM gateway-control-link observation, or
+a generic channel-provider health event fails repeatedly. The default running
+gateway trigger is 10 consecutive degraded gateway-service/control-link
+observations, a 61 minute per-zone cooldown, and a 10 minute recovery deadline.
+Generic channel-provider health has its own policy: `unhealthy-recoverable` can
+feed recovery after its threshold, `transitioning` is observed until its timeout,
+and `unhealthy-unrecoverable` is surfaced without restart by default.
+
+Recovery action selection comes from the internal gateway lifecycle state. A
+running or degraded gateway is restarted. A stopped or cold-start-eligible failed
+gateway is cold-started after current ownership checks prove the old runtime
+record and ingress port are safe. An owner-unsafe or ambiguous failed runtime
+requires operator action. Failed or timed-out recovery attempts are recorded as
+failed `gateway-recovery` events and do not freeze the monitor loop. After 3
+consecutive failed automatic recoveries, the controller records
+`gateway-recovery-suspended` and stops automatic recovery for that zone until
 the 24 hour failed-recovery reset window expires.
+
+Secret resolution failures are operation blockers, not inferred outage causes.
+When a start, restart, credentials refresh, or cold-start fails with
+`secret-resolution-failed`, status should surface it as the current recovery
+blocker unless durable lifecycle evidence proves that operation was the first
+outage transition.
 
 ---
 

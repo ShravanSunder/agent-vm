@@ -238,6 +238,13 @@ describe('loadSystemConfig', () => {
 			gatewayControlLinkBackoffCeilingMs: 120_000,
 			gatewayControlLinkIntervalMs: 10_000,
 			gatewayServiceAutoRestart: {
+				channelProviderHealth: {
+					consecutiveFailureThreshold: 3,
+					enabled: true,
+					restartGatewayOnRecoverable: true,
+					restartGatewayOnUnrecoverable: false,
+					transitioningTimeoutMs: 120_000,
+				},
 				cooldownMs: 61 * 60 * 1000,
 				consecutiveFailureThreshold: 10,
 				enabled: true,
@@ -259,6 +266,13 @@ describe('loadSystemConfig', () => {
 				gatewayControlLinkBackoffCeilingMs: 90_000,
 				gatewayControlLinkIntervalMs: 15_000,
 				gatewayServiceAutoRestart: {
+					channelProviderHealth: {
+						consecutiveFailureThreshold: 2,
+						enabled: true,
+						restartGatewayOnRecoverable: false,
+						restartGatewayOnUnrecoverable: true,
+						transitioningTimeoutMs: 180_000,
+					},
 					cooldownMs: 7_200_000,
 					consecutiveFailureThreshold: 8,
 					enabled: false,
@@ -283,6 +297,13 @@ describe('loadSystemConfig', () => {
 			gatewayControlLinkBackoffCeilingMs: 90_000,
 			gatewayControlLinkIntervalMs: 15_000,
 			gatewayServiceAutoRestart: {
+				channelProviderHealth: {
+					consecutiveFailureThreshold: 2,
+					enabled: true,
+					restartGatewayOnRecoverable: false,
+					restartGatewayOnUnrecoverable: true,
+					transitioningTimeoutMs: 180_000,
+				},
 				cooldownMs: 7_200_000,
 				consecutiveFailureThreshold: 8,
 				enabled: false,

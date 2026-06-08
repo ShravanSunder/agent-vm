@@ -18,6 +18,12 @@ import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
 import { defaultToolVmLeaseIdleTtlMs } from './lease-idle-policy.js';
 import type { TcpPool } from './tcp-pool.js';
 import {
+	classifyToolVmLeaseCloseOutcome,
+	classifyToolVmLeaseReleaseRequest,
+	classifyToolVmLeaseRenewal,
+	isToolVmLeaseExpired,
+} from './tool-vm-lease-lifecycle.js';
+import {
 	buildToolVmRuntimeRecord,
 	deleteToolVmRuntimeRecord,
 	writeToolVmRuntimeRecord,
@@ -367,12 +373,13 @@ export function createLeaseManager(options: {
 		return count;
 	}
 
-	function isLeaseIdleExpired(lease: Lease): boolean {
-		return lease.lastUsedAt + lease.effectiveIdleTtlMs < options.now();
-	}
-
 	function isLeaseExpired(lease: Lease): boolean {
-		return isLeaseIdleExpired(lease) && activeUseCountForLease(lease.id) === 0;
+		return isToolVmLeaseExpired({
+			activeUseCount: activeUseCountForLease(lease.id),
+			effectiveIdleTtlMs: lease.effectiveIdleTtlMs,
+			lastUsedAt: lease.lastUsedAt,
+			nowMs: options.now(),
+		});
 	}
 
 	async function withAgentLeaseLock<TValue>(
@@ -417,7 +424,8 @@ export function createLeaseManager(options: {
 		// QEMU may still be holding the host port — quarantine the slot so a
 		// fresh createLease cannot race onto the same port. Next-startup Phase A
 		// will reap the orphan; this controller process will not reuse the slot.
-		if (closeSucceeded) {
+		const closeOutcome = classifyToolVmLeaseCloseOutcome({ closeSucceeded });
+		if (closeOutcome.kind === 'release-tcp-and-delete-record') {
 			options.tcpPool.release(lease.tcpSlot);
 			try {
 				await deleteRuntimeRecord(options.stateDirFor(lease.zoneId), lease.runtimeRecordId);
@@ -617,11 +625,26 @@ export function createLeaseManager(options: {
 				if (!currentLease) {
 					return { kind: 'not-found', reason: 'missing' };
 				}
-				if (isLeaseExpired(currentLease)) {
+				const activeUseCount = activeUseCountForLease(currentLease.id);
+				if (
+					isToolVmLeaseExpired({
+						activeUseCount,
+						effectiveIdleTtlMs: currentLease.effectiveIdleTtlMs,
+						lastUsedAt: currentLease.lastUsedAt,
+						nowMs: options.now(),
+					})
+				) {
 					await evictLease(currentLease);
 					return { kind: 'not-found', reason: 'expired' };
 				}
-				if (!(await isLeaseVmLive(currentLease))) {
+				const renewalDecision = classifyToolVmLeaseRenewal({
+					activeUseCount,
+					effectiveIdleTtlMs: currentLease.effectiveIdleTtlMs,
+					lastUsedAt: currentLease.lastUsedAt,
+					nowMs: options.now(),
+					vmLive: await isLeaseVmLive(currentLease),
+				});
+				if (renewalDecision.kind === 'evict-dead') {
 					await evictLease(currentLease);
 					return { kind: 'not-found', reason: 'dead' };
 				}
@@ -685,20 +708,19 @@ export function createLeaseManager(options: {
 				if (!currentLease) {
 					return;
 				}
-				if (
-					releaseOptions?.ifLastUsedAtBeforeOrAt !== undefined &&
-					currentLease.lastUsedAt > releaseOptions.ifLastUsedAtBeforeOrAt
-				) {
+				const releaseDecision = classifyToolVmLeaseReleaseRequest({
+					activeUseCount: activeUseCountForLease(leaseId),
+					force: releaseOptions?.force,
+					ifLastUsedAtBeforeOrAt: releaseOptions?.ifLastUsedAtBeforeOrAt,
+					lastUsedAt: currentLease.lastUsedAt,
+				});
+				if (releaseDecision.kind === 'skip-recently-used') {
 					return;
 				}
-				if (releaseOptions?.force !== true) {
-					for (const activeUse of activeUses.values()) {
-						if (activeUse.leaseId === leaseId) {
-							throw new LeaseActiveUseConflictError(
-								`Tool VM lease '${leaseId}' is still in active use.`,
-							);
-						}
-					}
+				if (releaseDecision.kind === 'blocked-active-use') {
+					throw new LeaseActiveUseConflictError(
+						`Tool VM lease '${leaseId}' is still in active use.`,
+					);
 				}
 				releasingLeaseIds.add(leaseId);
 
@@ -711,7 +733,10 @@ export function createLeaseManager(options: {
 
 				deleteLease(currentLease);
 
-				if (releaseError === undefined) {
+				const closeOutcome = classifyToolVmLeaseCloseOutcome({
+					closeSucceeded: releaseError === undefined,
+				});
+				if (closeOutcome.kind === 'release-tcp-and-delete-record') {
 					// Close succeeded: slot is safe to re-allocate, record is
 					// safe to delete.
 					options.tcpPool.release(currentLease.tcpSlot);

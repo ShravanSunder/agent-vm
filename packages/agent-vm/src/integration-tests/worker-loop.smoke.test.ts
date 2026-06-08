@@ -11,7 +11,6 @@ import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-
 import {
 	currentSmokeArchitecture,
 	prepareLocalWorkerPackageForGatewayImage,
-	rebuildWorkspacePackages,
 	removeSmokeTempRoot,
 	scaffoldWorkerSmokeProject,
 	seedGatewayImageCacheIfAvailable,
@@ -75,7 +74,6 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 
 	it('runs a real worker task to completed through the controller route', async () => {
 		const repoRoot = path.resolve(process.cwd());
-		rebuildWorkspacePackages(repoRoot);
 
 		project = await scaffoldWorkerSmokeProject({
 			architecture,

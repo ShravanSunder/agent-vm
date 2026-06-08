@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
+import { hasBuiltImageAssets, resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
@@ -62,6 +62,14 @@ const smokeTempRootPrefixes = [
 	'openclaw-zone-git-smoke-',
 	'worker-loop-smoke-',
 ] as const;
+
+function resolveSmokeCacheRoot(): string {
+	const configuredCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
+	if (configuredCacheRoot !== undefined && configuredCacheRoot.length > 0) {
+		return path.resolve(configuredCacheRoot);
+	}
+	return path.join(os.tmpdir(), 'agent-vm-smoke-cache');
+}
 
 export interface SmokeHarnessSecretMap {
 	readonly [secretKey: string]: string;
@@ -206,13 +214,6 @@ export async function shouldRunWorkerGatewaySmoke(options: {
 	});
 }
 
-export function rebuildWorkspacePackages(repoRoot: string): void {
-	execFileSync('pnpm', ['build'], {
-		cwd: repoRoot,
-		stdio: 'inherit',
-	});
-}
-
 export async function findAvailablePort(): Promise<number> {
 	return await new Promise((resolve, reject) => {
 		const server = net.createServer();
@@ -253,6 +254,7 @@ export async function waitForControllerReady(controllerPort: number): Promise<vo
 export async function findReusableGatewayImageDirectory(
 	currentProjectRoot: string,
 	gatewayBuildConfigPath: string,
+	imageProfileName = 'worker',
 ): Promise<string | null> {
 	const explicitSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
 	if (!explicitSmokeCacheRoot) {
@@ -261,32 +263,28 @@ export async function findReusableGatewayImageDirectory(
 	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
 	const tempRootEntries = await fs.readdir(explicitSmokeCacheRoot, { withFileTypes: true });
 	const smokeRunDirectories = tempRootEntries
-		.filter((entry) => entry.isDirectory() && entry.name.includes('-smoke-'))
+		.filter((entry) => entry.isDirectory())
 		.map((entry) => path.join(explicitSmokeCacheRoot, entry.name));
 
 	for (const smokeRunDirectory of smokeRunDirectories) {
 		if (smokeRunDirectory === currentProjectRoot) {
 			continue;
 		}
-		const candidateImageDir = path.join(
-			smokeRunDirectory,
-			'cache',
-			'images',
-			'gateway',
-			requiredFingerprint,
-		);
-		try {
+		const candidateImageDirectories = [
+			path.join(smokeRunDirectory, 'gateway-images', imageProfileName, requiredFingerprint),
+			path.join(
+				smokeRunDirectory,
+				'cache',
+				'gateway-images',
+				imageProfileName,
+				requiredFingerprint,
+			),
+		];
+		for (const candidateImageDir of candidateImageDirectories) {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- intentionally searches cache candidates
-			await fs.access(path.join(candidateImageDir, 'manifest.json'));
-			// oxlint-disable-next-line eslint/no-await-in-loop -- intentionally searches cache candidates
-			await fs.access(path.join(candidateImageDir, 'rootfs.ext4'));
-			// oxlint-disable-next-line eslint/no-await-in-loop -- intentionally searches cache candidates
-			await fs.access(path.join(candidateImageDir, 'initramfs.cpio.lz4'));
-			// oxlint-disable-next-line eslint/no-await-in-loop -- intentionally searches cache candidates
-			await fs.access(path.join(candidateImageDir, 'vmlinuz-virt'));
-			return candidateImageDir;
-		} catch {
-			continue;
+			if (await hasBuiltImageAssets(candidateImageDir)) {
+				return candidateImageDir;
+			}
 		}
 	}
 
@@ -297,10 +295,13 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 	readonly activeCacheDir: string;
 	readonly currentProjectRoot: string;
 	readonly gatewayBuildConfigPath: string;
+	readonly imageProfileName?: string;
 }): Promise<void> {
+	const imageProfileName = options.imageProfileName ?? 'worker';
 	const reusableImageDir = await findReusableGatewayImageDirectory(
 		options.currentProjectRoot,
 		options.gatewayBuildConfigPath,
+		imageProfileName,
 	);
 	if (!reusableImageDir) {
 		return;
@@ -311,8 +312,8 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 	);
 	const activeImageDir = path.join(
 		options.activeCacheDir,
-		'images',
-		'gateway',
+		'gateway-images',
+		imageProfileName,
 		requiredFingerprint,
 	);
 	if (activeImageDir === reusableImageDir) {
@@ -943,7 +944,7 @@ export async function scaffoldOpenClawSmokeProject(options: {
 	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
 	systemConfig.host.controllerPort = controllerPort;
 	systemConfig.host.projectNamespace = 'claw-tests-zone-git';
-	systemConfig.cacheDir = path.join(tempRoot, 'cache');
+	systemConfig.cacheDir = path.join(resolveSmokeCacheRoot(), 'openclaw');
 	const zone = getOpenClawSmokeZone(systemConfig);
 	zone.gateway.port = gatewayPort;
 	return {
@@ -993,7 +994,7 @@ export async function scaffoldWorkerSmokeProject(options: {
 	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
 	systemConfig.host.controllerPort = controllerPort;
 	systemConfig.host.projectNamespace = 'claw-tests-worker';
-	systemConfig.cacheDir = path.join(tempRoot, 'cache');
+	systemConfig.cacheDir = path.join(resolveSmokeCacheRoot(), 'worker');
 	systemConfig.host.secretsProvider = {
 		type: '1password',
 		tokenSource: { type: 'env', envVar: 'OPEN_AI_TEST_KEY' },

@@ -1,5 +1,10 @@
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import {
+	classifyGatewayStartError,
+	deriveGatewayDiagnosisSnapshot,
+	type GatewayDiagnosisSnapshot,
+} from './gateway-zone-state-machine.js';
+import {
 	ControllerZoneNotFoundError,
 	ControllerZoneOperationUnsupportedError,
 } from './zone-runtime-errors.js';
@@ -21,6 +26,7 @@ export interface ZoneRuntimeRegistry {
 		readonly zoneId: string;
 	}>;
 	getOpenClawRuntime(zoneId: string): OpenClawZoneRuntime;
+	getDiagnosisByZone(): Readonly<Record<string, GatewayDiagnosisSnapshot>>;
 	getSnapshotByZone(): Readonly<Record<string, ControllerZoneRuntimeSnapshot>>;
 	getWorkerRuntime(zoneId: string): WorkerZoneRuntime;
 	startSelectedZones(): Promise<void>;
@@ -82,6 +88,34 @@ export function createZoneRuntimeRegistry(options: {
 				);
 			}
 			return runtime;
+		},
+		getDiagnosisByZone() {
+			const startupFailureDiagnoses = Object.fromEntries(
+				[...startupFailuresByZoneId.entries()].map(([zoneId, failure]) => [
+					zoneId,
+					deriveGatewayDiagnosisSnapshot({
+						channelProviderPlane: 'unknown',
+						controllerLiveness: 'ok',
+						state: {
+							coldStartEligible: true,
+							error: classifyGatewayStartError(new Error(failure.lastError)),
+							kind: 'failed',
+						},
+						toolVmPlane: 'unknown',
+					}),
+				]),
+			);
+			const runtimeDiagnoses = Object.fromEntries(
+				[...runtimesByZoneId.entries()]
+					.filter(
+						(entry): entry is [string, OpenClawZoneRuntime] => entry[1].gatewayType === 'openclaw',
+					)
+					.map(([zoneId, runtime]) => [zoneId, runtime.getDiagnosis()]),
+			);
+			return {
+				...startupFailureDiagnoses,
+				...runtimeDiagnoses,
+			};
 		},
 		getSnapshotByZone() {
 			return {

@@ -13,7 +13,6 @@ import {
 	canRunGondolinSmoke,
 	currentSmokeArchitecture,
 	disableOpenClawMcpPortalPlugin,
-	rebuildWorkspacePackages,
 	removeSmokeTempRoot,
 	scaffoldOpenClawSmokeProject,
 	startSmokeControllerRuntime,
@@ -233,7 +232,6 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 
 	it('lets an agent commit in /zone and push through the OpenClaw zone_git_push tool', async () => {
 		const repoRoot = path.resolve(process.cwd());
-		rebuildWorkspacePackages(repoRoot);
 
 		project = await scaffoldOpenClawSmokeProject({
 			agents: ['smoke'],
@@ -276,7 +274,6 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			zoneId: project.zone.id,
 		});
 		await runBuildCommand({
-			forceRebuild: true,
 			systemConfig: project.systemConfig,
 		});
 

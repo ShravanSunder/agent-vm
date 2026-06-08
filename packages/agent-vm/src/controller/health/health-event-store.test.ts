@@ -1,5 +1,5 @@
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { HealthEventStore } from './health-event-store.js';
 
@@ -84,5 +84,161 @@ describe('HealthEventStore', () => {
 		expect(store.listLatestEventsForZone('beta').map((event) => event.observedAtMs)).toEqual([
 			1_003, 1_002,
 		]);
+	});
+
+	it('persists events to a durable log without making disk writes part of in-memory recording', async () => {
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 10,
+			staleAfterMs: 30_000,
+		});
+		const event = gatewayControlLinkEvent({ observedAtMs: 4_000 });
+
+		store.record(event);
+		await store.flushDurableWrites();
+
+		expect(store.listHistory()).toEqual([event]);
+		expect(append).toHaveBeenCalledWith(event);
+	});
+
+	it('keeps health recording available when durable log writes fail', async () => {
+		const store = new HealthEventStore({
+			durableEventLog: {
+				append: vi.fn(async () => {
+					throw new Error('disk full');
+				}),
+			},
+			eventHistoryLimit: 10,
+			staleAfterMs: 30_000,
+		});
+		const event = gatewayControlLinkEvent({ observedAtMs: 5_000, result: 'failed' });
+
+		store.record(event);
+		await expect(store.flushDurableWrites()).resolves.toBeUndefined();
+
+		expect(store.listHistory()).toEqual([event]);
+		expect(store.deriveSnapshot({ nowMs: 5_500, zoneId: 'beta' })).toMatchObject({
+			kind: 'failed',
+		});
+	});
+
+	it('persists recovery action and failure class through the durable log boundary', async () => {
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 10,
+			staleAfterMs: 30_000,
+		});
+		const event = {
+			action: 'operator-required',
+			consecutiveFailures: 3,
+			cooldownMs: 3_660_000,
+			elapsedMs: 25,
+			errorCode: 'owner-unsafe',
+			kind: 'gateway-recovery',
+			observedAtMs: 6_000,
+			reason: 'gateway-service-unhealthy',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		store.record(event);
+		await store.flushDurableWrites();
+
+		expect(append).toHaveBeenCalledWith(
+			expect.objectContaining({
+				action: 'operator-required',
+				errorCode: 'owner-unsafe',
+				kind: 'gateway-recovery',
+			}),
+		);
+	});
+
+	it('persists failed Tool VM SSH lease events through the durable log boundary', async () => {
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 10,
+			staleAfterMs: 30_000,
+		});
+		const event = {
+			agentId: 'main',
+			elapsedMs: 5_000,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: 'lease-a',
+			observedAtMs: 7_000,
+			operation: 'command',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		store.record(event);
+		await store.flushDurableWrites();
+
+		expect(append).toHaveBeenCalledWith(
+			expect.objectContaining({
+				errorCode: 'ssh-command-failed',
+				kind: 'tool-vm-ssh',
+				leaseId: 'lease-a',
+				result: 'failed',
+			}),
+		);
+	});
+
+	it('persists May 30-shaped channel-provider events without folding in secret blockers', async () => {
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 10,
+			staleAfterMs: 30_000,
+		});
+		const channelProviderEvent = {
+			channelProviderId: 'primary-channel',
+			details: { closeCode: 1006, providerType: 'discord', reconnecting: true },
+			health: 'unhealthy-recoverable',
+			kind: 'agent-channel-provider-health',
+			observedAtMs: 8_000,
+			result: 'failed',
+			unhealthySinceMs: 8_000,
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+		const secretRecoveryEvent = {
+			action: 'observe-only',
+			consecutiveFailures: 3,
+			cooldownMs: 3_660_000,
+			elapsedMs: 25,
+			errorCode: 'secret-resolution-failed',
+			kind: 'gateway-recovery',
+			observedAtMs: 9_000,
+			reason: 'agent-channel-provider-unhealthy',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		store.record(channelProviderEvent);
+		store.record(secretRecoveryEvent);
+		await store.flushDurableWrites();
+
+		expect(append).toHaveBeenNthCalledWith(1, channelProviderEvent);
+		expect(append).toHaveBeenNthCalledWith(2, secretRecoveryEvent);
+		expect(store.deriveSnapshot({ nowMs: 9_500, zoneId: 'beta' })).toMatchObject({
+			issues: expect.arrayContaining([
+				expect.objectContaining({
+					kind: 'agent-channel-provider-unhealthy',
+					latestEvent: expect.objectContaining({
+						details: { closeCode: 1006, providerType: 'discord', reconnecting: true },
+					}),
+				}),
+				expect.objectContaining({
+					kind: 'gateway-recovery-failed',
+					latestEvent: expect.objectContaining({
+						errorCode: 'secret-resolution-failed',
+					}),
+				}),
+			]),
+			kind: 'failed',
+		});
 	});
 });

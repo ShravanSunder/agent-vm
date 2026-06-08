@@ -63,6 +63,9 @@ export default defineConfig({
 		fileParallelism: false,
 		include: ['packages/**/*.smoke.test.ts'],
 		exclude: ['**/node_modules/**'],
+		globalSetup: [
+			'./packages/agent-vm/src/integration-tests/smoke-workspace-build-global-setup.ts',
+		],
 		setupFiles: ['./vitest.setup.ts'],
 	},
 });

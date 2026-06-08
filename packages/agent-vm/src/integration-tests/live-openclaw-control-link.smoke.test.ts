@@ -20,7 +20,6 @@ import {
 	canRunGondolinSmoke,
 	currentSmokeArchitecture,
 	disableOpenClawMcpPortalPlugin,
-	rebuildWorkspacePackages,
 	removeSmokeTempRoot,
 	scaffoldOpenClawSmokeProject,
 	startSmokeControllerRuntime,
@@ -37,6 +36,21 @@ const agentId = 'smoke';
 const gatewayToken = 'control-link-smoke-gateway-token';
 const zoneId = 'control-link-smoke';
 const boundedProbePrefix = 'AGENT_VM_CONTROL_LINK_BOUNDED_PROBE ';
+const smokeGatewayServiceAutoRestart = {
+	channelProviderHealth: {
+		consecutiveFailureThreshold: 3,
+		enabled: true,
+		restartGatewayOnRecoverable: true,
+		restartGatewayOnUnrecoverable: false,
+		transitioningTimeoutMs: 120_000,
+	},
+	cooldownMs: 61 * 60 * 1000,
+	consecutiveFailureThreshold: 2,
+	enabled: true,
+	failedRecoveryResetMs: 24 * 60 * 60 * 1000,
+	maxConsecutiveFailedRecoveries: 3,
+	restartTimeoutMs: 120_000,
+} as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -234,7 +248,6 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
-		rebuildWorkspacePackages(repoRoot);
 		project = await scaffoldOpenClawSmokeProject({
 			agents: [agentId],
 			architecture,
@@ -252,18 +265,14 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 					gatewayControlLinkIntervalMs: 1_000,
 					gatewayServiceIntervalMs: 1_000,
 					gatewayServiceAutoRestart: {
-						cooldownMs: 61 * 60 * 1000,
-						consecutiveFailureThreshold: 2,
-						enabled: true,
-						failedRecoveryResetMs: 24 * 60 * 60 * 1000,
-						maxConsecutiveFailedRecoveries: 3,
-						restartTimeoutMs: 120_000,
+						...smokeGatewayServiceAutoRestart,
 					},
 					staleAfterMs: 20_000,
 				},
 			},
 		};
-		const systemZone = systemConfig.zones[0];
+		const loadedSystemConfig = systemConfig;
+		const systemZone = loadedSystemConfig.zones[0];
 		if (!systemZone || systemZone.gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw control-link smoke project to contain an OpenClaw zone.');
 		}
@@ -275,11 +284,10 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 			profileName: systemZone.gateway.imageProfile,
 			projectRoot: project.tempRoot,
 			repoRoot,
-			systemConfig,
+			systemConfig: loadedSystemConfig,
 		});
 		await runBuildCommand({
-			forceRebuild: true,
-			systemConfig,
+			systemConfig: loadedSystemConfig,
 		});
 		harness = await startSmokeControllerRuntime({
 			secrets: {
@@ -301,7 +309,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 				return result;
 			},
 			startOptions: {
-				systemConfig,
+				systemConfig: loadedSystemConfig,
 				zoneIds: [systemZone.id],
 			},
 		});

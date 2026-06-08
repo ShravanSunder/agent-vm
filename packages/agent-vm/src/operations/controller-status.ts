@@ -1,6 +1,12 @@
 import type { SystemConfig } from '../config/system-config.js';
+import type {
+	GatewayDiagnosisSnapshot,
+	GatewayLifecycleErrorCode,
+	GatewaySelectedZoneReadiness,
+} from '../controller/zone-runtimes/gateway-zone-state-machine.js';
 
 export type ControllerZoneLifecycleState = 'running' | 'failed' | 'stopped';
+export type ControllerZoneDiagnosisStatus = Readonly<GatewayDiagnosisSnapshot>;
 
 export interface ControllerRuntimeZoneStatus {
 	readonly bootedAt?: string;
@@ -20,6 +26,7 @@ export interface ControllerRuntimeZoneStatus {
 
 export interface ControllerRuntimeStatus {
 	readonly activeLeases?: readonly { readonly zoneId: string }[];
+	readonly diagnoses?: Readonly<Record<string, ControllerZoneDiagnosisStatus>>;
 	readonly zones?: Readonly<Record<string, ControllerRuntimeZoneStatus>>;
 }
 
@@ -32,6 +39,8 @@ export interface ControllerZoneStatusSummary {
 	readonly ingressPort: number;
 	readonly lastError?: string;
 	readonly lifecycleState: ControllerZoneLifecycleState;
+	readonly diagnosis: ControllerZoneDiagnosisStatus;
+	readonly readiness: GatewaySelectedZoneReadiness;
 	readonly running: boolean;
 	readonly defaultToolVmProfile?: string;
 	readonly vmId?: string;
@@ -52,6 +61,8 @@ function buildZoneStatus(
 	};
 	const running =
 		zoneRuntimeStatus.lifecycleState === 'running' && zoneRuntimeStatus.gateway !== undefined;
+	const diagnosis =
+		runtimeStatus.diagnoses?.[zone.id] ?? deriveFallbackDiagnosis(zoneRuntimeStatus, running);
 	const activeLeaseCount =
 		runtimeStatus.activeLeases?.filter((activeLease) => activeLease.zoneId === zone.id).length ?? 0;
 
@@ -61,6 +72,8 @@ function buildZoneStatus(
 		id: zone.id,
 		ingressPort: running ? zoneRuntimeStatus.gateway.ingress.port : zone.gateway.port,
 		lifecycleState: zoneRuntimeStatus.lifecycleState,
+		diagnosis,
+		readiness: diagnosis.selectedZoneReadiness,
 		running,
 		...(running && zoneRuntimeStatus.bootedAt
 			? {
@@ -76,6 +89,55 @@ function buildZoneStatus(
 		...(zoneRuntimeStatus.lastError ? { lastError: zoneRuntimeStatus.lastError } : {}),
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
 	};
+}
+
+function deriveFallbackDiagnosis(
+	zoneRuntimeStatus: ControllerRuntimeZoneStatus,
+	running: boolean,
+): ControllerZoneDiagnosisStatus {
+	const currentRecoveryBlocker = classifyStatusRecoveryBlocker(zoneRuntimeStatus.lastError);
+	const selectedZoneReadiness =
+		running && currentRecoveryBlocker === 'none' ? 'running' : running ? 'degraded' : 'failed';
+	return {
+		channelProviderPlane: 'unknown',
+		controllerLiveness: 'ok',
+		currentRecoveryBlocker,
+		gatewayInfrastructure: zoneRuntimeStatus.lifecycleState,
+		lastOperation: 'none',
+		originalOutageCause: { kind: 'unknown' },
+		selectedZoneReadiness,
+		toolVmPlane: 'unknown',
+	};
+}
+
+function classifyStatusRecoveryBlocker(
+	lastError: string | undefined,
+): GatewayLifecycleErrorCode | 'none' {
+	if (!lastError) {
+		return 'none';
+	}
+	const normalizedError = lastError.toLowerCase();
+	if (
+		normalizedError.includes('secret') ||
+		normalizedError.includes('resolveall') ||
+		normalizedError.includes('op failed') ||
+		normalizedError.includes('1password')
+	) {
+		return 'secret-resolution-failed';
+	}
+	if (normalizedError.includes('owner') || normalizedError.includes('unsafe')) {
+		return 'owner-unsafe';
+	}
+	if (normalizedError.includes('readyz') || normalizedError.includes('readiness')) {
+		return 'readiness-failed';
+	}
+	if (normalizedError.includes('stale-generation-closed')) {
+		return 'stale-generation-closed';
+	}
+	if (normalizedError.includes('vm-process-missing')) {
+		return 'vm-process-missing';
+	}
+	return 'vm-start-failed';
 }
 
 export function buildControllerStatus(

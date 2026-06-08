@@ -111,17 +111,34 @@ the defaults.
 | `gatewayServiceAutoRestart.maxConsecutiveFailedRecoveries` | `3` | Failed automatic restart attempts allowed before the controller suspends further auto-recovery for that zone. |
 | `gatewayServiceAutoRestart.failedRecoveryResetMs` | `86400000` | Suspension reset window after the latest failed recovery attempt. This is 24 hours by default. |
 | `gatewayServiceAutoRestart.restartTimeoutMs` | `600000` | Maximum time the controller waits for one automatic restart before recording failed `gateway-recovery`. |
+| `gatewayServiceAutoRestart.channelProviderHealth.enabled` | `true` | Enables generic agent channel-provider health as recovery input when the gateway/plugin publishes `agent-channel-provider-health` events. |
+| `gatewayServiceAutoRestart.channelProviderHealth.consecutiveFailureThreshold` | `3` | Consecutive generic channel-provider failures required before channel-provider health can select recovery. |
+| `gatewayServiceAutoRestart.channelProviderHealth.transitioningTimeoutMs` | `120000` | Maximum time a `transitioning` channel provider can remain in transition before policy treats it as unhealthy. |
+| `gatewayServiceAutoRestart.channelProviderHealth.restartGatewayOnRecoverable` | `true` | Allows `unhealthy-recoverable` channel-provider events to trigger gateway recovery after threshold/cooldown. |
+| `gatewayServiceAutoRestart.channelProviderHealth.restartGatewayOnUnrecoverable` | `false` | Prevents `unhealthy-unrecoverable` channel-provider events from restarting the gateway by default. |
 | `staleAfterMs` | `30000` | Age after which a latest health event is treated as stale in zone health snapshots. |
 | `eventHistoryLimit` | `500` | Rolling in-memory event history retained by the agent-vm controller. Latest per-boundary state is retained separately. |
 
-Health event history is in-memory controller state. It is useful for live
-diagnostics and zone health snapshots, but it is not durable across an
-agent-vm controller restart.
+The health snapshot and bounded event history are in-memory controller state
+for live HTTP reads. The controller also appends accepted health and recovery
+events to `<runtimeDir>/controller-health/events.jsonl` as diagnostic evidence.
+That JSONL log is not authority for ownership or recovery decisions; the
+runtime record and current process/port checks remain the authority.
 
-Automatic gateway VM restart is scoped to running OpenClaw gateway zones. It
-does not cold-start failed or stopped zones. When it fires, the controller first
-force releases that zone's Tool VM leases, then restarts the gateway VM and
-records `gateway-recovery` with old/new VM identity evidence.
+Automatic gateway VM recovery uses the current gateway lifecycle state. Running
+or degraded gateways are restarted. Failed or stopped gateways can be
+cold-started only when current runtime-record and ingress-port ownership checks
+prove that the old gateway owner is absent or safe. When recovery restarts a
+running gateway, the controller first force releases that zone's Tool VM leases,
+then restarts the gateway VM and records `gateway-recovery` with old/new VM
+identity evidence. Secret resolver errors such as `secret-resolution-failed`
+are surfaced as current recovery blockers, not as original outage causes unless
+durable lifecycle evidence proves the outage began during that operation.
+
+Channel-provider recovery is generic. Gateway implementations may include
+redacted provider details in `agent-channel-provider-health` events, but the
+controller branches only on `healthy`, `transitioning`,
+`unhealthy-recoverable`, and `unhealthy-unrecoverable`.
 
 Example:
 
@@ -139,7 +156,14 @@ Example:
         "cooldownMs": 3660000,
         "maxConsecutiveFailedRecoveries": 3,
         "failedRecoveryResetMs": 86400000,
-        "restartTimeoutMs": 600000
+        "restartTimeoutMs": 600000,
+        "channelProviderHealth": {
+          "enabled": true,
+          "consecutiveFailureThreshold": 3,
+          "transitioningTimeoutMs": 120000,
+          "restartGatewayOnRecoverable": true,
+          "restartGatewayOnUnrecoverable": false
+        }
       },
       "staleAfterMs": 30000,
       "eventHistoryLimit": 500

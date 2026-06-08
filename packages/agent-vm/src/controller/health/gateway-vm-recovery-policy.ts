@@ -8,8 +8,10 @@ export type GatewayVmRecoveryObservationResult =
 	| 'unobserved';
 
 export type GatewayVmRecoveryReason = GatewayRecoveryHealthReason;
+export type GatewayVmRecoveryBudgetClass = 'gateway-vm-cold-start' | 'gateway-vm-restart';
 
 export interface GatewayVmAutoRecoveryPolicy {
+	readonly channelProviderHealth?: GatewayVmChannelProviderRecoveryPolicy | undefined;
 	readonly consecutiveFailureThreshold: number;
 	readonly cooldownMs: number;
 	readonly enabled: boolean;
@@ -18,18 +20,36 @@ export interface GatewayVmAutoRecoveryPolicy {
 	readonly restartTimeoutMs: number;
 }
 
+export interface GatewayVmChannelProviderRecoveryPolicy {
+	readonly consecutiveFailureThreshold: number;
+	readonly enabled: boolean;
+	readonly restartGatewayOnRecoverable: boolean;
+	readonly restartGatewayOnUnrecoverable: boolean;
+	readonly transitioningTimeoutMs: number;
+}
+
+export const defaultGatewayVmChannelProviderRecoveryPolicy = {
+	consecutiveFailureThreshold: 3,
+	enabled: true,
+	restartGatewayOnRecoverable: true,
+	restartGatewayOnUnrecoverable: false,
+	transitioningTimeoutMs: 120_000,
+} satisfies GatewayVmChannelProviderRecoveryPolicy;
+
 export interface CreateGatewayVmRecoveryTrackerOptions {
 	readonly policy: GatewayVmAutoRecoveryPolicy;
 }
 
 export interface GatewayVmRecoveryObservation {
 	readonly observedAtMs: number;
+	readonly recoveryBudgetClass?: GatewayVmRecoveryBudgetClass | undefined;
 	readonly result: GatewayVmRecoveryObservationResult;
 	readonly zoneId: string;
 }
 
 export interface GatewayVmRecoveryLifecycleEvent {
 	readonly observedAtMs: number;
+	readonly recoveryBudgetClass?: GatewayVmRecoveryBudgetClass | undefined;
 	readonly result?: 'failed' | 'ok' | undefined;
 	readonly zoneId: string;
 }
@@ -57,6 +77,9 @@ export type GatewayVmRecoveryDecision =
 export interface GatewayVmRecoveryTracker {
 	readonly markRecoveryFinished: (event: GatewayVmRecoveryLifecycleEvent) => void;
 	readonly markRecoveryStarted: (event: GatewayVmRecoveryLifecycleEvent) => void;
+	readonly recordAgentChannelProviderObservation: (
+		observation: GatewayVmRecoveryObservation,
+	) => GatewayVmRecoveryDecision;
 	readonly recordGatewayControlLinkObservation: (
 		observation: GatewayVmRecoveryObservation,
 	) => GatewayVmRecoveryDecision;
@@ -66,20 +89,41 @@ export interface GatewayVmRecoveryTracker {
 }
 
 interface GatewayVmRecoveryTrackerState {
-	consecutiveFailedRecoveries: number;
+	agentChannelProviderConsecutiveFailures: number;
 	gatewayControlLinkConsecutiveFailures: number;
 	gatewayServiceConsecutiveFailures: number;
-	lastRecoveryAttemptAtMs: number | undefined;
+	recoveryBudgets: Record<GatewayVmRecoveryBudgetClass, GatewayVmRecoveryBudgetState>;
 	recoveryInFlight: boolean;
 }
 
+interface GatewayVmRecoveryBudgetState {
+	consecutiveFailedRecoveries: number;
+	lastRecoveryAttemptAtMs: number | undefined;
+}
+
+function createInitialGatewayVmRecoveryBudgetState(): GatewayVmRecoveryBudgetState {
+	return {
+		consecutiveFailedRecoveries: 0,
+		lastRecoveryAttemptAtMs: undefined,
+	};
+}
+
 const createInitialGatewayVmRecoveryTrackerState = (): GatewayVmRecoveryTrackerState => ({
-	consecutiveFailedRecoveries: 0,
+	agentChannelProviderConsecutiveFailures: 0,
 	gatewayControlLinkConsecutiveFailures: 0,
 	gatewayServiceConsecutiveFailures: 0,
-	lastRecoveryAttemptAtMs: undefined,
+	recoveryBudgets: {
+		'gateway-vm-cold-start': createInitialGatewayVmRecoveryBudgetState(),
+		'gateway-vm-restart': createInitialGatewayVmRecoveryBudgetState(),
+	},
 	recoveryInFlight: false,
 });
+
+function recoveryBudgetClassForEvent(
+	event: Pick<GatewayVmRecoveryLifecycleEvent, 'recoveryBudgetClass'>,
+): GatewayVmRecoveryBudgetClass {
+	return event.recoveryBudgetClass ?? 'gateway-vm-restart';
+}
 
 function isHealthyObservation(result: GatewayVmRecoveryObservationResult): boolean {
 	return result === 'ok';
@@ -90,39 +134,39 @@ function isDegradedObservation(result: GatewayVmRecoveryObservationResult): bool
 }
 
 function isWithinCooldown(
-	state: GatewayVmRecoveryTrackerState,
+	budgetState: GatewayVmRecoveryBudgetState,
 	policy: GatewayVmAutoRecoveryPolicy,
 	observedAtMs: number,
 ): boolean {
 	return (
-		state.lastRecoveryAttemptAtMs !== undefined &&
-		observedAtMs - state.lastRecoveryAttemptAtMs < policy.cooldownMs
+		budgetState.lastRecoveryAttemptAtMs !== undefined &&
+		observedAtMs - budgetState.lastRecoveryAttemptAtMs < policy.cooldownMs
 	);
 }
 
 function hasActiveRecoverySuspension(
-	state: GatewayVmRecoveryTrackerState,
+	budgetState: GatewayVmRecoveryBudgetState,
 	policy: GatewayVmAutoRecoveryPolicy,
 	observedAtMs: number,
 ): boolean {
 	return (
-		state.consecutiveFailedRecoveries >= policy.maxConsecutiveFailedRecoveries &&
-		state.lastRecoveryAttemptAtMs !== undefined &&
-		observedAtMs - state.lastRecoveryAttemptAtMs < policy.failedRecoveryResetMs
+		budgetState.consecutiveFailedRecoveries >= policy.maxConsecutiveFailedRecoveries &&
+		budgetState.lastRecoveryAttemptAtMs !== undefined &&
+		observedAtMs - budgetState.lastRecoveryAttemptAtMs < policy.failedRecoveryResetMs
 	);
 }
 
 function resetFailedRecoveriesIfSuspensionExpired(
-	state: GatewayVmRecoveryTrackerState,
+	budgetState: GatewayVmRecoveryBudgetState,
 	policy: GatewayVmAutoRecoveryPolicy,
 	observedAtMs: number,
 ): void {
 	if (
-		state.consecutiveFailedRecoveries >= policy.maxConsecutiveFailedRecoveries &&
-		state.lastRecoveryAttemptAtMs !== undefined &&
-		observedAtMs - state.lastRecoveryAttemptAtMs >= policy.failedRecoveryResetMs
+		budgetState.consecutiveFailedRecoveries >= policy.maxConsecutiveFailedRecoveries &&
+		budgetState.lastRecoveryAttemptAtMs !== undefined &&
+		observedAtMs - budgetState.lastRecoveryAttemptAtMs >= policy.failedRecoveryResetMs
 	) {
-		state.consecutiveFailedRecoveries = 0;
+		budgetState.consecutiveFailedRecoveries = 0;
 	}
 }
 
@@ -131,6 +175,7 @@ function decideRecovery(props: {
 	readonly observedAtMs: number;
 	readonly policy: GatewayVmAutoRecoveryPolicy;
 	readonly reason: GatewayVmRecoveryReason;
+	readonly recoveryBudgetClass: GatewayVmRecoveryBudgetClass;
 	readonly state: GatewayVmRecoveryTrackerState;
 	readonly zoneId: string;
 }): GatewayVmRecoveryDecision {
@@ -143,13 +188,14 @@ function decideRecovery(props: {
 	if (props.consecutiveFailures < props.policy.consecutiveFailureThreshold) {
 		return { consecutiveFailures: props.consecutiveFailures, kind: 'none' };
 	}
-	if (isWithinCooldown(props.state, props.policy, props.observedAtMs)) {
+	const budgetState = props.state.recoveryBudgets[props.recoveryBudgetClass];
+	if (isWithinCooldown(budgetState, props.policy, props.observedAtMs)) {
 		return { consecutiveFailures: props.consecutiveFailures, kind: 'none', reason: 'cooldown' };
 	}
-	resetFailedRecoveriesIfSuspensionExpired(props.state, props.policy, props.observedAtMs);
-	if (hasActiveRecoverySuspension(props.state, props.policy, props.observedAtMs)) {
+	resetFailedRecoveriesIfSuspensionExpired(budgetState, props.policy, props.observedAtMs);
+	if (hasActiveRecoverySuspension(budgetState, props.policy, props.observedAtMs)) {
 		return {
-			consecutiveFailedRecoveries: props.state.consecutiveFailedRecoveries,
+			consecutiveFailedRecoveries: budgetState.consecutiveFailedRecoveries,
 			consecutiveFailures: props.consecutiveFailures,
 			kind: 'suspended',
 			reason: 'max-failed-recoveries',
@@ -184,19 +230,55 @@ export function createGatewayVmRecoveryTracker(
 			const state = getStateForZone(event.zoneId);
 			state.recoveryInFlight = false;
 			if (event.result === 'ok') {
-				state.consecutiveFailedRecoveries = 0;
+				state.agentChannelProviderConsecutiveFailures = 0;
 				state.gatewayControlLinkConsecutiveFailures = 0;
 				state.gatewayServiceConsecutiveFailures = 0;
+				for (const budgetState of Object.values(state.recoveryBudgets)) {
+					budgetState.consecutiveFailedRecoveries = 0;
+				}
 				return;
 			}
 			if (event.result === 'failed') {
-				state.consecutiveFailedRecoveries += 1;
+				state.recoveryBudgets[recoveryBudgetClassForEvent(event)].consecutiveFailedRecoveries += 1;
 			}
 		},
 		markRecoveryStarted(event): void {
 			const state = getStateForZone(event.zoneId);
-			state.lastRecoveryAttemptAtMs = event.observedAtMs;
+			state.recoveryBudgets[recoveryBudgetClassForEvent(event)].lastRecoveryAttemptAtMs =
+				event.observedAtMs;
 			state.recoveryInFlight = true;
+		},
+		recordAgentChannelProviderObservation(observation): GatewayVmRecoveryDecision {
+			const channelProviderPolicy =
+				options.policy.channelProviderHealth ?? defaultGatewayVmChannelProviderRecoveryPolicy;
+			const state = getStateForZone(observation.zoneId);
+			if (observation.result === 'unobserved') {
+				return {
+					consecutiveFailures: state.agentChannelProviderConsecutiveFailures,
+					kind: 'none',
+					reason: 'unobserved',
+				};
+			}
+			if (isHealthyObservation(observation.result)) {
+				state.agentChannelProviderConsecutiveFailures = 0;
+				return { consecutiveFailures: 0, kind: 'none' };
+			}
+			if (isDegradedObservation(observation.result)) {
+				state.agentChannelProviderConsecutiveFailures += 1;
+			}
+			return decideRecovery({
+				consecutiveFailures: state.agentChannelProviderConsecutiveFailures,
+				observedAtMs: observation.observedAtMs,
+				policy: {
+					...options.policy,
+					consecutiveFailureThreshold: channelProviderPolicy.consecutiveFailureThreshold,
+					enabled: options.policy.enabled && channelProviderPolicy.enabled,
+				},
+				reason: 'agent-channel-provider-unhealthy',
+				recoveryBudgetClass: observation.recoveryBudgetClass ?? 'gateway-vm-restart',
+				state,
+				zoneId: observation.zoneId,
+			});
 		},
 		recordGatewayControlLinkObservation(observation): GatewayVmRecoveryDecision {
 			const state = getStateForZone(observation.zoneId);
@@ -219,6 +301,7 @@ export function createGatewayVmRecoveryTracker(
 				observedAtMs: observation.observedAtMs,
 				policy: options.policy,
 				reason: 'gateway-control-link-unhealthy',
+				recoveryBudgetClass: observation.recoveryBudgetClass ?? 'gateway-vm-restart',
 				state,
 				zoneId: observation.zoneId,
 			});
@@ -237,6 +320,7 @@ export function createGatewayVmRecoveryTracker(
 				observedAtMs: observation.observedAtMs,
 				policy: options.policy,
 				reason: 'gateway-service-unhealthy',
+				recoveryBudgetClass: observation.recoveryBudgetClass ?? 'gateway-vm-restart',
 				state,
 				zoneId: observation.zoneId,
 			});

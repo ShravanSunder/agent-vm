@@ -18,6 +18,7 @@ import {
 	AgentLeaseCompatibilityConflictError,
 	createLeaseManager,
 	type Lease,
+	type LeaseSnapshot,
 } from '../leases/lease-manager.js';
 import {
 	OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
@@ -244,6 +245,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('exposes zone health-event routes from the controller app', async () => {
+		const releaseLease = vi.fn(async () => {});
 		const app = createControllerAppForTest({
 			controllerPort: 18800,
 			toolVmProfiles: {
@@ -256,9 +258,12 @@ describe('createControllerApp', () => {
 			leaseManager: {
 				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
 				renewLease: vi.fn(),
-				peekLease: vi.fn(),
+				peekLease: vi.fn<() => LeaseSnapshot>(() => ({
+					kind: 'snapshot',
+					lease: createLeaseStub('lease-123', 0, { zoneId: 'beta' }),
+				})),
 				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
+				releaseLease,
 			},
 		});
 
@@ -280,6 +285,25 @@ describe('createControllerApp', () => {
 
 		expect(response.status).toBe(200);
 		await expect(response.json()).resolves.toEqual({ ok: true });
+
+		const toolVmSshResponse = await app.request('/zones/beta/health-events', {
+			body: JSON.stringify({
+				agentId: 'main',
+				elapsedMs: 5_000,
+				errorCode: 'ssh-command-failed',
+				kind: 'tool-vm-ssh',
+				leaseId: 'lease-123',
+				observedAtMs: Date.now(),
+				operation: 'command',
+				result: 'failed',
+				zoneId: 'beta',
+			}),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(toolVmSshResponse.status).toBe(200);
+		expect(releaseLease).not.toHaveBeenCalled();
 	});
 
 	it('returns not-ready for lease creation while runtime is recovering', async () => {

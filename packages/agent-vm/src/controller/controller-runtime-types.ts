@@ -10,6 +10,7 @@ import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { ControllerRuntimeZoneStatus } from '../operations/controller-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
+import type { appendDurableHealthEvent } from './health/durable-health-event-log.js';
 import type {
 	createControllerService,
 	ObservedControllerLeaseCreateRequest,
@@ -31,6 +32,7 @@ export interface ControllerRuntime {
 export interface ControllerRuntimeDependencies {
 	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
 	readonly clearTimeoutImpl?: (timer: NodeJS.Timeout) => void;
+	readonly appendDurableHealthEvent?: typeof appendDurableHealthEvent;
 	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
 	readonly createManagedToolVm?: (options: {
 		readonly profile: ToolVmProfile;
@@ -49,6 +51,7 @@ export interface ControllerRuntimeDependencies {
 	// Injected by tests so the lease manager doesn't shell out to `ps` against
 	// a fake managed-vm pid when capturing process identity for the runtime
 	// record. Production omits this; the lease manager uses the real default.
+	readonly isProcessAlive?: (pid: number) => boolean;
 	readonly readProcessIdentity?: (
 		pid: number,
 	) => Promise<{ readonly command: string; readonly lstart: string } | null>;

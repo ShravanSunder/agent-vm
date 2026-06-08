@@ -18,6 +18,11 @@ import type {
 	WorkerTaskResult,
 } from '../worker-task-runner.js';
 import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
+import type { GatewayLifecycleOperationTrigger } from './gateway-lifecycle-operation-record.js';
+import type {
+	GatewayDiagnosisSnapshot,
+	GatewayZoneLifecycleState,
+} from './gateway-zone-state-machine.js';
 
 export type ControllerZoneConfig = SystemConfig['zones'][number];
 
@@ -43,6 +48,7 @@ export interface ControllerZoneRuntimeBase {
 
 export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 	readonly gatewayType: 'openclaw';
+	coldStart(options?: OpenClawZoneRestartOptions): Promise<OpenClawZoneRestartResult>;
 	enableSsh(): ReturnType<ManagedVm['enableSsh']>;
 	exec(command: string): Promise<{
 		readonly exitCode: number;
@@ -57,6 +63,8 @@ export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 		readonly statusCode?: number | undefined;
 		readonly zoneId: string;
 	}>;
+	getLifecycleState(): GatewayZoneLifecycleState;
+	getDiagnosis(): GatewayDiagnosisSnapshot;
 	getLogs(): Promise<{ readonly output: string; readonly zoneId: string }>;
 	refreshCredentials(): Promise<{ readonly ok: true; readonly zoneId: string }>;
 	restart(options?: OpenClawZoneRestartOptions): Promise<OpenClawZoneRestartResult>;
@@ -67,9 +75,11 @@ export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 
 export interface OpenClawZoneRestartResult {
 	readonly leaseReleaseFailureCount: number;
+	readonly operationId?: string | undefined;
 }
 
 export interface OpenClawZoneRestartOptions {
+	readonly operationTrigger?: GatewayLifecycleOperationTrigger | undefined;
 	readonly timeoutMs?: number | undefined;
 }
 

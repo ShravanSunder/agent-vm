@@ -1,0 +1,113 @@
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import { isAgentVmHealthEvent, type AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+
+export interface AppendDurableHealthEventOptions {
+	readonly controllerPid: number;
+	readonly controllerPort: number;
+	readonly event: AgentVmHealthEvent;
+	readonly operationId?: string | undefined;
+	readonly runtimeDir: string;
+}
+
+export interface DurableHealthEventRecord {
+	readonly body: AgentVmHealthEvent;
+	readonly controllerPid: number;
+	readonly controllerPort: number;
+	readonly eventKind: AgentVmHealthEvent['kind'];
+	readonly observedAtMs: number;
+	readonly operationId?: string | undefined;
+	readonly zoneId: string;
+}
+
+export interface ReadDurableHealthEventsOptions {
+	readonly runtimeDir: string;
+}
+
+export function controllerHealthEventLogPath(runtimeDir: string): string {
+	return path.join(runtimeDir, 'controller-health', 'events.jsonl');
+}
+
+export async function appendDurableHealthEvent(
+	options: AppendDurableHealthEventOptions,
+): Promise<void> {
+	const logPath = controllerHealthEventLogPath(options.runtimeDir);
+	await mkdir(path.dirname(logPath), { recursive: true });
+	const operationId = options.operationId ?? operationIdForHealthEvent(options.event);
+	const record: DurableHealthEventRecord = {
+		body: options.event,
+		controllerPid: options.controllerPid,
+		controllerPort: options.controllerPort,
+		eventKind: options.event.kind,
+		observedAtMs: options.event.observedAtMs,
+		...(operationId === undefined ? {} : { operationId }),
+		zoneId: options.event.zoneId,
+	};
+	await appendFile(logPath, `${JSON.stringify(record)}\n`, 'utf8');
+}
+
+export async function readDurableHealthEvents(
+	options: ReadDurableHealthEventsOptions,
+): Promise<readonly DurableHealthEventRecord[]> {
+	const logPath = controllerHealthEventLogPath(options.runtimeDir);
+	const logText = await readFile(logPath, 'utf8');
+	return logText
+		.split('\n')
+		.filter((line) => line.trim().length > 0)
+		.map((line) => parseDurableHealthEventRecord(line));
+}
+
+function parseDurableHealthEventRecord(line: string): DurableHealthEventRecord {
+	const parsedRecord: unknown = JSON.parse(line);
+	if (!isDurableHealthEventRecord(parsedRecord)) {
+		throw new Error('Durable health event record does not match expected schema.');
+	}
+	return parsedRecord;
+}
+
+function isDurableHealthEventRecord(value: unknown): value is DurableHealthEventRecord {
+	if (!isUnknownRecord(value)) {
+		return false;
+	}
+	return (
+		isAgentVmHealthEvent(value.body) &&
+		typeof value.controllerPid === 'number' &&
+		Number.isInteger(value.controllerPid) &&
+		value.controllerPid > 0 &&
+		typeof value.controllerPort === 'number' &&
+		Number.isInteger(value.controllerPort) &&
+		value.controllerPort > 0 &&
+		value.eventKind === value.body.kind &&
+		typeof value.observedAtMs === 'number' &&
+		value.observedAtMs === value.body.observedAtMs &&
+		(value.operationId === undefined || typeof value.operationId === 'string') &&
+		value.zoneId === value.body.zoneId
+	);
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function operationIdForHealthEvent(event: AgentVmHealthEvent): string | undefined {
+	switch (event.kind) {
+		case 'gateway-recovery':
+		case 'gateway-recovery-suspended':
+			return event.operationId;
+		case 'controller-request':
+		case 'gateway-control-link':
+		case 'gateway-plugin-health':
+		case 'gateway-service-health':
+		case 'lease-heartbeat':
+		case 'lease-renew':
+		case 'agent-channel-provider-health':
+		case 'tool-vm-ssh':
+			return undefined;
+	}
+	return assertNeverHealthEvent(event);
+}
+
+function assertNeverHealthEvent(event: never): never {
+	throw new Error(`Unhandled health event kind for operation join key: ${JSON.stringify(event)}`);
+}

@@ -173,6 +173,53 @@ describe('createGatewayVmRecoveryTracker', () => {
 		).toEqual({ consecutiveFailures: 11, kind: 'none', reason: 'cooldown' });
 	});
 
+	it('keeps running restart and failed-runtime cold-start recovery budgets separate', () => {
+		const tracker = createGatewayVmRecoveryTracker({
+			policy: {
+				...policy,
+				consecutiveFailureThreshold: 1,
+				maxConsecutiveFailedRecoveries: 1,
+			},
+		});
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 10_000,
+				recoveryBudgetClass: 'gateway-vm-restart',
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toMatchObject({
+			kind: 'restart',
+			reason: 'gateway-service-unhealthy',
+		});
+		tracker.markRecoveryStarted({
+			observedAtMs: 10_000,
+			recoveryBudgetClass: 'gateway-vm-restart',
+			zoneId: 'sunfam',
+		});
+		tracker.markRecoveryFinished({
+			observedAtMs: 20_000,
+			recoveryBudgetClass: 'gateway-vm-restart',
+			result: 'failed',
+			zoneId: 'sunfam',
+		});
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 30_000,
+				recoveryBudgetClass: 'gateway-vm-cold-start',
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 2,
+			kind: 'restart',
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+	});
+
 	it('allows another automatic restart after one failed recovery and the 61 minute cooldown expires', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
