@@ -10,10 +10,11 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';
 import {
 	currentE2eArchitecture,
+	prepareGatewayE2eProjectImages,
 	prepareLocalWorkerPackageForGatewayImage,
+	removeE2eLocalPackageTarballs,
 	removeE2eTempRoot,
 	scaffoldWorkerE2eProject,
-	seedGatewayImageCacheIfAvailable,
 	shouldRunWorkerGatewayE2e,
 	startE2eControllerRuntime,
 	type E2eHarnessRuntime,
@@ -60,15 +61,17 @@ async function createSampleRepo(baseDir: string): Promise<string> {
 
 describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 	let harness: E2eHarnessRuntime | undefined;
+	let localWorkerTarballPath: string | undefined;
 	let project: WorkerE2eProject | undefined;
 
 	afterAll(async () => {
 		try {
 			await harness?.close();
 		} finally {
-			if (project) {
-				await removeE2eTempRoot(project.tempRoot);
-			}
+			await Promise.all([
+				project ? removeE2eTempRoot(project.tempRoot) : Promise.resolve(),
+				removeE2eLocalPackageTarballs([localWorkerTarballPath]),
+			]);
 		}
 	});
 
@@ -81,19 +84,8 @@ describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 			zoneId: 'worker-e2e',
 		});
 		const repoDir = await createSampleRepo(project.tempRoot);
-		const gatewayBuildConfigPath = path.join(
-			project.tempRoot,
-			'vm-images',
-			'gateways',
-			'worker',
-			'build-config.jsonc',
-		);
-		await seedGatewayImageCacheIfAvailable({
-			activeCacheDir: project.systemConfig.cacheDir,
-			currentProjectRoot: project.tempRoot,
-			gatewayBuildConfigPath,
-		});
-		const localWorkerTarballPath = await prepareLocalWorkerPackageForGatewayImage(repoRoot);
+		await prepareGatewayE2eProjectImages({ project });
+		localWorkerTarballPath = await prepareLocalWorkerPackageForGatewayImage(repoRoot);
 
 		project.zone.egressHosts = [
 			...project.zone.egressHosts,

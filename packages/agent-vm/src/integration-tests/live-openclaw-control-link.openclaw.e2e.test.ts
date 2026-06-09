@@ -14,12 +14,12 @@ import {
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { runBuildCommand } from '../cli/build-command.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinE2e,
 	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
+	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
@@ -292,9 +292,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 			repoRoot,
 			systemConfig: loadedSystemConfig,
 		});
-		await runBuildCommand({
-			systemConfig: loadedSystemConfig,
-		});
+		await prepareGatewayE2eProjectImages({ project });
 		harness = await startE2eControllerRuntime({
 			secrets: {
 				GITHUB_TOKEN: 'unused-control-link-smoke-token',

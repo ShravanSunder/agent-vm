@@ -6,11 +6,11 @@ import { type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { runBuildCommand } from '../cli/build-command.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinE2e,
 	currentE2eArchitecture,
+	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
@@ -721,9 +721,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			repoRoot,
 			systemConfig: project.systemConfig,
 		});
-		await runBuildCommand({
-			systemConfig: project.systemConfig,
-		});
+		await prepareGatewayE2eProjectImages({ project });
 		harness = await startE2eControllerRuntime({
 			onLeaseCreateRequest: (request) => {
 				observedLeaseRequests.push({

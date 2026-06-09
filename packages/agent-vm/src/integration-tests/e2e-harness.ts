@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
@@ -13,7 +14,13 @@ import {
 	generateManagedDockerfile,
 	resolveManagedImageRelease,
 } from '../build/managed-image-dockerfile.js';
+import {
+	readPreparedGondolinImage,
+	writePreparedGondolinImage,
+	type PreparedGondolinImage,
+} from '../build/prepared-gondolin-image-cache.js';
 import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
+import { runBuildCommand } from '../cli/build-command.js';
 import { scaffoldAgentVmProject, type ImageArchitecture } from '../cli/init-command.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
@@ -50,7 +57,48 @@ interface LocalDockerPackageTarball {
 	readonly sourcePath: string;
 }
 
+interface LocalPackagePackPlanFile {
+	readonly path: string;
+}
+
+interface LocalPackagePackPlan {
+	readonly filename: string;
+	readonly files: readonly LocalPackagePackPlanFile[];
+	readonly name: string;
+	readonly version: string;
+}
+
+interface E2eImageTarget {
+	readonly buildConfigPath: string;
+	readonly cacheDirectory: string;
+	readonly dockerfile?: string;
+	readonly e2eManifestEligible: boolean;
+	readonly family: 'gateway' | 'toolVm';
+	readonly name: string;
+	readonly recipeFingerprint: string;
+	readonly source?: unknown;
+}
+
+interface E2ePreparedImageManifestEntry {
+	readonly buildConfigPath: string;
+	readonly cacheDirectory: string;
+	readonly family: 'gateway' | 'toolVm';
+	readonly fingerprint: string;
+	readonly fingerprintInput?: unknown;
+	readonly imagePath: string;
+	readonly name: string;
+	readonly recipeFingerprint: string;
+}
+
+interface E2ePreparedImageManifest {
+	readonly entries: readonly E2ePreparedImageManifestEntry[];
+	readonly schemaVersion: 1;
+}
+
 const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
+const dockerContextLocalPackageTimestamp = new Date('2000-01-01T00:00:00.000Z');
+const e2ePreparedImageManifestFileName = 'prepared-e2e-images.json';
+const e2ePreparedImageManifestSchemaVersion = 1;
 const execFileAsync = promisify(execFile);
 const openClawMcpPortalPluginName = 'mcp-portal';
 const e2eTempRootPrefixes = [
@@ -69,6 +117,10 @@ function resolveE2eCacheRoot(): string {
 		return path.resolve(configuredCacheRoot);
 	}
 	return path.join(os.tmpdir(), 'agent-vm-e2e-cache');
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
 }
 
 export interface E2eHarnessSecretMap {
@@ -124,6 +176,11 @@ export interface GondolinE2ePrerequisiteOptions {
 	readonly commandExists?: (command: string) => boolean;
 	readonly resolveRequiredZigVersion?: () => Promise<string>;
 	readonly resolveZigVersion?: () => Promise<string | undefined>;
+}
+
+export interface PrepareGatewayE2eProjectImagesOptions {
+	readonly project: GatewayE2eProject;
+	readonly runBuild?: typeof runBuildCommand;
 }
 
 export interface StartE2eControllerRuntimeOptions {
@@ -262,6 +319,287 @@ export async function waitForControllerReady(controllerPort: number): Promise<vo
 	throw new Error('Controller did not become ready in time.');
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			return false;
+		}
+		throw error;
+	}
+}
+
+async function listDirectoryFiles(directoryPath: string): Promise<readonly string[]> {
+	const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+	const files = await Promise.all(
+		entries.map(async (entry): Promise<readonly string[]> => {
+			const entryPath = path.join(directoryPath, entry.name);
+			if (entry.isDirectory()) {
+				return await listDirectoryFiles(entryPath);
+			}
+			return entry.isFile() ? [entryPath] : [];
+		}),
+	);
+	return files.flat().toSorted((leftPath, rightPath) => leftPath.localeCompare(rightPath));
+}
+
+async function hashFileInto(
+	hasher: crypto.Hash,
+	filePath: string,
+	baseDirectory: string,
+): Promise<void> {
+	const relativePath = path.relative(baseDirectory, filePath).split(path.sep).join('/');
+	hasher.update(`file:${relativePath}\0`);
+	hasher.update(await fs.readFile(filePath));
+	hasher.update('\0');
+}
+
+async function computeDockerContextFingerprint(dockerfilePath: string): Promise<string> {
+	const dockerContextDirectory = path.dirname(dockerfilePath);
+	const hasher = crypto.createHash('sha256');
+	for (const filePath of await listDirectoryFiles(dockerContextDirectory)) {
+		// oxlint-disable-next-line no-await-in-loop -- hash order is deterministic and low-volume for e2e Docker contexts.
+		await hashFileInto(hasher, filePath, dockerContextDirectory);
+	}
+	return hasher.digest('hex');
+}
+
+async function readTextIfPresent(filePath: string | undefined): Promise<string | undefined> {
+	if (filePath === undefined || !(await pathExists(filePath))) {
+		return undefined;
+	}
+	return await fs.readFile(filePath, 'utf8');
+}
+
+async function normalizeE2eImageSourceForFingerprint(source: unknown): Promise<unknown> {
+	if (!isObjectRecord(source)) {
+		return source;
+	}
+	const overlay = source.overlay;
+	return {
+		...source,
+		...(typeof overlay === 'string'
+			? { overlay: { content: await readTextIfPresent(overlay) } }
+			: {}),
+	};
+}
+
+async function computeE2eImageRecipeFingerprint(options: {
+	readonly buildConfigPath: string;
+	readonly dockerfile?: string;
+	readonly source?: unknown;
+}): Promise<string> {
+	const hasher = crypto.createHash('sha256');
+	hasher.update(
+		JSON.stringify({
+			buildConfig: await readTextIfPresent(options.buildConfigPath),
+			dockerContext:
+				options.dockerfile === undefined
+					? undefined
+					: await computeDockerContextFingerprint(options.dockerfile),
+			source: await normalizeE2eImageSourceForFingerprint(options.source),
+		}),
+	);
+	return hasher.digest('hex');
+}
+
+async function collectE2eImageTargets(
+	project: GatewayE2eProject,
+): Promise<readonly E2eImageTarget[]> {
+	const createImageTarget = async (
+		family: 'gateway' | 'toolVm',
+		profileName: string,
+		profile:
+			| LoadedSystemConfig['imageProfiles']['gateways'][string]
+			| LoadedSystemConfig['imageProfiles']['toolVms'][string],
+	): Promise<E2eImageTarget> => {
+		const target: E2eImageTarget = {
+			buildConfigPath: profile.buildConfig,
+			cacheDirectory: path.join(
+				project.systemConfig.cacheDir,
+				family === 'gateway' ? 'gateway-images' : 'tool-vm-images',
+				profileName,
+			),
+			e2eManifestEligible: profile.source === undefined,
+			family,
+			name: profileName,
+			recipeFingerprint: await computeE2eImageRecipeFingerprint({
+				buildConfigPath: profile.buildConfig,
+				...(profile.dockerfile === undefined ? {} : { dockerfile: profile.dockerfile }),
+				...(profile.source === undefined ? {} : { source: profile.source }),
+			}),
+		};
+		if (profile.dockerfile !== undefined) {
+			return { ...target, dockerfile: profile.dockerfile };
+		}
+		if (profile.source !== undefined) {
+			return { ...target, source: profile.source };
+		}
+		return target;
+	};
+	const gatewayTargets = await Promise.all(
+		Object.entries(project.systemConfig.imageProfiles.gateways).map(
+			async ([profileName, profile]) => await createImageTarget('gateway', profileName, profile),
+		),
+	);
+	const toolVmTargets = await Promise.all(
+		Object.entries(project.systemConfig.imageProfiles.toolVms).map(
+			async ([profileName, profile]) => await createImageTarget('toolVm', profileName, profile),
+		),
+	);
+	return [...gatewayTargets, ...toolVmTargets];
+}
+
+function e2ePreparedImageManifestPath(cacheDir: string): string {
+	return path.join(cacheDir, e2ePreparedImageManifestFileName);
+}
+
+function parseE2ePreparedImageManifest(value: unknown): E2ePreparedImageManifest {
+	if (!isObjectRecord(value) || value.schemaVersion !== e2ePreparedImageManifestSchemaVersion) {
+		return { entries: [], schemaVersion: e2ePreparedImageManifestSchemaVersion };
+	}
+	if (!Array.isArray(value.entries)) {
+		return { entries: [], schemaVersion: e2ePreparedImageManifestSchemaVersion };
+	}
+	const entries = value.entries.filter((entry): entry is E2ePreparedImageManifestEntry => {
+		if (!isObjectRecord(entry)) {
+			return false;
+		}
+		return (
+			(entry.family === 'gateway' || entry.family === 'toolVm') &&
+			typeof entry.name === 'string' &&
+			typeof entry.recipeFingerprint === 'string' &&
+			typeof entry.buildConfigPath === 'string' &&
+			typeof entry.cacheDirectory === 'string' &&
+			typeof entry.fingerprint === 'string' &&
+			typeof entry.imagePath === 'string'
+		);
+	});
+	return { entries, schemaVersion: e2ePreparedImageManifestSchemaVersion };
+}
+
+async function readE2ePreparedImageManifest(cacheDir: string): Promise<E2ePreparedImageManifest> {
+	try {
+		const parsed = JSON.parse(
+			await fs.readFile(e2ePreparedImageManifestPath(cacheDir), 'utf8'),
+		) as unknown;
+		return parseE2ePreparedImageManifest(parsed);
+	} catch (error) {
+		if (error instanceof SyntaxError) {
+			return { entries: [], schemaVersion: e2ePreparedImageManifestSchemaVersion };
+		}
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			return { entries: [], schemaVersion: e2ePreparedImageManifestSchemaVersion };
+		}
+		throw error;
+	}
+}
+
+async function writeE2ePreparedImageManifest(
+	cacheDir: string,
+	manifest: E2ePreparedImageManifest,
+): Promise<void> {
+	await fs.mkdir(cacheDir, { recursive: true });
+	await fs.writeFile(
+		e2ePreparedImageManifestPath(cacheDir),
+		`${JSON.stringify(manifest, null, '\t')}\n`,
+		'utf8',
+	);
+}
+
+function e2eImageTargetKey(target: E2eImageTarget): string {
+	return `${target.family}:${target.name}:${target.recipeFingerprint}`;
+}
+
+function e2eManifestEntryKey(entry: E2ePreparedImageManifestEntry): string {
+	return `${entry.family}:${entry.name}:${entry.recipeFingerprint}`;
+}
+
+async function materializePreparedE2eImagesFromManifest(
+	project: GatewayE2eProject,
+	targets: readonly E2eImageTarget[],
+): Promise<boolean> {
+	if (targets.some((target) => !target.e2eManifestEligible)) {
+		return false;
+	}
+	const manifest = await readE2ePreparedImageManifest(project.systemConfig.cacheDir);
+	const entriesByKey = new Map(
+		manifest.entries.map((entry) => [e2eManifestEntryKey(entry), entry] as const),
+	);
+	const targetReadiness = await Promise.all(
+		targets.map(async (target) => {
+			const entry = entriesByKey.get(e2eImageTargetKey(target));
+			return entry !== undefined && (await hasBuiltImageAssets(entry.imagePath));
+		}),
+	);
+	if (targetReadiness.some((isReady) => !isReady)) {
+		return false;
+	}
+	await Promise.all(
+		targets.map(async (target) => {
+			const entry = entriesByKey.get(e2eImageTargetKey(target));
+			if (entry === undefined) {
+				throw new Error(
+					`Missing prepared e2e image manifest entry for ${target.family}/${target.name}.`,
+				);
+			}
+			await writePreparedGondolinImage({
+				buildConfigPath: target.buildConfigPath,
+				cacheDir: target.cacheDirectory,
+				fingerprint: entry.fingerprint,
+				...(entry.fingerprintInput === undefined
+					? {}
+					: { fingerprintInput: entry.fingerprintInput }),
+				imagePath: entry.imagePath,
+			});
+		}),
+	);
+	return true;
+}
+
+async function recordPreparedE2eImages(
+	project: GatewayE2eProject,
+	targets: readonly E2eImageTarget[],
+): Promise<void> {
+	const manifest = await readE2ePreparedImageManifest(project.systemConfig.cacheDir);
+	const entriesByKey = new Map(
+		manifest.entries.map((entry) => [e2eManifestEntryKey(entry), entry] as const),
+	);
+	for (const target of targets) {
+		if (!target.e2eManifestEligible) {
+			continue;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- record errors should identify the matching profile.
+		const preparedImage: PreparedGondolinImage | undefined = await readPreparedGondolinImage({
+			buildConfigPath: target.buildConfigPath,
+			cacheDir: target.cacheDirectory,
+		});
+		if (preparedImage === undefined) {
+			continue;
+		}
+		entriesByKey.set(e2eImageTargetKey(target), {
+			buildConfigPath: path.resolve(target.buildConfigPath),
+			cacheDirectory: path.resolve(target.cacheDirectory),
+			family: target.family,
+			fingerprint: preparedImage.fingerprint,
+			...(preparedImage.fingerprintInput === undefined
+				? {}
+				: { fingerprintInput: preparedImage.fingerprintInput }),
+			imagePath: preparedImage.imagePath,
+			name: target.name,
+			recipeFingerprint: target.recipeFingerprint,
+		});
+	}
+	await writeE2ePreparedImageManifest(project.systemConfig.cacheDir, {
+		entries: [...entriesByKey.values()].toSorted((leftEntry, rightEntry) =>
+			e2eManifestEntryKey(leftEntry).localeCompare(e2eManifestEntryKey(rightEntry)),
+		),
+		schemaVersion: e2ePreparedImageManifestSchemaVersion,
+	});
+}
+
 export async function findReusableGatewayImageDirectory(
 	currentProjectRoot: string,
 	gatewayBuildConfigPath: string,
@@ -272,6 +610,9 @@ export async function findReusableGatewayImageDirectory(
 		return null;
 	}
 	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+	if (!(await pathExists(explicitE2eCacheRoot))) {
+		return null;
+	}
 	const tempRootEntries = await fs.readdir(explicitE2eCacheRoot, { withFileTypes: true });
 	const e2eRunDirectories = tempRootEntries
 		.filter((entry) => entry.isDirectory())
@@ -328,6 +669,30 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 	await fs.rm(activeImageDir, { recursive: true, force: true });
 	await fs.mkdir(path.dirname(activeImageDir), { recursive: true });
 	await fs.symlink(reusableImageDir, activeImageDir, 'dir');
+}
+
+export async function prepareGatewayE2eProjectImages(
+	options: PrepareGatewayE2eProjectImagesOptions,
+): Promise<void> {
+	const imageTargets = await collectE2eImageTargets(options.project);
+	if (await materializePreparedE2eImagesFromManifest(options.project, imageTargets)) {
+		return;
+	}
+	await Promise.all(
+		Object.entries(options.project.systemConfig.imageProfiles.gateways).map(
+			async ([profileName, gatewayProfile]) => {
+				await seedGatewayImageCacheIfAvailable({
+					activeCacheDir: options.project.systemConfig.cacheDir,
+					currentProjectRoot: options.project.tempRoot,
+					gatewayBuildConfigPath: gatewayProfile.buildConfig,
+					imageProfileName: profileName,
+				});
+			},
+		),
+	);
+	const runBuild = options.runBuild ?? runBuildCommand;
+	await runBuild({ systemConfig: options.project.systemConfig });
+	await recordPreparedE2eImages(options.project, imageTargets);
 }
 
 export function createSmokeSecretResolver(secrets: E2eHarnessSecretMap): SecretResolver {
@@ -423,36 +788,137 @@ export function resolveLocalPackagePackArgs(packDirectory: string): readonly str
 	return ['pack', '--pack-destination', packDirectory, '--config.ignore-scripts=true'];
 }
 
+function parseLocalPackagePackPlan(value: unknown, packageName: string): LocalPackagePackPlan {
+	if (!isJsonRecord(value)) {
+		throw new Error(`Expected pnpm pack dry-run for ${packageName} to return an object.`);
+	}
+	const files = Array.isArray(value.files)
+		? value.files.filter((file): file is LocalPackagePackPlanFile => {
+				return isJsonRecord(file) && typeof file.path === 'string' && file.path.length > 0;
+			})
+		: [];
+	if (
+		typeof value.name !== 'string' ||
+		typeof value.version !== 'string' ||
+		typeof value.filename !== 'string' ||
+		files.length === 0
+	) {
+		throw new Error(`Unexpected pnpm pack dry-run result for ${packageName}.`);
+	}
+	return {
+		filename: value.filename,
+		files,
+		name: value.name,
+		version: value.version,
+	};
+}
+
+function resolveLocalPackagePackPlan(
+	packageDirectory: string,
+	packageName: string,
+): LocalPackagePackPlan {
+	const dryRunOutput = execFileSync(
+		'pnpm',
+		['pack', '--dry-run', '--json', '--config.ignore-scripts=true'],
+		{
+			cwd: packageDirectory,
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'pipe'],
+		},
+	);
+	return parseLocalPackagePackPlan(JSON.parse(dryRunOutput) as unknown, packageName);
+}
+
+function cacheSafeLocalPackageName(packageName: string): string {
+	return packageName.replace(/^@/u, '').replaceAll('/', '__');
+}
+
+async function computeLocalPackagePackFingerprint(
+	packageDirectory: string,
+	packPlan: LocalPackagePackPlan,
+): Promise<string> {
+	const hash = crypto.createHash('sha256');
+	hash.update(`${packPlan.name}\0${packPlan.version}\0${packPlan.filename}\0`);
+	for (const file of packPlan.files.toSorted((left, right) =>
+		left.path.localeCompare(right.path),
+	)) {
+		const filePath = path.join(packageDirectory, file.path);
+		// oxlint-disable-next-line no-await-in-loop -- ordered hashing keeps cache keys deterministic
+		const fileContents = await fs.readFile(filePath);
+		hash.update(`${file.path}\0`);
+		hash.update(fileContents);
+		hash.update('\0');
+	}
+	return hash.digest('hex').slice(0, 24);
+}
+
 async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<string> {
 	const packageJsonPath = path.join(props.packageDirectory, 'package.json');
 	await fs.access(packageJsonPath);
 	await assertLocalPackageFilesExist(props);
+	const packPlan = resolveLocalPackagePackPlan(props.packageDirectory, props.packageName);
+	const packFingerprint = await computeLocalPackagePackFingerprint(
+		props.packageDirectory,
+		packPlan,
+	);
+	const cachedPackageDirectory = path.join(
+		resolveE2eCacheRoot(),
+		'local-package-tarballs',
+		cacheSafeLocalPackageName(props.packageName),
+		packFingerprint,
+	);
+	const cachedTarballPath = path.join(cachedPackageDirectory, packPlan.filename);
+	try {
+		await fs.access(cachedTarballPath);
+		return cachedTarballPath;
+	} catch (error) {
+		if (!isJsonRecord(error) || error.code !== 'ENOENT') {
+			throw error;
+		}
+	}
 	const packDirectory = await fs.mkdtemp(path.join(os.tmpdir(), `${props.packageName}-pack-`));
 	try {
 		execFileSync('pnpm', [...resolveLocalPackagePackArgs(packDirectory)], {
 			cwd: props.packageDirectory,
 			stdio: 'pipe',
 		});
-		const packedTarballs = (await fs.readdir(packDirectory)).filter((fileName) =>
-			fileName.endsWith('.tgz'),
+		const packedTarballPath = path.join(packDirectory, packPlan.filename);
+		await fs.access(packedTarballPath);
+		await fs.mkdir(cachedPackageDirectory, { recursive: true });
+		const temporaryCachedTarballPath = path.join(
+			cachedPackageDirectory,
+			`${packPlan.filename}.${process.pid}.${crypto.randomUUID()}.tmp`,
 		);
-		const [packedTarballName] = packedTarballs;
-		if (packedTarballName === undefined) {
-			throw new Error(`Failed to pack local ${props.packageName} tarball for smoke image.`);
-		}
-		if (packedTarballs.length > 1) {
-			throw new Error(
-				`Expected pnpm pack for ${props.packageName} to produce exactly one tarball.`,
-			);
-		}
-		return path.join(packDirectory, packedTarballName);
+		await fs.copyFile(packedTarballPath, temporaryCachedTarballPath);
+		await fs.rename(temporaryCachedTarballPath, cachedTarballPath).catch(async (error) => {
+			await fs.rm(temporaryCachedTarballPath, { force: true });
+			if (isJsonRecord(error) && error.code === 'EEXIST') {
+				return;
+			}
+			throw error;
+		});
+		return cachedTarballPath;
 	} catch (error) {
 		await fs.rm(packDirectory, { force: true, recursive: true });
 		throw error;
+	} finally {
+		await fs.rm(packDirectory, { force: true, recursive: true });
 	}
 }
 
-async function removeLocalPackageTarballDirectories(
+function isOwnedLocalPackagePackDirectory(packDirectory: string): boolean {
+	const resolvedPackDirectory = path.resolve(packDirectory);
+	const resolvedSystemTempRoot = path.resolve(os.tmpdir());
+	if (
+		resolvedPackDirectory === resolvedSystemTempRoot ||
+		!resolvedPackDirectory.startsWith(`${resolvedSystemTempRoot}${path.sep}`)
+	) {
+		return false;
+	}
+	return path.basename(resolvedPackDirectory).includes('-pack-');
+}
+
+export async function removeE2eLocalPackageTarballs(
 	tarballPaths: readonly (string | undefined)[],
 ): Promise<void> {
 	await Promise.all(
@@ -462,9 +928,11 @@ async function removeLocalPackageTarballDirectories(
 					.filter((tarballPath): tarballPath is string => tarballPath !== undefined)
 					.map((tarballPath) => path.dirname(tarballPath)),
 			),
-		).map(async (packDirectory) => {
-			await fs.rm(packDirectory, { force: true, recursive: true });
-		}),
+		)
+			.filter(isOwnedLocalPackagePackDirectory)
+			.map(async (packDirectory) => {
+				await fs.rm(packDirectory, { force: true, recursive: true });
+			}),
 	);
 }
 
@@ -474,9 +942,12 @@ async function copyLocalPackageTarballsToDockerContext(options: {
 }): Promise<void> {
 	await Promise.all(
 		options.tarballs.map(async (tarball) => {
-			await fs.copyFile(
-				tarball.sourcePath,
-				path.join(options.dockerContextDirectory, tarball.archiveName),
+			const targetPath = path.join(options.dockerContextDirectory, tarball.archiveName);
+			await fs.copyFile(tarball.sourcePath, targetPath);
+			await fs.utimes(
+				targetPath,
+				dockerContextLocalPackageTimestamp,
+				dockerContextLocalPackageTimestamp,
 			);
 		}),
 	);
@@ -568,7 +1039,7 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 			systemConfig: options.systemConfig,
 		});
 	} finally {
-		await removeLocalPackageTarballDirectories([
+		await removeE2eLocalPackageTarballs([
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
 			localMcpPortalTarballPath,
@@ -829,7 +1300,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		gatewayProfile.dockerfile = dockerfilePath;
 		delete gatewayProfile.source;
 	} finally {
-		await removeLocalPackageTarballDirectories([
+		await removeE2eLocalPackageTarballs([
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
 			localGondolinAdapterTarballPath,
@@ -930,7 +1401,7 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		gatewayProfile.dockerfile = dockerfilePath;
 		delete gatewayProfile.source;
 	} finally {
-		await removeLocalPackageTarballDirectories([
+		await removeE2eLocalPackageTarballs([
 			localSecretManagementTarballPath,
 			localGondolinAdapterTarballPath,
 			localGatewayInterfaceTarballPath,
@@ -972,23 +1443,10 @@ export async function scaffoldOpenClawE2eProject(options: {
 }
 
 export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promise<string> {
-	await fs.mkdir(path.join(repoRoot, 'tmp'), { recursive: true });
-	const packDirectory = await fs.mkdtemp(path.join(repoRoot, 'tmp', 'agent-vm-worker-pack-'));
-	execFileSync('pnpm', ['pack', '--pack-destination', packDirectory], {
-		cwd: path.join(repoRoot, 'packages', 'agent-vm-worker'),
-		stdio: 'pipe',
+	return await packLocalPackageTarball({
+		packageDirectory: path.join(repoRoot, 'packages', 'agent-vm-worker'),
+		packageName: 'agent-vm-worker',
 	});
-	const packedTarballs = (await fs.readdir(packDirectory)).filter((fileName) =>
-		fileName.endsWith('.tgz'),
-	);
-	const [packedTarballName] = packedTarballs;
-	if (packedTarballName === undefined) {
-		throw new Error('Failed to pack local agent-vm-worker tarball for smoke image.');
-	}
-	if (packedTarballs.length > 1) {
-		throw new Error('Expected pnpm pack to produce exactly one agent-vm-worker tarball.');
-	}
-	return path.join(packDirectory, packedTarballName);
 }
 
 export async function scaffoldWorkerE2eProject(options: {
