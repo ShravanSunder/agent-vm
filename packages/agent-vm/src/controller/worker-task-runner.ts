@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import {
 	appendEvent,
@@ -737,7 +738,7 @@ export interface WorkerTaskPollClock {
 }
 
 const defaultWorkerTaskPollClock: WorkerTaskPollClock = {
-	now: () => Date.now(),
+	now: () => performance.now(),
 	sleep: async (durationMs: number): Promise<void> => {
 		await new Promise((resolve) => setTimeout(resolve, durationMs));
 	},

@@ -59,6 +59,43 @@ describe('e2e proof lane runner', () => {
 		expect(events).toEqual(['build', 'start:e2e-host', 'start:e2e-vm', 'start:e2e-vm-mediation']);
 	});
 
+	it('awaits an asynchronous shared build before starting proof lanes', async () => {
+		const events: string[] = [];
+		let finishBuild: (() => void) | undefined;
+		const buildFinished = new Promise<void>((resolve) => {
+			finishBuild = resolve;
+		});
+
+		const summaryPromise = runE2eProofLanes(createE2eProofLanes(), {
+			laneRunner: async (lane) => {
+				events.push(`start:${lane.id}`);
+				return passedResult(lane, 10);
+			},
+			now: () => 100,
+			runWorkspaceBuild: async () => {
+				events.push('build-start');
+				await buildFinished;
+				events.push('build-finish');
+			},
+			stderr: createSilentWritable(),
+			stdout: createSilentWritable(),
+		});
+
+		await Promise.resolve();
+		expect(events).toEqual(['build-start']);
+		finishBuild?.();
+		const summary = await summaryPromise;
+
+		expect(summary.ok).toBe(true);
+		expect(events).toEqual([
+			'build-start',
+			'build-finish',
+			'start:e2e-host',
+			'start:e2e-vm',
+			'start:e2e-vm-mediation',
+		]);
+	});
+
 	it('skips the shared build when the caller already built the workspace', async () => {
 		const events: string[] = [];
 

@@ -35,7 +35,7 @@ export type E2eProofLaneRunner = (lane: E2eProofLane) => Promise<E2eProofLaneRes
 interface RunE2eProofLanesOptions {
 	readonly laneRunner?: E2eProofLaneRunner;
 	readonly now?: () => number;
-	readonly runWorkspaceBuild?: () => void;
+	readonly runWorkspaceBuild?: () => Promise<void> | void;
 	readonly skipWorkspaceBuild?: boolean;
 	readonly stderr?: NodeJS.WritableStream;
 	readonly stdout?: NodeJS.WritableStream;
@@ -178,7 +178,7 @@ export async function runE2eProofLanes(
 		if (options.runWorkspaceBuild === undefined) {
 			await runWorkspaceBuildOnceAsync();
 		} else {
-			options.runWorkspaceBuild();
+			await options.runWorkspaceBuild();
 		}
 	}
 
