@@ -166,6 +166,7 @@ import http from 'node:http';
 
 const port = Number(process.env.MOCK_OPENAI_PORT);
 const requestLog = '/tmp/agent-vm-subagent-mock-openai-requests.jsonl';
+const readyPath = '/tmp/agent-vm-subagent-mock-openai.ready';
 
 function readBody(req) {
 	return new Promise((resolve, reject) => {
@@ -258,28 +259,32 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
+	fs.writeFileSync(readyPath, 'ready\\n', 'utf8');
 	console.log(\`mock-openai listening on \${port}\`);
 });
 NODE
+rm -f /tmp/agent-vm-subagent-mock-openai.ready
 MOCK_OPENAI_PORT=${shellSingleQuote(String(options.port))} node /tmp/agent-vm-subagent-mock-openai.mjs >/tmp/agent-vm-subagent-mock-openai.log 2>&1 &
 echo "$!" >/tmp/agent-vm-subagent-mock-openai.pid
 MOCK_OPENAI_PORT=${shellSingleQuote(String(options.port))} node --input-type=module <<'NODE'
-const port = Number(process.env.MOCK_OPENAI_PORT);
-const deadline = Date.now() + 10_000;
-let lastError;
-while (Date.now() < deadline) {
+import { once } from 'node:events';
+import fs from 'node:fs';
+
+const readyPath = '/tmp/agent-vm-subagent-mock-openai.ready';
+if (!fs.existsSync(readyPath)) {
+	const watcher = fs.watch('/tmp');
 	try {
-		const response = await fetch(\`http://127.0.0.1:\${port}/health\`);
-		if (response.ok) {
-			process.exit(0);
+		while (!fs.existsSync(readyPath)) {
+			await once(watcher, 'change');
 		}
-		lastError = new Error(\`HTTP \${response.status}\`);
-	} catch (error) {
-		lastError = error;
+	} finally {
+		watcher.close();
 	}
-	await new Promise((resolve) => setTimeout(resolve, 100));
 }
-throw lastError ?? new Error('mock OpenAI server did not become ready');
+const response = await fetch(\`http://127.0.0.1:\${process.env.MOCK_OPENAI_PORT}/health\`);
+if (!response.ok) {
+	throw new Error(\`mock OpenAI server reported HTTP \${response.status}\`);
+}
 NODE`;
 	const result = await options.gatewayVm.exec(command);
 	if (result.exitCode !== 0) {
@@ -349,28 +354,6 @@ async function publishOpenClawRuntimeStatus(options: {
 			`OpenClaw runtime status publish failed HTTP ${String(response.status)}: ${await response.text()}`,
 		);
 	}
-}
-
-async function waitForControllerLease(options: {
-	readonly agentId: string;
-	readonly controllerUrl: string;
-	readonly diagnostic: string;
-	readonly timeoutMs: number;
-}): Promise<unknown> {
-	const deadline = Date.now() + options.timeoutMs;
-	let lastPayload: unknown;
-	while (Date.now() < deadline) {
-		lastPayload = await readControllerLeases(options.controllerUrl);
-		if (JSON.stringify(lastPayload).includes(`"agentId":"${options.agentId}"`)) {
-			return lastPayload;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 500));
-	}
-	throw new Error(
-		`Timed out waiting for controller lease for agent ${options.agentId}; last /leases payload: ${JSON.stringify(
-			lastPayload,
-		)}; diagnostic: ${options.diagnostic}`,
-	);
 }
 
 async function runOpenClawSubagentSpawnProbe(options: {
@@ -651,7 +634,6 @@ try {
 			if (waitResponse && typeof waitResponse === 'object' && waitResponse.status === 'error') {
 				break;
 			}
-			await new Promise((resolve) => setTimeout(resolve, 1000));
 		}
 	}
 } finally {
@@ -809,12 +791,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			);
 		}
 
-		const leasePayload = await waitForControllerLease({
-			agentId,
-			controllerUrl: harness.controllerUrl,
-			diagnostic: JSON.stringify(spawnResults),
-			timeoutMs: 120_000,
-		});
+		const leasePayload = await readControllerLeases(harness.controllerUrl);
 		expect(JSON.stringify(leasePayload)).toContain(`"agentId":"${agentId}"`);
 		expect(
 			Array.isArray(leasePayload)

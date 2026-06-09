@@ -74,7 +74,7 @@ describe('createIdleReaper', () => {
 		const releaseLease = vi.fn(async () => {
 			activeReleases += 1;
 			maxConcurrentReleases = Math.max(maxConcurrentReleases, activeReleases);
-			await new Promise((resolve) => setTimeout(resolve, 0));
+			await new Promise<void>((resolve) => setImmediate(resolve));
 			activeReleases -= 1;
 		});
 		const idleReaper = createIdleReaper({

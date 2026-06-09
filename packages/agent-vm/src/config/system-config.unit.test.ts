@@ -4,7 +4,13 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
-import { loadSystemConfig, resolveControllerHealthConfig } from './system-config.js';
+import {
+	createLoadedSystemConfig,
+	loadSystemConfig,
+	resolveControllerHealthConfig,
+	type LoadedSystemConfig,
+	type SystemConfigInput,
+} from './system-config.js';
 
 const createdDirectories: string[] = [];
 
@@ -147,6 +153,12 @@ async function writeSystemConfigForTest(prefix: string, config: unknown): Promis
 	return configPath;
 }
 
+function parseSystemConfigInputForTest(config: ValidSystemConfigInput): LoadedSystemConfig {
+	return createLoadedSystemConfig(config as unknown as SystemConfigInput, {
+		systemConfigPath: path.join(os.tmpdir(), 'agent-vm-test', 'config', 'system.json'),
+	});
+}
+
 function extractFirstJsonCodeBlock(markdown: string): string {
 	const codeBlockMatch = /```json\n(?<jsonText>[\s\S]*?)\n```/u.exec(markdown);
 	const jsonText = codeBlockMatch?.groups?.jsonText;
@@ -257,7 +269,7 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('loads controller health overrides', async () => {
+	test('loads controller health overrides', () => {
 		const config = createValidSystemConfigInput();
 		config.controller = {
 			health: {
@@ -284,12 +296,8 @@ describe('loadSystemConfig', () => {
 				staleAfterMs: 45_000,
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-controller-health-overrides-',
-			config,
-		);
 
-		const loadedConfig = await loadSystemConfig(configPath);
+		const loadedConfig = parseSystemConfigInputForTest(config);
 
 		expect(resolveControllerHealthConfig(loadedConfig)).toEqual({
 			enabled: false,
@@ -316,22 +324,18 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('rejects non-positive controller health settings', async () => {
+	test('rejects non-positive controller health settings', () => {
 		const config = createValidSystemConfigInput();
 		config.controller = {
 			health: {
 				gatewayServiceIntervalMs: 0,
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-controller-health-non-positive-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/gatewayServiceIntervalMs/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/gatewayServiceIntervalMs/u);
 	});
 
-	test('rejects non-positive gateway service auto restart settings', async () => {
+	test('rejects non-positive gateway service auto restart settings', () => {
 		const config = createValidSystemConfigInput();
 		config.controller = {
 			health: {
@@ -345,15 +349,11 @@ describe('loadSystemConfig', () => {
 				},
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-gateway-service-auto-restart-non-positive-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/cooldownMs/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/cooldownMs/u);
 	});
 
-	test('rejects controller health backoff ceilings below the base interval', async () => {
+	test('rejects controller health backoff ceilings below the base interval', () => {
 		const config = createValidSystemConfigInput();
 		config.controller = {
 			health: {
@@ -361,12 +361,8 @@ describe('loadSystemConfig', () => {
 				gatewayControlLinkIntervalMs: 10_000,
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-controller-health-invalid-backoff-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
 			/gatewayControlLinkBackoffCeilingMs/u,
 		);
 	});
@@ -922,12 +918,8 @@ describe('loadSystemConfig', () => {
 				branch: 'main:refs/heads/pwn',
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-zone-git-unsafe-branch-',
-			input,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/git branch must/u);
+		expect(() => parseSystemConfigInputForTest(input)).toThrow(/git branch must/u);
 	});
 
 	test('rejects worker gateway configs with zoneGit', async () => {
@@ -954,9 +946,8 @@ describe('loadSystemConfig', () => {
 				},
 			},
 		};
-		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-zone-git-', input);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zoneGit/u);
+		expect(() => parseSystemConfigInputForTest(input)).toThrow(/zoneGit/u);
 	});
 
 	test('rejects gateway configs without an explicit gateway type', async () => {
@@ -966,9 +957,8 @@ describe('loadSystemConfig', () => {
 			...input.zones[0],
 			gateway: gatewayWithoutType,
 		};
-		const configPath = await writeSystemConfigForTest('agent-vm-system-missing-type-', input);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/type/u);
+		expect(() => parseSystemConfigInputForTest(input)).toThrow(/type/u);
 	});
 
 	test('rejects legacy gateway workspaceDir', async () => {
@@ -1005,32 +995,18 @@ describe('loadSystemConfig', () => {
 				workspaceRoot: '../workspaces/tools',
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-legacy-tool-workspace-',
-			input,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/workspaceRoot/u);
+		expect(() => parseSystemConfigInputForTest(input)).toThrow(/workspaceRoot/u);
 	});
 
 	test('accepts zones without an explicit backupDir (legacy fallback applies elsewhere)', async () => {
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-no-backup-',
-			createValidSystemConfigInput(),
-		);
-
-		const config = await loadSystemConfig(configPath);
+		const config = parseSystemConfigInputForTest(createValidSystemConfigInput());
 
 		expect(config.zones[0]?.gateway.backupDir).toBeUndefined();
 	});
 
 	test('omits zone resource policy when not present', async () => {
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-resources-defaults-',
-			createValidSystemConfigInput(),
-		);
-
-		const config = await loadSystemConfig(configPath);
+		const config = parseSystemConfigInputForTest(createValidSystemConfigInput());
 
 		expect(config.zones[0]?.resources).toBeUndefined();
 	});
@@ -1044,12 +1020,8 @@ describe('loadSystemConfig', () => {
 				allowRepoResources: ['https://github.com/example/app.git'],
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-resources-explicit-',
-			config,
-		);
 
-		const loadedConfig = await loadSystemConfig(configPath);
+		const loadedConfig = parseSystemConfigInputForTest(config);
 
 		expect(loadedConfig.zones[0]?.resources).toEqual({
 			allowRepoResources: ['https://github.com/example/app.git'],
@@ -1066,12 +1038,8 @@ describe('loadSystemConfig', () => {
 				allowedKinds: ['compose', 'postgres', 'redis'],
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-resources-legacy-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/allowedKinds/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/allowedKinds/u);
 	});
 
 	test('rejects per-profile legacy cache fields', async () => {
@@ -1401,9 +1369,8 @@ describe('loadSystemConfig', () => {
 			audience: 'both',
 			hosts: ['api.github.com'],
 		};
-		const configPath = await writeSystemConfigForTest('agent-vm-system-audience-', config);
 
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+		expect(parseSystemConfigInputForTest(config)).toMatchObject({
 			zones: [
 				{
 					egressHosts: [
@@ -1494,12 +1461,8 @@ describe('loadSystemConfig', () => {
 		zone.egressHosts = [
 			{ host: 'api.github.com' } as unknown as { host: string; audience: string },
 		];
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-egress-host-audience-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/audience/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/audience/u);
 	});
 
 	test('rejects zone secrets without audience', async () => {
@@ -1511,9 +1474,8 @@ describe('loadSystemConfig', () => {
 			injection: 'http-mediation',
 			hosts: ['api.github.com'],
 		};
-		const configPath = await writeSystemConfigForTest('agent-vm-system-secret-audience-', config);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/audience/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/audience/u);
 	});
 
 	test('rejects zone secret names that collide with JavaScript prototype properties', async () => {
@@ -1692,12 +1654,8 @@ describe('loadSystemConfig', () => {
 			audience: 'tool-vm',
 			hosts: ['api.linear.app'],
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-env-source-tool-vm-mediated-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+		expect(parseSystemConfigInputForTest(config)).toMatchObject({
 			zones: [
 				expect.objectContaining({
 					secrets: expect.objectContaining({
@@ -1742,12 +1700,8 @@ describe('loadSystemConfig', () => {
 			audience: 'both',
 			hosts: ['api.github.com'],
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-mediated-egress-shared-audience-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/egressHosts/u);
 	});
 
 	test('rejects legacy OpenClaw controller auth configuration', async () => {
@@ -1755,12 +1709,10 @@ describe('loadSystemConfig', () => {
 		Object.assign(config.zones[0].gateway, {
 			controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 		});
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-controller-auth-legacy-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key.*controllerAuth/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/Unrecognized key.*controllerAuth/u,
+		);
 	});
 
 	test('loads OpenClaw control auth from a configured zone secret pointer', async () => {
@@ -1776,12 +1728,8 @@ describe('loadSystemConfig', () => {
 			injection: 'env',
 			audience: 'gateway',
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-control-auth-custom-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+		expect(parseSystemConfigInputForTest(config)).toMatchObject({
 			zones: [
 				{
 					gateway: {
@@ -1798,23 +1746,15 @@ describe('loadSystemConfig', () => {
 	test('rejects OpenClaw zones without a control auth pointer', async () => {
 		const config = createValidSystemConfigInput();
 		delete config.zones[0].gateway.controlAuth;
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-control-auth-pointer-missing-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/controlAuth/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/controlAuth/u);
 	});
 
 	test('rejects OpenClaw zones without the configured control auth secret', async () => {
 		const config = createValidSystemConfigInput();
 		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-token-missing-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
 	});
 
 	test('rejects OpenClaw gateway token outside gateway env injection', async () => {
@@ -1826,12 +1766,8 @@ describe('loadSystemConfig', () => {
 			audience: 'tool-vm',
 			hosts: ['openclaw.local'],
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-token-wrong-surface-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
 	});
 
 	test('rejects OpenClaw gateway token with shared audience', async () => {
@@ -1843,12 +1779,8 @@ describe('loadSystemConfig', () => {
 			audience: 'both',
 			hosts: ['openclaw.local'],
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-token-shared-audience-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
 	});
 
 	test('rejects runtime auth hints on OpenClaw zones', async () => {
@@ -2099,12 +2031,10 @@ describe('loadSystemConfig', () => {
 	test('requires OpenClaw zones to declare agentToolVmProfiles explicitly', async () => {
 		const config = createValidSystemConfigInput();
 		delete config.zones[0].agentToolVmProfiles;
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-openclaw-missing-agent-tool-vm-profiles-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/must declare agentToolVmProfiles/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/must declare agentToolVmProfiles/u,
+		);
 	});
 
 	test('rejects legacy tool VM profile field names', async () => {
@@ -2123,12 +2053,10 @@ describe('loadSystemConfig', () => {
 		delete (legacyConfig as { toolVmProfiles?: unknown }).toolVmProfiles;
 		delete (legacyConfig.zones[0] as { defaultToolVmProfile?: unknown }).defaultToolVmProfile;
 		delete (legacyConfig.zones[0] as { agentToolVmProfiles?: unknown }).agentToolVmProfiles;
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-legacy-tool-vm-profile-names-',
-			legacyConfig,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key/u);
+		expect(() =>
+			parseSystemConfigInputForTest(legacyConfig as unknown as ValidSystemConfigInput),
+		).toThrow(/Unrecognized key/u);
 	});
 
 	test('loads the single lease idle TTL policy', async () => {
@@ -2138,9 +2066,8 @@ describe('loadSystemConfig', () => {
 			maxRequestedMs: 2 * 60 * 60 * 1000,
 			minRequestedMs: 5_000,
 		};
-		const configPath = await writeSystemConfigForTest('agent-vm-system-lease-ttl-', config);
 
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+		expect(parseSystemConfigInputForTest(config)).toMatchObject({
 			leaseIdleTtl: {
 				defaultMs: 1_800_000,
 				maxRequestedMs: 7_200_000,
@@ -2152,9 +2079,8 @@ describe('loadSystemConfig', () => {
 	test('defaults partial lease idle TTL policy to 100 minutes', async () => {
 		const config = createValidSystemConfigInput();
 		config.leaseIdleTtl = {};
-		const configPath = await writeSystemConfigForTest('agent-vm-system-lease-ttl-default-', config);
 
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+		expect(parseSystemConfigInputForTest(config)).toMatchObject({
 			leaseIdleTtl: {
 				defaultMs: 6_000_000,
 				maxRequestedMs: 86_400_000,
@@ -2166,9 +2092,8 @@ describe('loadSystemConfig', () => {
 	test('rejects non-positive lease idle TTL values', async () => {
 		const config = createValidSystemConfigInput();
 		config.leaseIdleTtl = { defaultMs: 0 };
-		const configPath = await writeSystemConfigForTest('agent-vm-system-bad-lease-ttl-', config);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/leaseIdleTtl/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/leaseIdleTtl/u);
 	});
 
 	test('rejects legacy scope-specific lease idle TTL policy fields', async () => {
@@ -2181,12 +2106,8 @@ describe('loadSystemConfig', () => {
 				'agent:shravan': 10 * 60 * 1000,
 			},
 		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-legacy-lease-ttl-scope-',
-			config,
-		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/leaseIdleTtl/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/leaseIdleTtl/u);
 	});
 
 	test('loads per-agent auth profiles and sandbox seed configuration for OpenClaw zones', async () => {

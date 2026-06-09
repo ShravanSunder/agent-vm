@@ -48,9 +48,9 @@ export function createE2eProofLanes(): readonly E2eProofLane[] {
 		{
 			args: ['run', 'test:e2e:host'],
 			command: 'pnpm',
-			env: {},
+			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
 			id: 'e2e-host',
-			label: 'Host subprocess e2e',
+			label: 'Host e2e',
 		},
 		{
 			args: ['run', 'test:e2e:vm'],

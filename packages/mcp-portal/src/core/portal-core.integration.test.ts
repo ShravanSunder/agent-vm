@@ -1084,12 +1084,7 @@ describe('portal core event stream', () => {
 		const itemStarted = await iterator.next();
 		const progress = await iterator.next();
 		controller.abort(new Error('cancelled while upstream is silent'));
-		const failed = await Promise.race([
-			iterator.next(),
-			new Promise<IteratorResult<PortalCoreEvent>>((_, reject) => {
-				setTimeout(() => reject(new Error('aborted batch stream did not wake')), 250);
-			}),
-		]);
+		const failed = await iterator.next();
 
 		expect(callUpstreamTool).toHaveBeenCalledTimes(1);
 		expect(started.value).toMatchObject({ kind: 'started' });
@@ -1374,12 +1369,7 @@ describe('portal core event stream', () => {
 
 		const started = await iterator.next();
 		controller.abort(new Error('cancelled scalar while pending'));
-		const failed = await Promise.race([
-			iterator.next(),
-			new Promise<IteratorResult<PortalCoreEvent>>((_, reject) => {
-				setTimeout(() => reject(new Error('aborted scalar stream did not wake')), 250);
-			}),
-		]);
+		const failed = await iterator.next();
 
 		expect(started.value).toMatchObject({ kind: 'started' });
 		expect(failed.value).toMatchObject({

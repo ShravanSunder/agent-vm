@@ -16,9 +16,12 @@ const allowedTestSuffixes = [
 
 const forbiddenTestSuffixes = ['.smoke.test.ts', '.llm.integration.test.ts'] as const;
 
-const unitBoundaryPatterns: readonly RegExp[] = [
+const unitBoundaryImportPatterns: readonly RegExp[] = [
 	/^import\s+.*\s+from\s+['"]execa['"]/mu,
 	/^import\s+.*\s+from\s+['"]node:child_process['"]/mu,
+];
+
+const unitBoundaryCallPatterns: readonly RegExp[] = [
 	/\bexecFileSync\s*\(/u,
 	/\bspawnSync\s*\(/u,
 	/\bexecFile\s*\(/u,
@@ -28,6 +31,19 @@ const unitBoundaryPatterns: readonly RegExp[] = [
 
 const unitWallClockWaitPatterns: readonly RegExp[] = [
 	/await\s+new\s+Promise[^\n]*setTimeout/u,
+	/\bawait\s+sleep\s*\(/u,
+	/\bawait\s+delay\s*\(/u,
+];
+
+const integrationWallClockWaitPatterns: readonly RegExp[] = [
+	/\bsetTimeout\s*\(/u,
+	/\bsetInterval\s*\(/u,
+	/\bawait\s+sleep\s*\(/u,
+	/\bawait\s+delay\s*\(/u,
+];
+
+const e2eWallClockSleepPatterns: readonly RegExp[] = [
+	/await\s+new\s+Promise[\s\S]*?setTimeout/u,
 	/\bawait\s+sleep\s*\(/u,
 	/\bawait\s+delay\s*\(/u,
 ];
@@ -71,6 +87,16 @@ export function hasAllowedTestSuffix(filePath: string): boolean {
 
 export function isUnitTest(filePath: string): boolean {
 	return filePath.endsWith('.unit.test.ts') || filePath.endsWith('.unit.spec.ts');
+}
+
+export function isIntegrationTest(filePath: string): boolean {
+	return filePath.endsWith('.integration.test.ts');
+}
+
+export function isE2eTest(filePath: string): boolean {
+	return allowedTestSuffixes.some(
+		(suffix) => suffix.endsWith('.e2e.test.ts') && filePath.endsWith(suffix),
+	);
 }
 
 export function resolveTestFileProjectNames(filePath: string): readonly string[] {
@@ -118,6 +144,53 @@ export function resolveTestFileProjectNames(filePath: string): readonly string[]
 	return [];
 }
 
+function stripSingleAndDoubleQuotedStringContents(source: string): string {
+	return source.replace(/(['"])(?:\\[\s\S]|(?!\1)[\s\S])*?\1/gu, '$1$1');
+}
+
+export function classifyUnitBoundaryViolation(filePath: string, source: string): string | null {
+	if (!isUnitTest(filePath)) {
+		return null;
+	}
+	for (const pattern of unitBoundaryImportPatterns) {
+		if (pattern.test(source)) {
+			return `${filePath}: unit tests must not cross real process/network boundaries`;
+		}
+	}
+	const sourceWithoutQuotedStringContents = stripSingleAndDoubleQuotedStringContents(source);
+	for (const pattern of unitBoundaryCallPatterns) {
+		if (pattern.test(sourceWithoutQuotedStringContents)) {
+			return `${filePath}: unit tests must not cross real process/network boundaries`;
+		}
+	}
+	return null;
+}
+
+export function classifyWallClockWaitViolation(filePath: string, source: string): string | null {
+	if (isUnitTest(filePath)) {
+		for (const pattern of unitWallClockWaitPatterns) {
+			if (pattern.test(source)) {
+				return `${filePath}: unit tests must not wait on wall-clock time`;
+			}
+		}
+	}
+	if (isIntegrationTest(filePath)) {
+		for (const pattern of integrationWallClockWaitPatterns) {
+			if (pattern.test(source)) {
+				return `${filePath}: integration tests must not wait on wall-clock time`;
+			}
+		}
+	}
+	if (isE2eTest(filePath)) {
+		for (const pattern of e2eWallClockSleepPatterns) {
+			if (pattern.test(source)) {
+				return `${filePath}: e2e tests must wait on real process, filesystem, protocol, or VM events instead of wall-clock sleeps`;
+			}
+		}
+	}
+	return null;
+}
+
 async function collectViolations(): Promise<readonly string[]> {
 	const testFiles = await listTrackedTestFiles();
 	const fileViolations = await Promise.all(
@@ -140,22 +213,17 @@ async function collectViolations(): Promise<readonly string[]> {
 				);
 				return violations;
 			}
-			if (!isUnitTest(filePath)) {
-				return violations;
+			const rawSource = await readFile(filePath, 'utf8');
+			const boundaryViolation = classifyUnitBoundaryViolation(filePath, rawSource);
+			if (boundaryViolation !== null) {
+				violations.push(boundaryViolation);
 			}
-
-			const source = await readFile(filePath, 'utf8');
-			for (const pattern of unitBoundaryPatterns) {
-				if (pattern.test(source)) {
-					violations.push(`${filePath}: unit tests must not cross real process/network boundaries`);
-					break;
-				}
-			}
-			for (const pattern of unitWallClockWaitPatterns) {
-				if (pattern.test(source)) {
-					violations.push(`${filePath}: unit tests must not wait on wall-clock time`);
-					break;
-				}
+			const wallClockViolation = classifyWallClockWaitViolation(
+				filePath,
+				stripSingleAndDoubleQuotedStringContents(rawSource),
+			);
+			if (wallClockViolation !== null) {
+				violations.push(wallClockViolation);
 			}
 			return violations;
 		}),

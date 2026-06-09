@@ -1693,9 +1693,7 @@ describe('runBuildCommand', () => {
 					activeDockerBuilds += 1;
 					maxActiveDockerBuilds = Math.max(maxActiveDockerBuilds, activeDockerBuilds);
 					dockerBuildStarts.push(options.imageTag);
-					await new Promise((resolve) => {
-						setTimeout(resolve, 20);
-					});
+					await new Promise<void>((resolve) => setImmediate(resolve));
 					activeDockerBuilds -= 1;
 				},
 				buildGondolinImage: async (options) => {

@@ -537,7 +537,7 @@ export async function startControllerRuntime(
 	const stopController = createStopControllerOperation({
 		clearReaperTimer,
 		closeControllerServer: async () => {
-			setTimeout(() => {
+			(dependencies.setTimeoutImpl ?? setTimeout)(() => {
 				void serverRef.current?.close().catch((error: unknown) => {
 					writeControllerRuntimeLog(
 						`Failed to close controller HTTP server after stop request: ${formatUnknownError(error)}`,

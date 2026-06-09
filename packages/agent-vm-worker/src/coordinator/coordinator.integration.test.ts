@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { workerConfigSchema, type WorkerConfig } from '../config/worker-config.js';
 import { replayEvents } from '../state/event-log.js';
+import type { TaskStatus } from '../state/task-event-types.js';
 import type { WorkExecutor } from '../work-executor/executor-interface.js';
 import type { Coordinator } from './coordinator-types.js';
 import { createCoordinator } from './coordinator.js';
@@ -137,21 +138,9 @@ async function readEventNames(stateDir: string, taskId: string): Promise<readonl
 async function waitForStatus(
 	coordinator: Coordinator,
 	taskId: string,
-	expectedStatus: string,
-	timeoutMs: number = 5_000,
+	expectedStatus: TaskStatus,
 ): Promise<void> {
-	const start = Date.now();
-	while (Date.now() - start < timeoutMs) {
-		if (coordinator.getTaskState(taskId)?.status === expectedStatus) {
-			return;
-		}
-		// Polling is intentionally sequential while the background task advances.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-	throw new Error(
-		`Task ${taskId} did not reach ${expectedStatus}. Last status: ${coordinator.getTaskState(taskId)?.status ?? 'unknown'}`,
-	);
+	await coordinator.waitForTaskStatus(taskId, expectedStatus, { timeoutMs: 5_000 });
 }
 
 const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
@@ -322,6 +311,23 @@ describe('coordinator', () => {
 		expect(coordinator.getTaskState(taskId)?.failureReason).toContain(
 			'https://x-access-token:***@github.com/repo.git',
 		);
+	});
+
+	it('rejects status waits when a task reaches a different terminal state', async () => {
+		mocks.createWorkExecutor.mockImplementationOnce(() => {
+			throw new Error('boom');
+		});
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workDir: tempDir,
+		});
+
+		const { taskId } = await coordinator.submitTask({ taskId: 'terminal-mismatch', prompt: 'fix' });
+
+		await expect(
+			coordinator.waitForTaskStatus(taskId, 'completed', { timeoutMs: 5_000 }),
+		).rejects.toThrow(/terminal status failed before completed/u);
+		expect(coordinator.getTaskState(taskId)?.status).toBe('failed');
 	});
 
 	it('continues when context gathering fails', async () => {

@@ -61,25 +61,12 @@ const taskStatusBodySchema = z.object({
 	plan: z.string().nullable().optional(),
 });
 
-async function waitForTaskCompletion(
+async function readTaskState(
 	app: ReturnType<typeof createApp>,
 	taskId: string,
 ): Promise<z.infer<typeof taskStatusBodySchema>> {
-	for (let attempt = 0; attempt < 100; attempt += 1) {
-		// Task polling is intentionally serial so each request observes the latest coordinator state.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		const response = await app.request(`/tasks/${taskId}`);
-		// Response parsing is coupled to the sequential polling loop above.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		const body = taskStatusBodySchema.parse(await response.json());
-		if (body.status === 'completed' || body.status === 'failed') {
-			return body;
-		}
-		// Polling must remain sequential because task progression happens asynchronously.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-	throw new Error(`Task ${taskId} did not complete in time.`);
+	const response = await app.request(`/tasks/${taskId}`);
+	return taskStatusBodySchema.parse(await response.json());
 }
 
 describe('worker runtime integration', () => {
@@ -184,7 +171,8 @@ describe('worker runtime integration', () => {
 
 		expect(createResponse.status).toBe(201);
 
-		const taskState = await waitForTaskCompletion(app, 'integration-task-1');
+		await coordinator.waitForTaskStatus('integration-task-1', 'completed', { timeoutMs: 5_000 });
+		const taskState = await readTaskState(app, 'integration-task-1');
 		expect(taskState.status).toBe('completed');
 		expect(taskState.plan).toBe('The implementation plan');
 	});

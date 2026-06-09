@@ -1,9 +1,10 @@
-/* oxlint-disable eslint/no-await-in-loop -- smoke polling must be sequential against a live worker */
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import fs from 'node:fs/promises';
+import { once } from 'node:events';
+import fs, { watch } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import type { Readable } from 'node:stream';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -26,6 +27,100 @@ const runWorkerOnlySmoke = shouldRunWorkerRuntimeE2e({
 
 const describeWorkerOnlySmoke = runWorkerOnlySmoke ? describe : describe.skip;
 
+interface WorkerProcessOutput {
+	stderr: string;
+	stdout: string;
+}
+
+function withTimeout<TValue>(
+	promise: Promise<TValue>,
+	timeoutMs: number,
+	message: string,
+): Promise<TValue> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const timeoutPromise = new Promise<never>((_resolve, reject) => {
+		timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+	});
+	return Promise.race([promise, timeoutPromise]).finally(() => {
+		if (timeout !== undefined) {
+			clearTimeout(timeout);
+		}
+	});
+}
+
+function waitForOutputCondition(options: {
+	readonly child: ChildProcess;
+	readonly describeCondition: string;
+	readonly isReady: () => boolean;
+	readonly output: WorkerProcessOutput;
+	readonly stream: Readable | null;
+	readonly timeoutMs: number;
+}): Promise<void> {
+	if (options.isReady()) {
+		return Promise.resolve();
+	}
+	if (options.child.exitCode !== null) {
+		return Promise.reject(
+			new Error(
+				`${options.describeCondition} failed because the process exited:\n${options.output.stderr}`,
+			),
+		);
+	}
+	if (options.stream === null) {
+		return Promise.reject(new Error(`${options.describeCondition} failed: stdout is not piped.`));
+	}
+	const outputStream = options.stream;
+	return new Promise<void>((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			cleanup();
+			reject(
+				new Error(
+					`${options.describeCondition} did not complete within ${String(
+						options.timeoutMs,
+					)}ms.\nstdout:\n${options.output.stdout}\nstderr:\n${options.output.stderr}`,
+				),
+			);
+		}, options.timeoutMs);
+		const cleanup = (): void => {
+			clearTimeout(timeout);
+			outputStream.off('data', onData);
+			options.child.off('exit', onExit);
+		};
+		const onData = (): void => {
+			if (options.isReady()) {
+				cleanup();
+				resolve();
+			}
+		};
+		const onExit = (): void => {
+			cleanup();
+			reject(
+				new Error(
+					`${options.describeCondition} failed because the process exited:\n${options.output.stderr}`,
+				),
+			);
+		};
+		outputStream.on('data', onData);
+		options.child.once('exit', onExit);
+		onData();
+	});
+}
+
+async function waitForChildExit(
+	child: ChildProcess,
+	timeoutMs: number,
+	describeExit: string,
+): Promise<void> {
+	if (child.exitCode !== null) {
+		return;
+	}
+	await withTimeout(
+		once(child, 'exit').then(() => undefined),
+		timeoutMs,
+		`${describeExit} did not exit within ${String(timeoutMs)}ms.`,
+	);
+}
+
 async function findAvailablePort(): Promise<number> {
 	return await new Promise((resolve, reject) => {
 		const server = net.createServer();
@@ -47,22 +142,30 @@ async function findAvailablePort(): Promise<number> {
 	});
 }
 
-async function waitForWorkerReady(port: number): Promise<void> {
-	for (let attempt = 0; attempt < 40; attempt += 1) {
-		try {
-			const response = await fetch(`http://127.0.0.1:${port}/health`);
-			if (response.ok) {
-				return;
-			}
-		} catch {
-			// The worker process may still be starting up; retry until the timeout window is exhausted.
-		}
-		// Worker boot polling is intentionally sequential.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		await new Promise((resolve) => setTimeout(resolve, 500));
-	}
+async function waitForWorkerReady(options: {
+	readonly output: WorkerProcessOutput;
+	readonly port: number;
+	readonly workerProcess: ChildProcess;
+	readonly timeoutMs: number;
+}): Promise<void> {
+	await waitForOutputCondition({
+		child: options.workerProcess,
+		describeCondition: 'Worker readiness',
+		isReady: () =>
+			options.output.stdout.includes(
+				`Server listening on http://localhost:${String(options.port)}`,
+			),
+		output: options.output,
+		stream: options.workerProcess.stdout,
+		timeoutMs: options.timeoutMs,
+	});
 
-	throw new Error('Worker did not become ready in time.');
+	const response = await fetch(`http://127.0.0.1:${String(options.port)}/health`);
+	if (!response.ok) {
+		throw new Error(
+			`Worker reported listening but /health returned HTTP ${String(response.status)}.`,
+		);
+	}
 }
 
 async function createSampleRepo(baseDir: string): Promise<string> {
@@ -100,24 +203,62 @@ const taskStateSchema = z.object({
 	failureReason: z.string().nullable().optional(),
 });
 
-async function waitForTaskCompletion(
+async function readTaskState(
 	port: number,
 	taskId: string,
-): Promise<z.infer<typeof taskStateSchema>> {
-	for (let attempt = 0; attempt < 300; attempt += 1) {
-		const response = await fetch(`http://127.0.0.1:${port}/tasks/${taskId}`);
-		if (response.ok) {
-			const body = taskStateSchema.parse(await response.json());
-			if (body.status === 'completed' || body.status === 'failed') {
+): Promise<z.infer<typeof taskStateSchema> | null> {
+	const response = await fetch(`http://127.0.0.1:${String(port)}/tasks/${taskId}`);
+	if (!response.ok) {
+		return null;
+	}
+	return taskStateSchema.parse(await response.json());
+}
+
+async function waitForTaskCompletion(options: {
+	readonly port: number;
+	readonly stateDir: string;
+	readonly taskId: string;
+	readonly timeoutMs: number;
+}): Promise<z.infer<typeof taskStateSchema>> {
+	const tasksDir = path.join(options.stateDir, 'tasks');
+	await fs.mkdir(tasksDir, { recursive: true });
+	const watcher = watch(tasksDir, { persistent: false });
+	const deadlineMs = Date.now() + options.timeoutMs;
+	let lastState: z.infer<typeof taskStateSchema> | null = null;
+	try {
+		while (true) {
+			const nextTaskEvent = watcher.next();
+			// oxlint-disable-next-line eslint/no-await-in-loop -- each pass reads current state before waiting for the next JSONL append event
+			const body = await readTaskState(options.port, options.taskId);
+			lastState = body;
+			if (body !== null && (body.status === 'completed' || body.status === 'failed')) {
 				return body;
 			}
+			const remainingTimeoutMs = deadlineMs - Date.now();
+			if (remainingTimeoutMs <= 0) {
+				throw new Error(
+					`Task ${options.taskId} did not reach terminal state within ${String(
+						options.timeoutMs,
+					)}ms. Last state: ${JSON.stringify(lastState)}.`,
+				);
+			}
+			// oxlint-disable-next-line eslint/no-await-in-loop -- task completion is driven by sequential JSONL append events
+			const nextResult = await withTimeout(
+				nextTaskEvent,
+				remainingTimeoutMs,
+				`Task ${options.taskId} did not emit state changes within ${String(
+					options.timeoutMs,
+				)}ms. Last state: ${JSON.stringify(lastState)}.`,
+			);
+			if (nextResult.done === true) {
+				throw new Error(
+					`Task state watcher ended before ${options.taskId} reached terminal state.`,
+				);
+			}
 		}
-		// Task polling is intentionally sequential.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		await new Promise((resolve) => setTimeout(resolve, 1000));
+	} finally {
+		await watcher.return?.();
 	}
-
-	throw new Error(`Task ${taskId} did not reach a terminal state in time.`);
 }
 
 const createTaskResponseSchema = z.object({
@@ -129,9 +270,17 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 	let workerProcess: ChildProcess | undefined;
 
 	afterEach(async () => {
-		if (workerProcess && !workerProcess.killed) {
+		if (workerProcess && workerProcess.exitCode === null) {
 			workerProcess.kill('SIGTERM');
-			await new Promise((resolve) => setTimeout(resolve, 250));
+			try {
+				await waitForChildExit(workerProcess, 5_000, 'Worker SIGTERM shutdown');
+			} catch (error) {
+				if (workerProcess.exitCode === null) {
+					workerProcess.kill('SIGKILL');
+					await waitForChildExit(workerProcess, 5_000, 'Worker SIGKILL shutdown');
+				}
+				throw error;
+			}
 		}
 	});
 
@@ -156,6 +305,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 		const configPath = path.join(tempRoot, 'worker-config.json');
 		const port = await findAvailablePort();
 		const workerLogPath = path.join(tempRoot, 'worker.log');
+		const workerOutput: WorkerProcessOutput = { stderr: '', stdout: '' };
 
 		await fs.mkdir(stateDir, { recursive: true });
 		await fs.mkdir(workDir, { recursive: true });
@@ -186,7 +336,6 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 			}),
 		);
 
-		const workerLogHandle = await fs.open(workerLogPath, 'a');
 		workerProcess = spawn(
 			'node',
 			[workerEntrypoint, 'serve', '--port', String(port), '--config', configPath],
@@ -197,12 +346,25 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 					OPENAI_API_KEY: process.env.AGENT_VM_TEST_OPENAI_API_KEY ?? '',
 					WORK_DIR: workDir,
 				},
-				stdio: ['ignore', workerLogHandle.fd, workerLogHandle.fd],
+				stdio: ['ignore', 'pipe', 'pipe'],
 			},
 		);
+		workerProcess.stdout?.setEncoding('utf8');
+		workerProcess.stderr?.setEncoding('utf8');
+		workerProcess.stdout?.on('data', (chunk: string) => {
+			workerOutput.stdout += chunk;
+		});
+		workerProcess.stderr?.on('data', (chunk: string) => {
+			workerOutput.stderr += chunk;
+		});
 
 		try {
-			await waitForWorkerReady(port);
+			await waitForWorkerReady({
+				output: workerOutput,
+				port,
+				timeoutMs: 30_000,
+				workerProcess,
+			});
 
 			const createResponse = await fetch(`http://127.0.0.1:${port}/tasks`, {
 				method: 'POST',
@@ -224,19 +386,24 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 
 			expect(createResponse.status).toBe(201);
 			const createBody = createTaskResponseSchema.parse(await createResponse.json());
-			const finalState = await waitForTaskCompletion(port, createBody.taskId);
+			const finalState = await waitForTaskCompletion({
+				port,
+				stateDir,
+				taskId: createBody.taskId,
+				timeoutMs: 300_000,
+			});
 			if (finalState.status !== 'completed') {
 				throw new Error(`Worker-only smoke failed: ${JSON.stringify(finalState)}`);
 			}
 			expect((await fs.readFile(path.join(repoDir, 'READY.txt'), 'utf8')).trim()).toBe('READY');
 		} catch (error) {
+			await fs.writeFile(workerLogPath, workerOutput.stdout + workerOutput.stderr).catch(() => {});
 			const workerLog = await fs.readFile(workerLogPath, 'utf8').catch(() => '');
 			throw new Error(
 				`${error instanceof Error ? error.message : String(error)}\n\nWorker log:\n${workerLog}`,
 				{ cause: error },
 			);
 		} finally {
-			await workerLogHandle.close();
 			await fs.rm(tempRoot, { recursive: true, force: true });
 		}
 	}, 900_000);

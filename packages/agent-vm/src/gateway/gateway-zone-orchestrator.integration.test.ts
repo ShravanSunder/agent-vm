@@ -812,7 +812,7 @@ describe('startGatewayZone', () => {
 	it('reports owner-unsafe before secret resolution when both startup preflights fail', async () => {
 		const systemConfig = await createSystemConfig();
 		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			await new Promise<void>((resolve) => setImmediate(resolve));
 			throw new GatewayOwnershipUnsafeError({
 				evidence: {
 					kind: 'missing-record-port-owned',

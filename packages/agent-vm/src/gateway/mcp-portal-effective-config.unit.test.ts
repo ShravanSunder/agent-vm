@@ -1,64 +1,70 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import {
+	mcpConfigSchema,
+	mcpPortalConfigSchema,
+	type McpConfig,
+	type McpPortalConfig,
+} from '@agent-vm/config-contracts';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import type { SecretRef } from '@agent-vm/secret-management';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
-	planMcpPortalEffectiveConfig,
-	writeMcpPortalEffectiveConfig,
+	planMcpPortalEffectiveConfigFromConfig,
+	resolveMcpPortalEffectiveConfigFromConfig,
+	type McpPortalEffectiveConfigFromConfigProps,
 } from './mcp-portal-effective-config.js';
 
-const createdDirectories: string[] = [];
 type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType<typeof vi.fn> };
 
-const effectiveConfigManifestFileName = 'mcp-portal-effective-manifest.json';
-
-interface TestEffectiveConfigManifest {
-	readonly mcpConfigFile: string;
-	readonly portalConfigFile: string;
-	readonly schemaVersion: 1;
-}
-
-afterEach(async () => {
-	await Promise.all(
-		createdDirectories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-	);
-});
-
-async function createAuthoredDir(props: {
-	readonly mcpConfig: unknown;
-	readonly portalConfig?: unknown;
-}): Promise<string> {
-	const dir = await mkdtemp(path.join(tmpdir(), 'agent-vm-mcp-portal-authored-'));
-	createdDirectories.push(dir);
-	await writeFile(path.join(dir, 'mcp.config.jsonc'), JSON.stringify(props.mcpConfig), 'utf8');
-	await writeFile(
-		path.join(dir, 'mcp-portal.config.jsonc'),
-		JSON.stringify(
-			props.portalConfig ?? {
-				agents: { shravan: { profile: 'default' } },
-				profiles: {
-					default: {
-						namespaces: {
-							deepwiki: {
-								calls: {
-									requiresApproval: { allow: '*' },
-									withoutApproval: { allow: [] },
-								},
-								tools: { allow: '*' },
-							},
+function createDefaultPortalConfigInput(): unknown {
+	return {
+		agents: { shravan: { profile: 'default' } },
+		profiles: {
+			default: {
+				namespaces: {
+					deepwiki: {
+						calls: {
+							requiresApproval: { allow: '*' },
+							withoutApproval: { allow: [] },
 						},
+						tools: { allow: '*' },
 					},
 				},
-				schemaVersion: 1,
 			},
-		),
-		'utf8',
-	);
-	return dir;
+		},
+		schemaVersion: 1,
+	};
+}
+
+function parseMcpConfigForTest(config: unknown): McpConfig {
+	return mcpConfigSchema.parse(config);
+}
+
+function parsePortalConfigForTest(config: unknown): McpPortalConfig {
+	return mcpPortalConfigSchema.parse(config);
+}
+
+function createPlanPropsForTest(props: {
+	readonly allowedRawEnvSecretNames?: readonly string[];
+	readonly mcpConfig: unknown;
+	readonly portalConfig?: unknown;
+	readonly secretResolver?: SecretResolver;
+	readonly zoneId?: string;
+}): McpPortalEffectiveConfigFromConfigProps {
+	return {
+		effectiveHostConfigDir: path.join(tmpdir(), 'agent-vm-mcp-portal-effective-test'),
+		effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+		mcpConfig: parseMcpConfigForTest(props.mcpConfig),
+		portalConfig: parsePortalConfigForTest(props.portalConfig ?? createDefaultPortalConfigInput()),
+		secretResolver: props.secretResolver ?? createSecretResolver({}),
+		zoneId: props.zoneId ?? 'shravan',
+		...(props.allowedRawEnvSecretNames === undefined
+			? {}
+			: { allowedRawEnvSecretNames: props.allowedRawEnvSecretNames }),
+	};
 }
 
 function createSecretResolver(values: Readonly<Record<string, string>>): TestSecretResolver {
@@ -92,48 +98,6 @@ function createSecretResolver(values: Readonly<Record<string, string>>): TestSec
 	} satisfies SecretResolver & { readonly resolveAllMock: typeof resolveAll };
 }
 
-async function readEffectiveConfigManifest(
-	effectiveDir: string,
-): Promise<TestEffectiveConfigManifest> {
-	const manifest: unknown = JSON.parse(
-		await readFile(path.join(effectiveDir, effectiveConfigManifestFileName), 'utf8'),
-	);
-	if (
-		typeof manifest !== 'object' ||
-		manifest === null ||
-		!('schemaVersion' in manifest) ||
-		!('mcpConfigFile' in manifest) ||
-		!('portalConfigFile' in manifest)
-	) {
-		throw new Error('test effective config manifest has unexpected shape');
-	}
-	const schemaVersion = manifest.schemaVersion;
-	const mcpConfigFile = manifest.mcpConfigFile;
-	const portalConfigFile = manifest.portalConfigFile;
-	if (
-		schemaVersion !== 1 ||
-		typeof mcpConfigFile !== 'string' ||
-		typeof portalConfigFile !== 'string'
-	) {
-		throw new Error('test effective config manifest has unexpected shape');
-	}
-	return { mcpConfigFile, portalConfigFile, schemaVersion };
-}
-
-async function readEffectiveMcpConfig<TConfig>(effectiveDir: string): Promise<TConfig> {
-	const manifest = await readEffectiveConfigManifest(effectiveDir);
-	return JSON.parse(
-		await readFile(path.join(effectiveDir, manifest.mcpConfigFile), 'utf8'),
-	) as TConfig;
-}
-
-async function readEffectivePortalConfig<TConfig>(effectiveDir: string): Promise<TConfig> {
-	const manifest = await readEffectiveConfigManifest(effectiveDir);
-	return JSON.parse(
-		await readFile(path.join(effectiveDir, manifest.portalConfigFile), 'utf8'),
-	) as TConfig;
-}
-
 describe('MCP Portal effective config materialization', () => {
 	it('reports HTTP provider URL hosts as required gateway egress', async () => {
 		const mcpConfig = {
@@ -146,18 +110,11 @@ describe('MCP Portal effective config materialization', () => {
 			},
 			schemaVersion: 1,
 		};
-		const authoredDir = await createAuthoredDir({
-			mcpConfig,
-		});
 		const zoneEgressHosts = [{ audience: 'gateway', host: 'api.openai.com' }];
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
+			planMcpPortalEffectiveConfigFromConfig({
+				...createPlanPropsForTest({ mcpConfig }),
 			}),
 		).resolves.toMatchObject({
 			requiredGatewayEgressHosts: ['mcp.deepwiki.com'],
@@ -170,179 +127,131 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('does not report loopback HTTP provider URLs as external gateway egress', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					local_proxy: {
-						kind: 'mcp',
-						namespace: 'local_proxy',
-						transport: { kind: 'streamable-http', url: 'http://127.0.0.1:18791/mcp' },
-					},
-					localhost_proxy: {
-						kind: 'mcp',
-						namespace: 'localhost_proxy',
-						transport: { kind: 'sse', url: 'http://localhost:18792/sse' },
-					},
+		const mcpConfig = {
+			providers: {
+				local_proxy: {
+					kind: 'mcp',
+					namespace: 'local_proxy',
+					transport: { kind: 'streamable-http', url: 'http://127.0.0.1:18791/mcp' },
 				},
-				schemaVersion: 1,
+				localhost_proxy: {
+					kind: 'mcp',
+					namespace: 'localhost_proxy',
+					transport: { kind: 'sse', url: 'http://localhost:18792/sse' },
+				},
 			},
-		});
+			schemaVersion: 1,
+		};
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
-			}),
+			planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 		).resolves.toMatchObject({
 			requiredGatewayEgressHosts: [],
 		});
 	});
 
 	it('reports SSE provider URL hosts as required gateway egress', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					linear: {
-						kind: 'mcp',
-						namespace: 'linear',
-						transport: { kind: 'sse', url: 'https://events.linear.app/sse' },
-					},
+		const mcpConfig = {
+			providers: {
+				linear: {
+					kind: 'mcp',
+					namespace: 'linear',
+					transport: { kind: 'sse', url: 'https://events.linear.app/sse' },
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
-			}),
+			planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 		).resolves.toMatchObject({
 			requiredGatewayEgressHosts: ['events.linear.app'],
 		});
 	});
 
 	it('reports stdio required egress hosts', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					tavily: {
-						kind: 'mcp',
-						namespace: 'tavily',
-						transport: {
-							args: ['-y', 'tavily-mcp'],
-							command: 'npx',
-							kind: 'stdio',
-							networkAccess: 'declared',
-							requiredEgressHosts: ['api.tavily.com'],
-						},
+		const mcpConfig = {
+			providers: {
+				tavily: {
+					kind: 'mcp',
+					namespace: 'tavily',
+					transport: {
+						args: ['-y', 'tavily-mcp'],
+						command: 'npx',
+						kind: 'stdio',
+						networkAccess: 'declared',
+						requiredEgressHosts: ['api.tavily.com'],
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
-			}),
+			planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 		).resolves.toMatchObject({
 			requiredGatewayEgressHosts: ['api.tavily.com'],
 		});
 	});
 
 	it('requires stdio network access declarations', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					tavily: {
-						kind: 'mcp',
-						namespace: 'tavily',
-						transport: { args: ['-y', 'tavily-mcp'], command: 'npx', kind: 'stdio' },
-					},
+		const mcpConfig = {
+			providers: {
+				tavily: {
+					kind: 'mcp',
+					namespace: 'tavily',
+					transport: { args: ['-y', 'tavily-mcp'], command: 'npx', kind: 'stdio' },
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
-			}),
+			planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 		).rejects.toThrow(/tavily.*networkAccess/u);
 	});
 
 	it('requires stdio egress declarations for network-capable providers', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					tavily: {
-						kind: 'mcp',
-						namespace: 'tavily',
-						transport: {
-							args: ['-y', 'tavily-mcp'],
-							command: 'npx',
-							kind: 'stdio',
-							networkAccess: 'declared',
-						},
+		const mcpConfig = {
+			providers: {
+				tavily: {
+					kind: 'mcp',
+					namespace: 'tavily',
+					transport: {
+						args: ['-y', 'tavily-mcp'],
+						command: 'npx',
+						kind: 'stdio',
+						networkAccess: 'declared',
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
-			}),
+			planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 		).rejects.toThrow(/tavily.*requiredEgressHosts/u);
 	});
 
 	it('allows explicitly local-only stdio providers', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					local_repo: {
-						kind: 'mcp',
-						namespace: 'local_repo',
-						transport: {
-							args: ['server'],
-							command: 'local-mcp',
-							kind: 'stdio',
-							networkAccess: 'none',
-						},
+		const mcpConfig = {
+			providers: {
+				local_repo: {
+					kind: 'mcp',
+					namespace: 'local_repo',
+					transport: {
+						args: ['server'],
+						command: 'local-mcp',
+						kind: 'stdio',
+						networkAccess: 'none',
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
-			}),
+			planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 		).resolves.toMatchObject({
 			requiredGatewayEgressHosts: [],
 		});
@@ -351,129 +260,101 @@ describe('MCP Portal effective config materialization', () => {
 	it('rejects malformed provider and mediated secret hosts', async () => {
 		await Promise.all(
 			['*.example.com', '', 'https://api.example.com/path'].map(async (host) => {
-				const authoredDir = await createAuthoredDir({
-					mcpConfig: {
-						providers: {
-							tavily: {
-								kind: 'mcp',
-								namespace: 'tavily',
-								secretPolicies: {
-									TAVILY_API_KEY: { hosts: [host], injection: 'http-mediation' },
-								},
-								transport: {
-									args: ['-y', 'tavily-mcp'],
-									command: 'npx',
-									env: {
-										TAVILY_API_KEY: {
-											ref: 'op://agent-vm/tavily/credential',
-											source: '1password',
-										},
+				const mcpConfig = {
+					providers: {
+						tavily: {
+							kind: 'mcp',
+							namespace: 'tavily',
+							secretPolicies: {
+								TAVILY_API_KEY: { hosts: [host], injection: 'http-mediation' },
+							},
+							transport: {
+								args: ['-y', 'tavily-mcp'],
+								command: 'npx',
+								env: {
+									TAVILY_API_KEY: {
+										ref: 'op://agent-vm/tavily/credential',
+										source: '1password',
 									},
-									kind: 'stdio',
-									networkAccess: 'declared',
-									requiredEgressHosts: ['api.tavily.com'],
 								},
+								kind: 'stdio',
+								networkAccess: 'declared',
+								requiredEgressHosts: ['api.tavily.com'],
 							},
 						},
-						schemaVersion: 1,
 					},
-				});
+					schemaVersion: 1,
+				};
 
 				await expect(
-					planMcpPortalEffectiveConfig({
-						authoredConfigDir: authoredDir,
-						effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-						effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-						secretResolver: createSecretResolver({}),
-						zoneId: 'shravan',
-					}),
+					planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 				).rejects.toThrow(/secret policy TAVILY_API_KEY/u);
 			}),
 		);
 	});
 
 	it('deduplicates required gateway egress hosts', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					linear: {
-						kind: 'mcp',
-						namespace: 'linear',
-						secretPolicies: {
-							authorization: { hosts: ['api.linear.app'], injection: 'http-mediation' },
-						},
-						transport: {
-							headers: {
-								authorization: {
-									ref: 'op://agent-vm/linear/credential',
-									source: '1password',
-								},
+		const mcpConfig = {
+			providers: {
+				linear: {
+					kind: 'mcp',
+					namespace: 'linear',
+					secretPolicies: {
+						authorization: { hosts: ['api.linear.app'], injection: 'http-mediation' },
+					},
+					transport: {
+						headers: {
+							authorization: {
+								ref: 'op://agent-vm/linear/credential',
+								source: '1password',
 							},
-							kind: 'streamable-http',
-							url: 'https://api.linear.app/mcp',
 						},
+						kind: 'streamable-http',
+						url: 'https://api.linear.app/mcp',
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
-			}),
+			planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 		).resolves.toMatchObject({
 			requiredGatewayEgressHosts: ['api.linear.app'],
 		});
 	});
 
 	it('strips external proxy auth from managed effective portal config', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {},
-				schemaVersion: 1,
-			},
-			portalConfig: {
-				agents: {
-					shravan: {
-						hmacKey: {
-							ref: 'op://agent-vm/shravan-mcp-portal-approval/credential',
-							source: '1password',
-						},
-						profile: 'default',
-					},
-				},
-				externalAuth: {
-					masterKey: {
-						ref: 'op://agent-vm/sunfam-mcp-portal-external-auth/credential',
+		const portalConfig = {
+			agents: {
+				shravan: {
+					hmacKey: {
+						ref: 'op://agent-vm/shravan-mcp-portal-approval/credential',
 						source: '1password',
 					},
+					profile: 'default',
 				},
-				mcpProxy: {
-					auth: { headerName: 'authorization' },
-					server: { host: '127.0.0.1', port: 18791 },
-				},
-				profiles: { default: { namespaces: {} } },
-				schemaVersion: 1,
 			},
-		});
-		const effectiveDir = path.join(authoredDir, 'effective');
-
-		await writeMcpPortalEffectiveConfig({
-			authoredConfigDir: authoredDir,
-			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-			secretResolver: createSecretResolver({
-				'op://agent-vm/sunfam-mcp-portal-external-auth/credential': 'master-key',
+			externalAuth: {
+				masterKey: {
+					ref: 'op://agent-vm/sunfam-mcp-portal-external-auth/credential',
+					source: '1password',
+				},
+			},
+			mcpProxy: {
+				auth: { headerName: 'authorization' },
+				server: { host: '127.0.0.1', port: 18791 },
+			},
+			profiles: { default: { namespaces: {} } },
+			schemaVersion: 1,
+		};
+		const plan = await planMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				mcpConfig: { providers: {}, schemaVersion: 1 },
+				portalConfig,
 			}),
-			zoneId: 'shravan',
-		});
-		const effectivePortalConfig =
-			await readEffectivePortalConfig<Record<string, unknown>>(effectiveDir);
+		);
+		const effectivePortalConfig = plan.effectivePortalConfig;
 
 		expect(JSON.stringify(effectivePortalConfig)).not.toContain('source');
 		expect(JSON.stringify(effectivePortalConfig)).not.toContain('op://');
@@ -485,48 +366,41 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('resolves 1Password provider secrets once and writes environment-only effective configs', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					tavily: {
-						kind: 'mcp',
-						namespace: 'tavily',
-						secretPolicies: {
-							TAVILY_API_KEY: { hosts: ['api.tavily.com'], injection: 'http-mediation' },
-						},
-						transport: {
-							args: ['-y', 'tavily-mcp'],
-							command: 'npx',
-							env: {
-								TAVILY_API_KEY: {
-									ref: 'op://agent-vm/tavily/credential',
-									source: '1password',
-								},
+		const mcpConfig = {
+			providers: {
+				tavily: {
+					kind: 'mcp',
+					namespace: 'tavily',
+					secretPolicies: {
+						TAVILY_API_KEY: { hosts: ['api.tavily.com'], injection: 'http-mediation' },
+					},
+					transport: {
+						args: ['-y', 'tavily-mcp'],
+						command: 'npx',
+						env: {
+							TAVILY_API_KEY: {
+								ref: 'op://agent-vm/tavily/credential',
+								source: '1password',
 							},
-							kind: 'stdio',
-							networkAccess: 'declared',
-							requiredEgressHosts: ['api.tavily.com'],
 						},
+						kind: 'stdio',
+						networkAccess: 'declared',
+						requiredEgressHosts: ['api.tavily.com'],
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
-		const effectiveDir = path.join(authoredDir, 'effective');
+			schemaVersion: 1,
+		};
 		const secretResolver = createSecretResolver({
 			'op://agent-vm/tavily/credential': 'resolved-tavily',
 		});
 
-		const result = await writeMcpPortalEffectiveConfig({
-			authoredConfigDir: authoredDir,
-			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-			secretResolver,
-			zoneId: 'shravan',
-		});
-		const effectiveMcpConfig = await readEffectiveMcpConfig<{
+		const result = await resolveMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({ mcpConfig, secretResolver }),
+		);
+		const effectiveMcpConfig = result.effectiveMcpConfig as {
 			readonly providers: Record<string, { readonly transport: { readonly env: unknown } }>;
-		}>(effectiveDir);
+		};
 
 		expect(secretResolver.resolveAllMock).toHaveBeenCalledTimes(1);
 		expect(effectiveMcpConfig.providers.tavily?.transport.env).toEqual({
@@ -547,104 +421,64 @@ describe('MCP Portal effective config materialization', () => {
 		});
 	});
 
-	it('publishes generated effective configs through a single manifest pointer', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					linear: {
-						kind: 'mcp',
-						namespace: 'linear',
-						transport: { kind: 'streamable-http', url: 'https://api.linear.app/mcp' },
-					},
-				},
-				schemaVersion: 1,
-			},
-		});
-		const effectiveDir = path.join(authoredDir, 'effective');
-
-		await writeMcpPortalEffectiveConfig({
-			authoredConfigDir: authoredDir,
-			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-			secretResolver: createSecretResolver({}),
-			zoneId: 'shravan',
-		});
-		const manifest = await readEffectiveConfigManifest(effectiveDir);
-
-		expect(manifest.mcpConfigFile).toMatch(/^mcp\.config\.[0-9a-f-]+\.jsonc$/u);
-		expect(manifest.portalConfigFile).toMatch(/^mcp-portal\.config\.[0-9a-f-]+\.jsonc$/u);
-		await expect(
-			readFile(path.join(effectiveDir, manifest.mcpConfigFile), 'utf8'),
-		).resolves.toContain('linear');
-		await expect(
-			readFile(path.join(effectiveDir, manifest.portalConfigFile), 'utf8'),
-		).resolves.toContain('shravan');
-	});
-
 	it('generates provider-scoped secret env names to avoid cross-provider collisions', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					linear: {
-						kind: 'mcp',
-						namespace: 'linear',
-						secretPolicies: {
-							authorization: { hosts: ['api.linear.app'], injection: 'http-mediation' },
-						},
-						transport: {
-							headers: {
-								authorization: {
-									ref: 'op://agent-vm/linear/credential',
-									source: '1password',
-								},
-							},
-							kind: 'streamable-http',
-							url: 'https://api.linear.app/mcp',
-						},
+		const mcpConfig = {
+			providers: {
+				linear: {
+					kind: 'mcp',
+					namespace: 'linear',
+					secretPolicies: {
+						authorization: { hosts: ['api.linear.app'], injection: 'http-mediation' },
 					},
-					notion: {
-						kind: 'mcp',
-						namespace: 'notion',
-						secretPolicies: {
-							authorization: { hosts: ['api.notion.com'], injection: 'http-mediation' },
-						},
-						transport: {
-							headers: {
-								authorization: {
-									ref: 'op://agent-vm/notion/credential',
-									source: '1password',
-								},
+					transport: {
+						headers: {
+							authorization: {
+								ref: 'op://agent-vm/linear/credential',
+								source: '1password',
 							},
-							kind: 'streamable-http',
-							url: 'https://api.notion.com/mcp',
 						},
+						kind: 'streamable-http',
+						url: 'https://api.linear.app/mcp',
 					},
 				},
-				schemaVersion: 1,
+				notion: {
+					kind: 'mcp',
+					namespace: 'notion',
+					secretPolicies: {
+						authorization: { hosts: ['api.notion.com'], injection: 'http-mediation' },
+					},
+					transport: {
+						headers: {
+							authorization: {
+								ref: 'op://agent-vm/notion/credential',
+								source: '1password',
+							},
+						},
+						kind: 'streamable-http',
+						url: 'https://api.notion.com/mcp',
+					},
+				},
 			},
-		});
-		const effectiveDir = path.join(authoredDir, 'effective');
+			schemaVersion: 1,
+		};
 		const secretResolver = createSecretResolver({
 			'op://agent-vm/linear/credential': 'linear-token',
 			'op://agent-vm/notion/credential': 'notion-token',
 		});
 
-		const result = await writeMcpPortalEffectiveConfig({
-			authoredConfigDir: authoredDir,
-			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-			secretResolver,
-			zoneId: 'shravan',
-		});
-		const effectiveMcpConfig = await readEffectiveMcpConfig<{
-			readonly providers: Record<string, { readonly transport: { readonly headers: unknown } }>;
-		}>(effectiveDir);
+		const result = await resolveMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({ mcpConfig, secretResolver }),
+		);
 
-		expect(effectiveMcpConfig.providers.linear?.transport.headers).toEqual({
-			authorization: { name: 'AGENT_VM_MCP_LINEAR_AUTHORIZATION', source: 'environment' },
+		expect(result.effectiveMcpConfig.providers.linear?.transport).toMatchObject({
+			headers: {
+				authorization: { name: 'AGENT_VM_MCP_LINEAR_AUTHORIZATION', source: 'environment' },
+			},
 		});
-		expect(effectiveMcpConfig.providers.notion?.transport.headers).toEqual({
-			authorization: { name: 'AGENT_VM_MCP_NOTION_AUTHORIZATION', source: 'environment' },
+		expect(result.effectiveMcpConfig.providers.notion?.transport).toMatchObject({
+			headers: {
+				authorization: { name: 'AGENT_VM_MCP_NOTION_AUTHORIZATION', source: 'environment' },
+			},
 		});
 		expect(result.runtimeMediatedSecrets).toEqual({
 			AGENT_VM_MCP_LINEAR_AUTHORIZATION: {
@@ -669,132 +503,112 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('reports both source secrets when normalized provider secret names collide', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					linear: {
-						kind: 'mcp',
-						namespace: 'linear',
-						secretPolicies: {
-							'api-key': { hosts: ['api.linear.app'], injection: 'http-mediation' },
-							api_key: { hosts: ['api.linear.app'], injection: 'http-mediation' },
-						},
-						transport: {
-							headers: {
-								'api-key': {
-									ref: 'op://agent-vm/linear/api-key',
-									source: '1password',
-								},
-								api_key: {
-									ref: 'op://agent-vm/linear/api_key',
-									source: '1password',
-								},
+		const mcpConfig = {
+			providers: {
+				linear: {
+					kind: 'mcp',
+					namespace: 'linear',
+					secretPolicies: {
+						'api-key': { hosts: ['api.linear.app'], injection: 'http-mediation' },
+						api_key: { hosts: ['api.linear.app'], injection: 'http-mediation' },
+					},
+					transport: {
+						headers: {
+							'api-key': {
+								ref: 'op://agent-vm/linear/api-key',
+								source: '1password',
 							},
-							kind: 'streamable-http',
-							url: 'https://api.linear.app/mcp',
+							api_key: {
+								ref: 'op://agent-vm/linear/api_key',
+								source: '1password',
+							},
 						},
+						kind: 'streamable-http',
+						url: 'https://api.linear.app/mcp',
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 
 		await expect(
-			planMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: createSecretResolver({}),
-				zoneId: 'shravan',
-			}),
+			planMcpPortalEffectiveConfigFromConfig(createPlanPropsForTest({ mcpConfig })),
 		).rejects.toThrow(/api-key.*api_key|api_key.*api-key/u);
 	});
 
 	it('rejects authored environment provider secrets unless the generated env name is allowlisted', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					linear: {
-						kind: 'mcp',
-						namespace: 'linear',
-						secretPolicies: {
-							authorization: { hosts: [], injection: 'env' },
-						},
-						transport: {
-							headers: {
-								authorization: {
-									name: 'LINEAR_MCP_TOKEN',
-									source: 'environment',
-								},
+		const mcpConfig = {
+			providers: {
+				linear: {
+					kind: 'mcp',
+					namespace: 'linear',
+					secretPolicies: {
+						authorization: { hosts: [], injection: 'env' },
+					},
+					transport: {
+						headers: {
+							authorization: {
+								name: 'LINEAR_MCP_TOKEN',
+								source: 'environment',
 							},
-							kind: 'streamable-http',
-							url: 'https://api.linear.app/mcp',
 						},
+						kind: 'streamable-http',
+						url: 'https://api.linear.app/mcp',
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
-		const effectiveDir = path.join(authoredDir, 'effective');
+			schemaVersion: 1,
+		};
 		const secretResolver = createSecretResolver({
 			LINEAR_MCP_TOKEN: 'linear-env-token',
 		});
 
 		await expect(
-			writeMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: effectiveDir,
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver,
-				zoneId: 'shravan',
-			}),
+			resolveMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({ mcpConfig, secretResolver }),
+			),
 		).rejects.toThrow(/AGENT_VM_MCP_LINEAR_AUTHORIZATION.*rawEnvSecrets/u);
 	});
 
 	it('materializes explicitly allowlisted environment provider secrets through the shared resolver', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					linear: {
-						kind: 'mcp',
-						namespace: 'linear',
-						secretPolicies: {
-							authorization: { hosts: [], injection: 'env' },
-						},
-						transport: {
-							headers: {
-								authorization: {
-									name: 'LINEAR_MCP_TOKEN',
-									source: 'environment',
-								},
+		const mcpConfig = {
+			providers: {
+				linear: {
+					kind: 'mcp',
+					namespace: 'linear',
+					secretPolicies: {
+						authorization: { hosts: [], injection: 'env' },
+					},
+					transport: {
+						headers: {
+							authorization: {
+								name: 'LINEAR_MCP_TOKEN',
+								source: 'environment',
 							},
-							kind: 'streamable-http',
-							url: 'https://api.linear.app/mcp',
 						},
+						kind: 'streamable-http',
+						url: 'https://api.linear.app/mcp',
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
-		const effectiveDir = path.join(authoredDir, 'effective');
+			schemaVersion: 1,
+		};
 		const secretResolver = createSecretResolver({
 			LINEAR_MCP_TOKEN: 'linear-env-token',
 		});
 
-		const result = await writeMcpPortalEffectiveConfig({
-			authoredConfigDir: authoredDir,
-			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-			allowedRawEnvSecretNames: ['AGENT_VM_MCP_LINEAR_AUTHORIZATION'],
-			secretResolver,
-			zoneId: 'shravan',
-		});
-		const effectiveMcpConfig = await readEffectiveMcpConfig<{
-			readonly providers: Record<string, { readonly transport: { readonly headers: unknown } }>;
-		}>(effectiveDir);
+		const result = await resolveMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				allowedRawEnvSecretNames: ['AGENT_VM_MCP_LINEAR_AUTHORIZATION'],
+				mcpConfig,
+				secretResolver,
+			}),
+		);
 
-		expect(effectiveMcpConfig.providers.linear?.transport.headers).toEqual({
-			authorization: { name: 'AGENT_VM_MCP_LINEAR_AUTHORIZATION', source: 'environment' },
+		expect(result.effectiveMcpConfig.providers.linear?.transport).toMatchObject({
+			headers: {
+				authorization: { name: 'AGENT_VM_MCP_LINEAR_AUTHORIZATION', source: 'environment' },
+			},
 		});
 		expect(result.runtimeEnvironment).toEqual({
 			AGENT_VM_MCP_LINEAR_AUTHORIZATION: 'linear-env-token',
@@ -809,56 +623,48 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('materializes stdio provider http-mediation secrets as placeholder environment references', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					perplexity: {
-						kind: 'mcp',
-						namespace: 'perplexity',
-						secretPolicies: {
-							PERPLEXITY_API_KEY: {
-								hosts: ['api.perplexity.ai'],
-								injection: 'http-mediation',
-							},
-						},
-						transport: {
-							args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
-							command: 'npx',
-							env: {
-								PERPLEXITY_API_KEY: {
-									ref: 'op://agent-vm/sunfam-perplexity/credential',
-									source: '1password',
-								},
-							},
-							kind: 'stdio',
-							networkAccess: 'declared',
-							requiredEgressHosts: ['api.perplexity.ai'],
+		const mcpConfig = {
+			providers: {
+				perplexity: {
+					kind: 'mcp',
+					namespace: 'perplexity',
+					secretPolicies: {
+						PERPLEXITY_API_KEY: {
+							hosts: ['api.perplexity.ai'],
+							injection: 'http-mediation',
 						},
 					},
+					transport: {
+						args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+						command: 'npx',
+						env: {
+							PERPLEXITY_API_KEY: {
+								ref: 'op://agent-vm/sunfam-perplexity/credential',
+								source: '1password',
+							},
+						},
+						kind: 'stdio',
+						networkAccess: 'declared',
+						requiredEgressHosts: ['api.perplexity.ai'],
+					},
 				},
-				schemaVersion: 1,
 			},
-		});
-		const effectiveDir = path.join(authoredDir, 'effective');
+			schemaVersion: 1,
+		};
 		const secretResolver = createSecretResolver({
 			'op://agent-vm/sunfam-perplexity/credential': 'resolved-pplx-key',
 		});
 
-		const result = await writeMcpPortalEffectiveConfig({
-			authoredConfigDir: authoredDir,
-			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-			secretResolver,
-			zoneId: 'beta',
-		});
-		const effectiveMcpConfig = await readEffectiveMcpConfig<{
-			readonly providers: Record<string, { readonly transport: { readonly env: unknown } }>;
-		}>(effectiveDir);
+		const result = await resolveMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({ mcpConfig, secretResolver, zoneId: 'beta' }),
+		);
 
-		expect(effectiveMcpConfig.providers.perplexity?.transport?.env).toEqual({
-			PERPLEXITY_API_KEY: {
-				name: 'AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY',
-				source: 'environment',
+		expect(result.effectiveMcpConfig.providers.perplexity?.transport).toMatchObject({
+			env: {
+				PERPLEXITY_API_KEY: {
+					name: 'AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY',
+					source: 'environment',
+				},
 			},
 		});
 		expect(result.runtimeEnvironment).toEqual({});
@@ -871,33 +677,31 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('rejects missing resolved provider secret values', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					tavily: {
-						kind: 'mcp',
-						namespace: 'tavily',
-						secretPolicies: {
-							TAVILY_API_KEY: { hosts: ['api.tavily.com'], injection: 'http-mediation' },
-						},
-						transport: {
-							args: ['-y', 'tavily-mcp'],
-							command: 'npx',
-							env: {
-								TAVILY_API_KEY: {
-									ref: 'op://agent-vm/tavily/credential',
-									source: '1password',
-								},
+		const mcpConfig = {
+			providers: {
+				tavily: {
+					kind: 'mcp',
+					namespace: 'tavily',
+					secretPolicies: {
+						TAVILY_API_KEY: { hosts: ['api.tavily.com'], injection: 'http-mediation' },
+					},
+					transport: {
+						args: ['-y', 'tavily-mcp'],
+						command: 'npx',
+						env: {
+							TAVILY_API_KEY: {
+								ref: 'op://agent-vm/tavily/credential',
+								source: '1password',
 							},
-							kind: 'stdio',
-							networkAccess: 'declared',
-							requiredEgressHosts: ['api.tavily.com'],
 						},
+						kind: 'stdio',
+						networkAccess: 'declared',
+						requiredEgressHosts: ['api.tavily.com'],
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 		const emptyResolver = {
 			resolve: async () => {
 				throw new Error('not used');
@@ -906,44 +710,38 @@ describe('MCP Portal effective config materialization', () => {
 		} satisfies SecretResolver;
 
 		await expect(
-			writeMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				secretResolver: emptyResolver,
-				zoneId: 'shravan',
-			}),
+			resolveMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({ mcpConfig, secretResolver: emptyResolver }),
+			),
 		).rejects.toThrow(/AGENT_VM_MCP_TAVILY_TAVILY_API_KEY/u);
 	});
 
 	it('rejects empty resolved provider secret values', async () => {
-		const authoredDir = await createAuthoredDir({
-			mcpConfig: {
-				providers: {
-					tavily: {
-						kind: 'mcp',
-						namespace: 'tavily',
-						secretPolicies: {
-							TAVILY_API_KEY: { hosts: [], injection: 'env' },
-						},
-						transport: {
-							args: ['-y', 'tavily-mcp'],
-							command: 'npx',
-							env: {
-								TAVILY_API_KEY: {
-									ref: 'op://agent-vm/tavily/credential',
-									source: '1password',
-								},
+		const mcpConfig = {
+			providers: {
+				tavily: {
+					kind: 'mcp',
+					namespace: 'tavily',
+					secretPolicies: {
+						TAVILY_API_KEY: { hosts: [], injection: 'env' },
+					},
+					transport: {
+						args: ['-y', 'tavily-mcp'],
+						command: 'npx',
+						env: {
+							TAVILY_API_KEY: {
+								ref: 'op://agent-vm/tavily/credential',
+								source: '1password',
 							},
-							kind: 'stdio',
-							networkAccess: 'declared',
-							requiredEgressHosts: ['api.tavily.com'],
 						},
+						kind: 'stdio',
+						networkAccess: 'declared',
+						requiredEgressHosts: ['api.tavily.com'],
 					},
 				},
-				schemaVersion: 1,
 			},
-		});
+			schemaVersion: 1,
+		};
 		const emptyValueResolver = {
 			resolve: async () => {
 				throw new Error('not used');
@@ -952,14 +750,13 @@ describe('MCP Portal effective config materialization', () => {
 		} satisfies SecretResolver;
 
 		await expect(
-			writeMcpPortalEffectiveConfig({
-				authoredConfigDir: authoredDir,
-				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
-				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
-				allowedRawEnvSecretNames: ['AGENT_VM_MCP_TAVILY_TAVILY_API_KEY'],
-				secretResolver: emptyValueResolver,
-				zoneId: 'shravan',
-			}),
+			resolveMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					allowedRawEnvSecretNames: ['AGENT_VM_MCP_TAVILY_TAVILY_API_KEY'],
+					mcpConfig,
+					secretResolver: emptyValueResolver,
+				}),
+			),
 		).rejects.toThrow(/AGENT_VM_MCP_TAVILY_TAVILY_API_KEY/u);
 	});
 });

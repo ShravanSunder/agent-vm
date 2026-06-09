@@ -1,5 +1,5 @@
 /* oxlint-disable eslint/no-await-in-loop -- E2E steps are sequential against live VMs */
-import fs from 'node:fs/promises';
+import fs, { watch } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -14,6 +14,10 @@ import {
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import {
+	controllerHealthEventLogPath,
+	readDurableHealthEvents,
+} from '../controller/health/durable-health-event-log.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinE2e,
@@ -65,6 +69,24 @@ function latestEvents(snapshot: ZoneHealthSnapshot): readonly AgentVmHealthEvent
 	return 'latestEvents' in snapshot ? snapshot.latestEvents : [];
 }
 
+class E2eTimeoutError extends Error {}
+
+function withTimeout<TValue>(
+	promise: Promise<TValue>,
+	timeoutMs: number,
+	message: string,
+): Promise<TValue> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const timeoutPromise = new Promise<never>((_resolve, reject) => {
+		timeout = setTimeout(() => reject(new E2eTimeoutError(message)), timeoutMs);
+	});
+	return Promise.race([promise, timeoutPromise]).finally(() => {
+		if (timeout !== undefined) {
+			clearTimeout(timeout);
+		}
+	});
+}
+
 async function readHealthSnapshot(controllerUrl: string): Promise<ZoneHealthSnapshot> {
 	const response = await fetch(
 		`${controllerUrl}/zones/${encodeURIComponent(zoneId)}/health-snapshot`,
@@ -79,17 +101,53 @@ async function waitForHealthEvent(options: {
 	readonly controllerUrl: string;
 	readonly describeEvent: string;
 	readonly matches: (event: AgentVmHealthEvent) => boolean;
+	readonly runtimeDir: string;
 	readonly timeoutMs: number;
 }): Promise<AgentVmHealthEvent> {
-	const deadline = Date.now() + options.timeoutMs;
-	let lastSnapshot: ZoneHealthSnapshot | undefined;
-	while (Date.now() < deadline) {
-		lastSnapshot = await readHealthSnapshot(options.controllerUrl);
+	const eventLogPath = controllerHealthEventLogPath(options.runtimeDir);
+	await fs.mkdir(path.dirname(eventLogPath), { recursive: true });
+	await fs.appendFile(eventLogPath, '', 'utf8');
+	const watcher = watch(eventLogPath, { persistent: false });
+	const deadlineMs = Date.now() + options.timeoutMs;
+	try {
+		while (true) {
+			const nextLogChange = watcher.next();
+			const event = (await readDurableHealthEvents({ runtimeDir: options.runtimeDir }))
+				.map((record) => record.body)
+				.find(options.matches);
+			if (event !== undefined) {
+				return event;
+			}
+			const remainingTimeoutMs = deadlineMs - Date.now();
+			if (remainingTimeoutMs <= 0) {
+				break;
+			}
+			let nextResult: Awaited<ReturnType<typeof watcher.next>>;
+			try {
+				nextResult = await withTimeout(
+					nextLogChange,
+					remainingTimeoutMs,
+					`Timed out waiting for ${options.describeEvent}`,
+				);
+			} catch (error) {
+				if (error instanceof E2eTimeoutError) {
+					break;
+				}
+				throw error;
+			}
+			if (nextResult.done === true) {
+				break;
+			}
+		}
+	} finally {
+		await watcher.return?.();
+	}
+	const lastSnapshot = await readHealthSnapshot(options.controllerUrl).catch(() => undefined);
+	if (lastSnapshot !== undefined) {
 		const event = latestEvents(lastSnapshot).find(options.matches);
 		if (event !== undefined) {
 			return event;
 		}
-		await new Promise((resolve) => setTimeout(resolve, 500));
 	}
 	throw new Error(
 		`Timed out waiting for ${options.describeEvent}; last snapshot: ${JSON.stringify(lastSnapshot)}`,
@@ -347,6 +405,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 			controllerUrl: harness.controllerUrl,
 			describeEvent: 'gateway-service-health ok',
 			matches: (event) => event.kind === 'gateway-service-health' && event.result === 'ok',
+			runtimeDir: harness.systemConfig.runtimeDir,
 			timeoutMs: 60_000,
 		});
 		expect(gatewayServiceEvent).toMatchObject({ kind: 'gateway-service-health', result: 'ok' });
@@ -355,6 +414,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 			controllerUrl: harness.controllerUrl,
 			describeEvent: 'gateway-control-link ok',
 			matches: (event) => event.kind === 'gateway-control-link' && event.result === 'ok',
+			runtimeDir: harness.systemConfig.runtimeDir,
 			timeoutMs: 60_000,
 		});
 		expect(gatewayControlLinkEvent).toMatchObject({
@@ -410,6 +470,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 				event.leaseId === lease.leaseId &&
 				event.useId === useId &&
 				event.result === 'ok',
+			runtimeDir: harness.systemConfig.runtimeDir,
 			timeoutMs: 30_000,
 		});
 		await waitForHealthEvent({
@@ -417,6 +478,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 			describeEvent: 'lease-renew ok',
 			matches: (event) =>
 				event.kind === 'lease-renew' && event.leaseId === lease.leaseId && event.result === 'ok',
+			runtimeDir: harness.systemConfig.runtimeDir,
 			timeoutMs: 30_000,
 		});
 
@@ -466,6 +528,7 @@ echo "stopped openclaw gateway pid $gateway_pid"
 				event.kind === 'gateway-recovery' &&
 				event.result === 'ok' &&
 				event.oldVmId === initialGatewayVmId,
+			runtimeDir: harness.systemConfig.runtimeDir,
 			timeoutMs: 300_000,
 		});
 

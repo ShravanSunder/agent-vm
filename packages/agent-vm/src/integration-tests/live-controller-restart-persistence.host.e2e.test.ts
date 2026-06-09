@@ -8,6 +8,7 @@ import type { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import { startControllerHttpServer } from '../controller/http/controller-http-server.js';
 import type { controllerLeaseCreateRequestSchema } from '../controller/http/controller-request-schemas.js';
 import {
 	createManagedExecProcessStub,
@@ -161,21 +162,6 @@ function createGatewayVmMock(
 	};
 }
 
-async function waitForControllerShutdown(controllerPort: number): Promise<boolean> {
-	for (let attempt = 0; attempt < 20; attempt += 1) {
-		try {
-			// oxlint-disable-next-line no-await-in-loop -- polling shutdown transition
-			await fetch(`http://127.0.0.1:${controllerPort}/health`);
-		} catch {
-			return true;
-		}
-		// oxlint-disable-next-line no-await-in-loop -- polling shutdown transition
-		await new Promise((resolve) => setTimeout(resolve, 50));
-	}
-
-	return false;
-}
-
 const createdDirectories: string[] = [];
 
 afterEach(() => {
@@ -227,6 +213,7 @@ describe('live integration: controller restart persistence', () => {
 			throw new Error('Expected restart test zone.');
 		}
 
+		let currentServerClosed: Promise<void> | undefined;
 		const startRuntime = async (): ReturnType<typeof startControllerRuntime> =>
 			await startControllerRuntime(
 				{
@@ -264,6 +251,30 @@ describe('live integration: controller restart persistence', () => {
 						lstart: 'Fri May 22 10:00:00 2026',
 					}),
 					readIdentityPem: async () => 'pem',
+					setTimeoutImpl: (callback) => {
+						queueMicrotask(callback);
+						return {} as NodeJS.Timeout;
+					},
+					startHttpServer: async (startHttpServerOptions) => {
+						let resolveServerClosed: () => void;
+						let rejectServerClosed: (error: unknown) => void;
+						currentServerClosed = new Promise<void>((resolve, reject) => {
+							resolveServerClosed = resolve;
+							rejectServerClosed = reject;
+						});
+						const server = await startControllerHttpServer(startHttpServerOptions);
+						return {
+							close: async () => {
+								try {
+									await server.close();
+									resolveServerClosed();
+								} catch (error) {
+									rejectServerClosed(error);
+									throw error;
+								}
+							},
+						};
+					},
 					startGatewayZone: vi.fn(async () => ({
 						image: {
 							built: true,
@@ -308,8 +319,11 @@ describe('live integration: controller restart persistence', () => {
 		});
 		expect(stopResponse.status).toBe(200);
 
-		const healthStopped = await waitForControllerShutdown(controllerPort);
-		expect(healthStopped).toBe(true);
+		if (currentServerClosed === undefined) {
+			throw new Error('Expected controller server close promise to be captured.');
+		}
+		await currentServerClosed;
+		await expect(fetch(`http://127.0.0.1:${String(controllerPort)}/health`)).rejects.toThrow();
 
 		const restartedRuntime = await startRuntime();
 

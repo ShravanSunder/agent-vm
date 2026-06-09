@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 
 import { createManagedVm } from '@agent-vm/gondolin-adapter';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
@@ -18,13 +19,35 @@ import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 
-async function fetchIngressUntilReady(url: string, attempt = 0): Promise<Response> {
-	const response = await fetch(url);
-	if (response.status !== 502 || attempt >= 30) {
-		return response;
+const ingressReadyTimeoutMs = 10_000;
+const ingressRetryIntervalMs = 100;
+
+async function fetchIngressUntilReady(url: string): Promise<{
+	readonly body: string;
+	readonly response: Response;
+}> {
+	let lastError = 'not attempted';
+	const startedAtMs = performance.now();
+	while (performance.now() - startedAtMs <= ingressReadyTimeoutMs) {
+		try {
+			// AbortSignal.timeout is a protocol safety bound for a single ingress request.
+			// oxlint-disable-next-line no-await-in-loop -- ingress readiness checks must observe sequential proxy state.
+			const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
+			// oxlint-disable-next-line no-await-in-loop -- the response body is tied to the sequential request above.
+			const body = await response.text();
+			if (response.status !== 502) {
+				return { body, response };
+			}
+			lastError = `HTTP ${String(response.status)}: ${body}`;
+		} catch (error) {
+			lastError = error instanceof Error ? error.message : String(error);
+		}
+		// oxlint-disable-next-line no-await-in-loop -- ingress readiness has no event source; use bounded protocol retry backoff.
+		await waitForRetryInterval(ingressRetryIntervalMs);
 	}
-	await new Promise((resolve) => setTimeout(resolve, 100));
-	return await fetchIngressUntilReady(url, attempt + 1);
+	throw new Error(
+		`Ingress did not become ready within ${String(ingressReadyTimeoutMs)}ms. Last error: ${lastError}`,
+	);
 }
 
 describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
@@ -184,9 +207,9 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 		vm.setIngressRoutes([{ prefix: '/', port: 18080, stripPrefix: true }]);
 		const ingress = await vm.enableIngress({ listenPort: 0 });
 
-		// Fetch from host
-		const response = await fetchIngressUntilReady(`http://${ingress.host}:${ingress.port}/`);
-		const body = await response.text();
+		const { body, response } = await fetchIngressUntilReady(
+			`http://${ingress.host}:${String(ingress.port)}/`,
+		);
 
 		expect(response.status).toBe(200);
 		expect(body).toBe('ingress_works');

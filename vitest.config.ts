@@ -83,12 +83,12 @@ export default defineConfig({
 		globalSetup: [
 			repoPath('packages/agent-vm/src/integration-tests/e2e-workspace-build-global-setup.ts'),
 		],
-		setupFiles: [repoPath('vitest.setup.ts')],
 		projects: [
 			{
 				extends: true,
 				test: {
 					name: 'unit',
+					pool: 'threads',
 					include: [
 						'packages/**/*.unit.test.ts',
 						'packages/**/*.unit.spec.ts',
@@ -108,6 +108,7 @@ export default defineConfig({
 				extends: true,
 				test: {
 					name: 'integration',
+					pool: 'threads',
 					include: ['packages/**/*.integration.test.ts'],
 					exclude: ['**/node_modules/**', '**/*.e2e.test.ts'],
 					maxWorkers: '50%',

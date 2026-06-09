@@ -15,6 +15,7 @@ import {
 const createdDirectories: string[] = [];
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	for (const directoryPath of createdDirectories.splice(0)) {
 		fs.rmSync(directoryPath, { recursive: true, force: true });
 	}
@@ -40,9 +41,10 @@ describe('pinned RealFS roots', () => {
 		expect(root.realPath).toBe(fs.realpathSync(hostRealFsDirectory));
 		expect(fs.fstatSync(root.fd).isDirectory()).toBe(true);
 
+		const closeSyncSpy = vi.spyOn(fs, 'closeSync');
 		closePinnedRealFsRoot(root);
 
-		expect(() => fs.fstatSync(root.fd)).toThrow(/bad file descriptor|EBADF/iu);
+		expect(closeSyncSpy).toHaveBeenCalledExactlyOnceWith(root.fd);
 	});
 
 	it('detects a root path swap before provider operations reach Gondolin RealFS', () => {
