@@ -184,6 +184,34 @@ describe('zod from JSON Schema loader', () => {
 		});
 	});
 
+	it('does not normalize pattern-matched properties through additionalProperties', () => {
+		const validator = buildZodValidatorFromJsonSchema({
+			additionalProperties: { type: 'integer' },
+			patternProperties: {
+				'^x-': { type: 'string' },
+			},
+			type: 'object',
+		});
+
+		expect(validator.ok).toBe(true);
+		if (!validator.ok) {
+			throw new Error('validator should build');
+		}
+
+		expect(
+			validator.validate({
+				count: '2',
+				'x-code': '7',
+			}),
+		).toEqual({
+			ok: true,
+			value: {
+				count: 2,
+				'x-code': '7',
+			},
+		});
+	});
+
 	it('normalizes stringified values through implicit object and array schemas', () => {
 		const validator = buildZodValidatorFromJsonSchema({
 			properties: {

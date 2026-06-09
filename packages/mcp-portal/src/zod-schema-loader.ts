@@ -268,6 +268,7 @@ function normalizeObjectValueForJsonSchema(
 	}
 
 	const patternProperties = schema.patternProperties;
+	const matchedPatternProperties = new Set<string>();
 	if (isJsonSchemaObject(patternProperties)) {
 		for (const [pattern, patternSchema] of Object.entries(patternProperties)) {
 			if (!isJsonSchemaObject(patternSchema)) {
@@ -286,6 +287,7 @@ function normalizeObjectValueForJsonSchema(
 						normalizedValue[propertyName],
 						rootSchema,
 					);
+					matchedPatternProperties.add(propertyName);
 				}
 			}
 		}
@@ -295,6 +297,9 @@ function normalizeObjectValueForJsonSchema(
 	if (isJsonSchemaObject(additionalProperties)) {
 		for (const propertyName of Object.keys(normalizedValue)) {
 			if (isJsonSchemaObject(properties) && propertyName in properties) {
+				continue;
+			}
+			if (matchedPatternProperties.has(propertyName)) {
 				continue;
 			}
 			normalizedValue[propertyName] = normalizeValueForJsonSchema(
