@@ -98,9 +98,11 @@ fast formatting and linting.
   This discovers e2e files with gates closed. It may report skips and is not
   proof that a VM, gateway, provider, secret resolver, or model path worked.
 - Default non-secret E2E proof: `mise exec -- pnpm test:e2e`.
-  This runs `pnpm build` once, then runs the VM/Gondolin proof lane with
-  `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1`.
+  This runs `pnpm build` once, then runs the host subprocess and VM/Gondolin
+  proof lanes with `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1` where a lane needs
+  built workspace artifacts.
 - Additional E2E proof lanes:
+  - Host subprocess proofs: `pnpm test:e2e:host`.
   - VM/Gondolin: `mise exec -- pnpm test:e2e:vm`.
   - VM/Gondolin HTTP mediation: `mise exec -- pnpm test:e2e:vm-mediation`.
   - OpenClaw gateway: `mise exec -- pnpm test:e2e:openclaw`.
@@ -132,6 +134,7 @@ The suffix is the contract. Do not use plain `*.test.ts` for new tests.
 
 - Unit tests must use `*.unit.test.ts` or `*.unit.spec.ts`.
 - Integration tests must use `*.integration.test.ts`.
+- Host subprocess e2e tests must use `*.host.e2e.test.ts`.
 - VM e2e tests must use `*.vm.e2e.test.ts`.
 - OpenClaw e2e tests must use `*.openclaw.e2e.test.ts`.
 - Worker e2e tests must use `*.worker.e2e.test.ts`.
@@ -139,8 +142,9 @@ The suffix is the contract. Do not use plain `*.test.ts` for new tests.
 - LLM-gated e2e tests must use `*.llm.e2e.test.ts`.
 
 Coverage must not be deleted or weakened to make a layer faster. If a slow
-real-boundary test leaves the unit lane, keep the real coverage in integration
-and add or keep pure unit coverage for the underlying decision logic.
+real-boundary test leaves a lower lane, keep the real coverage in the proper
+higher lane and add or keep pure unit coverage for the underlying decision
+logic.
 
 Unit tests are process-local and deterministic. They may use mocks, stubs, fake
 timers, pure temp-file serialization, and injected clocks. They must not run real
@@ -149,12 +153,13 @@ bind real TCP/HTTP listeners; boot a controller; build packages or images; or
 wait on wall-clock time for internal logic. Use fake timers or injected clocks
 for retry, timeout, heartbeat, polling, and reaper behavior.
 
-Integration tests prove boundaries between modules and real host facilities:
-real CLI/process execution, real Git, real archive/encryption tools, HTTP server
-wiring, temp deployment roots, and lifecycle orchestration with fake VM/provider
-edges. Integration tests should run in parallel by default; tests that require
-exclusive host resources must isolate with temp dirs, ephemeral ports, and unique
-names rather than disabling the whole lane.
+Integration tests prove boundaries between modules without expensive host
+subprocess proofs: real Node/controller wiring, HTTP server wiring, temp state
+dirs, temp deployment roots, built CLI/manual generation, config validation, and
+lifecycle orchestration with fake VM/provider edges. They should be fast,
+parallel, deterministic, and event-driven. They must not use wall-clock sleeps
+for internal retry, timeout, heartbeat, polling, or reaper behavior; inject
+clocks or wait on explicit events instead.
 
 E2E tests prove production-shaped behavior from outside the system. E2E tests
 should also be parallel-safe through temp roots, dynamic ports, shared build
@@ -176,6 +181,13 @@ package inputs. The intended loop is build once, pack with scripts disabled into
 the shared cache, prepare images into the shared cache, then run the runtime
 proof.
 
+Host subprocess e2e tests are the home for expensive host-boundary proofs that
+do not boot a VM but do execute production-shaped host tools: real `git`, `tar`,
+`age`, package-manager-style CLI entrypoints, shell bootstrap rendering, and
+other external process behavior. These tests must keep temp roots isolated and
+must be included in the default `pnpm test:e2e` proof lane so coverage is not
+lost when `pnpm test:integration` stays fast.
+
 ### Testing Pyramid And Evidence Names
 
 Name test evidence by the highest real layer it exercised. Do not relabel lower
@@ -190,6 +202,10 @@ layers as e2e.
   CLI/manual generation, and config validation. These tests prove contracts
   between modules, but they are not e2e if the VM/provider/product path is
   fake.
+- Host subprocess e2e: production-shaped host command proofs that do not boot a
+  VM, such as real Git, archive/encryption tools, package-manager-style CLI
+  entrypoints, and shell bootstrap rendering. They are higher than integration
+  because they execute external host programs and are allowed to be slower.
 - Real VM integration: boots the real Gondolin/QEMU path or a real managed image
   path and proves host/guest wiring, ingress, control link, runtime records, or
   Tool VM SSH with the pinned toolchain active through `mise exec --`.
@@ -206,6 +222,7 @@ must climb the pyramid explicitly:
 ```text
 unit          -> exact command and pass/fail count
 integration   -> exact command and pass/fail count
+e2e host      -> exact no-skip command, pass/fail count, and host prerequisites
 e2e inventory -> exact command and pass/fail/skip count, marked inventory only
 e2e proof     -> exact no-skip command, pass/fail count, and prerequisites
 ```
@@ -224,9 +241,10 @@ they do not prove the live feature.
   package-wide scripts, not for unrelated root scripts.
 - Default live VM e2e gate: `pnpm test:e2e`.
   This is intentionally owned by `scripts/run-e2e-proof-lanes.ts`: it runs one
-  workspace build, then runs independent proof lanes in parallel with
-  `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1`. Keep build-once/test-many orchestration
-  there instead of adding shell `&&` chains to `package.json`.
+  workspace build, then runs independent host and VM proof lanes in parallel
+  with `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1` for lanes that consume the build.
+  Keep build-once/test-many orchestration there instead of adding shell `&&`
+  chains to `package.json`.
 - OXC formatting: `pnpm fmt:check` to verify, `pnpm fmt` to apply Oxfmt.
 - OXC linting: `pnpm lint` for Oxlint, `pnpm lint:types` for type-aware Oxlint.
 - Typecheck: `pnpm typecheck`.
@@ -264,7 +282,7 @@ Use targeted tests first:
 
 - Config shape: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.unit.test.ts`.
 - Portal tool result shapes: `pnpm vitest run packages/mcp-portal/src/core/portal-tools.unit.test.ts`.
-- Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.unit.test.ts`.
+- Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.integration.test.ts`.
 
 When testing a deployment, run static validation before boot work, then live MCP
 validation after provider/profile edits:

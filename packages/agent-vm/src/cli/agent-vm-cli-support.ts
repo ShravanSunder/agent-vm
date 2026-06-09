@@ -23,11 +23,15 @@ import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runConfigValidation } from '../operations/config-validation.js';
 import { runControllerOfflineCleanup } from '../operations/controller-offline-cleanup.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
-import { runControllerDoctor } from '../operations/doctor.js';
+import { type DoctorCheck, runControllerDoctor } from '../operations/doctor.js';
 import { runBuildCommand } from './build-command.js';
 import { runCacheCommand } from './cache-commands.js';
 import { resolveCliVersion } from './cli-version.js';
 import { resetWorkerInstructions } from './config-commands.js';
+import type {
+	CollectDynamicDoctorChecksOptions,
+	ControllerDoctorEnvironment,
+} from './controller-operation-commands.js';
 import {
 	scaffoldAgentVmProject,
 	type ScaffoldAgentVmProjectOptions,
@@ -49,6 +53,13 @@ export interface CliDependencies {
 	readonly createControllerClient: typeof createControllerClient;
 	readonly createSecretResolver: typeof createSecretResolver;
 	readonly createZoneBackupManager: typeof createZoneBackupManager;
+	readonly collectControllerDoctorEnvironment?: (
+		systemConfig: LoadedSystemConfig,
+		dependencies: CliDependencies,
+	) => Promise<ControllerDoctorEnvironment>;
+	readonly collectDynamicDoctorChecks?: (
+		options: CollectDynamicDoctorChecksOptions,
+	) => Promise<readonly DoctorCheck[]>;
 	readonly getCurrentWorkingDirectory?: () => string;
 	readonly initRepoResources?: (options: {
 		readonly targetDir: string;

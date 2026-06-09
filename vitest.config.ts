@@ -116,8 +116,19 @@ export default defineConfig({
 			{
 				extends: true,
 				test: {
+					name: 'e2e-host',
+					include: ['packages/**/*.host.e2e.test.ts'],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: '50%',
+				},
+			},
+			{
+				extends: true,
+				test: {
 					name: 'e2e-inventory',
 					include: ['packages/**/*.e2e.test.ts'],
+					exclude: ['**/*.host.e2e.test.ts'],
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
 					maxWorkers: 2,

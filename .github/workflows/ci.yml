@@ -116,8 +116,8 @@ jobs:
       - name: Format check
         run: pnpm fmt:check
 
-      # Typecheck skipped in CI — @earendil-works/gondolin is locally linked
-      # and not available in CI. Run `pnpm check` locally to verify types.
+      - name: Typecheck
+        run: pnpm typecheck
 
       - name: Unit tests
         run: pnpm test:unit
@@ -129,6 +129,4 @@ jobs:
         run: pnpm test:e2e:inventory
 
       - name: Non-secret E2E proofs
-        run: |
-          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm
-          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm-mediation
+        run: AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e

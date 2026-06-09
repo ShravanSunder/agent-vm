@@ -720,6 +720,8 @@ export interface PrepareWorkerTaskOptions {
 export interface ExecuteWorkerTaskOptions {
 	readonly secretResolver: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
+	readonly pollClock?: WorkerTaskPollClock;
+	readonly pollIntervalMs?: number;
 	readonly timeoutMs?: number;
 	readonly onWorkerTaskIngress?: (
 		zoneId: string,
@@ -728,6 +730,18 @@ export interface ExecuteWorkerTaskOptions {
 	) => void | Promise<void>;
 	readonly onTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
 }
+
+export interface WorkerTaskPollClock {
+	readonly now: () => number;
+	readonly sleep: (durationMs: number) => Promise<void>;
+}
+
+const defaultWorkerTaskPollClock: WorkerTaskPollClock = {
+	now: () => Date.now(),
+	sleep: async (durationMs: number): Promise<void> => {
+		await new Promise((resolve) => setTimeout(resolve, durationMs));
+	},
+};
 
 export async function prepareWorkerTask(
 	options: PrepareWorkerTaskOptions,
@@ -852,9 +866,11 @@ export async function executeWorkerTask(
 
 		const timeoutMs =
 			options.timeoutMs ?? computeTotalTaskTimeoutMs(prepared.preStartResult.effectiveConfig);
-		const start = Date.now();
+		const pollClock = options.pollClock ?? defaultWorkerTaskPollClock;
+		const pollIntervalMs = options.pollIntervalMs ?? 1000;
+		const start = pollClock.now();
 		let consecutivePollFailures = 0;
-		while (Date.now() - start < timeoutMs) {
+		while (pollClock.now() - start < timeoutMs) {
 			let state:
 				| {
 						readonly status?: string | undefined;
@@ -888,7 +904,7 @@ export async function executeWorkerTask(
 			if (!state) {
 				// Poll retry loop intentionally sleeps before the next serial attempt.
 				// oxlint-disable-next-line eslint/no-await-in-loop
-				await new Promise((resolve) => setTimeout(resolve, 1000));
+				await pollClock.sleep(pollIntervalMs);
 				continue;
 			}
 			if (state.status === 'completed' || state.status === 'failed' || state.status === 'closed') {
@@ -901,7 +917,7 @@ export async function executeWorkerTask(
 			}
 			// The sleep is part of the serial poll loop and cannot be parallelized.
 			// oxlint-disable-next-line eslint/no-await-in-loop
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+			await pollClock.sleep(pollIntervalMs);
 		}
 
 		if (!result) {
