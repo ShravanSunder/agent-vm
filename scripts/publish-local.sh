@@ -11,7 +11,7 @@
 # Preconditions:
 #   - 1Password CLI (`op`) is signed in.
 #   - Working tree is clean (commit version bumps before publishing).
-#   - `pnpm build` and `pnpm check` and `pnpm test:unit` are green.
+#   - `pnpm check` and `pnpm test:unit` are green.
 #
 # Use:
 #   AGENT_VM_NPM_TOKEN_OP_REF='op://agent-vm/npm-token-agent-vm-publish/credential' scripts/publish-local.sh
@@ -87,6 +87,9 @@ bash scripts/check-package-version-sync.sh
 echo "[publish] verifying managed GHCR base image tags"
 verify_managed_base_images_exist
 
+echo "[publish] building workspace once"
+pnpm build
+
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
@@ -107,7 +110,7 @@ export NPM_CONFIG_USERCONFIG="$WORKDIR/.npmrc"
 echo "[publish] verifying npm auth"
 npm whoami
 
-echo "[publish] running pnpm -r publish --no-git-checks $DRY_RUN_FLAG"
-pnpm -r publish --access=public --no-git-checks $DRY_RUN_FLAG
+echo "[publish] running pnpm -r publish --no-git-checks --config.ignore-scripts=true $DRY_RUN_FLAG"
+pnpm -r publish --access=public --no-git-checks --config.ignore-scripts=true $DRY_RUN_FLAG
 
 echo "[publish] done"

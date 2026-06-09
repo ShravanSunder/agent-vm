@@ -6,6 +6,10 @@ import { buildImageAssetFileNames, type ManagedVm } from '@agent-vm/gondolin-ada
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
+import {
+	readPreparedGondolinImage,
+	writePreparedGondolinImage,
+} from '../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
@@ -16,7 +20,9 @@ import {
 	collectE2eDockerImageTags,
 	disableOpenClawMcpPortalPlugin,
 	findReusableGatewayImageDirectory,
+	prepareGatewayE2eProjectImages,
 	prepareLocalWorkerPackageForGatewayImage,
+	removeE2eLocalPackageTarballs,
 	removeE2eDockerImagesForSystemConfig,
 	removeE2eTempRoot,
 	resolveLocalPackagePackArgs,
@@ -32,6 +38,7 @@ import {
 } from './e2e-harness.js';
 
 const temporaryRoots: string[] = [];
+const normalizedDockerContextTimestampMs = Date.UTC(2000, 0, 1, 0, 0, 0, 0);
 
 async function createTemporaryRoot(prefix: string): Promise<string> {
 	const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -148,6 +155,64 @@ describe('scaffoldGatewayE2eProject', () => {
 				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
 			}
 		}
+	});
+
+	it('keeps generated e2e runtime and state paths inside owned temp project roots', async () => {
+		const openClawProject = await scaffoldOpenClawE2eProject({
+			architecture: 'aarch64',
+			prefix: 'openclaw-control-link-e2e-',
+			zoneId: 'openclaw-smoke',
+		});
+		const workerProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(openClawProject.tempRoot, workerProject.tempRoot);
+
+		for (const project of [openClawProject, workerProject]) {
+			expect(path.resolve(project.systemConfig.runtimeDir)).toContain(
+				path.resolve(project.tempRoot),
+			);
+			for (const zone of project.systemConfig.zones) {
+				expect(path.resolve(zone.gateway.stateDir)).toContain(path.resolve(project.tempRoot));
+				expect(path.resolve(zone.gateway.config)).toContain(path.resolve(project.tempRoot));
+			}
+		}
+	});
+
+	it('computes the same gateway image fingerprint for equivalent temp deployments', async () => {
+		const firstProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		const secondProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
+		const firstBuildConfigPath = path.join(
+			firstProject.tempRoot,
+			'vm-images',
+			'gateways',
+			'worker',
+			'build-config.jsonc',
+		);
+		const secondBuildConfigPath = path.join(
+			secondProject.tempRoot,
+			'vm-images',
+			'gateways',
+			'worker',
+			'build-config.jsonc',
+		);
+
+		const firstFingerprint = await computeFingerprintFromConfigPath(firstBuildConfigPath);
+		const secondFingerprint = await computeFingerprintFromConfigPath(secondBuildConfigPath);
+
+		expect(firstProject.tempRoot).not.toBe(secondProject.tempRoot);
+		expect(firstFingerprint).toBe(secondFingerprint);
 	});
 
 	it('dispatches through the typed OpenClaw gateway smoke project scaffold', async () => {
@@ -421,6 +486,17 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).not.toContain('portal-server.js');
 		expect(dockerfile).not.toContain('/work/repo/packages/mcp-portal');
 		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
+		await expect(
+			fs.stat(
+				path.join(
+					temporaryRoot,
+					'vm-images',
+					'gateways',
+					'openclaw-local-packages',
+					'openclaw-agent-vm-plugin-local.tgz',
+				),
+			),
+		).resolves.toMatchObject({ mtimeMs: normalizedDockerContextTimestampMs });
 		const toolVmDockerfilePath = systemConfig.imageProfiles.toolVms.tool?.dockerfile;
 		if (toolVmDockerfilePath === undefined) {
 			throw new Error('Expected local OpenClaw gateway helper to set Tool VM dockerfile path.');
@@ -437,6 +513,17 @@ describe('startE2eControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain('/opt/agent-vm/local-packages');
 		expect(toolVmDockerfile).not.toContain('pnpm add -g');
 		expect(toolVmDockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
+		await expect(
+			fs.stat(
+				path.join(
+					temporaryRoot,
+					'vm-images',
+					'tool-vms',
+					'tool-local-mcp-portal',
+					'mcp-portal-local.tgz',
+				),
+			),
+		).resolves.toMatchObject({ mtimeMs: normalizedDockerContextTimestampMs });
 	});
 
 	it('writes plugin-only OpenClaw smoke images without mutating Tool VM MCP Portal profiles', async () => {
@@ -665,9 +752,235 @@ describe('findReusableGatewayImageDirectory', () => {
 	});
 });
 
+describe('prepareGatewayE2eProjectImages', () => {
+	it('seeds reusable gateway images before running the build command once for the project', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const project = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(project.tempRoot);
+		const gatewayBuildConfigPath = project.systemConfig.imageProfiles.gateways.worker?.buildConfig;
+		if (gatewayBuildConfigPath === undefined) {
+			throw new Error('Expected worker gateway image profile.');
+		}
+		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+		const reusableImageDirectory = path.join(
+			smokeCacheRoot,
+			'previous-run',
+			'cache',
+			'gateway-images',
+			'worker',
+			fingerprint,
+		);
+		await fs.mkdir(reusableImageDirectory, { recursive: true });
+		await Promise.all(
+			buildImageAssetFileNames.map(async (fileName) => {
+				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
+			}),
+		);
+		const buildConfigs: LoadedSystemConfig[] = [];
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		try {
+			await prepareGatewayE2eProjectImages({
+				project,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+				},
+			});
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+
+		const activeImageDirectory = path.join(
+			project.systemConfig.cacheDir,
+			'gateway-images',
+			'worker',
+			fingerprint,
+		);
+		expect(buildConfigs).toEqual([project.systemConfig]);
+		await expect(
+			fs.readFile(path.join(activeImageDirectory, 'manifest.json'), 'utf8'),
+		).resolves.toBe('manifest.json\n');
+	});
+
+	it('materializes prepared records from the e2e manifest for an equivalent temp deployment', async () => {
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const firstProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		const secondProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		const buildConfigs: LoadedSystemConfig[] = [];
+		try {
+			firstProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
+			secondProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
+			await Promise.all(
+				[firstProject, secondProject].map(async (project) => {
+					const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
+					if (gatewayProfile === undefined) {
+						throw new Error('Expected worker gateway image profile.');
+					}
+					const dockerContextDirectory = path.join(project.tempRoot, 'docker-context', 'worker');
+					await fs.mkdir(dockerContextDirectory, { recursive: true });
+					await fs.writeFile(
+						path.join(dockerContextDirectory, 'Dockerfile'),
+						'FROM scratch\n',
+						'utf8',
+					);
+					gatewayProfile.dockerfile = path.join(dockerContextDirectory, 'Dockerfile');
+					delete gatewayProfile.source;
+				}),
+			);
+			await prepareGatewayE2eProjectImages({
+				project: firstProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+					await Promise.all(
+						Object.entries(systemConfig.imageProfiles.gateways).map(
+							async ([profileName, profile]) => {
+								const fingerprint = await computeFingerprintFromConfigPath(profile.buildConfig);
+								const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', profileName);
+								const imagePath = path.join(cacheDir, fingerprint);
+								await fs.mkdir(imagePath, { recursive: true });
+								await Promise.all(
+									buildImageAssetFileNames.map(
+										async (fileName) =>
+											await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+									),
+								);
+								await writePreparedGondolinImage({
+									buildConfigPath: profile.buildConfig,
+									cacheDir,
+									fingerprint,
+									imagePath,
+								});
+							},
+						),
+					);
+				},
+			});
+			await prepareGatewayE2eProjectImages({
+				project: secondProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+				},
+			});
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+
+		const secondGatewayProfile = secondProject.systemConfig.imageProfiles.gateways.worker;
+		if (secondGatewayProfile === undefined) {
+			throw new Error('Expected worker gateway image profile.');
+		}
+		const secondPreparedImage = await readPreparedGondolinImage({
+			buildConfigPath: secondGatewayProfile.buildConfig,
+			cacheDir: path.join(secondProject.systemConfig.cacheDir, 'gateway-images', 'worker'),
+		});
+
+		expect(buildConfigs).toEqual([firstProject.systemConfig]);
+		expect(secondPreparedImage?.built).toBe(false);
+		expect(secondPreparedImage?.fingerprint).toBe(
+			await computeFingerprintFromConfigPath(secondGatewayProfile.buildConfig),
+		);
+	});
+
+	it('does not materialize managed-source profiles from the e2e manifest', async () => {
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const firstProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		const secondProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
+		firstProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
+		secondProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
+		for (const project of [firstProject, secondProject]) {
+			const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
+			if (gatewayProfile === undefined) {
+				throw new Error('Expected worker gateway image profile.');
+			}
+			gatewayProfile.source = { base: 'worker-gateway', kind: 'managedBase' };
+		}
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		const buildConfigs: LoadedSystemConfig[] = [];
+		try {
+			for (const project of [firstProject, secondProject]) {
+				// oxlint-disable-next-line no-await-in-loop -- the second call must observe the first call's manifest output.
+				await prepareGatewayE2eProjectImages({
+					project,
+					runBuild: async ({ systemConfig }) => {
+						buildConfigs.push(systemConfig);
+						await Promise.all(
+							Object.entries(systemConfig.imageProfiles.gateways).map(
+								async ([profileName, profile]) => {
+									const fingerprint = await computeFingerprintFromConfigPath(profile.buildConfig);
+									const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', profileName);
+									const imagePath = path.join(cacheDir, fingerprint);
+									await fs.mkdir(imagePath, { recursive: true });
+									await Promise.all(
+										buildImageAssetFileNames.map(
+											async (fileName) =>
+												await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+										),
+									);
+									await writePreparedGondolinImage({
+										buildConfigPath: profile.buildConfig,
+										cacheDir,
+										fingerprint,
+										imagePath,
+									});
+								},
+							),
+						);
+					},
+				});
+			}
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+
+		expect(buildConfigs).toEqual([firstProject.systemConfig, secondProject.systemConfig]);
+	});
+});
+
 describe('prepareLocalWorkerPackageForGatewayImage', () => {
-	it('packs the local worker package and returns the generated tarball path', async () => {
+	it('caches the local worker package outside the repo and reuses the generated tarball path', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 		const temporaryRoot = await createTemporaryRoot('agent-vm-worker-pack-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'e2e-cache');
 		const workerPackageDir = path.join(temporaryRoot, 'packages', 'agent-vm-worker');
 		await fs.mkdir(workerPackageDir, { recursive: true });
 		await fs.writeFile(
@@ -684,11 +997,31 @@ describe('prepareLocalWorkerPackageForGatewayImage', () => {
 		);
 		await fs.writeFile(path.join(workerPackageDir, 'index.js'), 'export {};\n');
 
-		const tarballPath = await prepareLocalWorkerPackageForGatewayImage(temporaryRoot);
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		let tarballPath = '';
+		let secondTarballPath = '';
+		try {
+			tarballPath = await prepareLocalWorkerPackageForGatewayImage(temporaryRoot);
+			secondTarballPath = await prepareLocalWorkerPackageForGatewayImage(temporaryRoot);
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+		const repoLocalTmp = path.join(temporaryRoot, 'tmp');
 		const packedFiles = await fs.readdir(path.dirname(tarballPath));
 
+		expect(secondTarballPath).toBe(tarballPath);
+		expect(path.resolve(tarballPath).startsWith(path.resolve(repoLocalTmp))).toBe(false);
+		expect(path.resolve(tarballPath).startsWith(path.resolve(smokeCacheRoot))).toBe(true);
+		await expect(fs.access(repoLocalTmp)).rejects.toMatchObject({ code: 'ENOENT' });
 		expect(path.basename(tarballPath)).toBe('agent-vm-fake-worker-pack-fixture-0.0.0.tgz');
 		expect(packedFiles).toEqual(['agent-vm-fake-worker-pack-fixture-0.0.0.tgz']);
+
+		await removeE2eLocalPackageTarballs([tarballPath]);
+		await expect(fs.access(tarballPath)).resolves.toBeUndefined();
 	});
 });
 

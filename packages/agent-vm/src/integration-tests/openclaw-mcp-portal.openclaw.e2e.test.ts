@@ -9,7 +9,6 @@ import {
 } from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { runBuildCommand } from '../cli/build-command.js';
 import {
 	createGatewayApiClient,
 	type GatewayApiClient,
@@ -18,6 +17,7 @@ import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinE2e,
 	currentE2eArchitecture,
+	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
@@ -182,9 +182,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			repoRoot,
 			systemConfig: project.systemConfig,
 		});
-		await runBuildCommand({
-			systemConfig: project.systemConfig,
-		});
+		await prepareGatewayE2eProjectImages({ project });
 		harness = await startE2eControllerRuntime({
 			secrets: {
 				GITHUB_TOKEN: 'mcp-portal-smoke-github-token',

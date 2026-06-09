@@ -6,13 +6,13 @@ import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-pl
 import { execa } from 'execa';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { runBuildCommand } from '../cli/build-command.js';
 import { ensureZoneGitRepository } from '../controller/zone-git/zone-git-operations.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
 	canRunGondolinE2e,
 	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
+	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
@@ -273,9 +273,7 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			zoneFilesDir: project.zone.gateway.zoneFilesDir,
 			zoneId: project.zone.id,
 		});
-		await runBuildCommand({
-			systemConfig: project.systemConfig,
-		});
+		await prepareGatewayE2eProjectImages({ project });
 
 		harness = await startE2eControllerRuntime({
 			secrets: {

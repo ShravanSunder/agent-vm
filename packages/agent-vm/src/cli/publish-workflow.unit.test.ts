@@ -7,6 +7,46 @@ const publishNpmTokenOpRef = 'op://agent-vm/npm-token-agent-vm-publish/credentia
 const staleNpmTokenOpRef = ['op://agent-vm', 'npm-token', 'credential'].join('/');
 
 describe('publish workflow', () => {
+	it('does not define publish lifecycle scripts other than the workspace rebuild prepack', async () => {
+		const packageDirectories = await fs.readdir(path.join(process.cwd(), 'packages'), {
+			withFileTypes: true,
+		});
+		const forbiddenLifecycleScripts = [
+			'prepublishOnly',
+			'prepublish',
+			'prepare',
+			'postpack',
+			'publish',
+			'postpublish',
+		];
+
+		const packageManifests = await Promise.all(
+			packageDirectories
+				.filter((entry) => entry.isDirectory())
+				.map(async (packageDirectory) => {
+					const packageJsonPath = path.join(
+						process.cwd(),
+						'packages',
+						packageDirectory.name,
+						'package.json',
+					);
+					const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as {
+						readonly scripts?: Readonly<Record<string, string>>;
+					};
+					return { name: packageDirectory.name, packageJson };
+				}),
+		);
+
+		for (const { name, packageJson } of packageManifests) {
+			for (const scriptName of forbiddenLifecycleScripts) {
+				expect(packageJson.scripts?.[scriptName], `${name}:${scriptName}`).toBe(undefined);
+			}
+			if (packageJson.scripts?.prepack !== undefined) {
+				expect(packageJson.scripts.prepack).toBe('pnpm -C ../.. build');
+			}
+		}
+	});
+
 	it('caches Gondolin Zig tarballs in CI and publish workflows', async () => {
 		const workflowPaths = [
 			path.join(process.cwd(), '.github', 'workflows', 'ci.yml'),
@@ -110,6 +150,23 @@ describe('publish workflow', () => {
 			publishScript.indexOf('[publish] verifying npm auth'),
 		);
 		expect(publishScript.indexOf('verify_managed_base_images_exist')).toBeLessThan(
+			publishScript.indexOf('pnpm -r publish'),
+		);
+	});
+
+	it('builds once before local npm publish and disables package prepack rebuilds', async () => {
+		const publishScript = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'publish-local.sh'),
+			'utf8',
+		);
+
+		expect(publishScript).toContain('echo "[publish] building workspace once"');
+		expect(publishScript).toContain('pnpm build');
+		expect(publishScript).toContain('--config.ignore-scripts=true');
+		expect(publishScript.indexOf('pnpm build')).toBeLessThan(
+			publishScript.indexOf('pnpm -r publish'),
+		);
+		expect(publishScript.indexOf('--config.ignore-scripts=true')).toBeGreaterThan(
 			publishScript.indexOf('pnpm -r publish'),
 		);
 	});

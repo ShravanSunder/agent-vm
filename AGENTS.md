@@ -112,10 +112,10 @@ fast formatting and linting.
   may skip.
 - E2E VM/OpenClaw/Worker lanes require Docker, QEMU, and the pinned Zig from
   `mise.toml`. Use `mise exec --` for those lanes. The e2e harness uses a
-  shared rebuildable image cache by default and honors `AGENT_VM_E2E_CACHE_DIR`
-  when you want to pin that cache location. `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1`
-  is only for callers that already ran `pnpm build` and want build-once,
-  test-many behavior.
+  shared rebuildable image/local-package cache by default and honors
+  `AGENT_VM_E2E_CACHE_DIR` when you want to pin that cache location.
+  `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1` is only for callers that already ran
+  `pnpm build` and want build-once, test-many behavior.
 - Secret/model e2e lanes use test-only env names:
   `AGENT_VM_LLM_E2E`, `AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN`,
   `AGENT_VM_TEST_OP_REFS`, `AGENT_VM_TEST_OP_VAULT_PREFIX`,
@@ -160,6 +160,21 @@ E2E tests prove production-shaped behavior from outside the system. E2E tests
 should also be parallel-safe through temp roots, dynamic ports, shared build
 caches, and explicit setup/teardown. If an e2e test cannot be parallel safe,
 document the exact shared resource in the test and keep that exception narrow.
+Live e2e tests must not write deployment `config/`, `runtime/`, `state/`, or
+`zone-files/` under the source checkout. Use the e2e harness scaffolds so each
+deployment gets an owned OS-temp project root, and use `AGENT_VM_E2E_CACHE_DIR`
+only for the shared image cache. The Vitest global setup makes this cache root
+explicit for live e2e projects even when `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1`
+is set after a prior `pnpm build`.
+
+For live gateway e2e tests, finalize the temp project and local overlay first,
+then call `prepareGatewayE2eProjectImages` before starting the controller. Do
+not hide VM image preparation inside controller startup, and do not call
+package `prepack` from e2e overlay packing. Local overlay tarballs belong in the
+shared e2e cache, not in repo `tmp`, so repeated test files reuse the exact same
+package inputs. The intended loop is build once, pack with scripts disabled into
+the shared cache, prepare images into the shared cache, then run the runtime
+proof.
 
 ### Testing Pyramid And Evidence Names
 
@@ -201,14 +216,26 @@ they do not prove the live feature.
 
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
-  publish script.
+  publish script. `pnpm check` is intentionally owned by
+  `scripts/run-check-gate.ts`: it runs quick independent guards in parallel,
+  then runs heavier static checks in parallel with grouped logs and duration
+  evidence. Keep root-level quality-gate orchestration there instead of adding
+  more `&&` chains to `package.json`. Use pnpm recursive concurrency for
+  package-wide scripts, not for unrelated root scripts.
+- Default live VM e2e gate: `pnpm test:e2e`.
+  This is intentionally owned by `scripts/run-e2e-proof-lanes.ts`: it runs one
+  workspace build, then runs independent proof lanes in parallel with
+  `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1`. Keep build-once/test-many orchestration
+  there instead of adding shell `&&` chains to `package.json`.
 - OXC formatting: `pnpm fmt:check` to verify, `pnpm fmt` to apply Oxfmt.
 - OXC linting: `pnpm lint` for Oxlint, `pnpm lint:types` for type-aware Oxlint.
 - Typecheck: `pnpm typecheck`.
 - Local npm publish must use the release-specific 1Password item:
   `set -a; source .env.local; set +a; AGENT_VM_NPM_TOKEN_OP_REF='op://agent-vm/npm-token-agent-vm-publish/credential' scripts/publish-local.sh`.
   The script defaults to that same item, reads the token through 1Password,
-  writes it only to a temporary npm user config, and runs `pnpm -r publish`.
+  writes it only to a temporary npm user config, builds the workspace once, and
+  runs `pnpm -r publish` with package lifecycle scripts disabled so per-package
+  `prepack` cannot rebuild the full workspace repeatedly.
   Do this before trying browser `npm login` or assuming npm auth is blocked.
   If 1Password times out, verify the same item with
   `op read 'op://agent-vm/npm-token-agent-vm-publish/credential' >/dev/null`
