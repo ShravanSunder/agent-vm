@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { hasBuiltImageAssets, resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
@@ -303,13 +304,50 @@ export async function findAvailablePort(): Promise<number> {
 	});
 }
 
-export async function waitForControllerReady(controllerPort: number): Promise<void> {
-	const response = await fetch(`http://127.0.0.1:${String(controllerPort)}/controller-status`);
-	if (!response.ok) {
-		throw new Error(
-			`Controller reported listening but status returned HTTP ${String(response.status)}.`,
-		);
+function readNodeNetworkErrorCode(error: unknown): string | null {
+	if (!(error instanceof TypeError) || error.message !== 'fetch failed') {
+		return null;
 	}
+	const cause = error.cause;
+	if (typeof cause !== 'object' || cause === null || !('code' in cause)) {
+		return null;
+	}
+	return typeof cause.code === 'string' ? cause.code : null;
+}
+
+function isRecoverableControllerReadyError(error: unknown): boolean {
+	return ['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH'].includes(
+		readNodeNetworkErrorCode(error) ?? '',
+	);
+}
+
+export async function waitForControllerReady(controllerPort: number): Promise<void> {
+	const timeoutMs = 5_000;
+	const retryIntervalMs = 50;
+	const startedAtMs = performance.now();
+	let lastError = 'not attempted';
+	while (performance.now() - startedAtMs <= timeoutMs) {
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- controller startup readiness must observe sequential protocol state.
+			const response = await fetch(`http://127.0.0.1:${String(controllerPort)}/controller-status`, {
+				signal: AbortSignal.timeout(1_000),
+			});
+			if (response.ok) {
+				return;
+			}
+			lastError = `HTTP ${String(response.status)}`;
+		} catch (error) {
+			if (!isRecoverableControllerReadyError(error)) {
+				throw error;
+			}
+			lastError = error instanceof Error ? error.message : String(error);
+		}
+		// oxlint-disable-next-line no-await-in-loop -- controller readiness has no event source from the subprocess boundary.
+		await waitForRetryInterval(retryIntervalMs);
+	}
+	throw new Error(
+		`Controller did not report ready within ${String(timeoutMs)}ms. Last error: ${lastError}`,
+	);
 }
 
 async function pathExists(filePath: string): Promise<boolean> {

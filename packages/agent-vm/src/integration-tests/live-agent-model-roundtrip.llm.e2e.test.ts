@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 
 import { describe, expect, it } from 'vitest';
 
@@ -179,10 +180,44 @@ async function findAvailablePort(): Promise<number> {
 }
 
 async function waitForControllerHealth(controllerPort: number): Promise<void> {
-	const response = await fetch(`http://127.0.0.1:${String(controllerPort)}/health`);
-	if (!response.ok) {
-		throw new Error(`Controller health returned HTTP ${String(response.status)} after startup.`);
+	const timeoutMs = 5_000;
+	const retryIntervalMs = 50;
+	const startedAtMs = performance.now();
+	let lastError = 'not attempted';
+	while (performance.now() - startedAtMs <= timeoutMs) {
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- controller startup readiness must observe sequential protocol state.
+			const response = await fetch(`http://127.0.0.1:${String(controllerPort)}/health`, {
+				signal: AbortSignal.timeout(1_000),
+			});
+			if (response.ok) {
+				return;
+			}
+			lastError = `HTTP ${String(response.status)}`;
+		} catch (error) {
+			const networkErrorCode = readNodeNetworkErrorCode(error);
+			if (!['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH'].includes(networkErrorCode ?? '')) {
+				throw error;
+			}
+			lastError = error instanceof Error ? error.message : String(error);
+		}
+		// oxlint-disable-next-line no-await-in-loop -- controller readiness has no event source from the runtime boundary.
+		await waitForRetryInterval(retryIntervalMs);
 	}
+	throw new Error(
+		`Controller health did not report ready within ${String(timeoutMs)}ms. Last error: ${lastError}`,
+	);
+}
+
+function readNodeNetworkErrorCode(error: unknown): string | null {
+	if (!(error instanceof TypeError) || error.message !== 'fetch failed') {
+		return null;
+	}
+	const cause = error.cause;
+	if (typeof cause !== 'object' || cause === null || !('code' in cause)) {
+		return null;
+	}
+	return typeof cause.code === 'string' ? cause.code : null;
 }
 
 describe('live integration: agent model roundtrip deployment config', () => {

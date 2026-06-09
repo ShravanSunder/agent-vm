@@ -67,6 +67,15 @@ describe('classifyWallClockWaitViolation', () => {
 		).toContain('e2e tests must wait on real process');
 	});
 
+	it('rejects wall-clock waits inside template literal interpolation', () => {
+		expect(
+			classifyWallClockWaitViolation(
+				'packages/example/example.host.e2e.test.ts',
+				'it("waits", async () => `${await sleep(50)}`);',
+			),
+		).toContain('e2e tests must wait on real process');
+	});
+
 	it('allows e2e protocol safety timers that are not awaited sleeps', () => {
 		expect(
 			classifyWallClockWaitViolation(

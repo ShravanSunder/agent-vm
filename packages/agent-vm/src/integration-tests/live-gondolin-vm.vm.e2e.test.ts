@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 
 import { createManagedVm } from '@agent-vm/gondolin-adapter';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
@@ -18,16 +19,16 @@ import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 
-async function yieldToEventLoop(): Promise<void> {
-	await new Promise<void>((resolve) => setImmediate(resolve));
-}
+const ingressReadyTimeoutMs = 10_000;
+const ingressRetryIntervalMs = 100;
 
 async function fetchIngressUntilReady(url: string): Promise<{
 	readonly body: string;
 	readonly response: Response;
 }> {
 	let lastError = 'not attempted';
-	for (let attempt = 1; attempt <= 50; attempt += 1) {
+	const startedAtMs = performance.now();
+	while (performance.now() - startedAtMs <= ingressReadyTimeoutMs) {
 		try {
 			// AbortSignal.timeout is a protocol safety bound for a single ingress request.
 			// oxlint-disable-next-line no-await-in-loop -- ingress readiness checks must observe sequential proxy state.
@@ -41,10 +42,12 @@ async function fetchIngressUntilReady(url: string): Promise<{
 		} catch (error) {
 			lastError = error instanceof Error ? error.message : String(error);
 		}
-		// oxlint-disable-next-line no-await-in-loop -- ingress readiness is a bounded protocol retry with event-loop yielding, not a wall-clock sleep
-		await yieldToEventLoop();
+		// oxlint-disable-next-line no-await-in-loop -- ingress readiness has no event source; use bounded protocol retry backoff.
+		await waitForRetryInterval(ingressRetryIntervalMs);
 	}
-	throw new Error(`Ingress did not become ready after 50 attempts. Last error: ${lastError}`);
+	throw new Error(
+		`Ingress did not become ready within ${String(ingressReadyTimeoutMs)}ms. Last error: ${lastError}`,
+	);
 }
 
 describeLiveVmIntegration('live e2e: real Gondolin VM', () => {

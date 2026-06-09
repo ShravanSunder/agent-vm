@@ -144,8 +144,8 @@ export function resolveTestFileProjectNames(filePath: string): readonly string[]
 	return [];
 }
 
-function stripQuotedStringContents(source: string): string {
-	return source.replace(/(['"`])(?:\\[\s\S]|(?!\1)[\s\S])*?\1/gu, '$1$1');
+function stripSingleAndDoubleQuotedStringContents(source: string): string {
+	return source.replace(/(['"])(?:\\[\s\S]|(?!\1)[\s\S])*?\1/gu, '$1$1');
 }
 
 export function classifyUnitBoundaryViolation(filePath: string, source: string): string | null {
@@ -157,7 +157,7 @@ export function classifyUnitBoundaryViolation(filePath: string, source: string):
 			return `${filePath}: unit tests must not cross real process/network boundaries`;
 		}
 	}
-	const sourceWithoutQuotedStringContents = stripQuotedStringContents(source);
+	const sourceWithoutQuotedStringContents = stripSingleAndDoubleQuotedStringContents(source);
 	for (const pattern of unitBoundaryCallPatterns) {
 		if (pattern.test(sourceWithoutQuotedStringContents)) {
 			return `${filePath}: unit tests must not cross real process/network boundaries`;
@@ -220,7 +220,7 @@ async function collectViolations(): Promise<readonly string[]> {
 			}
 			const wallClockViolation = classifyWallClockWaitViolation(
 				filePath,
-				stripQuotedStringContents(rawSource),
+				stripSingleAndDoubleQuotedStringContents(rawSource),
 			);
 			if (wallClockViolation !== null) {
 				violations.push(wallClockViolation);
