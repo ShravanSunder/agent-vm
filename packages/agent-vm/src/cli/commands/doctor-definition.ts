@@ -30,6 +30,12 @@ export function createDoctorCommand(io: CliIo, dependencies: CliDependencies) {
 				].filter((argument): argument is string => argument !== undefined),
 				subcommand: 'doctor',
 				systemConfig: await loadSystemConfigFromOption(config, dependencies),
+				...(dependencies.collectControllerDoctorEnvironment
+					? { collectDoctorEnvironment: dependencies.collectControllerDoctorEnvironment }
+					: {}),
+				...(dependencies.collectDynamicDoctorChecks
+					? { collectDynamicDoctorChecks: dependencies.collectDynamicDoctorChecks }
+					: {}),
 			});
 		},
 	});

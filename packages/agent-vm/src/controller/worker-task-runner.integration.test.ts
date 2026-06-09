@@ -14,6 +14,7 @@ import {
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import type { WorkerTaskInput } from './worker-task-runner.js';
+import type { WorkerTaskPollClock } from './worker-task-runner.js';
 
 const startGatewayZoneMock = vi.fn();
 const stopRepoResourceProvidersMock =
@@ -177,6 +178,8 @@ const systemConfig = {
 
 async function executePreparedWorkerTaskForTest(options: {
 	readonly input: WorkerTaskInput;
+	readonly pollClock?: WorkerTaskPollClock;
+	readonly pollIntervalMs?: number;
 	readonly secretResolver: { resolve: () => Promise<string>; resolveAll: () => Promise<{}> };
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneId: string;
@@ -195,8 +198,20 @@ async function executePreparedWorkerTaskForTest(options: {
 	return await executeWorkerTask(prepared, {
 		secretResolver: options.secretResolver,
 		systemConfig: options.systemConfig,
+		pollClock: options.pollClock ?? createInstantPollClock(),
+		pollIntervalMs: options.pollIntervalMs ?? 1,
 		...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
 	});
+}
+
+function createInstantPollClock(): WorkerTaskPollClock {
+	let elapsedMs = 0;
+	return {
+		now: () => elapsedMs,
+		sleep: async (durationMs: number): Promise<void> => {
+			elapsedMs += Math.max(durationMs, 1);
+		},
+	};
 }
 
 describe('worker-task-runner', () => {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export type E2eProofLaneId = 'e2e-vm' | 'e2e-vm-mediation';
+export type E2eProofLaneId = 'e2e-host' | 'e2e-vm' | 'e2e-vm-mediation';
 
 export interface E2eProofLane {
 	readonly args: readonly string[];
@@ -35,7 +35,8 @@ export type E2eProofLaneRunner = (lane: E2eProofLane) => Promise<E2eProofLaneRes
 interface RunE2eProofLanesOptions {
 	readonly laneRunner?: E2eProofLaneRunner;
 	readonly now?: () => number;
-	readonly runWorkspaceBuild?: () => void;
+	readonly runWorkspaceBuild?: () => Promise<void> | void;
+	readonly skipWorkspaceBuild?: boolean;
 	readonly stderr?: NodeJS.WritableStream;
 	readonly stdout?: NodeJS.WritableStream;
 }
@@ -44,6 +45,13 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 
 export function createE2eProofLanes(): readonly E2eProofLane[] {
 	return [
+		{
+			args: ['run', 'test:e2e:host'],
+			command: 'pnpm',
+			env: {},
+			id: 'e2e-host',
+			label: 'Host subprocess e2e',
+		},
 		{
 			args: ['run', 'test:e2e:vm'],
 			command: 'pnpm',
@@ -164,10 +172,14 @@ export async function runE2eProofLanes(
 	const stderr = options.stderr ?? process.stderr;
 	const startTimeMs = now();
 
-	if (options.runWorkspaceBuild === undefined) {
-		await runWorkspaceBuildOnceAsync();
-	} else {
-		options.runWorkspaceBuild();
+	const skipWorkspaceBuild =
+		options.skipWorkspaceBuild ?? process.env.AGENT_VM_E2E_SKIP_WORKSPACE_BUILD === '1';
+	if (!skipWorkspaceBuild) {
+		if (options.runWorkspaceBuild === undefined) {
+			await runWorkspaceBuildOnceAsync();
+		} else {
+			await options.runWorkspaceBuild();
+		}
 	}
 
 	const results = await Promise.all(lanes.map(async (lane) => await laneRunner(lane)));

@@ -31,6 +31,13 @@ import {
 } from './agent-vm-cli-support.js';
 
 interface RunControllerOperationCommandOptions {
+	readonly collectDoctorEnvironment?: (
+		systemConfig: LoadedSystemConfig,
+		dependencies: CliDependencies,
+	) => Promise<ControllerDoctorEnvironment>;
+	readonly collectDynamicDoctorChecks?: (
+		options: CollectDynamicDoctorChecksOptions,
+	) => Promise<readonly DoctorCheck[]>;
 	readonly dependencies: CliDependencies;
 	readonly io: CliIo;
 	readonly restArguments: readonly string[];
@@ -60,6 +67,22 @@ interface DoctorCommandResult {
 	readonly ok: boolean;
 	readonly passed: number;
 	readonly summary: string;
+}
+
+export interface ControllerDoctorEnvironment {
+	readonly availableBinaries: ReadonlySet<string>;
+	readonly dockerDaemonReady: boolean;
+	readonly env: NodeJS.ProcessEnv;
+	readonly nodeVersion: string;
+	readonly requiredZigVersion: string;
+	readonly zigVersion?: string;
+}
+
+export interface CollectDynamicDoctorChecksOptions {
+	readonly availableBinaries: ReadonlySet<string>;
+	readonly controllerGithubToken: string | null;
+	readonly dockerDaemonReady: boolean;
+	readonly systemConfig: LoadedSystemConfig;
 }
 
 const defaultPassingPreviewLimit = 3;
@@ -165,6 +188,75 @@ async function collectDockerDaemonReady(availableBinaries: ReadonlySet<string>):
 	} catch {
 		return false;
 	}
+}
+
+export async function collectControllerDoctorEnvironment(
+	systemConfig: LoadedSystemConfig,
+	dependencies: CliDependencies,
+): Promise<ControllerDoctorEnvironment> {
+	const availableBinaries = await collectAvailableBinaryNames(
+		[
+			'qemu-system-aarch64',
+			'qemu-system-x86_64',
+			'qemu-img',
+			'docker',
+			'op',
+			'security',
+			'mke2fs',
+			'mkfs.ext4',
+			'/opt/homebrew/opt/e2fsprogs/sbin/mke2fs',
+			'/usr/local/opt/e2fsprogs/sbin/mke2fs',
+			'debugfs',
+			'/opt/homebrew/opt/e2fsprogs/sbin/debugfs',
+			'/usr/local/opt/e2fsprogs/sbin/debugfs',
+			'cpio',
+			'lz4',
+			'openclaw',
+		] as const,
+		path.resolve(path.dirname(systemConfig.systemConfigPath), '..', 'node_modules', '.bin'),
+	);
+	const requiredZigVersion = await dependencies.resolveGondolinMinimumZigVersion();
+	const zigVersion = await collectCommandOutput('zig', ['version']);
+	const dockerDaemonReady = await collectDockerDaemonReady(availableBinaries);
+	return {
+		availableBinaries,
+		dockerDaemonReady,
+		env: process.env,
+		nodeVersion: process.version,
+		requiredZigVersion,
+		...(zigVersion ? { zigVersion } : {}),
+	};
+}
+
+export async function collectDynamicDoctorChecks(
+	options: CollectDynamicDoctorChecksOptions,
+): Promise<readonly DoctorCheck[]> {
+	const workerGatewayConfigChecks = await collectWorkerGatewayConfigChecks(options.systemConfig);
+	const openClawConfigChecks = options.availableBinaries.has('openclaw')
+		? convertConfigValidationChecksToDoctorChecks(
+				await collectOpenClawConfigChecks(options.systemConfig),
+			)
+		: [];
+	const openClawDeploymentChecks = await collectOpenClawDeploymentDoctorChecks(
+		options.systemConfig,
+	);
+	const zoneGitChecks = await collectZoneGitDoctorChecks({
+		githubToken: options.controllerGithubToken,
+		systemConfig: options.systemConfig,
+	});
+	const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
+		options.systemConfig,
+		options.availableBinaries.has('docker') && options.dockerDaemonReady,
+	);
+	const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(options.systemConfig);
+	return [
+		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
+		...imageProfileDockerfileChecks,
+		...workerGatewayConfigChecks,
+		...openClawConfigChecks,
+		...openClawDeploymentChecks,
+		...zoneGitChecks,
+	] as const;
 }
 
 async function collectImageProfileDockerfileChecks(
@@ -386,55 +478,18 @@ export async function runControllerOperationCommand(
 
 	switch (options.subcommand) {
 		case 'doctor': {
-			const availableBinaries = await collectAvailableBinaryNames(
-				[
-					'qemu-system-aarch64',
-					'qemu-system-x86_64',
-					'qemu-img',
-					'docker',
-					'op',
-					'security',
-					'mke2fs',
-					'mkfs.ext4',
-					'/opt/homebrew/opt/e2fsprogs/sbin/mke2fs',
-					'/usr/local/opt/e2fsprogs/sbin/mke2fs',
-					'debugfs',
-					'/opt/homebrew/opt/e2fsprogs/sbin/debugfs',
-					'/usr/local/opt/e2fsprogs/sbin/debugfs',
-					'cpio',
-					'lz4',
-					'openclaw',
-				] as const,
-				path.resolve(
-					path.dirname(options.systemConfig.systemConfigPath),
-					'..',
-					'node_modules',
-					'.bin',
-				),
-			);
-			const requiredZigVersion = await options.dependencies.resolveGondolinMinimumZigVersion();
-			const zigVersion = await collectCommandOutput('zig', ['version']);
-			const dockerDaemonReady = await collectDockerDaemonReady(availableBinaries);
+			const doctorEnvironment = await (
+				options.collectDoctorEnvironment ?? collectControllerDoctorEnvironment
+			)(options.systemConfig, options.dependencies);
 			const doctorResult = options.dependencies.runControllerDoctor({
-				availableBinaries,
-				dockerDaemonReady,
-				env: process.env,
-				nodeVersion: process.version,
-				requiredZigVersion,
+				availableBinaries: doctorEnvironment.availableBinaries,
+				dockerDaemonReady: doctorEnvironment.dockerDaemonReady,
+				env: doctorEnvironment.env,
+				nodeVersion: doctorEnvironment.nodeVersion,
+				requiredZigVersion: doctorEnvironment.requiredZigVersion,
 				systemConfig: options.systemConfig,
-				...(zigVersion ? { zigVersion } : {}),
+				...(doctorEnvironment.zigVersion ? { zigVersion: doctorEnvironment.zigVersion } : {}),
 			});
-			const workerGatewayConfigChecks = await collectWorkerGatewayConfigChecks(
-				options.systemConfig,
-			);
-			const openClawConfigChecks = availableBinaries.has('openclaw')
-				? convertConfigValidationChecksToDoctorChecks(
-						await collectOpenClawConfigChecks(options.systemConfig),
-					)
-				: [];
-			const openClawDeploymentChecks = await collectOpenClawDeploymentDoctorChecks(
-				options.systemConfig,
-			);
 			const hasZoneGitConfig = options.systemConfig.zones.some(isOpenClawZoneGitConfigured);
 			const controllerGithubToken = hasZoneGitConfig
 				? await resolveControllerGithubToken(
@@ -442,23 +497,14 @@ export async function runControllerOperationCommand(
 						await createResolverFromSystemConfig(options.systemConfig, options.dependencies),
 					)
 				: null;
-			const zoneGitChecks = await collectZoneGitDoctorChecks({
-				githubToken: controllerGithubToken,
+			const dynamicChecks = await (
+				options.collectDynamicDoctorChecks ?? collectDynamicDoctorChecks
+			)({
+				availableBinaries: doctorEnvironment.availableBinaries,
+				controllerGithubToken,
+				dockerDaemonReady: doctorEnvironment.dockerDaemonReady,
 				systemConfig: options.systemConfig,
 			});
-			const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
-				options.systemConfig,
-				availableBinaries.has('docker') && dockerDaemonReady,
-			);
-			const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(options.systemConfig);
-			const dynamicChecks = [
-				...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
-				...imageProfileDockerfileChecks,
-				...workerGatewayConfigChecks,
-				...openClawConfigChecks,
-				...openClawDeploymentChecks,
-				...zoneGitChecks,
-			] as const satisfies readonly DoctorCheck[];
 			const checks = [...doctorResult.checks, ...dynamicChecks];
 			const failed = checks.filter((check) => !check.ok).length;
 			const passed = checks.length - failed;

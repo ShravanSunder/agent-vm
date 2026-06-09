@@ -6,6 +6,7 @@ const allowedTestSuffixes = [
 	'.unit.test.ts',
 	'.unit.spec.ts',
 	'.integration.test.ts',
+	'.host.e2e.test.ts',
 	'.vm.e2e.test.ts',
 	'.openclaw.e2e.test.ts',
 	'.worker.e2e.test.ts',
@@ -81,6 +82,9 @@ export function resolveTestFileProjectNames(filePath: string): readonly string[]
 		if (filePath.endsWith('.integration.test.ts')) {
 			projectNames.push('integration');
 		}
+		if (filePath.endsWith('.host.e2e.test.ts')) {
+			projectNames.push('e2e-host');
+		}
 		if (
 			filePath.endsWith('.vm.e2e.test.ts') &&
 			!filePath.endsWith('/live-gondolin-http-mediation.vm.e2e.test.ts') &&
@@ -121,7 +125,7 @@ async function collectViolations(): Promise<readonly string[]> {
 			const violations: string[] = [];
 			if (!hasAllowedTestSuffix(filePath)) {
 				violations.push(
-					`${filePath}: test files must use .unit.test.ts, .integration.test.ts, .vm.e2e.test.ts, .openclaw.e2e.test.ts, .worker.e2e.test.ts, .secrets.e2e.test.ts, or .llm.e2e.test.ts`,
+					`${filePath}: test files must use .unit.test.ts, .integration.test.ts, .host.e2e.test.ts, .vm.e2e.test.ts, .openclaw.e2e.test.ts, .worker.e2e.test.ts, .secrets.e2e.test.ts, or .llm.e2e.test.ts`,
 				);
 				return violations;
 			}

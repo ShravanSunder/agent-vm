@@ -11,6 +11,7 @@ describe('hasAllowedTestSuffix', () => {
 		expect(hasAllowedTestSuffix('packages/example/example.unit.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.unit.spec.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.integration.test.ts')).toBe(true);
+		expect(hasAllowedTestSuffix('packages/example/example.host.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.vm.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.openclaw.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.worker.e2e.test.ts')).toBe(true);
@@ -40,6 +41,9 @@ describe('resolveTestFileProjectNames', () => {
 		expect(resolveTestFileProjectNames('packages/example/example.unit.spec.ts')).toEqual(['unit']);
 		expect(resolveTestFileProjectNames('packages/example/example.integration.test.ts')).toEqual([
 			'integration',
+		]);
+		expect(resolveTestFileProjectNames('packages/example/example.host.e2e.test.ts')).toEqual([
+			'e2e-host',
 		]);
 		expect(resolveTestFileProjectNames('packages/example/example.vm.e2e.test.ts')).toEqual([
 			'e2e-vm',

@@ -158,10 +158,8 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit
 
-      - name: Gondolin VM e2e proof
-        run: |
-          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm
-          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e:vm-mediation
+      - name: Non-secret E2E proofs
+        run: AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e
 
       - name: Detect managed base image changes
         id: base_images

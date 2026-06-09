@@ -374,6 +374,23 @@ function createControllerClientStub(): ReturnType<
 	};
 }
 
+function fastDoctorEnvironmentOptions(binaryNames: readonly string[] = []): {
+	readonly collectDoctorEnvironment: NonNullable<
+		Parameters<typeof runControllerOperationCommand>[0]['collectDoctorEnvironment']
+	>;
+} {
+	return {
+		collectDoctorEnvironment: async () => ({
+			availableBinaries: new Set(binaryNames),
+			dockerDaemonReady: binaryNames.includes('docker'),
+			env: {},
+			nodeVersion: 'v24.0.0',
+			requiredZigVersion: '0.16.0',
+			zigVersion: '0.16.0',
+		}),
+	};
+}
+
 async function writeImageBuildConfigsForDoctor(systemConfig: LoadedSystemConfig): Promise<void> {
 	const imageProfiles = [
 		...Object.values(systemConfig.imageProfiles.gateways),
@@ -428,6 +445,7 @@ describe('runControllerOperationCommand', () => {
 
 		try {
 			await runControllerOperationCommand({
+				...fastDoctorEnvironmentOptions(),
 				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: () => createControllerClientStub(),
@@ -488,6 +506,7 @@ describe('runControllerOperationCommand', () => {
 		await writeImageBuildConfigsForDoctor(systemConfig);
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => ({
@@ -576,6 +595,7 @@ describe('runControllerOperationCommand', () => {
 		await writeImageBuildConfigsForDoctor(systemConfig);
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: createControllerClientStub,
@@ -647,6 +667,7 @@ describe('runControllerOperationCommand', () => {
 			const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
 
 			await runControllerOperationCommand({
+				...fastDoctorEnvironmentOptions(),
 				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: createControllerClientStub,
@@ -692,6 +713,7 @@ describe('runControllerOperationCommand', () => {
 			const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
 
 			await runControllerOperationCommand({
+				...fastDoctorEnvironmentOptions(),
 				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: createControllerClientStub,
@@ -751,6 +773,7 @@ describe('runControllerOperationCommand', () => {
 			await writeImageBuildConfigsForDoctor(systemConfig);
 
 			await runControllerOperationCommand({
+				...fastDoctorEnvironmentOptions(),
 				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: createControllerClientStub,
@@ -822,6 +845,7 @@ describe('runControllerOperationCommand', () => {
 		await writeImageBuildConfigsForDoctor(systemConfig);
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: createControllerClientStub,
@@ -890,6 +914,7 @@ printf '{"ok":true}\\n'
 		await writeImageBuildConfigsForDoctor(systemConfig);
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(['openclaw']),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => ({
@@ -991,6 +1016,7 @@ printf '{"ok":true}\\n'
 		await writeImageBuildConfigsForDoctor(systemConfig);
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => ({
@@ -1074,6 +1100,7 @@ printf '{"ok":true}\\n'
 		const outputs: string[] = [];
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => ({
@@ -1183,6 +1210,7 @@ printf '{"ok":true}\\n'
 		const outputs: string[] = [];
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => createControllerClientStub(),
@@ -1262,6 +1290,7 @@ printf '{"ok":true}\\n'
 		const outputs: string[] = [];
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => createControllerClientStub(),
@@ -1350,6 +1379,7 @@ printf '{"ok":true}\\n'
 		await writeImageBuildConfigsForDoctor(resolvedPathSystemConfig);
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => ({
@@ -1446,6 +1476,7 @@ printf '{"ok":true}\\n'
 		const outputs: string[] = [];
 
 		await runControllerOperationCommand({
+			...fastDoctorEnvironmentOptions(),
 			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => ({

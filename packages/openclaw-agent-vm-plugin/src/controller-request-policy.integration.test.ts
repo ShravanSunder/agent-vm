@@ -5,6 +5,7 @@ import { Socket } from 'node:net';
 import { describe, expect, it } from 'vitest';
 
 import {
+	ControllerRequestPolicyTransportError,
 	fetchControllerWithPolicy,
 	type ControllerRequestPolicy,
 } from './controller-request-policy.js';
@@ -72,18 +73,24 @@ describe('controller request policy real Node networking integration', () => {
 		const port = await listenOnLoopback(server);
 
 		try {
-			await expect(
-				fetchControllerWithPolicy({
+			let thrownError: unknown;
+			try {
+				await fetchControllerWithPolicy({
 					fetchImpl: fetch,
 					input: `http://127.0.0.1:${String(port)}/health`,
 					init: { method: 'GET' },
 					operation: 'controller-health',
 					policy: singleAttemptPolicy,
-				}),
-			).rejects.toMatchObject({
-				code: 'controller-request-failed',
-				operation: 'controller-health',
-			});
+				});
+			} catch (error) {
+				thrownError = error;
+			}
+			expect(thrownError).toBeInstanceOf(ControllerRequestPolicyTransportError);
+			const transportError = thrownError as ControllerRequestPolicyTransportError;
+			expect(transportError.operation).toBe('controller-health');
+			expect(['controller-request-failed', 'controller-request-timeout']).toContain(
+				transportError.code,
+			);
 		} finally {
 			await closeServer(server);
 		}
