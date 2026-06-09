@@ -120,7 +120,7 @@ function resolveE2eCacheRoot(): string {
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null;
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export interface E2eHarnessSecretMap {
@@ -567,18 +567,23 @@ async function recordPreparedE2eImages(
 	const entriesByKey = new Map(
 		manifest.entries.map((entry) => [e2eManifestEntryKey(entry), entry] as const),
 	);
-	for (const target of targets) {
-		if (!target.e2eManifestEligible) {
+	const preparedImages = await Promise.all(
+		targets.map(async (target) => {
+			if (!target.e2eManifestEligible) {
+				return null;
+			}
+			const preparedImage: PreparedGondolinImage | undefined = await readPreparedGondolinImage({
+				buildConfigPath: target.buildConfigPath,
+				cacheDir: target.cacheDirectory,
+			});
+			return { preparedImage, target };
+		}),
+	);
+	for (const item of preparedImages) {
+		if (item === null || item.preparedImage === undefined) {
 			continue;
 		}
-		// oxlint-disable-next-line no-await-in-loop -- record errors should identify the matching profile.
-		const preparedImage: PreparedGondolinImage | undefined = await readPreparedGondolinImage({
-			buildConfigPath: target.buildConfigPath,
-			cacheDir: target.cacheDirectory,
-		});
-		if (preparedImage === undefined) {
-			continue;
-		}
+		const { preparedImage, target } = item;
 		entriesByKey.set(e2eImageTargetKey(target), {
 			buildConfigPath: path.resolve(target.buildConfigPath),
 			cacheDirectory: path.resolve(target.cacheDirectory),

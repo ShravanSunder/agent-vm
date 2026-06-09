@@ -157,10 +157,10 @@ export async function runCheckGateCommand(
 			stdio: ['ignore', 'pipe', 'pipe'],
 		});
 
-		childProcess.stdout.on('data', (chunk: Buffer) => {
+		childProcess.stdout?.on('data', (chunk: Buffer) => {
 			stdoutChunks.push(chunk);
 		});
-		childProcess.stderr.on('data', (chunk: Buffer) => {
+		childProcess.stderr?.on('data', (chunk: Buffer) => {
 			stderrChunks.push(chunk);
 		});
 		childProcess.on('error', (error) => {
@@ -235,8 +235,15 @@ export async function runCheckGate(
 }
 
 async function main(): Promise<void> {
-	const summary = await runCheckGate();
-	if (!summary.ok) {
+	try {
+		const summary = await runCheckGate();
+		if (!summary.ok) {
+			process.exit(1);
+		}
+	} catch (error) {
+		process.stderr.write(
+			`Unhandled error in check gate: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+		);
 		process.exit(1);
 	}
 }

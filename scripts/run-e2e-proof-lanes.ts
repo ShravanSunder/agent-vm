@@ -181,8 +181,15 @@ export async function runE2eProofLanes(
 }
 
 async function main(): Promise<void> {
-	const summary = await runE2eProofLanes();
-	if (!summary.ok) {
+	try {
+		const summary = await runE2eProofLanes();
+		if (!summary.ok) {
+			process.exit(1);
+		}
+	} catch (error) {
+		process.stderr.write(
+			`Unhandled error in e2e proof lanes: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+		);
 		process.exit(1);
 	}
 }
