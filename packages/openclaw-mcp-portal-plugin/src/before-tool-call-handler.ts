@@ -10,6 +10,7 @@ import type {
 	OpenClawBeforeToolCallResult,
 	OpenClawPluginHookContext,
 } from './openclaw-plugin-api.js';
+import { normalizeOpenClawToolParamsRecord } from './openclaw-tool-params.js';
 import type { PortalPluginRuntimeState } from './portal-plugin-runtime-state.js';
 import {
 	profileAllowsPortalCall,
@@ -150,7 +151,11 @@ export function createBeforeToolCallHandler(
 			return { block: true, blockReason: `mcp-portal: agent "${agentId}" is not configured.` };
 		}
 		const profile = resolveMcpPortalProfile(portalConfig, agent.profile);
-		const calls = parseCallRequests(event.params);
+		const params = normalizeOpenClawToolParamsRecord(event.params);
+		if (params === null) {
+			return { block: true, blockReason: 'mcp-portal: malformed portal call batch.' };
+		}
+		const calls = parseCallRequests(params);
 		if (calls === null || calls.length === 0) {
 			return { block: true, blockReason: 'mcp-portal: malformed portal call batch.' };
 		}
@@ -195,7 +200,7 @@ export function createBeforeToolCallHandler(
 					agentId,
 					approvalCalls,
 					context,
-					params: event.params,
+					params,
 				})) ?? fallbackApprovalTokenCallDigests(approvalCalls);
 			if (callDigests.length !== approvalCalls.length) {
 				throw new Error(
@@ -216,7 +221,7 @@ export function createBeforeToolCallHandler(
 		}
 		const approvalPreview = approvalCalls.map(approvalCallPreview).join('\n');
 		return {
-			params: { ...event.params, portalApprovalToken },
+			params: { ...params, portalApprovalToken },
 			requireApproval: {
 				description: `Allow MCP Portal batch for agent ${agentId}:\n${approvalPreview}`,
 				pluginId: 'mcp-portal',

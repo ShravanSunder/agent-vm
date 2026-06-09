@@ -40,6 +40,19 @@ const session = {
 				namespace: 'linear',
 				toolName: 'create_issue_with_default',
 			},
+			{
+				description: 'List teams',
+				inputSchema: {
+					additionalProperties: false,
+					properties: {
+						includeArchived: { type: 'boolean' },
+						limit: { type: 'number' },
+					},
+					type: 'object',
+				},
+				namespace: 'linear',
+				toolName: 'list_teams',
+			},
 		],
 	},
 	graph: { relationships: [], skills: [] },
@@ -809,6 +822,50 @@ describe('portal tool handlers', () => {
 			expect.objectContaining({
 				arguments: { title: 'Fallback title' },
 				agentScopeId: 'agent-scope-a\nsession-a',
+			}),
+		);
+	});
+
+	it('passes schema-normalized scalar arguments to approval and upstream calls', async () => {
+		const approval = vi.fn(allowDecision);
+		const callUpstreamTool = vi.fn(async () => ({ content: [{ text: 'teams', type: 'text' }] }));
+		const handlers = createPortalToolHandlers({
+			approval,
+			callUpstreamTool,
+			getSession: vi.fn(async () => session),
+		});
+
+		await expect(
+			handlers.call({
+				identity: session.identity,
+				input: {
+					calls: [
+						{
+							arguments: { includeArchived: 'false', limit: '20' },
+							id: 'list-teams',
+							namespace: 'linear',
+							toolName: 'list_teams',
+						},
+					],
+				},
+			}),
+		).resolves.toMatchObject({ ok: true });
+
+		expect(approval).toHaveBeenCalledWith(
+			[
+				expect.objectContaining({
+					arguments: { includeArchived: false, limit: 20 },
+					id: 'list-teams',
+					toolName: 'list_teams',
+				}),
+			],
+			session.identity,
+			undefined,
+		);
+		expect(callUpstreamTool).toHaveBeenCalledWith(
+			expect.objectContaining({
+				arguments: { includeArchived: false, limit: 20 },
+				toolName: 'list_teams',
 			}),
 		);
 	});
