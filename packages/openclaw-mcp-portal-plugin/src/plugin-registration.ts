@@ -27,6 +27,7 @@ import type {
 	OpenClawToolRegistration,
 	OpenClawToolUpdateCallback,
 } from './openclaw-plugin-api.js';
+import { normalizeOpenClawToolParams } from './openclaw-tool-params.js';
 import { parsePortalConfig } from './portal-config.js';
 import { createPortalPluginRuntimeState } from './portal-plugin-runtime-state.js';
 
@@ -317,6 +318,7 @@ function createNativeTool(props: {
 			if (props.context.agentId === undefined || props.context.agentId.length === 0) {
 				throw new Error('mcp-portal: OpenClaw did not provide a trusted agentId.');
 			}
+			const normalizedParams = normalizeOpenClawToolParams(params);
 			const core = await props.getCore();
 			const scope = core.createAgentScope({
 				agentId: props.context.agentId,
@@ -327,7 +329,7 @@ function createNativeTool(props: {
 			});
 			const result = await core.collectPortalCoreResult(
 				core.callStream({
-					input: params,
+					input: normalizedParams,
 					scope,
 					...(signal !== undefined ? { signal } : {}),
 					toolName: props.descriptor.name,

@@ -125,6 +125,120 @@ describe('native MCP Portal onUpdate forwarding', () => {
 		}
 	});
 
+	it('parses stringified OpenClaw tool params before invoking the portal core', async () => {
+		vi.resetModules();
+		const coreResult = {
+			items: [{ requestId: 'read-1', status: 'success' }],
+			toolName: 'mcp_portal_call',
+		};
+		const coreInputs: unknown[] = [];
+		const close = vi.fn(async () => undefined);
+		vi.doMock('@agent-vm/mcp-portal/core', () => ({
+			createPortalPolicyApprovalEvaluator: () => () => ({ decisionsByCallId: {} }),
+			createPortalCore: () => ({
+				callStream: async function* (props: { readonly input: unknown }) {
+					coreInputs.push(props.input);
+					yield { kind: 'completed', result: coreResult };
+				},
+				close,
+				collectPortalCoreResult: async (
+					events: AsyncIterable<{ readonly kind: 'completed'; readonly result: typeof coreResult }>,
+				) => {
+					for await (const event of events) {
+						return event.result;
+					}
+					throw new Error('test stream did not complete');
+				},
+				createAgentScope: (scope: unknown) => scope,
+			}),
+			createUpstreamMcpClientRuntime: () => ({
+				callTool: vi.fn(),
+				closeAgentScope: vi.fn(),
+				closeSession: vi.fn(),
+				listTools: vi.fn(),
+			}),
+			listPortalCoreToolDescriptors: () => [
+				{
+					description: 'Call authorized MCP tools.',
+					inputSchema: { type: 'object' },
+					name: 'mcp_portal_call',
+				},
+			],
+			resolveUpstreamServers: async () => [],
+		}));
+		const { registerMcpPortalPlugin } = await import('./plugin-registration.js');
+		const workspace = await mkdtemp(join(tmpdir(), 'openclaw-mcp-portal-plugin-'));
+		let registeredToolFactory: OpenClawToolFactory | undefined;
+		try {
+			await writeFile(
+				join(workspace, 'mcp.config.jsonc'),
+				JSON.stringify({ providers: {}, schemaVersion: 1 }),
+			);
+			await writeFile(
+				join(workspace, 'mcp-portal.config.jsonc'),
+				JSON.stringify({
+					agents: { shravan: { profile: 'default' } },
+					profiles: {
+						default: { namespaces: {} },
+					},
+					schemaVersion: 1,
+				}),
+			);
+
+			registerMcpPortalPlugin({
+				logger: { error: () => undefined, warn: () => undefined },
+				on: () => undefined,
+				pluginConfig: { configDir: workspace },
+				registerRuntimeLifecycle: () => undefined,
+				registerTool: (tool) => {
+					if (typeof tool === 'function') {
+						registeredToolFactory = tool;
+					}
+				},
+			});
+			const tools = registeredToolFactory?.({ agentId: 'shravan' });
+			if (!Array.isArray(tools)) {
+				throw new Error('MCP Portal registered tool factory did not return tools.');
+			}
+			const callTool = tools.find((tool) => tool.name === 'mcp_portal_call');
+			if (callTool === undefined) {
+				throw new Error('MCP Portal call tool was not registered.');
+			}
+
+			const result = await callTool.execute(
+				'call-1',
+				JSON.stringify({
+					calls: [
+						{
+							arguments: { limit: 20 },
+							id: 'linear-teams',
+							namespace: 'linear',
+							toolName: 'list_teams',
+						},
+					],
+				}),
+			);
+
+			expect(result.details).toBe(coreResult);
+			expect(coreInputs).toEqual([
+				{
+					calls: [
+						{
+							arguments: { limit: 20 },
+							id: 'linear-teams',
+							namespace: 'linear',
+							toolName: 'list_teams',
+						},
+					],
+				},
+			]);
+		} finally {
+			await rm(workspace, { force: true, recursive: true });
+			vi.doUnmock('@agent-vm/mcp-portal/core');
+			vi.resetModules();
+		}
+	});
+
 	it('logs and continues when OpenClaw onUpdate rejects', async () => {
 		vi.resetModules();
 		const coreResult = {
