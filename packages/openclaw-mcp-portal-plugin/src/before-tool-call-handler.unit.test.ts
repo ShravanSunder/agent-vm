@@ -206,6 +206,39 @@ describe('createBeforeToolCallHandler', () => {
 		expect(params).not.toHaveProperty('portalApprovalToken');
 	});
 
+	it('injects a portal approval token when OpenClaw passes stringified params', async () => {
+		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+		const params = JSON.stringify({
+			calls: [
+				{
+					arguments: { title: 'Fix deploy' },
+					id: 'create',
+					namespace: 'linear',
+					toolName: 'create_issue',
+				},
+			],
+		}) as unknown as Record<string, unknown>;
+
+		const result = await handler({ params, toolName: 'mcp_portal_call' }, { agentId: 'shravan' });
+
+		expect(result).toMatchObject({
+			params: {
+				calls: [
+					{
+						arguments: { title: 'Fix deploy' },
+						id: 'create',
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+				],
+				portalApprovalToken: expect.any(String),
+			},
+			requireApproval: expect.objectContaining({
+				pluginId: 'mcp-portal',
+			}),
+		});
+	});
+
 	it('uses prepared approval token digests from core validation', async () => {
 		const runtimeState = createRuntimeState();
 		const defaultedArguments = { title: 'Default title' };
