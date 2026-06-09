@@ -697,6 +697,10 @@ describe('git-push-operations', () => {
 
 	it('pushes branches for different repos concurrently', async () => {
 		const events: string[] = [];
+		let releaseWidgetsPush: (() => void) | undefined;
+		const widgetsPushCanFinish = new Promise<void>((resolve) => {
+			releaseWidgetsPush = resolve;
+		});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = extractGitArgs(args);
 			const gitDirArgument = args.find((arg) => arg.startsWith('--git-dir='));
@@ -704,7 +708,9 @@ describe('git-push-operations', () => {
 			if (gitArgs[0] === 'push') {
 				events.push(`push-start:${repoName}`);
 				if (repoName === 'widgets') {
-					await new Promise((resolve) => setTimeout(resolve, 10));
+					await widgetsPushCanFinish;
+				} else {
+					releaseWidgetsPush?.();
 				}
 				events.push(`push-finish:${repoName}`);
 				return { stdout: '', stderr: '', exitCode: 0 };

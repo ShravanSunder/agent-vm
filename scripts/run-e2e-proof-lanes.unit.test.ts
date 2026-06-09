@@ -32,7 +32,7 @@ describe('e2e proof lane plan', () => {
 		const lanes = createE2eProofLanes();
 
 		expect(lanes.map((lane) => lane.id)).toEqual(['e2e-host', 'e2e-vm', 'e2e-vm-mediation']);
-		expect(lanes[0]?.env).toEqual({});
+		expect(lanes[0]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
 		expect(lanes[1]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
 		expect(lanes[2]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
 	});

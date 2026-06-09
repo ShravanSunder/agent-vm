@@ -20,6 +20,16 @@ export interface McpPortalEffectiveConfigProps {
 	readonly zoneId: string;
 }
 
+export interface McpPortalEffectiveConfigFromConfigProps {
+	readonly allowedRawEnvSecretNames?: readonly string[];
+	readonly effectiveHostConfigDir: string;
+	readonly effectiveVmConfigDir: string;
+	readonly mcpConfig: McpConfig;
+	readonly portalConfig: McpPortalConfig;
+	readonly secretResolver: SecretResolver;
+	readonly zoneId: string;
+}
+
 export interface McpPortalEffectiveConfigPlan {
 	readonly effectiveConfigDir: string;
 	readonly effectiveMcpConfig: McpConfig;
@@ -155,14 +165,10 @@ function validateProviderNetwork(
 	}
 }
 
-async function buildEffectivePlan(
-	props: McpPortalEffectiveConfigProps,
+async function buildEffectivePlanFromConfig(
+	props: McpPortalEffectiveConfigFromConfigProps,
 	resolveSecrets: boolean,
 ): Promise<McpPortalEffectiveConfigPlan> {
-	const [mcpConfig, portalConfig] = await Promise.all([
-		loadMcpConfig(path.join(props.authoredConfigDir, 'mcp.config.jsonc')),
-		loadMcpPortalConfig(path.join(props.authoredConfigDir, 'mcp-portal.config.jsonc')),
-	]);
 	const requiredGatewayEgressHosts = new Set<string>();
 	const allowedRawEnvSecretNames = new Set(props.allowedRawEnvSecretNames ?? []);
 	const secretRefs: Record<string, SecretRef> = {};
@@ -176,7 +182,7 @@ async function buildEffectivePlan(
 	>();
 	const effectiveProviders: McpConfig['providers'] = {};
 
-	for (const [providerName, provider] of Object.entries(mcpConfig.providers)) {
+	for (const [providerName, provider] of Object.entries(props.mcpConfig.providers)) {
 		validateProviderNetwork(providerName, provider, requiredGatewayEgressHosts);
 		const effectiveProvider = structuredClone(provider);
 		const transportSecrets =
@@ -238,14 +244,38 @@ async function buildEffectivePlan(
 
 	return {
 		effectiveConfigDir: props.effectiveHostConfigDir,
-		effectiveMcpConfig: { ...mcpConfig, providers: effectiveProviders },
-		effectivePortalConfig: buildManagedEffectivePortalConfig(portalConfig),
+		effectiveMcpConfig: { ...props.mcpConfig, providers: effectiveProviders },
+		effectivePortalConfig: buildManagedEffectivePortalConfig(props.portalConfig),
 		pluginConfig: { configDir: props.effectiveVmConfigDir },
 		requiredGatewayEgressHosts: [...requiredGatewayEgressHosts].toSorted(),
 		resolvedSecretNames: Object.keys(secretRefs).toSorted(),
 		runtimeEnvironment,
 		runtimeMediatedSecrets,
 	};
+}
+
+async function buildEffectivePlan(
+	props: McpPortalEffectiveConfigProps,
+	resolveSecrets: boolean,
+): Promise<McpPortalEffectiveConfigPlan> {
+	const [mcpConfig, portalConfig] = await Promise.all([
+		loadMcpConfig(path.join(props.authoredConfigDir, 'mcp.config.jsonc')),
+		loadMcpPortalConfig(path.join(props.authoredConfigDir, 'mcp-portal.config.jsonc')),
+	]);
+	return await buildEffectivePlanFromConfig(
+		{
+			effectiveHostConfigDir: props.effectiveHostConfigDir,
+			effectiveVmConfigDir: props.effectiveVmConfigDir,
+			mcpConfig,
+			portalConfig,
+			secretResolver: props.secretResolver,
+			zoneId: props.zoneId,
+			...(props.allowedRawEnvSecretNames === undefined
+				? {}
+				: { allowedRawEnvSecretNames: props.allowedRawEnvSecretNames }),
+		},
+		resolveSecrets,
+	);
 }
 
 async function writeNewFileAndSync(filePath: string, content: string): Promise<void> {
@@ -338,6 +368,18 @@ export async function planMcpPortalEffectiveConfig(
 	props: McpPortalEffectiveConfigProps,
 ): Promise<McpPortalEffectiveConfigPlan> {
 	return await buildEffectivePlan(props, false);
+}
+
+export async function planMcpPortalEffectiveConfigFromConfig(
+	props: McpPortalEffectiveConfigFromConfigProps,
+): Promise<McpPortalEffectiveConfigPlan> {
+	return await buildEffectivePlanFromConfig(props, false);
+}
+
+export async function resolveMcpPortalEffectiveConfigFromConfig(
+	props: McpPortalEffectiveConfigFromConfigProps,
+): Promise<McpPortalEffectiveConfigPlan> {
+	return await buildEffectivePlanFromConfig(props, true);
 }
 
 export async function writeMcpPortalEffectiveConfig(

@@ -406,6 +406,8 @@ describe('portal HTTP server', () => {
 	});
 
 	it('resets auth failure buckets after the configured window', async () => {
+		let nowMs = 1_000;
+		const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
 		const app = createPortalHttpApp({
 			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
 			authFailureLimit: { maxFailures: 1, windowMs: 5 },
@@ -416,22 +418,26 @@ describe('portal HTTP server', () => {
 					: null,
 		});
 
-		await expect(
-			app.request('/agents/agent-a/mcp', {
-				headers: { authorization: bearerAuthHeader('agent-b') },
-			}),
-		).resolves.toMatchObject({ status: 401 });
-		await expect(
-			app.request('/agents/agent-a/mcp', {
-				headers: { authorization: bearerAuthHeader('agent-b') },
-			}),
-		).resolves.toMatchObject({ status: 429 });
-		await new Promise((resolve) => setTimeout(resolve, 10));
-		await expect(
-			app.request('/agents/agent-a/mcp', {
-				headers: { authorization: bearerAuthHeader('agent-b') },
-			}),
-		).resolves.toMatchObject({ status: 401 });
+		try {
+			await expect(
+				app.request('/agents/agent-a/mcp', {
+					headers: { authorization: bearerAuthHeader('agent-b') },
+				}),
+			).resolves.toMatchObject({ status: 401 });
+			await expect(
+				app.request('/agents/agent-a/mcp', {
+					headers: { authorization: bearerAuthHeader('agent-b') },
+				}),
+			).resolves.toMatchObject({ status: 429 });
+			nowMs += 6;
+			await expect(
+				app.request('/agents/agent-a/mcp', {
+					headers: { authorization: bearerAuthHeader('agent-b') },
+				}),
+			).resolves.toMatchObject({ status: 401 });
+		} finally {
+			dateNowSpy.mockRestore();
+		}
 	});
 
 	it('serves initialize, tools/list, and tools/call through Streamable HTTP', async () => {
@@ -646,6 +652,10 @@ describe('portal HTTP server', () => {
 	it('attempts every active session close before surfacing close errors', async () => {
 		let closeCallbackCount = 0;
 		const closedSessionIds: string[] = [];
+		let releaseSecondClose: (() => void) | undefined;
+		const secondCloseCanFinish = new Promise<void>((resolve) => {
+			releaseSecondClose = resolve;
+		});
 		const app = createPortalHttpApp({
 			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
 			core: createTestPortalCore(),
@@ -655,7 +665,7 @@ describe('portal HTTP server', () => {
 					closedSessionIds.push(identity.sessionId ?? 'missing-session-id');
 					return Promise.reject('first close failed');
 				}
-				await new Promise((resolve) => setTimeout(resolve, 50));
+				await secondCloseCanFinish;
 				closedSessionIds.push(identity.sessionId ?? 'missing-session-id');
 			},
 			resolveAgentIdentity: (agentId) =>
@@ -679,10 +689,12 @@ describe('portal HTTP server', () => {
 				}),
 			);
 
-			await expect(app.closePortalSessions()).rejects.toMatchObject({
+			const closePromise = expect(app.closePortalSessions()).rejects.toMatchObject({
 				errors: [expect.any(Error)],
 				message: 'Failed to close one or more MCP Portal sessions.',
 			});
+			releaseSecondClose?.();
+			await closePromise;
 			expect(closedSessionIds).toHaveLength(2);
 		} finally {
 			await Promise.allSettled(clients.map(async (client) => await client.close()));

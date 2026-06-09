@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import {
@@ -21,7 +21,7 @@ describe('resolveLeaseWorkMountDir', () => {
 	let stateDir: string;
 	let zone: ZoneConfig;
 
-	beforeEach(async () => {
+	beforeAll(async () => {
 		tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-lease-work-mount-'));
 		runtimeDir = path.join(tempDir, 'runtime');
 		zoneFilesDir = path.join(tempDir, 'zone-files', 'shravan');
@@ -60,7 +60,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		};
 	});
 
-	afterEach(async () => {
+	afterAll(async () => {
 		await rm(tempDir, { recursive: true, force: true });
 	});
 

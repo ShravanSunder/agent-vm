@@ -94,15 +94,19 @@ fast formatting and linting.
   boundary.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
+  Unit and integration Vitest projects use the `threads` pool for fast local and
+  CI feedback. Do not move live VM, OpenClaw, Worker, 1Password, LLM, or host
+  e2e lanes onto that pool without proving teardown and process isolation still
+  hold.
 - E2E inventory: `pnpm test:e2e:inventory`.
   This discovers e2e files with gates closed. It may report skips and is not
   proof that a VM, gateway, provider, secret resolver, or model path worked.
 - Default non-secret E2E proof: `mise exec -- pnpm test:e2e`.
-  This runs `pnpm build` once, then runs the host subprocess and VM/Gondolin
-  proof lanes with `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1` where a lane needs
-  built workspace artifacts.
+  This runs `pnpm build` once, then runs the host and VM/Gondolin proof lanes
+  with `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1` where a lane needs built workspace
+  artifacts.
 - Additional E2E proof lanes:
-  - Host subprocess proofs: `pnpm test:e2e:host`.
+  - Host proofs: `pnpm test:e2e:host`.
   - VM/Gondolin: `mise exec -- pnpm test:e2e:vm`.
   - VM/Gondolin HTTP mediation: `mise exec -- pnpm test:e2e:vm-mediation`.
   - OpenClaw gateway: `mise exec -- pnpm test:e2e:openclaw`.
@@ -134,7 +138,7 @@ The suffix is the contract. Do not use plain `*.test.ts` for new tests.
 
 - Unit tests must use `*.unit.test.ts` or `*.unit.spec.ts`.
 - Integration tests must use `*.integration.test.ts`.
-- Host subprocess e2e tests must use `*.host.e2e.test.ts`.
+- Host e2e tests must use `*.host.e2e.test.ts`.
 - VM e2e tests must use `*.vm.e2e.test.ts`.
 - OpenClaw e2e tests must use `*.openclaw.e2e.test.ts`.
 - Worker e2e tests must use `*.worker.e2e.test.ts`.
@@ -165,6 +169,9 @@ E2E tests prove production-shaped behavior from outside the system. E2E tests
 should also be parallel-safe through temp roots, dynamic ports, shared build
 caches, and explicit setup/teardown. If an e2e test cannot be parallel safe,
 document the exact shared resource in the test and keep that exception narrow.
+E2E test control flow must wait on real process, filesystem, protocol, or VM
+events instead of wall-clock sleeps. A protocol timeout that rejects a hung
+WebSocket/request is allowed; an `await sleep(...)` between probes is not.
 Live e2e tests must not write deployment `config/`, `runtime/`, `state/`, or
 `zone-files/` under the source checkout. Use the e2e harness scaffolds so each
 deployment gets an owned OS-temp project root, and use `AGENT_VM_E2E_CACHE_DIR`
@@ -181,12 +188,13 @@ package inputs. The intended loop is build once, pack with scripts disabled into
 the shared cache, prepare images into the shared cache, then run the runtime
 proof.
 
-Host subprocess e2e tests are the home for expensive host-boundary proofs that
-do not boot a VM but do execute production-shaped host tools: real `git`, `tar`,
-`age`, package-manager-style CLI entrypoints, shell bootstrap rendering, and
-other external process behavior. These tests must keep temp roots isolated and
-must be included in the default `pnpm test:e2e` proof lane so coverage is not
-lost when `pnpm test:integration` stays fast.
+Host e2e tests are the home for expensive host-boundary proofs that do not boot
+a VM but do execute production-shaped host behavior: real `git`, `tar`, `age`,
+package-manager-style CLI entrypoints, shell bootstrap rendering, real
+controller/worker HTTP wiring, host process lifecycle, and other external
+process behavior. These tests must keep temp roots isolated and must be
+included in the default `pnpm test:e2e` proof lane so coverage is not lost when
+`pnpm test:integration` stays fast.
 
 ### Testing Pyramid And Evidence Names
 
@@ -202,10 +210,11 @@ layers as e2e.
   CLI/manual generation, and config validation. These tests prove contracts
   between modules, but they are not e2e if the VM/provider/product path is
   fake.
-- Host subprocess e2e: production-shaped host command proofs that do not boot a
-  VM, such as real Git, archive/encryption tools, package-manager-style CLI
-  entrypoints, and shell bootstrap rendering. They are higher than integration
-  because they execute external host programs and are allowed to be slower.
+- Host e2e: production-shaped host proofs that do not boot a VM, such as real
+  Git, archive/encryption tools, package-manager-style CLI entrypoints, shell
+  bootstrap rendering, real controller/worker HTTP wiring, and host process
+  lifecycle. They are higher than integration because they execute external host
+  programs or production-shaped host services and are allowed to be slower.
 - Real VM integration: boots the real Gondolin/QEMU path or a real managed image
   path and proves host/guest wiring, ingress, control link, runtime records, or
   Tool VM SSH with the pinned toolchain active through `mise exec --`.

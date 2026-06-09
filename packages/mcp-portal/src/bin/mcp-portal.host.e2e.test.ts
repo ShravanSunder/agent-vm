@@ -1,11 +1,11 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { createHmac } from 'node:crypto';
+import { once } from 'node:events';
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -48,6 +48,90 @@ interface PortalClientHandle {
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function withTimeout<TValue>(
+	promise: Promise<TValue>,
+	timeoutMs: number,
+	message: string,
+): Promise<TValue> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const timeoutPromise = new Promise<never>((_resolve, reject) => {
+		timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+	});
+	return Promise.race([promise, timeoutPromise]).finally(() => {
+		if (timeout !== undefined) {
+			clearTimeout(timeout);
+		}
+	});
+}
+
+function waitForOutputCondition(options: {
+	readonly child: PortalChildProcess;
+	readonly describeCondition: string;
+	readonly isReady: () => boolean;
+	readonly output: ChildOutput;
+	readonly timeoutMs: number;
+}): Promise<void> {
+	if (options.isReady()) {
+		return Promise.resolve();
+	}
+	if (options.child.exitCode !== null) {
+		return Promise.reject(
+			new Error(
+				`${options.describeCondition} failed because the process exited:\n${options.output.stderr}`,
+			),
+		);
+	}
+	return new Promise<void>((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			cleanup();
+			reject(
+				new Error(
+					`${options.describeCondition} did not complete within ${String(
+						options.timeoutMs,
+					)}ms.\nstdout:\n${options.output.stdout}\nstderr:\n${options.output.stderr}`,
+				),
+			);
+		}, options.timeoutMs);
+		const cleanup = (): void => {
+			clearTimeout(timeout);
+			options.child.stdout.off('data', onData);
+			options.child.off('exit', onExit);
+		};
+		const onData = (): void => {
+			if (options.isReady()) {
+				cleanup();
+				resolve();
+			}
+		};
+		const onExit = (): void => {
+			cleanup();
+			reject(
+				new Error(
+					`${options.describeCondition} failed because the process exited:\n${options.output.stderr}`,
+				),
+			);
+		};
+		options.child.stdout.on('data', onData);
+		options.child.once('exit', onExit);
+		onData();
+	});
+}
+
+async function waitForPortalExit(
+	child: PortalChildProcess,
+	timeoutMs: number,
+	describeExit: string,
+): Promise<void> {
+	if (child.exitCode !== null) {
+		return;
+	}
+	await withTimeout(
+		once(child, 'exit').then(() => undefined),
+		timeoutMs,
+		`${describeExit} did not exit within ${String(timeoutMs)}ms.`,
+	);
 }
 
 async function findOpenPort(): Promise<number> {
@@ -143,36 +227,19 @@ async function waitForPortalHealth(props: {
 	readonly output: ChildOutput;
 	readonly port: number;
 }): Promise<void> {
-	await waitForPortalHealthAttempt({
-		...props,
-		startedAt: Date.now(),
+	await waitForOutputCondition({
+		child: props.child,
+		describeCondition: 'Portal readiness',
+		isReady: () => props.output.stdout.includes(`listening port=${String(props.port)}`),
+		output: props.output,
+		timeoutMs: 30_000,
 	});
-}
-
-async function waitForPortalHealthAttempt(props: {
-	readonly child: PortalChildProcess;
-	readonly output: ChildOutput;
-	readonly port: number;
-	readonly startedAt: number;
-}): Promise<void> {
-	if (props.child.exitCode !== null) {
-		throw new Error(`Portal process exited early: ${props.output.stderr}`);
-	}
-	if (Date.now() - props.startedAt >= 10_000) {
+	const response = await fetch(`http://127.0.0.1:${String(props.port)}/health`);
+	if (!response.ok) {
 		throw new Error(
-			`Timed out waiting for portal health. stdout=${props.output.stdout} stderr=${props.output.stderr}`,
+			`Portal process reported listening but health returned HTTP ${String(response.status)}.`,
 		);
 	}
-	try {
-		const response = await fetch(`http://127.0.0.1:${String(props.port)}/health`);
-		if (response.ok) {
-			return;
-		}
-	} catch {
-		// The subprocess may still be starting; keep polling until the bounded timeout.
-	}
-	await delay(50);
-	return waitForPortalHealthAttempt(props);
 }
 
 async function startPortalProcess(props: {
@@ -212,16 +279,15 @@ async function stopPortalProcess(startedPortal: StartedPortalProcess | null): Pr
 		return;
 	}
 	startedPortal.child.kill('SIGTERM');
-	await Promise.race([
-		new Promise<void>((resolve) => {
-			startedPortal.child.once('exit', () => resolve());
-		}),
-		delay(5_000).then(() => {
-			if (startedPortal.child.exitCode === null) {
-				startedPortal.child.kill('SIGKILL');
-			}
-		}),
-	]);
+	try {
+		await waitForPortalExit(startedPortal.child, 5_000, 'Portal SIGTERM shutdown');
+	} catch (error) {
+		if (startedPortal.child.exitCode === null) {
+			startedPortal.child.kill('SIGKILL');
+			await waitForPortalExit(startedPortal.child, 5_000, 'Portal SIGKILL shutdown');
+		}
+		throw error;
+	}
 }
 
 function asClientTransport(transport: StreamableHTTPClientTransport): Transport {

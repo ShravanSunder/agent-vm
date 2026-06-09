@@ -161,10 +161,7 @@ describe('worker-task-runner integration', () => {
 			submitTask: async (input) => {
 				receivedTaskBody = input;
 				activeTaskId = input.taskId;
-				currentStatus = 'pending';
-				setTimeout(() => {
-					currentStatus = 'completed';
-				}, 50);
+				currentStatus = 'completed';
 				return { taskId: input.taskId, status: 'accepted' as const };
 			},
 			closeTask: async () => ({ status: 'closed' as const }),

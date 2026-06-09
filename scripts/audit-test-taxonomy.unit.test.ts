@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	classifyUnitBoundaryViolation,
+	classifyWallClockWaitViolation,
 	hasAllowedTestSuffix,
+	isE2eTest,
+	isIntegrationTest,
 	isUnitTest,
 	resolveTestFileProjectNames,
 } from './audit-test-taxonomy.js';
@@ -26,12 +30,106 @@ describe('hasAllowedTestSuffix', () => {
 	});
 });
 
+describe('classifyWallClockWaitViolation', () => {
+	it('rejects wall-clock waits in unit and integration tests', () => {
+		expect(
+			classifyWallClockWaitViolation(
+				'packages/example/example.unit.test.ts',
+				'it("waits", async () => { await delay(10); });',
+			),
+		).toContain('unit tests must not wait on wall-clock time');
+		expect(
+			classifyWallClockWaitViolation(
+				'packages/example/example.integration.test.ts',
+				'it("waits", async () => { setTimeout(resolve, 10); });',
+			),
+		).toContain('integration tests must not wait on wall-clock time');
+	});
+
+	it('rejects direct wall-clock sleeps in e2e tests', () => {
+		expect(
+			classifyWallClockWaitViolation(
+				'packages/example/example.host.e2e.test.ts',
+				'it("waits for a process", async () => { await delay(50); });',
+			),
+		).toContain('e2e tests must wait on real process');
+		expect(
+			classifyWallClockWaitViolation(
+				'packages/example/example.host.e2e.test.ts',
+				[
+					'it("waits for a process", async () => {',
+					'  await new Promise((resolve) =>',
+					'    setTimeout(resolve, 50),',
+					'  );',
+					'});',
+				].join('\n'),
+			),
+		).toContain('e2e tests must wait on real process');
+	});
+
+	it('allows e2e protocol safety timers that are not awaited sleeps', () => {
+		expect(
+			classifyWallClockWaitViolation(
+				'packages/example/example.openclaw.e2e.test.ts',
+				'const timer = setTimeout(() => reject(new Error("protocol timeout")), timeoutMs);',
+			),
+		).toBeNull();
+	});
+});
+
+describe('classifyUnitBoundaryViolation', () => {
+	it('rejects unit tests that import subprocess APIs', () => {
+		expect(
+			classifyUnitBoundaryViolation(
+				'packages/example/example.unit.test.ts',
+				[
+					"import { execa } from 'execa';",
+					"import { spawn } from 'node:child_process';",
+					"await execa('git', ['status']);",
+				].join('\n'),
+			),
+		).toContain('unit tests must not cross real process/network boundaries');
+		expect(
+			classifyUnitBoundaryViolation(
+				'packages/example/example.unit.test.ts',
+				["import { spawn } from 'node:child_process';", "spawn('git', ['status']);"].join('\n'),
+			),
+		).toContain('unit tests must not cross real process/network boundaries');
+	});
+
+	it('ignores subprocess-looking text outside unit tests', () => {
+		expect(
+			classifyUnitBoundaryViolation(
+				'packages/example/example.host.e2e.test.ts',
+				"import { execa } from 'execa';",
+			),
+		).toBeNull();
+	});
+});
+
 describe('isUnitTest', () => {
 	it('only treats unit suffixes as unit tests', () => {
 		expect(isUnitTest('packages/example/example.unit.test.ts')).toBe(true);
 		expect(isUnitTest('packages/example/example.unit.spec.ts')).toBe(true);
 		expect(isUnitTest('packages/example/example.integration.test.ts')).toBe(false);
 		expect(isUnitTest('packages/example/example.vm.e2e.test.ts')).toBe(false);
+	});
+});
+
+describe('isIntegrationTest', () => {
+	it('only treats integration suffixes as integration tests', () => {
+		expect(isIntegrationTest('packages/example/example.integration.test.ts')).toBe(true);
+		expect(isIntegrationTest('packages/example/example.unit.test.ts')).toBe(false);
+		expect(isIntegrationTest('packages/example/example.host.e2e.test.ts')).toBe(false);
+	});
+});
+
+describe('isE2eTest', () => {
+	it('treats explicit e2e lane suffixes as e2e tests', () => {
+		expect(isE2eTest('packages/example/example.host.e2e.test.ts')).toBe(true);
+		expect(isE2eTest('packages/example/example.vm.e2e.test.ts')).toBe(true);
+		expect(isE2eTest('packages/example/example.openclaw.e2e.test.ts')).toBe(true);
+		expect(isE2eTest('packages/example/example.integration.test.ts')).toBe(false);
 	});
 });
 

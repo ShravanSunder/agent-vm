@@ -34,7 +34,7 @@ function createMockGatewaySocket(options?: {
 		if (event === 'message') {
 			messageHandler = handler;
 			// Gateway sends connect.challenge as the first frame
-			setTimeout(() => {
+			queueMicrotask(() => {
 				messageHandler?.({
 					data: JSON.stringify({
 						type: 'event',
@@ -42,7 +42,7 @@ function createMockGatewaySocket(options?: {
 						payload: { nonce, ts: 1737264000000 },
 					}),
 				});
-			}, 1);
+			});
 		}
 	});
 	const closeMock = vi.fn((): void => {});
@@ -55,7 +55,7 @@ function createMockGatewaySocket(options?: {
 		};
 
 		if (parsed.method === 'connect') {
-			setTimeout(() => {
+			queueMicrotask(() => {
 				if (options?.connectReject) {
 					messageHandler?.({
 						data: JSON.stringify({
@@ -79,11 +79,11 @@ function createMockGatewaySocket(options?: {
 						}),
 					});
 				}
-			}, 1);
+			});
 			return;
 		}
 
-		setTimeout(() => {
+		queueMicrotask(() => {
 			const response = options?.mockResponder?.(parsed) ?? {
 				ok: true,
 				payload: { text: 'default response' },
@@ -95,7 +95,7 @@ function createMockGatewaySocket(options?: {
 					...response,
 				}),
 			});
-		}, 1);
+		});
 	});
 	const socket = {
 		addEventListener,

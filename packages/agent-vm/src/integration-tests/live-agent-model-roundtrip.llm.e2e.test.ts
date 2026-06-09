@@ -179,19 +179,10 @@ async function findAvailablePort(): Promise<number> {
 }
 
 async function waitForControllerHealth(controllerPort: number): Promise<void> {
-	const poll = async (attempt: number): Promise<void> => {
-		const response = await fetch(`http://127.0.0.1:${controllerPort}/health`);
-		if (response.ok) {
-			return;
-		}
-		if (attempt >= 20) {
-			throw new Error('Controller health check did not become ready in time');
-		}
-		await new Promise((resolve) => setTimeout(resolve, 250));
-		await poll(attempt + 1);
-	};
-
-	await poll(0);
+	const response = await fetch(`http://127.0.0.1:${String(controllerPort)}/health`);
+	if (!response.ok) {
+		throw new Error(`Controller health returned HTTP ${String(response.status)} after startup.`);
+	}
 }
 
 describe('live integration: agent model roundtrip deployment config', () => {

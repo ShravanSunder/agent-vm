@@ -304,19 +304,12 @@ export async function findAvailablePort(): Promise<number> {
 }
 
 export async function waitForControllerReady(controllerPort: number): Promise<void> {
-	for (let attempt = 0; attempt < 40; attempt += 1) {
-		// oxlint-disable-next-line eslint/no-await-in-loop -- readiness polling is sequential
-		const response = await fetch(`http://127.0.0.1:${controllerPort}/controller-status`).catch(
-			() => null,
+	const response = await fetch(`http://127.0.0.1:${String(controllerPort)}/controller-status`);
+	if (!response.ok) {
+		throw new Error(
+			`Controller reported listening but status returned HTTP ${String(response.status)}.`,
 		);
-		if (response?.ok) {
-			return;
-		}
-		// oxlint-disable-next-line eslint/no-await-in-loop -- readiness polling is sequential
-		await new Promise((resolve) => setTimeout(resolve, 500));
 	}
-
-	throw new Error('Controller did not become ready in time.');
 }
 
 async function pathExists(filePath: string): Promise<boolean> {

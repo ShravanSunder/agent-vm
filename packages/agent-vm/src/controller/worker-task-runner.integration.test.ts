@@ -1061,6 +1061,14 @@ describe('worker-task-runner', () => {
 
 	it('waits for parallel clone attempts to settle before deleting the task root', async () => {
 		const events: string[] = [];
+		let releaseSlowClone: (() => void) | undefined;
+		const slowCloneCanFinish = new Promise<void>((resolve) => {
+			releaseSlowClone = resolve;
+		});
+		let markSlowCloneStarted: (() => void) | undefined;
+		const slowCloneStarted = new Promise<void>((resolve) => {
+			markSlowCloneStarted = resolve;
+		});
 		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
 			if (command === 'git' && args.includes('https://github.com/org/failing.git')) {
 				events.push('failing-clone-failed');
@@ -1068,7 +1076,8 @@ describe('worker-task-runner', () => {
 			}
 			if (command === 'git' && args.includes('https://github.com/org/slow.git')) {
 				events.push('slow-clone-started');
-				await new Promise((resolve) => setTimeout(resolve, 10));
+				markSlowCloneStarted?.();
+				await slowCloneCanFinish;
 				events.push('slow-clone-finished');
 				return { stdout: '', stderr: '', exitCode: 0 };
 			}
@@ -1092,20 +1101,22 @@ describe('worker-task-runner', () => {
 		}
 
 		const { preStartGateway } = await import('./worker-task-runner.js');
-		await expect(
-			preStartGateway(
-				{
-					requestTaskId: 'request-task-1',
-					prompt: 'clone two repos',
-					repos: [
-						{ repoUrl: 'https://github.com/org/failing.git', baseBranch: 'main' },
-						{ repoUrl: 'https://github.com/org/slow.git', baseBranch: 'main' },
-					],
-					context: {},
-				},
-				zone,
-			),
-		).rejects.toThrow(/clone failed/u);
+		const preStartPromise = preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'clone two repos',
+				repos: [
+					{ repoUrl: 'https://github.com/org/failing.git', baseBranch: 'main' },
+					{ repoUrl: 'https://github.com/org/slow.git', baseBranch: 'main' },
+				],
+				context: {},
+			},
+			zone,
+		);
+		await slowCloneStarted;
+		expect(events).not.toContain('task-root-removed');
+		releaseSlowClone?.();
+		await expect(preStartPromise).rejects.toThrow(/clone failed/u);
 
 		expect(events).toEqual([
 			'failing-clone-failed',
