@@ -41,6 +41,30 @@ function shellQuoteForTest(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
+async function captureThrownError(promise: Promise<unknown> | undefined): Promise<Error> {
+	if (promise === undefined) {
+		throw new Error('Expected lifecycle hook to be defined.');
+	}
+	try {
+		await promise;
+	} catch (error) {
+		return error instanceof Error ? error : new Error(String(error));
+	}
+	throw new Error('Expected promise to reject.');
+}
+
+async function captureThrownMessage(promise: Promise<unknown> | undefined): Promise<string> {
+	return (await captureThrownError(promise)).message;
+}
+
+function aggregateChildMessages(error: Error): readonly string[] {
+	return error instanceof AggregateError
+		? error.errors.map((childError: unknown) =>
+				childError instanceof Error ? childError.message : String(childError),
+			)
+		: [];
+}
+
 afterEach(async () => {
 	vi.useRealTimers();
 	vi.unstubAllEnvs();
@@ -1033,7 +1057,7 @@ describe('openclawLifecycle', () => {
 			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
 		});
 
-		it('attempts all per-agent auth profile writes before reporting failures', async () => {
+		it('resolves all per-agent auth profiles before writing files', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-auth-fail-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
@@ -1078,14 +1102,14 @@ describe('openclawLifecycle', () => {
 			};
 
 			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
-				/Failed to write 1 OpenClaw auth profile/u,
+				/Failed to resolve 1 OpenClaw auth profile secret/u,
 			);
 			await expect(
 				readFile(
 					path.join(zone.gateway.stateDir, 'agents', 'alevtina', 'agent', 'auth-profiles.json'),
 					'utf8',
 				),
-			).resolves.toBe('{"profiles":["alevtina"]}');
+			).rejects.toThrow(/ENOENT/u);
 		});
 
 		it('still writes effective-openclaw.json when authProfilesRef is absent', async () => {
@@ -1263,8 +1287,190 @@ describe('openclawLifecycle', () => {
 			};
 
 			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
-				/Failed to write effective OpenClaw config for zone 'shravan'.*must be a JSON object/u,
+				/Failed to build effective OpenClaw config for zone 'shravan'.*must be a JSON object/u,
 			);
+			await expect(openclawLifecycle.preflightHostState?.(zone, secretResolver)).rejects.toThrow(
+				/Failed to build effective OpenClaw config for zone 'shravan'.*must be a JSON object/u,
+			);
+		});
+
+		it('redacts configured 1Password refs from effective config errors', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-redacted-config-error-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(['not-an-object'], null, 2),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async () => {
+					throw new Error('auth profile resolution should not run');
+				},
+				resolveAll: async () => ({}),
+			};
+
+			const message = await captureThrownMessage(
+				openclawLifecycle.prepareHostState?.(zone, secretResolver),
+			);
+
+			expect(message).toContain('<1password-ref>');
+			expect(message).toContain('must be a JSON object');
+			expect(message).not.toContain('op://');
+			expect(message).not.toContain('op://vault/item/openclaw-gateway-token');
+		});
+
+		it('redacts configured 1Password refs from auth profile resolution errors', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-redacted-auth-profile-error-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify({
+					gateway: {
+						auth: { mode: 'token' },
+						bind: 'loopback',
+					},
+				}),
+				'utf8',
+			);
+			const authProfileReference = 'op://vault/private-auth-profiles/credential';
+			const zone = createZone({
+				authProfilesRef: {
+					source: '1password',
+					ref: authProfileReference,
+				},
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					throw new Error(`lookup failed for ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			const error = await captureThrownError(
+				openclawLifecycle.prepareHostState?.(zone, secretResolver),
+			);
+			const message = error.message;
+			const childMessages = aggregateChildMessages(error);
+
+			expect(message).toContain('Failed to resolve 1 OpenClaw auth profile secret');
+			expect(message).not.toContain('op://');
+			expect(childMessages.join('\n')).toContain('<1password-ref>');
+			expect(childMessages.join('\n')).toContain('lookup failed for <1password-ref>');
+			expect(childMessages.join('\n')).not.toContain('op://');
+			expect(message).not.toContain(authProfileReference);
+			expect(childMessages.join('\n')).not.toContain(authProfileReference);
+		});
+
+		it('preflights effective-openclaw config without writing the final config file', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-preflight-effective-config-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			const configPath = path.join(configDirectory, 'openclaw.json');
+			await writeFile(
+				configPath,
+				JSON.stringify({
+					gateway: {
+						auth: { mode: 'token' },
+						bind: 'loopback',
+					},
+				}),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: configPath,
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async () => {
+					throw new Error('auth profile resolution should not run');
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.preflightHostState?.(zone, secretResolver)).resolves.toBe(
+				undefined,
+			);
+
+			expect(await pathExists(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).toBe(
+				false,
+			);
+			expect(
+				(await readdir(zone.gateway.stateDir)).filter((entryName) =>
+					entryName.includes('.agent-vm-effective-openclaw-preflight'),
+				),
+			).toEqual([]);
+		});
+
+		it('preflight fails before restart when effective-openclaw path is a directory', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-preflight-directory-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			const configPath = path.join(configDirectory, 'openclaw.json');
+			await writeFile(
+				configPath,
+				JSON.stringify({
+					gateway: {
+						auth: { mode: 'token' },
+						bind: 'loopback',
+					},
+				}),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: configPath,
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			await mkdir(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), {
+				recursive: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async () => 'resolved-gateway-token',
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.preflightHostState?.(zone, secretResolver)).rejects.toThrow(
+				/Failed to preflight effective OpenClaw config.*is a directory/u,
+			);
+			expect(
+				(await readdir(zone.gateway.stateDir)).filter((entryName) =>
+					entryName.includes('.agent-vm-effective-openclaw-preflight'),
+				),
+			).toEqual([]);
 		});
 
 		it('cleans up the temp effective config file if atomic rename fails', async () => {

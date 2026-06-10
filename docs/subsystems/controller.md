@@ -107,6 +107,7 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 |--------|------|-------------|-------------|
 | `GET` | `/controller-status` | System config and zone health | OpenClaw |
 | `GET` | `/zones/:zoneId/health` | Live gateway health probe using the zone's `GatewayHealthCheck` | OpenClaw |
+| `GET` | `/zones/:zoneId/service-health` | Live gateway service liveness probe using the zone's `serviceHealthCheck` when configured | OpenClaw |
 | `GET` | `/zones/:zoneId/logs` | Gateway VM process logs | OpenClaw |
 | `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve secrets, restart gateway | OpenClaw |
 | `POST` | `/zones/:zoneId/destroy` | Stop gateway, release zone leases, purge state | OpenClaw |
@@ -147,6 +148,14 @@ for fast live reads. Accepted health and recovery events are also appended to
 durable JSONL log is not backup state and is not authority for ownership or
 recovery decisions; runtime records plus current process/port checks remain the
 authority.
+
+Operators can read the same zone-scoped health evidence through the CLI:
+`agent-vm controller health --config <system-config> --zone <zone>` runs the
+configured live readiness probe,
+`agent-vm controller service-health --config <system-config> --zone <zone>` runs
+the live gateway-service liveness probe, and
+`agent-vm controller health-snapshot --config <system-config> --zone <zone>`
+returns the current in-memory health snapshot.
 
 ```text
 agent-vm controller
@@ -191,9 +200,11 @@ host-side gateway-service probe, the in-VM gateway-control-link observation, or
 a generic channel-provider health event fails repeatedly. The default running
 gateway trigger is 10 consecutive degraded gateway-service/control-link
 observations, a 61 minute per-zone cooldown, and a 10 minute recovery deadline.
-Generic channel-provider health has its own policy: `unhealthy-recoverable` can
-feed recovery after its threshold, `transitioning` is observed until its timeout,
-and `unhealthy-unrecoverable` is surfaced without restart by default.
+Generic channel-provider health has its own policy: `unhealthy-recoverable`
+degrades readiness/status by default and feeds recovery only when
+`restartGatewayOnRecoverable` is explicitly enabled, `transitioning` is observed
+until its timeout, and `unhealthy-unrecoverable` is surfaced without restart by
+default.
 
 Recovery action selection comes from the internal gateway lifecycle state. A
 running or degraded gateway is restarted. A stopped or cold-start-eligible failed
@@ -210,6 +221,11 @@ When a start, restart, credentials refresh, or cold-start fails with
 `secret-resolution-failed`, status should surface it as the current recovery
 blocker unless durable lifecycle evidence proves that operation was the first
 outage transition.
+Use `agent-vm controller credentials check --zone <zone>` to verify the same
+gateway-zone secret resolution path without contacting the controller or
+refreshing/restarting the gateway. Use `credentials refresh` only when the
+operator intentionally wants the controller to refresh credentials and restart
+the zone runtime.
 
 ---
 
@@ -343,7 +359,7 @@ failed, or wrong-type zones.
 |-----------|-------------|
 | `getStatus` | Calls `buildControllerStatus(systemConfig)` -- returns system configuration summary |
 | `getZoneLogs` | Reads the OpenClaw gateway boot log and latest runtime log from `/agent-vm/logs` inside the gateway VM |
-| `refreshZoneCredentials` | Re-resolves zone secrets via `resolveZoneSecrets()`, then restarts the gateway zone |
+| `refreshZoneCredentials` | Builds a fresh resolver, preflights all gateway startup secret dependencies, then restarts the gateway zone with the preflighted resolver |
 | `destroyZone` | Releases all zone leases (sequential), stops the gateway VM, optionally purges state |
 | `upgradeZone` | Rebuilds the gateway image (no-op currently), then restarts the gateway zone |
 | `enableSshForZone` | Calls `vm.enableSsh()` on the gateway VM |

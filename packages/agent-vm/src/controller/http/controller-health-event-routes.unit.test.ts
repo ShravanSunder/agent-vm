@@ -123,7 +123,7 @@ describe('controller health event routes', () => {
 		store.record({
 			kind: 'gateway-service-health',
 			observedAtMs: 1_780_167_621_217,
-			path: '/readyz',
+			path: '/health',
 			port: 18789,
 			result: 'ok',
 			statusCode: 200,
@@ -212,7 +212,7 @@ describe('controller health event routes', () => {
 			body: JSON.stringify({
 				kind: 'gateway-service-health',
 				observedAtMs: 9_000,
-				path: '/readyz',
+				path: '/health',
 				port: 18_789,
 				result: 'failed',
 				zoneId: 'beta',

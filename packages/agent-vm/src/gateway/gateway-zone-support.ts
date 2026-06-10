@@ -11,6 +11,7 @@ export type GatewayZone = SystemConfig['zones'][number];
 
 export interface StartGatewayZoneOptions {
 	readonly environmentOverride?: Record<string, string>;
+	readonly prebuiltImage?: import('@agent-vm/gondolin-adapter').BuildImageResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;

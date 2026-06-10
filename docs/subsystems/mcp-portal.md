@@ -148,10 +148,12 @@ External `/mcp-proxy` mode is different: `mcp-portal mcp-proxy serve` runs on th
 operator host, resolves its configured auth secrets at process startup, and
 authenticates callers before constructing trusted agent scope for `/core`. When
 that external process must resolve 1Password refs, it uses `@agent-vm/secret-management`
-and accepts `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env`, `op-cli`, or `keychain`
-plus the matching source-specific env settings. If no token source is
-configured, env-only MCP Portal configs still run without 1Password access.
-The built-in HTTP bearer server is loopback-only; exposing MCP Portal publicly
+and accepts `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env` or `keychain` plus the
+matching source-specific env settings. Token bootstrap does not support ambient
+`op` CLI auth; service-account tokens must come from an environment variable or
+macOS Keychain. If no token source is configured, env-only MCP Portal configs
+still run without 1Password access. The
+built-in HTTP bearer server is loopback-only; exposing MCP Portal publicly
 requires an outer TLS reverse proxy and an explicit credential `proxyUrl`.
 
 Upstream MCP provider URLs are trusted deployment config. Runtime validation

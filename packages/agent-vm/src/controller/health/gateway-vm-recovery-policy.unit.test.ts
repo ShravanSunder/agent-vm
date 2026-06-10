@@ -408,4 +408,66 @@ describe('createGatewayVmRecoveryTracker', () => {
 			zoneId: 'sunfam',
 		});
 	});
+
+	it('observes recoverable channel-provider failures by default without restarting the gateway VM', () => {
+		const tracker = createGatewayVmRecoveryTracker({ policy });
+
+		for (let index = 1; index <= 3; index += 1) {
+			expect(
+				tracker.recordAgentChannelProviderObservation({
+					channelProviderId: 'discord',
+					observedAtMs: index * 10_000,
+					result: 'failed',
+					zoneId: 'sunfam',
+				}),
+			).toEqual({
+				consecutiveFailures: index,
+				kind: 'none',
+				reason: 'disabled',
+			});
+		}
+	});
+
+	it('allows unrecoverable channel-provider restart opt-in independently from recoverable restart opt-in', () => {
+		const tracker = createGatewayVmRecoveryTracker({
+			policy: {
+				...policy,
+				channelProviderHealth: {
+					consecutiveFailureThreshold: 2,
+					enabled: true,
+					restartGatewayOnRecoverable: false,
+					restartGatewayOnUnrecoverable: true,
+					transitioningTimeoutMs: 120_000,
+				},
+			},
+		});
+
+		expect(
+			tracker.recordAgentChannelProviderObservation({
+				channelProviderHealth: 'unhealthy-recoverable',
+				channelProviderId: 'discord',
+				observedAtMs: 10_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 1,
+			kind: 'none',
+			reason: 'disabled',
+		});
+		expect(
+			tracker.recordAgentChannelProviderObservation({
+				channelProviderHealth: 'unhealthy-unrecoverable',
+				channelProviderId: 'discord',
+				observedAtMs: 20_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 2,
+			kind: 'restart',
+			reason: 'agent-channel-provider-unhealthy',
+			zoneId: 'sunfam',
+		});
+	});
 });

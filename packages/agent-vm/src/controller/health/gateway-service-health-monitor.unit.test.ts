@@ -149,7 +149,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',
@@ -222,7 +222,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -273,7 +273,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -358,7 +358,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -382,6 +382,55 @@ describe('createGatewayServiceHealthMonitor', () => {
 			reason: 'agent-channel-provider-unhealthy',
 			zoneId: 'sunfam',
 		});
+	});
+
+	it('does not restart for a recoverable channel provider by default while gateway service is healthy', async () => {
+		let nowMs = 0;
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		healthEventStore.record({
+			channelProviderId: 'primary-channel',
+			details: { closeCode: 1006, providerType: 'discord' },
+			health: 'unhealthy-recoverable',
+			kind: 'agent-channel-provider-health',
+			observedAtMs: 1_000,
+			result: 'failed',
+			unhealthySinceMs: 1_000,
+			zoneId: 'sunfam',
+		});
+		const recoverGatewayVm = vi.fn(async (): Promise<GatewayVmRecoveryResult> => {
+			throw new Error('recoverGatewayVm should not run for default channel-provider policy');
+		});
+		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart,
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/health',
+				port: 18789,
+				statusCode: 200,
+				zoneId: 'sunfam',
+			})),
+			recoverGatewayVm,
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		for (let tickIndex = 1; tickIndex <= 3; tickIndex += 1) {
+			nowMs = tickIndex * 10_000;
+			await monitor.tick();
+		}
+
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+		expect(healthEventStore.listLatestEventsForZone('sunfam')).not.toContainEqual(
+			expect.objectContaining({
+				kind: 'gateway-recovery',
+			}),
+		);
 	});
 
 	it('recovers from stale unhealthy channel-provider evidence while gateway service is healthy', async () => {
@@ -428,7 +477,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -489,7 +538,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -553,7 +602,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -613,7 +662,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -680,7 +729,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -744,7 +793,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -802,7 +851,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -841,7 +890,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',
@@ -883,7 +932,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',
@@ -936,7 +985,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',
@@ -1002,7 +1051,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',
@@ -1078,14 +1127,14 @@ describe('createGatewayServiceHealthMonitor', () => {
 				.fn()
 				.mockResolvedValueOnce({
 					ok: false,
-					path: '/readyz',
+					path: '/health',
 					port: 18789,
 					statusCode: 502,
 					zoneId: 'sunfam',
 				})
 				.mockResolvedValue({
 					ok: true,
-					path: '/readyz',
+					path: '/health',
 					port: 18789,
 					statusCode: 200,
 					zoneId: 'sunfam',
@@ -1154,7 +1203,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',
@@ -1212,7 +1261,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 200,
 				zoneId: 'sunfam',
@@ -1270,7 +1319,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',
@@ -1344,7 +1393,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',
@@ -1419,7 +1468,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => 10_000,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/readyz',
+				path: '/health',
 				port: 18789,
 				statusCode: 502,
 				zoneId: 'sunfam',

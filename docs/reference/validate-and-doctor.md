@@ -59,6 +59,8 @@ It checks:
 - Controller and gateway ports.
 - Disk and memory budget.
 - Configured 1Password token source, if the config uses one.
+- 1Password CLI service-account fallback readiness for 1Password-backed
+  configs, using `op whoami` under an isolated service-account environment.
 - OpenClaw CLI availability for OpenClaw zones.
 - OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
 - OpenClaw MCP Portal plugin wiring and plugin approval routing for OpenClaw
@@ -71,23 +73,32 @@ It checks:
 - `vm-host-system/` files when present in a checked-out container runtime
   layout, or runtime host files when running from `/etc/agent-vm/system.json`.
 
-`doctor` does not treat age or 1Password CLI as universal requirements. They
-are only relevant to flows that use them:
+`doctor` does not treat age, 1Password CLI, or macOS Keychain as universal
+requirements. They are only relevant to flows that use them:
 
-- 1Password CLI is required only for `tokenSource.type: "op-cli"`.
+- 1Password CLI is required for the SDK-fallback/headless recovery probe when a
+  config uses 1Password secrets.
 - macOS Keychain access is required only for `tokenSource.type: "keychain"`.
 - age is used by encrypted backup/local key generation flows, not by every
   Worker runtime.
 
 For 1Password-backed local configs, doctor verifies that the configured access
-method is available on the current host. It does not resolve every secret
-during the offline prerequisite check.
+method is available on the current host. It also verifies that `op whoami`
+reports `SERVICE_ACCOUNT` when run with only the resolved service-account token,
+an isolated `OP_CONFIG_DIR`, `OP_BIOMETRIC_UNLOCK_ENABLED=false`, and
+`OP_CACHE=false`. This check does not resolve deployment secret refs and redacts
+child-process stdout/stderr on failure.
+
+`tokenSource.type: "op-cli"` is not supported for controller startup or recovery
+because it must use ambient `op read` authentication to fetch the service-account
+token before service-account auth exists. Use `tokenSource.type: "env"` or
+`"keychain"` for unattended controller startup and recovery.
 
 For OpenClaw-backed local configs, keep OpenClaw loosely coupled by installing
 it in the catalog rather than inside `@agent-vm/agent-vm`:
 
 ```bash
-pnpm add -D openclaw@2026.5.7
+pnpm add -D openclaw@2026.6.5
 ```
 
 When you run `pnpm doctor`, pnpm places `node_modules/.bin` on `PATH`, so

@@ -31,7 +31,7 @@ export interface GatewayVmChannelProviderRecoveryPolicy {
 export const defaultGatewayVmChannelProviderRecoveryPolicy = {
 	consecutiveFailureThreshold: 3,
 	enabled: true,
-	restartGatewayOnRecoverable: true,
+	restartGatewayOnRecoverable: false,
 	restartGatewayOnUnrecoverable: false,
 	transitioningTimeoutMs: 120_000,
 } satisfies GatewayVmChannelProviderRecoveryPolicy;
@@ -41,6 +41,12 @@ export interface CreateGatewayVmRecoveryTrackerOptions {
 }
 
 export interface GatewayVmRecoveryObservation {
+	readonly channelProviderHealth?:
+		| 'healthy'
+		| 'transitioning'
+		| 'unhealthy-recoverable'
+		| 'unhealthy-unrecoverable'
+		| undefined;
 	readonly channelProviderId?: string | undefined;
 	readonly observedAtMs: number;
 	readonly recoveryBudgetClass?: GatewayVmRecoveryBudgetClass | undefined;
@@ -275,6 +281,17 @@ export function createGatewayVmRecoveryTracker(
 			if (isDegradedObservation(observation.result)) {
 				consecutiveFailures += 1;
 				state.agentChannelProviderConsecutiveFailuresById.set(counterKey, consecutiveFailures);
+			}
+			const restartGatewayForObservation =
+				observation.channelProviderHealth === 'unhealthy-unrecoverable'
+					? channelProviderPolicy.restartGatewayOnUnrecoverable
+					: channelProviderPolicy.restartGatewayOnRecoverable;
+			if (!restartGatewayForObservation) {
+				return {
+					consecutiveFailures,
+					kind: 'none',
+					reason: 'disabled',
+				};
 			}
 			return decideRecovery({
 				consecutiveFailures,

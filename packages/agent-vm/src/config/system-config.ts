@@ -147,12 +147,6 @@ const runtimeAuthHintSchema = z.discriminatedUnion('kind', [
 const tokenSourceSchema = z.discriminatedUnion('type', [
 	z
 		.object({
-			type: z.literal('op-cli'),
-			ref: z.string().min(1),
-		})
-		.strict(),
-	z
-		.object({
 			type: z.literal('env'),
 			envVar: z.string().min(1).optional(),
 		})
@@ -351,7 +345,7 @@ const defaultControllerHealthConfig = {
 		channelProviderHealth: {
 			consecutiveFailureThreshold: 3,
 			enabled: true,
-			restartGatewayOnRecoverable: true,
+			restartGatewayOnRecoverable: false,
 			restartGatewayOnUnrecoverable: false,
 			transitioningTimeoutMs: 120_000,
 		},

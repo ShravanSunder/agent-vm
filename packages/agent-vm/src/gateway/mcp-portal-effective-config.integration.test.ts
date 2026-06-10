@@ -1,14 +1,18 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { SecretResolver } from '@agent-vm/secret-management';
-import { afterAll, describe, expect, it } from 'vitest';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
-import { writeMcpPortalEffectiveConfig } from './mcp-portal-effective-config.js';
+import {
+	resolveMcpPortalEffectiveConfig,
+	writeMcpPortalEffectiveConfig,
+} from './mcp-portal-effective-config.js';
 
 const createdDirectories: string[] = [];
 const effectiveConfigManifestFileName = 'mcp-portal-effective-manifest.json';
+type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType<typeof vi.fn> };
 
 interface TestEffectiveConfigManifest {
 	readonly mcpConfigFile: string;
@@ -78,7 +82,89 @@ const emptySecretResolver = {
 	resolveAll: async () => ({}),
 } satisfies SecretResolver;
 
+function createSecretResolver(values: Readonly<Record<string, string>>): TestSecretResolver {
+	const resolveAll = vi.fn(async (refs: Record<string, SecretRef>) =>
+		Object.fromEntries(
+			Object.entries(refs).map(([name, ref]) => {
+				if (ref.source === 'config') {
+					return [name, ref.value];
+				}
+				const value = values[ref.ref];
+				if (value === undefined) {
+					throw new Error(`missing secret ${ref.ref}`);
+				}
+				return [name, value];
+			}),
+		),
+	);
+	return {
+		resolve: async (secretRef) => {
+			if (secretRef.source === 'config') {
+				return secretRef.value;
+			}
+			const value = values[secretRef.ref];
+			if (value === undefined) {
+				throw new Error(`missing secret ${secretRef.ref}`);
+			}
+			return value;
+		},
+		resolveAll,
+		resolveAllMock: resolveAll,
+	} satisfies SecretResolver & { readonly resolveAllMock: typeof resolveAll };
+}
+
 describe('MCP Portal effective config file materialization', () => {
+	it('resolves 1Password provider secrets without writing effective configs', async () => {
+		const authoredDir = await createAuthoredDir({
+			mcpConfig: {
+				providers: {
+					tavily: {
+						kind: 'mcp',
+						namespace: 'tavily',
+						secretPolicies: {
+							TAVILY_API_KEY: { hosts: ['api.tavily.com'], injection: 'http-mediation' },
+						},
+						transport: {
+							args: ['-y', 'tavily-mcp'],
+							command: 'npx',
+							env: {
+								TAVILY_API_KEY: {
+									ref: 'op://agent-vm/tavily/credential',
+									source: '1password',
+								},
+							},
+							kind: 'stdio',
+							networkAccess: 'declared',
+							requiredEgressHosts: ['api.tavily.com'],
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+		});
+		const effectiveDir = path.join(authoredDir, 'effective');
+		const secretResolver = createSecretResolver({
+			'op://agent-vm/tavily/credential': 'resolved-tavily',
+		});
+
+		const result = await resolveMcpPortalEffectiveConfig({
+			authoredConfigDir: authoredDir,
+			effectiveHostConfigDir: effectiveDir,
+			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			secretResolver,
+			zoneId: 'shravan',
+		});
+
+		expect(secretResolver.resolveAllMock).toHaveBeenCalledTimes(1);
+		expect(result.runtimeMediatedSecrets).toEqual({
+			AGENT_VM_MCP_TAVILY_TAVILY_API_KEY: {
+				hosts: ['api.tavily.com'],
+				value: 'resolved-tavily',
+			},
+		});
+		await expect(readdir(effectiveDir)).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
 	it('publishes generated effective configs through a single manifest pointer', async () => {
 		const authoredDir = await createAuthoredDir({
 			mcpConfig: {

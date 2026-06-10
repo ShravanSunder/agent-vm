@@ -317,8 +317,8 @@ The `gondolin-adapter` package (`packages/gondolin-adapter/src/index.ts`) re-exp
 | `ManagedVm`, `ManagedVmInstance` | `vm-adapter.ts` | VM handle interfaces |
 | `CreateVmOptions`, `VfsMountSpec` | `vm-adapter.ts` | VM configuration types |
 | `ManagedExecResult`, `SshAccess`, `IngressAccess`, `IngressRoute` | `vm-adapter.ts` | Result types |
-| `SecretResolver`, `createSecretResolver`, `createOpCliSecretResolver` | `secret-resolver.ts` | Resolve `SecretRef` values from 1Password SDK or `op` CLI |
-| `resolveServiceAccountToken`, `TokenSource` | `secret-resolver.ts` | Obtain 1Password service account token from op-cli, env, or macOS Keychain |
+| `SecretResolver`, `createSecretResolver`, `createOpCliSecretResolver` | `@agent-vm/secret-management` | Resolve `SecretRef` values from 1Password SDK or `op` CLI |
+| `resolveServiceAccountToken`, `TokenSource` | `@agent-vm/secret-management` | Obtain 1Password service account token from env or macOS Keychain |
 | `SecretSpec` | `types.ts` | `{ hosts, value }` -- resolved secret with host binding |
 | `SecretRef` | `types.ts` | Discriminated union: `{ source: '1password', ref }`, `{ source: 'environment', ref }`, or `{ source: 'config', value }` |
 | `writeFileAtomically` | `write-file-atomically.ts` | Write-then-rename for crash-safe file updates |
@@ -337,7 +337,9 @@ The `gondolin-adapter` package (`packages/gondolin-adapter/src/index.ts`) re-exp
 |------|-------|----------------|
 | `packages/gondolin-adapter/src/vm-adapter.ts` | 287 | `ManagedVm` interface, `createManagedVm()`, VFS provider assembly, HTTP hooks wiring |
 | `packages/secret-management/src/contracts.ts` | 28 | `SecretRef`, `SecretResolver`, and `MediatedSecretSpec` shared contracts |
-| `packages/secret-management/src/onepassword-secret-resolver.ts` | 574 | 1Password SDK client with op-cli fallback and token source resolution |
+| `packages/secret-management/src/onepassword-secret-resolver.ts` | 657 | 1Password SDK client with isolated `op inject` fallback and token source resolution |
+| `packages/secret-management/src/redacted-exec-file.ts` | 216 | Child-process execution with redacted failure formatting |
+| `packages/secret-management/src/op-cli-service-account-env.ts` | 65 | Isolated service-account environment for `op` CLI fallback |
 | `packages/gondolin-adapter/src/build-pipeline.ts` | 132 | `buildImage()`, `computeBuildFingerprint()`, asset verification |
 | `packages/gondolin-adapter/src/mount-policy.ts` | 117 | Writable mount validation, auth path protection |
 | `packages/gondolin-adapter/src/policy-compiler.ts` | 33 | VM host allowlist compilation and deduplication |

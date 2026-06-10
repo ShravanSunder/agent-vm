@@ -28,14 +28,16 @@ The portal loads two files from `--config-dir`:
 - `mcp-portal.config.jsonc`: agents, profiles, policy, and optional external proxy auth.
 
 External `serve` resolves `source: "1password"` refs through `@agent-vm/secret-management`.
-Use `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env`, `op-cli`, or `keychain` plus the
-matching source-specific env settings when the proxy host needs 1Password
-access. If no token source is configured, env-only configs still work. The
-built-in HTTP bearer server is loopback-only; use a TLS reverse proxy and
-`mcp-portal mcp-proxy print-client-config --proxy-url <url>` for public
-endpoints. The printed client config contains bearer credential material on
-stdout. Treat it like an API token, keep it out of logs and commits, and rotate
-`credentialVersion` or the portal `masterKey` to revoke issued credentials.
+Use `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env` or `keychain` plus the matching
+source-specific env settings when the proxy host needs 1Password access. Token
+bootstrap does not support ambient `op` CLI auth; service-account tokens must
+come from an environment variable or macOS Keychain. If no token source is
+configured, env-only configs still work. The built-in
+HTTP bearer server is loopback-only; use a TLS reverse proxy and `mcp-portal
+mcp-proxy print-client-config --proxy-url <url>` for public endpoints. The printed
+client config contains bearer credential material on stdout. Treat it like an API
+token, keep it out of logs and commits, and rotate `credentialVersion` or the
+portal `masterKey` to revoke issued credentials.
 
 `mcp-proxy serve` keeps approval-token replay state in process. Run one serving
 process per external endpoint unless a future shared replay store is added.

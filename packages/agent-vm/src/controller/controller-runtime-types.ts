@@ -6,7 +6,10 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
-import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type {
+	preflightGatewayZoneStart,
+	startGatewayZone,
+} from '../gateway/gateway-zone-orchestrator.js';
 import type { ControllerRuntimeZoneStatus } from '../operations/controller-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
@@ -66,6 +69,7 @@ export interface ControllerRuntimeDependencies {
 	) => void | Promise<void>;
 	readonly onWorkerTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStart;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
 		delayMs: number,

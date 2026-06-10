@@ -3,7 +3,10 @@ import { configureHostNetworkDefaults, type ManagedVm } from '@agent-vm/gondolin
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
 import { resolveControllerHealthConfig } from '../config/system-config.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import {
+	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
+	startGatewayZone,
+} from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 import { ActiveTaskRegistry } from './active-task-registry.js';
@@ -481,15 +484,48 @@ export async function startControllerRuntime(
 						...(dependencies.isProcessAlive ? { isProcessAlive: dependencies.isProcessAlive } : {}),
 						leaseManager,
 						now,
-						restartGatewayZone: async (zoneId, startOptions) =>
-							await (dependencies.startGatewayZone ?? startGatewayZone)({
-								runTask: runTaskStep,
-								runtimeEnvironment: zoneGitCapabilityStore.buildRuntimeEnvironment(zoneId),
-								runtimePluginConfigs: buildOpenClawRuntimePluginConfig({
+						preflightGatewayZoneStart: async (preflightOptions, preflightDependencies) => {
+							const runtimeEnvironment = {
+								...zoneGitCapabilityStore.buildRuntimeEnvironment(preflightOptions.zoneId),
+								...preflightOptions.runtimeEnvironment,
+							};
+							const runtimePluginConfigs = {
+								...buildOpenClawRuntimePluginConfig({
 									systemConfig: options.systemConfig,
 									zoneGitCapabilityStore,
-									zoneId,
+									zoneId: preflightOptions.zoneId,
 								}),
+								...preflightOptions.runtimePluginConfigs,
+							};
+							return await (
+								dependencies.preflightGatewayZoneStart ?? preflightGatewayZoneStartDefault
+							)(
+								{
+									...preflightOptions,
+									runtimeEnvironment,
+									runtimePluginConfigs,
+								},
+								preflightDependencies,
+							);
+						},
+						restartGatewayZone: async (zoneId, startOptions) =>
+							await (dependencies.startGatewayZone ?? startGatewayZone)({
+								...(startOptions?.prebuiltImage
+									? { prebuiltImage: startOptions.prebuiltImage }
+									: {}),
+								runTask: runTaskStep,
+								runtimeEnvironment: {
+									...zoneGitCapabilityStore.buildRuntimeEnvironment(zoneId),
+									...startOptions?.runtimeEnvironment,
+								},
+								runtimePluginConfigs: {
+									...buildOpenClawRuntimePluginConfig({
+										systemConfig: options.systemConfig,
+										zoneGitCapabilityStore,
+										zoneId,
+									}),
+									...startOptions?.runtimePluginConfigs,
+								},
 								secretResolver: startOptions?.secretResolver ?? secretResolver,
 								systemConfig: options.systemConfig,
 								zoneId,
@@ -738,7 +774,7 @@ export async function startControllerRuntime(
 				intervalMs: controllerHealthConfig.gatewayServiceIntervalMs,
 				now,
 				probeZoneHealth: async (zoneId) => {
-					const health = await operations.getZoneHealth(zoneId);
+					const health = await operations.getZoneServiceHealth(zoneId);
 					if (typeof health.path !== 'string' || typeof health.port !== 'number') {
 						throw new Error(
 							`Zone '${zoneId}' health probe did not include gateway service path/port.`,

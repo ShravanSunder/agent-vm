@@ -10,6 +10,9 @@ import {
 	type RecoverableGatewayRuntime,
 } from './gateway-vm-recovery-runner.js';
 
+type RecoveryWriteLog = (message: string) => void;
+type RecoveryWriteLogSpy = ReturnType<typeof vi.fn<RecoveryWriteLog>>;
+
 describe('createGatewayVmRecoveryRunner', () => {
 	it('observes only when the controller is stopping', async () => {
 		const getRecoverableGatewayRuntime = vi.fn(() => createRuntime({}));
@@ -109,6 +112,81 @@ describe('createGatewayVmRecoveryRunner', () => {
 			operationId: 'sunfam-credentials-refresh-op',
 			result: 'failed',
 		});
+	});
+
+	it('redacts credential refresh failure details before writing recovery logs', async () => {
+		const writeLog = vi.fn<RecoveryWriteLog>();
+		const runtime = createRuntime({
+			getLifecycleState: () => ({
+				coldStartEligible: true,
+				error: {
+					code: 'secret-resolution-failed',
+					message: 'Failed to resolve zone secrets.',
+				},
+				kind: 'failed',
+			}),
+			refreshCredentials: async () => {
+				throw new ControllerZoneRuntimeStartError(
+					'sunfam',
+					new Error(createUnsafeRecoveryErrorMessage()),
+					{
+						gatewayLifecycleErrorCode: 'secret-resolution-failed',
+						operationId: 'sunfam-credentials-refresh-op',
+					},
+				);
+			},
+		});
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime: () => runtime,
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog,
+		});
+
+		await recoverGatewayVm({
+			consecutiveFailures: 1,
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+
+		expectRecoveryLogToBeCredentialSafe(writeLog);
+	});
+
+	it('redacts restart failure details before writing recovery logs', async () => {
+		const writeLog = vi.fn<RecoveryWriteLog>();
+		const runtime = createRuntime({
+			getLifecycleState: () => ({
+				gateway: createGatewayHandle('old-gateway', 111),
+				kind: 'running',
+			}),
+			getSnapshot: () => ({
+				bootedAt: '2026-06-07T10:00:00.000Z',
+				gateway: {
+					ingress: { host: '127.0.0.1', port: 18_791 },
+					vm: { hostPid: 111, id: 'old-gateway' },
+				},
+				lifecycleState: 'running',
+			}),
+			restart: async () => {
+				throw new Error(createUnsafeRecoveryErrorMessage());
+			},
+		});
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime: () => runtime,
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog,
+		});
+
+		await recoverGatewayVm({
+			consecutiveFailures: 1,
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+
+		expectRecoveryLogToBeCredentialSafe(writeLog);
 	});
 
 	it('passes auto-recovery trigger to cold-start and restart runtime actions', async () => {
@@ -388,6 +466,47 @@ describe('classifyGatewayRecoveryRestartError', () => {
 		);
 	});
 });
+
+function createUnsafeRecoveryErrorMessage(): string {
+	return [
+		"failed to resolve 'op://agent-vm/sunfam gateway/password;field'",
+		'OP_SERVICE_ACCOUNT_TOKEN=ops_recoveryserviceaccounttoken123456',
+		'Bearer eyJunsafe.secret.signature',
+		'password=raw-password-value',
+		'token=raw-token-value',
+		'password="quoted-password-value"',
+		'"password":"json-password-value"',
+		'"token":"json-token-value"',
+		"'secret':'single-quoted-secret-value'",
+		'standalone ops_standaloneserviceaccounttoken123456',
+	].join(' ');
+}
+
+function expectRecoveryLogToBeCredentialSafe(writeLog: RecoveryWriteLogSpy): void {
+	const loggedText = writeLog.mock.calls.map(([message]) => message).join('\n');
+
+	expect(loggedText).toContain("'<1password-ref>'");
+	expect(loggedText).toContain('OP_SERVICE_ACCOUNT_TOKEN=<redacted>');
+	expect(loggedText).toContain('Bearer <redacted>');
+	expect(loggedText).toContain('password=<redacted>');
+	expect(loggedText).toContain('token=<redacted>');
+	expect(loggedText).toContain('password="<redacted>"');
+	expect(loggedText).toContain('"password":"<redacted>"');
+	expect(loggedText).toContain('"token":"<redacted>"');
+	expect(loggedText).toContain("'secret':'<redacted>'");
+
+	expect(loggedText).not.toContain('op://');
+	expect(loggedText).not.toContain('sunfam gateway');
+	expect(loggedText).not.toContain('ops_recoveryserviceaccounttoken123456');
+	expect(loggedText).not.toContain('ops_standaloneserviceaccounttoken123456');
+	expect(loggedText).not.toContain('eyJunsafe.secret.signature');
+	expect(loggedText).not.toContain('raw-password-value');
+	expect(loggedText).not.toContain('raw-token-value');
+	expect(loggedText).not.toContain('quoted-password-value');
+	expect(loggedText).not.toContain('json-password-value');
+	expect(loggedText).not.toContain('json-token-value');
+	expect(loggedText).not.toContain('single-quoted-secret-value');
+}
 
 function createRuntime(overrides: Partial<RecoverableGatewayRuntime>): RecoverableGatewayRuntime {
 	return {

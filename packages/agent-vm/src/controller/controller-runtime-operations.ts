@@ -46,6 +46,14 @@ interface ControllerRuntimeOperations {
 		readonly statusCode?: number | undefined;
 		readonly zoneId: string;
 	}>;
+	readonly getZoneServiceHealth: (targetZoneId: string) => Promise<{
+		readonly ok: boolean;
+		readonly observation: string;
+		readonly path?: string | undefined;
+		readonly port?: number | undefined;
+		readonly statusCode?: number | undefined;
+		readonly zoneId: string;
+	}>;
 	readonly getZoneStatus: (targetZoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (targetZoneId: string) => Promise<{
 		readonly ok: true;
@@ -60,7 +68,14 @@ export function createControllerRuntimeOperations(options: {
 		zoneId: string,
 	) => Pick<
 		OpenClawZoneRuntime,
-		'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+		| 'destroy'
+		| 'enableSsh'
+		| 'exec'
+		| 'getHealth'
+		| 'getLogs'
+		| 'getServiceHealth'
+		| 'refreshCredentials'
+		| 'upgrade'
 	>;
 	readonly destroyZoneRuntime: (
 		zoneId: string,
@@ -126,6 +141,8 @@ export function createControllerRuntimeOperations(options: {
 		getStatus: async () => buildControllerStatus(options.systemConfig, buildRuntimeStatus()),
 		getZoneHealth: async (targetZoneId) =>
 			await options.getOpenClawRuntime(targetZoneId).getHealth(),
+		getZoneServiceHealth: async (targetZoneId) =>
+			await options.getOpenClawRuntime(targetZoneId).getServiceHealth(),
 		getZoneLogs: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).getLogs(),
 		getZoneStatus: async (targetZoneId) => {
 			findZone(targetZoneId);

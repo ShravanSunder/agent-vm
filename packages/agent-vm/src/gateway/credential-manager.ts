@@ -1,24 +1,11 @@
 import { targetsAudience, type RuntimeVmAudience } from '@agent-vm/gateway-interface';
-import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
+import {
+	redactOnePasswordReferences,
+	type SecretRef,
+	type SecretResolver,
+} from '@agent-vm/secret-management';
 
 import type { SystemConfig } from '../config/system-config.js';
-
-function buildSuggestedSecretRef(zoneId: string, secretName: string): string {
-	switch (secretName) {
-		case 'DISCORD_BOT_TOKEN':
-			return `op://agent-vm/${zoneId}-discord/bot-token`;
-		case 'PERPLEXITY_API_KEY':
-			return `op://agent-vm/${zoneId}-perplexity/credential`;
-		case 'OPENCLAW_GATEWAY_TOKEN':
-			return `op://agent-vm/${zoneId}-gateway-auth/password`;
-		case 'OPENAI_API_KEY':
-			return `op://agent-vm/${zoneId}-openai/credential`;
-		case 'ANTHROPIC_API_KEY':
-			return `op://agent-vm/${zoneId}-anthropic/credential`;
-		default:
-			return `op://agent-vm/${zoneId}-${secretName.toLowerCase().replace(/_/gu, '-')}/credential`;
-	}
-}
 
 function findZone(
 	systemConfig: SystemConfig,
@@ -28,7 +15,7 @@ function findZone(
 }
 
 function formatUnknownError(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return redactOnePasswordReferences(error instanceof Error ? error.message : String(error));
 }
 
 function formatSecretResolutionFailure(zoneId: string, error: unknown): string {
@@ -104,7 +91,7 @@ export async function resolveZoneSecrets(
 			case '1password':
 				if (!secretConfig.ref) {
 					throw new Error(
-						`Zone '${zone.id}' secret '${secretName}' is missing 'ref'. Add an explicit 1Password reference such as '${buildSuggestedSecretRef(zone.id, secretName)}'.`,
+						`Zone '${zone.id}' secret '${secretName}' is missing 'ref'. Add an explicit 1Password reference for this secret.`,
 					);
 				}
 				secretRefs[secretName] = {

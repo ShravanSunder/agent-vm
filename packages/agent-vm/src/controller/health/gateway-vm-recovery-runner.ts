@@ -1,3 +1,5 @@
+import { redactOnePasswordReferences } from '@agent-vm/secret-management';
+
 import type { ControllerRuntimeReadiness } from '../http/controller-http-route-support.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
 import { isOpenClawZoneRestartTimeoutError } from '../zone-runtimes/openclaw-zone-runtime.js';
@@ -44,6 +46,31 @@ function formatUnknownError(error: unknown): string {
 		return error.message;
 	}
 	return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
+const serviceAccountTokenEnvPattern = /\b(OP_SERVICE_ACCOUNT_TOKEN=)[^\s;]+/gu;
+const onePasswordServiceAccountTokenPattern = /\bops_[A-Za-z0-9._=-]{16,}\b/gu;
+const bearerCredentialPattern = /\b(Bearer\s+)[^\s;,'")]+/giu;
+const credentialAssignmentPattern =
+	/(["']?)(password|passwd|token|secret)\1(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s;,'")]+)/giu;
+
+function redactCredentialAssignment(
+	_match: string,
+	keyQuote: string,
+	keyName: string,
+	separator: string,
+	value: string,
+): string {
+	const valueQuote = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : '';
+	return `${keyQuote}${keyName}${keyQuote}${separator}${valueQuote}<redacted>${valueQuote}`;
+}
+
+function formatRecoveryLogError(error: unknown): string {
+	return redactOnePasswordReferences(formatUnknownError(error))
+		.replaceAll(serviceAccountTokenEnvPattern, '$1<redacted>')
+		.replaceAll(onePasswordServiceAccountTokenPattern, '<redacted>')
+		.replaceAll(bearerCredentialPattern, '$1<redacted>')
+		.replaceAll(credentialAssignmentPattern, redactCredentialAssignment);
 }
 
 function getUnknownErrorCode(error: unknown): string | undefined {
@@ -126,7 +153,7 @@ export function createGatewayVmRecoveryRunner(
 			runtime = options.getRecoverableGatewayRuntime(request.zoneId);
 		} catch (error) {
 			options.writeLog(
-				`Gateway VM recovery failed to find OpenClaw runtime for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+				`Gateway VM recovery failed to find OpenClaw runtime for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
 			);
 			return {
 				action: 'observe-only',
@@ -154,7 +181,7 @@ export function createGatewayVmRecoveryRunner(
 				await runtime.refreshCredentials();
 			} catch (error) {
 				options.writeLog(
-					`Gateway VM recovery credential refresh failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+					`Gateway VM recovery credential refresh failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
 				);
 				return {
 					action: 'gateway-vm-cold-start',
@@ -185,7 +212,7 @@ export function createGatewayVmRecoveryRunner(
 				});
 			} catch (error) {
 				options.writeLog(
-					`Gateway VM recovery cold-start failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+					`Gateway VM recovery cold-start failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
 				);
 				return {
 					action: 'gateway-vm-cold-start',
@@ -238,7 +265,7 @@ export function createGatewayVmRecoveryRunner(
 			});
 		} catch (error) {
 			options.writeLog(
-				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
+				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
 			);
 			return {
 				action: 'gateway-vm-restart',

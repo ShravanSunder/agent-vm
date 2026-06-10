@@ -146,12 +146,6 @@ function readPortalOnePasswordTokenSource(
 			type: 'env',
 		};
 	}
-	if (sourceType === 'op-cli') {
-		return {
-			ref: requirePortalTokenSourceValue(env, 'AGENT_VM_MCP_PORTAL_OP_TOKEN_REF', sourceType),
-			type: 'op-cli',
-		};
-	}
 	if (sourceType === 'keychain') {
 		return {
 			account: requirePortalTokenSourceValue(

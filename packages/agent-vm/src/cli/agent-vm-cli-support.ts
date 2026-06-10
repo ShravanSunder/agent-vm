@@ -1,6 +1,7 @@
 import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import {
 	createSecretResolver,
+	probeOnePasswordServiceAccountHeadlessAuth,
 	type SecretResolver,
 	resolveServiceAccountToken,
 } from '@agent-vm/secret-management';
@@ -97,6 +98,7 @@ export interface CliDependencies {
 	readonly runControllerOfflineCleanup?: typeof runControllerOfflineCleanup;
 	readonly runConfigValidation?: typeof runConfigValidation;
 	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
+	readonly probeOnePasswordServiceAccountHeadlessAuth: typeof probeOnePasswordServiceAccountHeadlessAuth;
 	readonly resetWorkerInstructions?: typeof resetWorkerInstructions;
 	readonly resolveCliVersion?: typeof resolveCliVersion;
 	readonly scaffoldAgentVmProject?: (
@@ -127,6 +129,7 @@ export const defaultCliDependencies: CliDependencies = {
 	loadSystemConfig,
 	runBuildCommand,
 	runCacheCommand,
+	probeOnePasswordServiceAccountHeadlessAuth,
 	resolveGondolinMinimumZigVersion,
 	resolveServiceAccountToken,
 	runControllerDoctor,

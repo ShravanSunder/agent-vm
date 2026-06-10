@@ -42,7 +42,17 @@ describe('createControllerClient', () => {
 			},
 		});
 
+		if (
+			!controllerClient.getZoneHealth ||
+			!controllerClient.getZoneHealthSnapshot ||
+			!controllerClient.getZoneServiceHealth
+		) {
+			throw new Error('Expected controller client to include zone health methods.');
+		}
 		await controllerClient.getControllerStatus();
+		await controllerClient.getZoneHealth('shravan');
+		await controllerClient.getZoneHealthSnapshot('shravan');
+		await controllerClient.getZoneServiceHealth('shravan');
 		await controllerClient.getZoneLogs('shravan');
 		await controllerClient.execInZone?.('shravan', 'echo hi', { adminToken: 'admin-token' });
 		await controllerClient.refreshZoneCredentials('shravan');
@@ -60,6 +70,9 @@ describe('createControllerClient', () => {
 
 		expect(requests).toEqual([
 			{ method: 'GET', url: 'http://127.0.0.1:18800/controller-status' },
+			{ method: 'GET', url: 'http://127.0.0.1:18800/zones/shravan/health' },
+			{ method: 'GET', url: 'http://127.0.0.1:18800/zones/shravan/health-snapshot' },
+			{ method: 'GET', url: 'http://127.0.0.1:18800/zones/shravan/service-health' },
 			{ method: 'GET', url: 'http://127.0.0.1:18800/zones/shravan/logs' },
 			{
 				body: JSON.stringify({ adminToken: 'admin-token', command: 'echo hi' }),

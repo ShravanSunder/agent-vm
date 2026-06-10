@@ -382,6 +382,54 @@ export async function resolveMcpPortalEffectiveConfigFromConfig(
 	return await buildEffectivePlanFromConfig(props, true);
 }
 
+function effectiveConfigWriteResultFromPlan(
+	plan: McpPortalEffectiveConfigPlan,
+): McpPortalEffectiveConfigWriteResult {
+	return {
+		effectiveConfigDir: plan.effectiveConfigDir,
+		pluginConfig: plan.pluginConfig,
+		requiredGatewayEgressHosts: plan.requiredGatewayEgressHosts,
+		resolvedSecretNames: plan.resolvedSecretNames,
+		runtimeEnvironment: plan.runtimeEnvironment,
+		runtimeMediatedSecrets: plan.runtimeMediatedSecrets,
+	};
+}
+
+export async function resolveMcpPortalEffectiveConfig(
+	props: McpPortalEffectiveConfigProps,
+): Promise<McpPortalEffectiveConfigWriteResult> {
+	return effectiveConfigWriteResultFromPlan(await buildEffectivePlan(props, true));
+}
+
+async function assertEffectiveConfigDirectoryWritable(directoryPath: string): Promise<void> {
+	const probeName = `.agent-vm-mcp-portal-effective-preflight-${process.pid}-${randomUUID()}`;
+	const mcpProbePath = path.join(directoryPath, `${probeName}.mcp.tmp`);
+	const portalProbePath = path.join(directoryPath, `${probeName}.portal.tmp`);
+	const manifestProbePath = path.join(directoryPath, `${probeName}.manifest.tmp`);
+	try {
+		await writeNewFileAndSync(mcpProbePath, '{}\n');
+		await writeNewFileAndSync(portalProbePath, '{}\n');
+		await replaceFileAtomically(manifestProbePath, '{}\n');
+		await syncDirectory(directoryPath);
+	} finally {
+		await Promise.all([
+			rm(mcpProbePath, { force: true }),
+			rm(portalProbePath, { force: true }),
+			rm(manifestProbePath, { force: true }),
+			rm(`${manifestProbePath}.${process.pid}.tmp`, { force: true }),
+		]);
+	}
+}
+
+export async function preflightMcpPortalEffectiveConfig(
+	props: McpPortalEffectiveConfigProps,
+): Promise<McpPortalEffectiveConfigWriteResult> {
+	const plan = await buildEffectivePlan(props, true);
+	await mkdir(props.effectiveHostConfigDir, { recursive: true, mode: 0o700 });
+	await assertEffectiveConfigDirectoryWritable(props.effectiveHostConfigDir);
+	return effectiveConfigWriteResultFromPlan(plan);
+}
+
 export async function writeMcpPortalEffectiveConfig(
 	props: McpPortalEffectiveConfigProps,
 ): Promise<McpPortalEffectiveConfigWriteResult> {
@@ -393,12 +441,5 @@ export async function writeMcpPortalEffectiveConfig(
 		portalConfigContent: `${JSON.stringify(plan.effectivePortalConfig, null, '\t')}\n`,
 	});
 
-	return {
-		effectiveConfigDir: plan.effectiveConfigDir,
-		pluginConfig: plan.pluginConfig,
-		requiredGatewayEgressHosts: plan.requiredGatewayEgressHosts,
-		resolvedSecretNames: plan.resolvedSecretNames,
-		runtimeEnvironment: plan.runtimeEnvironment,
-		runtimeMediatedSecrets: plan.runtimeMediatedSecrets,
-	};
+	return effectiveConfigWriteResultFromPlan(plan);
 }

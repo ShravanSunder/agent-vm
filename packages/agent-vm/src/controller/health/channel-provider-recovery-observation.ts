@@ -44,6 +44,7 @@ export function deriveChannelProviderRecoveryObservation(
 			return {
 				kind: 'record-observation',
 				observation: {
+					channelProviderHealth: options.event.health,
 					channelProviderId: options.event.channelProviderId,
 					observedAtMs: options.event.observedAtMs,
 					result: 'ok',
@@ -56,7 +57,7 @@ export function deriveChannelProviderRecoveryObservation(
 			if (isStaleChannelProviderEvent(options)) {
 				return staleChannelProviderObservation(options.nowMs, options.event);
 			}
-			return options.restartGatewayOnRecoverable === false
+			return options.restartGatewayOnRecoverable !== true
 				? { kind: 'observe-only', reason: 'channel-provider-restart-disabled' }
 				: failedChannelProviderObservation(options.event.observedAtMs, options.event);
 		case 'unhealthy-unrecoverable':
@@ -90,6 +91,7 @@ function failedChannelProviderObservation(
 	return {
 		kind: 'record-observation',
 		observation: {
+			channelProviderHealth: event.health,
 			channelProviderId: event.channelProviderId,
 			observedAtMs,
 			result: 'failed',
@@ -106,6 +108,7 @@ function staleChannelProviderObservation(
 	return {
 		kind: 'record-observation',
 		observation: {
+			channelProviderHealth: event.health,
 			channelProviderId: event.channelProviderId,
 			observedAtMs,
 			result: 'stale',

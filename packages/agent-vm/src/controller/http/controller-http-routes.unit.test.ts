@@ -2159,6 +2159,11 @@ describe('createControllerApp', () => {
 			observation: 'http 200',
 			zoneId: 'shravan',
 		}));
+		const getZoneServiceHealth = vi.fn(async () => ({
+			ok: true,
+			observation: 'http 200',
+			zoneId: 'shravan',
+		}));
 		const getZoneLogs = vi.fn(async () => ({
 			output: 'gateway log line',
 			zoneId: 'shravan',
@@ -2192,6 +2197,7 @@ describe('createControllerApp', () => {
 				destroyZone,
 				getStatus,
 				getZoneHealth,
+				getZoneServiceHealth,
 				getZoneStatus,
 				getZoneLogs,
 				refreshZoneCredentials,
@@ -2202,6 +2208,7 @@ describe('createControllerApp', () => {
 		const statusResponse = await app.request('/controller-status');
 		const zoneStatusResponse = await app.request('/zones/shravan/status');
 		const zoneHealthResponse = await app.request('/zones/shravan/health');
+		const zoneServiceHealthResponse = await app.request('/zones/shravan/service-health');
 		const logsResponse = await app.request('/zones/shravan/logs');
 		const refreshResponse = await app.request('/zones/shravan/credentials/refresh', {
 			method: 'POST',
@@ -2220,6 +2227,7 @@ describe('createControllerApp', () => {
 		expect(statusResponse.status).toBe(200);
 		expect(zoneStatusResponse.status).toBe(200);
 		expect(zoneHealthResponse.status).toBe(200);
+		expect(zoneServiceHealthResponse.status).toBe(200);
 		expect(logsResponse.status).toBe(200);
 		expect(refreshResponse.status).toBe(200);
 		expect(destroyResponse.status).toBe(200);
@@ -2227,13 +2235,14 @@ describe('createControllerApp', () => {
 		expect(getStatus).toHaveBeenCalled();
 		expect(getZoneStatus).toHaveBeenCalledWith('shravan');
 		expect(getZoneHealth).toHaveBeenCalledWith('shravan');
+		expect(getZoneServiceHealth).toHaveBeenCalledWith('shravan');
 		expect(getZoneLogs).toHaveBeenCalledWith('shravan');
 		expect(refreshZoneCredentials).toHaveBeenCalledWith('shravan');
 		expect(destroyZone).toHaveBeenCalledWith('shravan', true);
 		expect(upgradeZone).toHaveBeenCalledWith('shravan');
 	});
 
-	it('returns 503 when a zone gateway health probe is unhealthy', async () => {
+	it('returns 503 for unhealthy readiness without recording service health', async () => {
 		const healthEventStore = new HealthEventStore({
 			eventHistoryLimit: 20,
 			staleAfterMs: 30_000,
@@ -2262,7 +2271,7 @@ describe('createControllerApp', () => {
 				getZoneHealth: vi.fn(async () => ({
 					ok: false,
 					observation: 'http 503',
-					path: '/health',
+					path: '/readyz',
 					port: 18789,
 					statusCode: 503,
 					zoneId: 'shravan',
@@ -2275,6 +2284,62 @@ describe('createControllerApp', () => {
 		});
 
 		const response = await app.request('/zones/shravan/health');
+
+		expect(response.status).toBe(503);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			observation: 'http 503',
+			path: '/readyz',
+			port: 18789,
+			statusCode: 503,
+			zoneId: 'shravan',
+		});
+		expect(healthEventStore.listLatestEventsForZone('shravan')).toEqual([]);
+	});
+
+	it('records service health only from the service-health route', async () => {
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		const app = createControllerAppForTest({
+			healthEventStore,
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneHealth: vi.fn(async () => ({ ok: true, zoneId: 'shravan' })),
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneServiceHealth: vi.fn(async () => ({
+					ok: false,
+					observation: 'http 503',
+					path: '/health',
+					port: 18789,
+					statusCode: 503,
+					zoneId: 'shravan',
+				})),
+				getZoneStatus: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/service-health');
 
 		expect(response.status).toBe(503);
 		await expect(response.json()).resolves.toEqual({

@@ -454,22 +454,32 @@ describe('startE2eControllerRuntime', () => {
 			path.join(temporaryRoot, 'vm-images', 'gateways', 'openclaw-local-packages', 'Dockerfile'),
 		);
 		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
-		expect(dockerfile).toContain('COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz');
 		expect(dockerfile).toContain(
-			'COPY secret-management-local.tgz /tmp/secret-management-local.tgz',
-		);
-		expect(dockerfile).toContain('COPY gondolin-adapter-local.tgz /tmp/gondolin-adapter-local.tgz');
-		expect(dockerfile).toContain(
-			'COPY gateway-interface-local.tgz /tmp/gateway-interface-local.tgz',
-		);
-		expect(dockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
-		expect(dockerfile).toContain(
-			'COPY openclaw-agent-vm-plugin-local.tgz /tmp/openclaw-agent-vm-plugin-local.tgz',
+			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
-			'COPY openclaw-mcp-portal-plugin-local.tgz /tmp/openclaw-mcp-portal-plugin-local.tgz',
+			'COPY agent-vm-secret-management-0.0.0-smoke.tgz /tmp/agent-vm-secret-management-0.0.0-smoke.tgz',
 		);
-		expect(dockerfile).toContain('npm install --omit=dev --no-audit --no-fund');
+		expect(dockerfile).toContain(
+			'COPY agent-vm-gondolin-adapter-0.0.0-smoke.tgz /tmp/agent-vm-gondolin-adapter-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-gateway-interface-0.0.0-smoke.tgz /tmp/agent-vm-gateway-interface-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain('pnpm install --prod --ignore-scripts');
+		expect(dockerfile).toContain('@agent-vm/config-contracts');
+		expect(dockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
+		expect(dockerfile).toContain('@agent-vm/mcp-portal');
+		expect(dockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
 		expect(dockerfile).toContain('RUN pnpm add -g "openclaw@');
 		expect(dockerfile).toContain('"@openclaw/codex@');
 		expect(dockerfile).toContain('"@openai/codex@');
@@ -493,7 +503,7 @@ describe('startE2eControllerRuntime', () => {
 					'vm-images',
 					'gateways',
 					'openclaw-local-packages',
-					'openclaw-agent-vm-plugin-local.tgz',
+					'agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
 				),
 			),
 		).resolves.toMatchObject({ mtimeMs: normalizedDockerContextTimestampMs });
@@ -503,13 +513,19 @@ describe('startE2eControllerRuntime', () => {
 		}
 		const toolVmDockerfile = await fs.readFile(toolVmDockerfilePath, 'utf8');
 		expect(toolVmDockerfile).toContain(
-			'COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz',
+			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
 		);
 		expect(toolVmDockerfile).toContain(
-			'COPY secret-management-local.tgz /tmp/secret-management-local.tgz',
+			'COPY agent-vm-secret-management-0.0.0-smoke.tgz /tmp/agent-vm-secret-management-0.0.0-smoke.tgz',
 		);
-		expect(toolVmDockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
-		expect(toolVmDockerfile).toContain('npm install --omit=dev --no-audit --no-fund');
+		expect(toolVmDockerfile).toContain(
+			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
+		);
+		expect(toolVmDockerfile).toContain('pnpm install --prod --ignore-scripts');
+		expect(toolVmDockerfile).toContain('@agent-vm/config-contracts');
+		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
+		expect(toolVmDockerfile).toContain('@agent-vm/mcp-portal');
+		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
 		expect(toolVmDockerfile).toContain('/opt/agent-vm/local-packages');
 		expect(toolVmDockerfile).not.toContain('pnpm add -g');
 		expect(toolVmDockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
@@ -520,7 +536,7 @@ describe('startE2eControllerRuntime', () => {
 					'vm-images',
 					'tool-vms',
 					'tool-local-mcp-portal',
-					'mcp-portal-local.tgz',
+					'agent-vm-mcp-portal-0.0.0-smoke.tgz',
 				),
 			),
 		).resolves.toMatchObject({ mtimeMs: normalizedDockerContextTimestampMs });
@@ -555,10 +571,10 @@ describe('startE2eControllerRuntime', () => {
 		}
 		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
 		expect(dockerfile).toContain(
-			'COPY gateway-interface-local.tgz /tmp/gateway-interface-local.tgz',
+			'COPY agent-vm-gateway-interface-0.0.0-smoke.tgz /tmp/agent-vm-gateway-interface-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
-			'COPY openclaw-agent-vm-plugin-local.tgz /tmp/openclaw-agent-vm-plugin-local.tgz',
+			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain('RUN pnpm add -g "openclaw@');
 		expect(dockerfile).toContain('"@openclaw/codex@');
@@ -570,8 +586,8 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).toContain(
 			'ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm"',
 		);
-		expect(dockerfile).not.toContain('mcp-portal-local.tgz');
-		expect(dockerfile).not.toContain('openclaw-mcp-portal-plugin-local.tgz');
+		expect(dockerfile).not.toContain('agent-vm-mcp-portal-0.0.0-smoke.tgz');
+		expect(dockerfile).not.toContain('agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz');
 		expect(systemConfig.imageProfiles.toolVms.tool).toEqual(originalToolVmProfile);
 	});
 
@@ -600,14 +616,21 @@ describe('startE2eControllerRuntime', () => {
 		);
 		const toolVmDockerfile = await fs.readFile(toolVmDockerfilePath, 'utf8');
 		expect(toolVmDockerfile).toContain(
-			'COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz',
+			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
 		);
 		expect(toolVmDockerfile).toContain(
-			'COPY secret-management-local.tgz /tmp/secret-management-local.tgz',
+			'COPY agent-vm-secret-management-0.0.0-smoke.tgz /tmp/agent-vm-secret-management-0.0.0-smoke.tgz',
 		);
-		expect(toolVmDockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
-		expect(toolVmDockerfile).not.toContain('openclaw-agent-vm-plugin-local.tgz');
-		expect(toolVmDockerfile).not.toContain('openclaw-mcp-portal-plugin-local.tgz');
+		expect(toolVmDockerfile).toContain(
+			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
+		);
+		expect(toolVmDockerfile).toContain('pnpm install --prod --ignore-scripts');
+		expect(toolVmDockerfile).toContain('@agent-vm/config-contracts');
+		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
+		expect(toolVmDockerfile).toContain('@agent-vm/mcp-portal');
+		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
+		expect(toolVmDockerfile).not.toContain('agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz');
+		expect(toolVmDockerfile).not.toContain('agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz');
 		expect(toolVmDockerfile).not.toContain('pnpm add -g');
 	});
 

@@ -20,16 +20,33 @@ interface RecordedOpCall {
 	readonly command: string;
 	readonly forwardedUnsafeAuthEnvNames: readonly string[];
 	readonly inputLength: number;
+	readonly opBiometricUnlock: string | undefined;
+	readonly opCache: string | undefined;
+	readonly opConfigDir: string | undefined;
 	readonly redactErrorOutput: boolean;
 	readonly serviceAccountTokenLength: number;
 	readonly templateSecretReferences: readonly string[];
 }
 
 const unsafeAmbientOnePasswordAuthEnvNames = [
+	'OP_ACCOUNT',
 	'OP_CONNECT_HOST',
 	'OP_CONNECT_TOKEN',
 	'OP_SESSION',
+	'OP_SESSION_human',
 ] satisfies readonly string[];
+
+const poisonedAmbientOnePasswordEnv = {
+	OP_ACCOUNT: 'ambient-human-account',
+	OP_BIOMETRIC_UNLOCK_ENABLED: 'true',
+	OP_CACHE: 'true',
+	OP_CONNECT_HOST: 'https://connect.example.test',
+	OP_CONNECT_TOKEN: 'ambient-connect-token',
+	OP_CONFIG_DIR: '/tmp/ambient-human-op-config',
+	OP_SERVICE_ACCOUNT_TOKEN: 'ambient-service-token',
+	OP_SESSION: 'ambient-session-token',
+	OP_SESSION_human: 'ambient-named-session-token',
+} satisfies Readonly<Record<string, string>>;
 
 const describeOnePasswordSecretResolverE2e = shouldRunOnePasswordSecretResolverE2e()
 	? describe
@@ -125,6 +142,9 @@ function createRecordingExecFileAsync(
 					(envName) => execOptions?.env?.[envName] !== undefined,
 				),
 				inputLength: execOptions?.input?.length ?? 0,
+				opBiometricUnlock: execOptions?.env?.OP_BIOMETRIC_UNLOCK_ENABLED,
+				opCache: execOptions?.env?.OP_CACHE,
+				opConfigDir: execOptions?.env?.OP_CONFIG_DIR,
 				redactErrorOutput: execOptions?.redactErrorOutput === true,
 				serviceAccountTokenLength: execOptions?.env?.OP_SERVICE_ACCOUNT_TOKEN?.length ?? 0,
 				templateSecretReferences: readTemplateSecretReferences(execOptions?.input),
@@ -191,6 +211,28 @@ function expectResolvedSmokeSecrets(
 	}
 }
 
+async function withPoisonedAmbientOnePasswordEnv<TResult>(
+	callback: () => Promise<TResult>,
+): Promise<TResult> {
+	const previousValues = Object.fromEntries(
+		Object.keys(poisonedAmbientOnePasswordEnv).map((envName) => [envName, process.env[envName]]),
+	) as Record<keyof typeof poisonedAmbientOnePasswordEnv, string | undefined>;
+	for (const [envName, envValue] of Object.entries(poisonedAmbientOnePasswordEnv)) {
+		process.env[envName] = envValue;
+	}
+	try {
+		return await callback();
+	} finally {
+		for (const [envName, envValue] of Object.entries(previousValues)) {
+			if (envValue === undefined) {
+				delete process.env[envName];
+			} else {
+				process.env[envName] = envValue;
+			}
+		}
+	}
+}
+
 function expectSafeRecordedOpCall(
 	opCall: RecordedOpCall | undefined,
 	config: OnePasswordE2eTestConfig,
@@ -201,6 +243,10 @@ function expectSafeRecordedOpCall(
 	expect(opCall.redactErrorOutput).toBe(true);
 	expect(opCall.serviceAccountTokenLength).toBe(config.serviceAccountToken.length);
 	expect(opCall.forwardedUnsafeAuthEnvNames).toEqual([]);
+	expect(opCall.opBiometricUnlock).toBe('false');
+	expect(opCall.opCache).toBe('false');
+	expect(opCall.opConfigDir).toContain('agent-vm-op-config-');
+	expect(opCall.opConfigDir).not.toBe(poisonedAmbientOnePasswordEnv.OP_CONFIG_DIR);
 	return opCall;
 }
 
@@ -221,21 +267,24 @@ describeOnePasswordSecretResolverE2e('e2e: 1Password op inject fallback', () => 
 		const refs = createSmokeSecretRefs(config.secretReferences);
 		const batchOpCalls: RecordedOpCall[] = [];
 		const stderrWriteSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-		const batchResolver = await createSecretResolver(
-			{ serviceAccountToken: config.serviceAccountToken },
-			{
-				createClient: async () => forcedFailingSdkClient,
-				execFileAsync: createRecordingExecFileAsync(batchOpCalls),
-			},
-		);
 
 		try {
-			const batchResolvedSecrets = await batchResolver.resolveAll(refs);
-			expectResolvedSmokeSecrets(batchResolvedSecrets, refs);
-			expect(batchOpCalls).toHaveLength(1);
-			expectOpInjectBatchCall({
-				config,
-				opCall: batchOpCalls[0],
+			await withPoisonedAmbientOnePasswordEnv(async () => {
+				const batchResolver = await createSecretResolver(
+					{ serviceAccountToken: config.serviceAccountToken },
+					{
+						createClient: async () => forcedFailingSdkClient,
+						execFileAsync: createRecordingExecFileAsync(batchOpCalls),
+					},
+				);
+
+				const batchResolvedSecrets = await batchResolver.resolveAll(refs);
+				expectResolvedSmokeSecrets(batchResolvedSecrets, refs);
+				expect(batchOpCalls).toHaveLength(1);
+				expectOpInjectBatchCall({
+					config,
+					opCall: batchOpCalls[0],
+				});
 			});
 			expect(stderrWriteSpy).not.toHaveBeenCalled();
 		} finally {

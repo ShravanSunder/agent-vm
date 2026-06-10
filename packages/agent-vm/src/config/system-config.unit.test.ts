@@ -199,6 +199,23 @@ describe('loadSystemConfig', () => {
 		expect(loadedConfig.zones[0]?.id).toBe('shravan');
 	});
 
+	test('rejects op-cli 1Password token source because it is not headless', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.secretsProvider = {
+			type: '1password',
+			tokenSource: {
+				type: 'op-cli',
+				ref: 'op://agent-vm/agent-1p-service-account/password',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-op-cli-token-source-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/tokenSource/u);
+	});
+
 	test('loads optional gateway and Tool VM runtime rootfs sizes', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones[0].gateway.runtimeRootfsSize = '12G';
@@ -253,7 +270,7 @@ describe('loadSystemConfig', () => {
 				channelProviderHealth: {
 					consecutiveFailureThreshold: 3,
 					enabled: true,
-					restartGatewayOnRecoverable: true,
+					restartGatewayOnRecoverable: false,
 					restartGatewayOnUnrecoverable: false,
 					transitioningTimeoutMs: 120_000,
 				},
@@ -606,7 +623,7 @@ describe('loadSystemConfig', () => {
 					},
 					secretsProvider: {
 						type: '1password',
-						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
 				cacheDir: '../cache',
@@ -1074,7 +1091,7 @@ describe('loadSystemConfig', () => {
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
-						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
 				cacheDir: '../cache',
@@ -1134,7 +1151,7 @@ describe('loadSystemConfig', () => {
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
-						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
 				cacheDir: '../cache',
@@ -1218,7 +1235,7 @@ describe('loadSystemConfig', () => {
 					projectNamespace: 'bad:namespace',
 					secretsProvider: {
 						type: '1password',
-						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
 				cacheDir: '../cache',
@@ -1958,7 +1975,7 @@ describe('loadSystemConfig', () => {
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
-						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
 				cacheDir: '../cache',

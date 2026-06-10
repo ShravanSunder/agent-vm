@@ -31,40 +31,51 @@ resolved plaintext value together with the hosts it should be injected into.
 | Source | Backing Store | When Used |
 |--------|--------------|-----------|
 | 1Password SDK | `@1password/sdk` `createClient` | Primary path for `source: '1password'` refs |
-| op-cli fallback | `op read <ref>` subprocess | Automatic fallback when SDK fails (per-secret) |
+| op-cli fallback | `op inject --in-file /dev/stdin` subprocess | Automatic batched fallback when SDK resolution fails |
 | Environment variable | `process.env[key]` | `source: 'environment'` refs |
 | Config value | `system.json` inline value | `source: 'config'` refs for local/test-only plaintext config |
 | macOS Keychain | `security find-generic-password` | Token storage only (service account token) |
 
 The SDK is preferred because it resolves secrets in-process without spawning
-subprocesses. When the SDK throws on a specific secret, the resolver logs to
-stderr and retries that single secret via `op read` with the service account
-token injected into the subprocess environment. If SDK client creation itself
-fails, the entire resolver falls back to op-cli for all operations.
+subprocesses. If SDK client creation or SDK resolution fails, the resolver falls
+back to one `op inject` batch for the requested 1Password refs. The fallback
+runs with an isolated `OP_CONFIG_DIR`, `OP_SERVICE_ACCOUNT_TOKEN` set from the
+resolved service-account token, `OP_BIOMETRIC_UNLOCK_ENABLED=false`, and
+`OP_CACHE=false`. Ambient `OP_CONNECT_*`, `OP_SESSION*`, `OP_ACCOUNT`, desktop
+integration, SSH-agent, and user config/cache env are not forwarded.
+
+Fallback failures redact stdout and stderr. Error messages keep only safe
+metadata such as exit code, signal, elapsed time, timeout/killed status, and the
+isolated auth context (`opAuth`, `opConfig`, `opBiometricUnlock`, `opCache`,
+`opConnectEnv`, `opSessionEnv`, `opAccountEnv`).
 
 ---
 
 ## Token Source Resolution
 
 Before any 1Password secret can be resolved, the system needs a service account
-token. `resolveServiceAccountToken` (`@agent-vm/secret-management`) supports three
-sources, selected by `host.secretsProvider.tokenSource` in the system config:
+token. `resolveServiceAccountToken` (`@agent-vm/secret-management`) supports two
+headless sources, selected by `host.secretsProvider.tokenSource` in the system
+config:
 
 ```
 TokenSource
-  | { type: 'op-cli';    ref: string }                          -- op read <ref> (biometric)
   | { type: 'env';       envVar?: string }                      -- process.env (default: OP_SERVICE_ACCOUNT_TOKEN)
   | { type: 'keychain';  service: string; account: string }     -- macOS only
 ```
 
 ```
-  op-cli    -->  `op read <ref>`  -->  biometric prompt (Touch ID)  -->  token
   env       -->  process.env[envVar ?? 'OP_SERVICE_ACCOUNT_TOKEN']  -->  token
   keychain  -->  `security find-generic-password -s <svc> -a <acct> -w`  -->  token
 ```
 
 The keychain source validates identifiers against `^[\w.@-]+$` to prevent
 argument injection and is gated to `process.platform === 'darwin'`.
+
+Ambient `op read` token bootstrap is not supported because it can depend on the
+operator's 1Password CLI session or desktop app state before service-account auth
+exists. The `op` CLI is used only after the service-account token is available,
+as the isolated `op inject` fallback for resolving deployment secret refs.
 
 ---
 

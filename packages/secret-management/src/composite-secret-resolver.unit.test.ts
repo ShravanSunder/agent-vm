@@ -172,8 +172,11 @@ describe('createCompositeSecretResolver', () => {
 			expect(error.message).toBe('Failed to resolve 2 secret(s).');
 			expect(error.errors.map((failure: unknown) => String(failure))).toEqual([
 				"Error: Failed to resolve secret 'GITHUB_TOKEN' from 'GITHUB_TOKEN': Environment variable 'GITHUB_TOKEN' is not set.",
-				"Error: Failed to resolve secret 'OPENAI_API_KEY' from 'op://vault/openai/token': missing item",
+				"Error: Failed to resolve secret 'OPENAI_API_KEY' from '<1password-ref>': missing item",
 			]);
+			expect(error.errors.map((failure: unknown) => String(failure)).join('\n')).not.toContain(
+				'op://',
+			);
 		}
 		expect(resolveAllOnePasswordSecrets).toHaveBeenCalledTimes(1);
 		expect(resolveAllOnePasswordSecrets).toHaveBeenCalledWith({

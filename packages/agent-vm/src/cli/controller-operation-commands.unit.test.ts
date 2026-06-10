@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
@@ -13,6 +13,8 @@ const ansiEscapeSequencePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-9;
 
 afterEach(() => {
 	process.env.PATH = originalPath;
+	delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
+	delete process.env.OP_SESSION;
 });
 
 function createWorkerSystemConfig(
@@ -351,6 +353,9 @@ function createControllerClientStub(): ReturnType<
 		destroyZone: async () => ({}),
 		enableZoneSsh: async () => ({}),
 		getControllerStatus: async () => ({}),
+		getZoneHealth: async () => ({}),
+		getZoneHealthSnapshot: async () => ({}),
+		getZoneServiceHealth: async () => ({}),
 		getZoneLogs: async () => ({}),
 		peekLease: async () => ({
 			agentId: 'main',
@@ -414,6 +419,74 @@ async function writeImageBuildConfigsForDoctor(systemConfig: LoadedSystemConfig)
 }
 
 describe('runControllerOperationCommand', () => {
+	it('prints live zone health and zone health snapshots through the controller client', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-health-command-'),
+		);
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		const toolVmBuildConfigPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'tool-vms',
+			'default',
+			'build-config.json',
+		);
+		const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
+		const outputs: string[] = [];
+		const calledOperations: string[] = [];
+		const controllerClient = {
+			...createControllerClientStub(),
+			getZoneHealth: async (zoneId: string) => {
+				calledOperations.push(`health:${zoneId}`);
+				return { ok: true, path: '/readyz', zoneId };
+			},
+			getZoneHealthSnapshot: async (zoneId: string) => {
+				calledOperations.push(`health-snapshot:${zoneId}`);
+				return { healthy: true, issues: [], zoneId };
+			},
+			getZoneServiceHealth: async (zoneId: string) => {
+				calledOperations.push(`service-health:${zoneId}`);
+				return { ok: true, path: '/health', zoneId };
+			},
+		};
+
+		try {
+			for (const subcommand of ['health', 'health-snapshot', 'service-health'] as const) {
+				// oxlint-disable-next-line no-await-in-loop -- commands intentionally run serially against shared output capture
+				await runControllerOperationCommand({
+					dependencies: {
+						...defaultCliDependencies,
+						createControllerClient: () => controllerClient,
+						runControllerDoctor: () => ({ ok: true, checks: [] }),
+					},
+					io: {
+						stderr: { write: () => true },
+						stdout: {
+							write: (chunk: string | Uint8Array) => {
+								outputs.push(String(chunk));
+								return true;
+							},
+						},
+					},
+					restArguments: ['--zone', 'shravan'],
+					subcommand,
+					systemConfig,
+				});
+			}
+		} finally {
+			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+
+		expect(calledOperations).toEqual([
+			'health:shravan',
+			'health-snapshot:shravan',
+			'service-health:shravan',
+		]);
+		expect(outputs.join('\n')).toContain('"path": "/readyz"');
+		expect(outputs.join('\n')).toContain('"healthy": true');
+		expect(outputs.join('\n')).toContain('"path": "/health"');
+	});
+
 	it('refreshes OpenClaw credentials without resolving Tool VM-only secrets', async () => {
 		const previousGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
 		process.env.OPENCLAW_GATEWAY_TOKEN = 'test-gateway-token';
@@ -474,6 +547,78 @@ describe('runControllerOperationCommand', () => {
 		}
 
 		expect(JSON.parse(outputs.join(''))).toEqual({});
+	});
+
+	it('checks OpenClaw credential resolution without refreshing the controller runtime', async () => {
+		const previousGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'test-gateway-token';
+		const temporaryDirectoryPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-credentials-check-'),
+		);
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		const toolVmBuildConfigPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'tool-vms',
+			'default',
+			'build-config.json',
+		);
+		const outputs: string[] = [];
+		const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected OpenClaw test system config to include a zone.');
+		}
+		zone.secrets.LINEAR_API_KEY = {
+			source: '1password',
+			ref: 'op://agent-vm/shravan-linear/credential',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.linear.app'],
+		};
+		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
+		const refreshZoneCredentials = vi.fn(async () => ({}));
+
+		try {
+			await runControllerOperationCommand({
+				...fastDoctorEnvironmentOptions(),
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () => ({
+						...createControllerClientStub(),
+						refreshZoneCredentials,
+					}),
+					runControllerDoctor: () => ({ ok: true, checks: [] }),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							outputs.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				restArguments: ['check', '--zone', 'shravan'],
+				subcommand: 'credentials',
+				systemConfig,
+			});
+		} finally {
+			if (previousGatewayToken === undefined) {
+				delete process.env.OPENCLAW_GATEWAY_TOKEN;
+			} else {
+				process.env.OPENCLAW_GATEWAY_TOKEN = previousGatewayToken;
+			}
+			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+
+		expect(JSON.parse(outputs.join(''))).toEqual({
+			audience: 'gateway',
+			ok: true,
+			resolvedSecretCount: 1,
+			zoneId: 'shravan',
+		});
+		expect(refreshZoneCredentials).not.toHaveBeenCalled();
 	});
 
 	it('accepts authored worker config drafts without generated runtime instructions in doctor output', async () => {
@@ -879,6 +1024,318 @@ describe('runControllerOperationCommand', () => {
 		expect(result.summary).toBe('1 check(s) failed');
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('reports 1Password service-account headless fallback readiness without printing the token', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+		const opShimDirectory = path.join(temporaryDirectoryPath, 'bin');
+		const opEnvCapturePath = path.join(temporaryDirectoryPath, 'op-env.txt');
+		await fs.mkdir(opShimDirectory, { recursive: true });
+		await fs.writeFile(
+			workerConfigPath,
+			JSON.stringify({
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { instructions: null },
+				},
+			}),
+			'utf8',
+		);
+		await fs.writeFile(
+			path.join(opShimDirectory, 'op'),
+			[
+				'#!/bin/sh',
+				`env | sort > ${JSON.stringify(opEnvCapturePath)}`,
+				'if [ "$1" = "whoami" ]; then',
+				'  printf "URL: https://example.1password.test\\nUser Type: SERVICE_ACCOUNT\\n"',
+				'  exit 0',
+				'fi',
+				'exit 2',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+		await fs.chmod(path.join(opShimDirectory, 'op'), 0o755);
+
+		process.env.PATH = originalPath
+			? `${opShimDirectory}${path.delimiter}${originalPath}`
+			: opShimDirectory;
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'SUPER-SECRET-TOKEN';
+		process.env.OP_SESSION = 'ambient-human-session';
+
+		try {
+			const outputs: string[] = [];
+			const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
+			const onePasswordSystemConfig = {
+				...systemConfig,
+				host: {
+					...systemConfig.host,
+					secretsProvider: {
+						type: '1password' as const,
+						tokenSource: { type: 'env' as const },
+					},
+				},
+			} satisfies LoadedSystemConfig;
+			await writeImageBuildConfigsForDoctor(onePasswordSystemConfig);
+
+			await runControllerOperationCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: createControllerClientStub,
+					runControllerDoctor: () => ({
+						ok: true,
+						checks: [],
+					}),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							outputs.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				restArguments: ['--json'],
+				subcommand: 'doctor',
+				systemConfig: onePasswordSystemConfig,
+			});
+
+			const renderedOutput = outputs.join('');
+			expect(renderedOutput).not.toContain('SUPER-SECRET-TOKEN');
+			expect(renderedOutput).not.toContain('ambient-human-session');
+			const result = JSON.parse(renderedOutput) as {
+				readonly checks: readonly {
+					readonly hint?: string;
+					readonly name: string;
+					readonly ok: boolean;
+				}[];
+			};
+			expect(result.checks.find((check) => check.name === '1password-op-cli-headless')).toEqual({
+				name: '1password-op-cli-headless',
+				ok: true,
+				hint: 'op whoami returned SERVICE_ACCOUNT with isolated service-account env',
+			});
+			const opEnv = await fs.readFile(opEnvCapturePath, 'utf8');
+			expect(opEnv).toContain('OP_SERVICE_ACCOUNT_TOKEN=SUPER-SECRET-TOKEN');
+			expect(opEnv).toContain('OP_BIOMETRIC_UNLOCK_ENABLED=false');
+			expect(opEnv).toContain('OP_CACHE=false');
+			expect(opEnv).not.toContain('OP_SESSION=');
+		} finally {
+			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+	});
+
+	it('redacts literal service-account token values from 1Password doctor probe hints', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+		const opShimDirectory = path.join(temporaryDirectoryPath, 'bin');
+		await fs.mkdir(opShimDirectory, { recursive: true });
+		await fs.writeFile(
+			workerConfigPath,
+			JSON.stringify({
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { instructions: null },
+				},
+			}),
+			'utf8',
+		);
+		await fs.writeFile(path.join(opShimDirectory, 'op'), '#!/bin/sh\nexit 0\n', 'utf8');
+		await fs.chmod(path.join(opShimDirectory, 'op'), 0o755);
+
+		process.env.PATH = originalPath
+			? `${opShimDirectory}${path.delimiter}${originalPath}`
+			: opShimDirectory;
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'SUPER-SECRET-TOKEN';
+
+		try {
+			const outputs: string[] = [];
+			const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
+			const onePasswordSystemConfig = {
+				...systemConfig,
+				host: {
+					...systemConfig.host,
+					secretsProvider: {
+						type: '1password' as const,
+						tokenSource: { type: 'env' as const },
+					},
+				},
+			} satisfies LoadedSystemConfig;
+			await writeImageBuildConfigsForDoctor(onePasswordSystemConfig);
+
+			await runControllerOperationCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: createControllerClientStub,
+					probeOnePasswordServiceAccountHeadlessAuth: async () => ({
+						hint: 'probe failed for raw token SUPER-SECRET-TOKEN',
+						ok: false,
+					}),
+					runControllerDoctor: () => ({
+						ok: true,
+						checks: [],
+					}),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							outputs.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				restArguments: ['--json'],
+				subcommand: 'doctor',
+				systemConfig: onePasswordSystemConfig,
+			});
+
+			const renderedOutput = outputs.join('');
+			expect(renderedOutput).not.toContain('SUPER-SECRET-TOKEN');
+			const result = JSON.parse(renderedOutput) as {
+				readonly checks: readonly {
+					readonly hint?: string;
+					readonly name: string;
+					readonly ok: boolean;
+				}[];
+			};
+			expect(result.checks.find((check) => check.name === '1password-op-cli-headless')).toEqual({
+				name: '1password-op-cli-headless',
+				ok: false,
+				hint: 'probe failed for raw token <redacted>',
+			});
+		} finally {
+			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+	});
+
+	it('continues 1Password doctor checks when zone Git GitHub token resolution fails', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		const toolVmBuildConfigPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'tool-vms',
+			'default',
+			'build-config.json',
+		);
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'SUPER-SECRET-TOKEN';
+
+		try {
+			const outputs: string[] = [];
+			const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
+			const zone = systemConfig.zones[0];
+			if (!zone || zone.gateway.type !== 'openclaw') {
+				throw new Error('Expected OpenClaw test system config to include an OpenClaw zone.');
+			}
+			zone.gateway.zoneGit = {
+				remote: {
+					branch: 'main',
+					repoUrl: 'ShravanSunder/sunfam-zone-files',
+				},
+			};
+			const onePasswordSystemConfig = {
+				...systemConfig,
+				host: {
+					...systemConfig.host,
+					githubToken: {
+						source: '1password' as const,
+						ref: 'op://agent-vm/github-token/credential',
+					},
+					secretsProvider: {
+						type: '1password' as const,
+						tokenSource: { type: 'env' as const },
+					},
+				},
+			} satisfies LoadedSystemConfig;
+			await writeImageBuildConfigsForDoctor(onePasswordSystemConfig);
+
+			await runControllerOperationCommand({
+				...fastDoctorEnvironmentOptions(['op']),
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: createControllerClientStub,
+					createSecretResolver: async () => ({
+						resolve: async (): Promise<string> => {
+							throw new Error(
+								'GitHub token failed through OP_SERVICE_ACCOUNT_TOKEN=SUPER-SECRET-TOKEN Bearer github-token-value ref=op://agent-vm/github-token/credential',
+							);
+						},
+						resolveAll: async () => ({}),
+					}),
+					probeOnePasswordServiceAccountHeadlessAuth: async () => ({
+						hint: 'headless probe ok for SUPER-SECRET-TOKEN',
+						ok: true,
+					}),
+					runControllerDoctor: () => ({
+						ok: true,
+						checks: [],
+					}),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							outputs.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				restArguments: ['--json'],
+				subcommand: 'doctor',
+				systemConfig: onePasswordSystemConfig,
+			});
+
+			const renderedOutput = outputs.join('');
+			expect(renderedOutput).not.toContain('SUPER-SECRET-TOKEN');
+			expect(renderedOutput).not.toContain('op://');
+			expect(renderedOutput).not.toContain('github-token-value');
+			const result = JSON.parse(renderedOutput) as {
+				readonly checks: readonly {
+					readonly hint?: string;
+					readonly name: string;
+					readonly ok: boolean;
+				}[];
+				readonly ok: boolean;
+			};
+			expect(result.ok).toBe(false);
+			expect(result.checks.find((check) => check.name === '1password-op-cli-headless')).toEqual({
+				name: '1password-op-cli-headless',
+				ok: true,
+				hint: 'headless probe ok for <redacted>',
+			});
+			expect(result.checks.find((check) => check.name === 'zone-git-github-token-shravan')).toEqual(
+				{
+					name: 'zone-git-github-token-shravan',
+					ok: false,
+					hint: 'Configured host.githubToken could not be resolved: GitHub token failed through OP_SERVICE_ACCOUNT_TOKEN=<redacted> Bearer <redacted> ref=<1password-ref>',
+				},
+			);
+		} finally {
+			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
 	});
 
 	it('validates OpenClaw gateway configs with the catalog OpenClaw CLI in doctor output', async () => {

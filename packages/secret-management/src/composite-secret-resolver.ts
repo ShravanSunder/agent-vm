@@ -1,4 +1,5 @@
 import type { SecretRef, SecretResolver } from './contracts.js';
+import { redactOnePasswordReferences } from './secret-redaction.js';
 
 type SecretEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -24,12 +25,13 @@ function resolveConfigSecret(ref: Extract<SecretRef, { readonly source: 'config'
 }
 
 function formatUnknownError(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return redactOnePasswordReferences(error instanceof Error ? error.message : String(error));
 }
 
 function describeSecretRef(ref: SecretRef): string {
 	switch (ref.source) {
 		case '1password':
+			return '<1password-ref>';
 		case 'environment':
 			return ref.ref;
 		case 'config':
@@ -60,9 +62,7 @@ function throwAggregateSecretResolutionError(failures: readonly Error[]): void {
 
 function extractAggregateErrors(error: AggregateError): readonly Error[] {
 	const failures: readonly unknown[] = Array.isArray(error.errors) ? error.errors : [error];
-	return failures.map((failure: unknown) =>
-		failure instanceof Error ? failure : new Error(formatUnknownError(failure), { cause: failure }),
-	);
+	return failures.map((failure: unknown) => new Error(formatUnknownError(failure)));
 }
 
 export function createCompositeSecretResolver(

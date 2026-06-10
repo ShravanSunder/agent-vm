@@ -334,6 +334,17 @@ export function registerControllerZoneOperationRoutes(
 		}
 		try {
 			const health = await operations.getZoneHealth(context.req.param('zoneId'));
+			return context.json(health, health.ok ? 200 : 503);
+		} catch (error) {
+			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
+		}
+	});
+	app.get('/zones/:zoneId/service-health', async (context) => {
+		if (!operations.getZoneServiceHealth) {
+			return context.json({ error: 'zone-service-health-unavailable' }, 405);
+		}
+		try {
+			const health = await operations.getZoneServiceHealth(context.req.param('zoneId'));
 			if (
 				options.healthEventStore &&
 				typeof health.path === 'string' &&

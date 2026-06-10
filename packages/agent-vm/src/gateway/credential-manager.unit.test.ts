@@ -301,11 +301,20 @@ describe('resolveZoneSecrets', () => {
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Zone 'shravan' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/shravan-gateway-auth/password'.",
+			"Zone 'shravan' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference for this secret.",
 		);
+		await expect(
+			resolveZoneSecrets({
+				audience: 'gateway',
+				secretResolver,
+				// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+				systemConfig: envBackedConfig as unknown as SystemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.not.toThrow(/op:\/\//u);
 	});
 
-	it('suggests a secret-specific ref example when discord token ref is missing', async () => {
+	it('keeps missing 1Password ref errors free of concrete ref examples', async () => {
 		const baseZone = systemConfig.zones[0];
 		if (!baseZone) {
 			throw new Error('Expected base test zone');
@@ -344,8 +353,17 @@ describe('resolveZoneSecrets', () => {
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Zone 'shravan' secret 'DISCORD_BOT_TOKEN' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/shravan-discord/bot-token'.",
+			"Zone 'shravan' secret 'DISCORD_BOT_TOKEN' is missing 'ref'. Add an explicit 1Password reference for this secret.",
 		);
+		await expect(
+			resolveZoneSecrets({
+				audience: 'gateway',
+				secretResolver,
+				// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+				systemConfig: missingDiscordRefConfig as unknown as SystemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.not.toThrow(/op:\/\//u);
 	});
 
 	it('adds secret-specific context when secret resolution fails', async () => {
@@ -394,8 +412,16 @@ describe('resolveZoneSecrets', () => {
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve 1 secret(s) via op read. Details: Failed to resolve secret 'PERPLEXITY_API_KEY' for zone 'shravan' from 'op://agent-vm/shravan-perplexity/credential': 1Password lookup failed",
+			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve 1 secret(s) via op read. Details: Failed to resolve secret 'PERPLEXITY_API_KEY' for zone 'shravan' from '<1password-ref>': 1Password lookup failed",
 		);
+		await expect(
+			resolveZoneSecrets({
+				audience: 'gateway',
+				secretResolver,
+				systemConfig: failingConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.not.toThrow(/op:\/\//u);
 	});
 
 	it('keeps secret-specific context when an environment-backed batch secret is missing', async () => {
@@ -441,7 +467,15 @@ describe('resolveZoneSecrets', () => {
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve 2 secret(s). Details: Failed to resolve secret 'ANTHROPIC_API_KEY' from 'op://AI/anthropic/api-key': Secret with source '1password' requires host.secretsProvider to be configured.; Failed to resolve secret 'GITHUB_PAT' from 'op://AI/github/pat': Secret with source '1password' requires host.secretsProvider to be configured.",
+			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve 2 secret(s). Details: Failed to resolve secret 'ANTHROPIC_API_KEY' from '<1password-ref>': Secret with source '1password' requires host.secretsProvider to be configured.; Failed to resolve secret 'GITHUB_PAT' from '<1password-ref>': Secret with source '1password' requires host.secretsProvider to be configured.",
 		);
+		await expect(
+			resolveZoneSecrets({
+				audience: 'gateway',
+				secretResolver: createCompositeSecretResolver(null, {}),
+				systemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.not.toThrow(/op:\/\//u);
 	});
 });

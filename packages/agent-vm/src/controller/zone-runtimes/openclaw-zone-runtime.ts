@@ -1,14 +1,21 @@
 import { randomUUID } from 'node:crypto';
 
+import type { GatewayHealthCheck } from '@agent-vm/gateway-interface';
+import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
-import { resolveZoneSecrets } from '../../gateway/credential-manager.js';
 import { runGatewayHealthCheck } from '../../gateway/gateway-health-check.js';
 import { GatewayOwnershipUnsafeError } from '../../gateway/gateway-ownership-evidence.js';
 import { deleteGatewayRuntimeRecord as deleteGatewayRuntimeRecordDefault } from '../../gateway/gateway-runtime-record.js';
-import { startGatewayZone } from '../../gateway/gateway-zone-orchestrator.js';
-import type { GatewayZoneStartResult } from '../../gateway/gateway-zone-support.js';
+import {
+	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
+	startGatewayZone,
+} from '../../gateway/gateway-zone-orchestrator.js';
+import type {
+	GatewayZoneStartResult,
+	StartGatewayZoneOptions as StartGatewayZoneRequestOptions,
+} from '../../gateway/gateway-zone-support.js';
 import { runControllerCredentialsRefresh as runControllerCredentialsRefreshDefault } from '../../operations/credentials-refresh.js';
 import { runControllerDestroy as runControllerDestroyDefault } from '../../operations/destroy-zone.js';
 import { runControllerUpgrade as runControllerUpgradeDefault } from '../../operations/upgrade-zone.js';
@@ -56,6 +63,7 @@ export interface CreateOpenClawZoneRuntimeOptions {
 	readonly isProcessAlive?: (pid: number) => boolean;
 	readonly leaseManager: Pick<LeaseManager, 'listLeases' | 'releaseLease'>;
 	readonly now: () => number;
+	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStartDefault;
 	readonly restartGatewayZone?: (
 		zoneId: string,
 		options?: GatewayZoneStartOptions,
@@ -73,7 +81,11 @@ export interface CreateOpenClawZoneRuntimeOptions {
 const defaultGatewayCloseTimeoutMs = 60_000;
 
 interface GatewayZoneStartOptions {
+	readonly prebuiltImage?: BuildImageResult | undefined;
+	readonly runtimeEnvironment?: StartGatewayZoneRequestOptions['runtimeEnvironment'];
+	readonly runtimePluginConfigs?: StartGatewayZoneRequestOptions['runtimePluginConfigs'];
 	readonly secretResolver?: SecretResolver | undefined;
+	readonly protectedRestartPreflighted?: boolean | undefined;
 }
 
 interface GatewayLifecycleOperationContext {
@@ -222,6 +234,13 @@ export function createOpenClawZoneRuntime(
 		options.restartGatewayZone
 			? await options.restartGatewayZone(options.zone.id, startOptions)
 			: await startGatewayZone({
+					...(startOptions.prebuiltImage ? { prebuiltImage: startOptions.prebuiltImage } : {}),
+					...(startOptions.runtimeEnvironment
+						? { runtimeEnvironment: startOptions.runtimeEnvironment }
+						: {}),
+					...(startOptions.runtimePluginConfigs
+						? { runtimePluginConfigs: startOptions.runtimePluginConfigs }
+						: {}),
 					secretResolver: startOptions.secretResolver ?? options.secretResolver,
 					systemConfig: options.systemConfig,
 					zoneId: options.zone.id,
@@ -236,6 +255,31 @@ export function createOpenClawZoneRuntime(
 			);
 		}
 		return currentState.gateway;
+	};
+
+	const runGatewayHealthProbe = async (
+		activeGateway: GatewayZoneRuntimeHandle,
+		healthCheck: GatewayHealthCheck,
+	): Promise<{
+		readonly ok: boolean;
+		readonly observation: string;
+		readonly path?: string | undefined;
+		readonly port?: number | undefined;
+		readonly statusCode?: number | undefined;
+		readonly zoneId: string;
+	}> => {
+		const result = await runGatewayHealthCheck({
+			exec: async (command) => await executeGatewayCommand(activeGateway, command),
+			healthCheck,
+		});
+		return {
+			ok: result.ok,
+			observation: result.observation,
+			...(result.path === undefined ? {} : { path: result.path }),
+			...(result.port === undefined ? {} : { port: result.port }),
+			...(result.statusCode === undefined ? {} : { statusCode: result.statusCode }),
+			zoneId: options.zone.id,
+		};
 	};
 
 	const createOperationId = (operationName: string): string =>
@@ -289,7 +333,12 @@ export function createOpenClawZoneRuntime(
 		if (operation !== undefined) {
 			lastOperation = operation;
 		}
-		if (record.kind === 'operation-failed' && !isRecoverySecretResolutionFailure(record)) {
+		if (
+			record.kind === 'operation-failed' &&
+			!isRecoverySecretResolutionFailure(record) &&
+			lifecycleState.kind !== 'running' &&
+			lifecycleState.kind !== 'running-degraded'
+		) {
 			setOriginalOutageCauseIfUnknown(record.errorCode);
 		}
 		const operationRecord = {
@@ -538,6 +587,35 @@ export function createOpenClawZoneRuntime(
 		}
 	};
 
+	const abortIfLifecycleGenerationStale = async (props: {
+		readonly operationContext: GatewayLifecycleOperationContext;
+		readonly operationGeneration: number;
+		readonly previousGateway?: GatewayZoneRuntimeHandle | undefined;
+		readonly stage: string;
+		readonly timeoutMs?: number | undefined;
+	}): Promise<void> => {
+		if (props.operationGeneration === lifecycleGeneration) {
+			return;
+		}
+		const errorMessage = `stale-generation-closed: Aborted stale gateway lifecycle operation for zone '${options.zone.id}' before ${props.stage}.`;
+		lastError = errorMessage;
+		if (props.previousGateway !== undefined) {
+			gateway = props.previousGateway;
+			lifecycleState = { gateway: props.previousGateway, kind: 'running' };
+		} else {
+			lifecycleState = classifyLastError(errorMessage);
+		}
+		await recordLifecycleOperation({
+			errorCode: 'stale-generation-closed',
+			errorMessage,
+			kind: 'operation-failed',
+			operationId: props.operationContext.operationId,
+			operationTrigger: props.operationContext.operationTrigger,
+			previousGateway: gatewayIdentityFor(props.previousGateway),
+		});
+		throw new OpenClawZoneRestartTimeoutError(options.zone.id, props.timeoutMs ?? 0);
+	};
+
 	const stopNow = async (
 		next: 'stopped' | 'starting' = 'stopped',
 		operationContext?: GatewayLifecycleOperationContext,
@@ -730,6 +808,51 @@ export function createOpenClawZoneRuntime(
 		}
 	};
 
+	const preflightGatewayStartOptions = async (
+		startOptions: GatewayZoneStartOptions,
+		operationContext: GatewayLifecycleOperationContext,
+	): Promise<GatewayZoneStartOptions> => {
+		if (startOptions.protectedRestartPreflighted === true) {
+			return startOptions;
+		}
+		try {
+			const preflightGatewayZoneStart =
+				options.preflightGatewayZoneStart ?? preflightGatewayZoneStartDefault;
+			const preflightResult = await preflightGatewayZoneStart({
+				...(startOptions.runtimeEnvironment
+					? { runtimeEnvironment: startOptions.runtimeEnvironment }
+					: {}),
+				...(startOptions.runtimePluginConfigs
+					? { runtimePluginConfigs: startOptions.runtimePluginConfigs }
+					: {}),
+				secretResolver: startOptions.secretResolver ?? options.secretResolver,
+				systemConfig: options.systemConfig,
+				zoneId: options.zone.id,
+			});
+			return {
+				...startOptions,
+				...(preflightResult.image ? { prebuiltImage: preflightResult.image } : {}),
+				protectedRestartPreflighted: true,
+				secretResolver: preflightResult.secretResolver,
+			};
+		} catch (error) {
+			const classifiedError = classifyGatewayStartError(error);
+			lastError = formatUnknownError(error);
+			await recordLifecycleOperation({
+				errorCode: classifiedError.code,
+				errorMessage: classifiedError.message,
+				kind: 'operation-failed',
+				operationId: operationContext.operationId,
+				operationTrigger: operationContext.operationTrigger,
+				previousGateway: gatewayIdentityFor(operationContext.previousGateway),
+			});
+			throw new ControllerZoneRuntimeStartError(options.zone.id, error, {
+				gatewayLifecycleErrorCode: classifiedError.code,
+				operationId: operationContext.operationId,
+			});
+		}
+	};
+
 	const stop = async (): Promise<void> => await runLifecycleOperation(async () => await stopNow());
 
 	const start = async (): Promise<void> =>
@@ -769,13 +892,6 @@ export function createOpenClawZoneRuntime(
 						? currentState.gateway
 						: undefined,
 			};
-			if (currentState.kind === 'running' || currentState.kind === 'running-degraded') {
-				lifecycleState = {
-					kind: 'restarting',
-					operationId,
-					previousGateway: currentState.gateway,
-				};
-			}
 			const restartOperation =
 				currentState.kind === 'running' || currentState.kind === 'running-degraded'
 					? (async (): Promise<OpenClawZoneRestartResult> => {
@@ -785,9 +901,32 @@ export function createOpenClawZoneRuntime(
 								operationTrigger: operationContext.operationTrigger,
 								previousGateway: gatewayIdentityFor(operationContext.previousGateway),
 							});
+							const preflightedStartOptions = await preflightGatewayStartOptions(
+								startOptions,
+								operationContext,
+							);
+							await abortIfLifecycleGenerationStale({
+								operationContext,
+								operationGeneration,
+								previousGateway: currentState.gateway,
+								stage: 'lease release',
+								timeoutMs: restartOptions.timeoutMs,
+							});
+							lifecycleState = {
+								kind: 'restarting',
+								operationId,
+								previousGateway: currentState.gateway,
+							};
 							const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
+							await abortIfLifecycleGenerationStale({
+								operationContext,
+								operationGeneration,
+								previousGateway: currentState.gateway,
+								stage: 'gateway VM close',
+								timeoutMs: restartOptions.timeoutMs,
+							});
 							await stopNow('starting', operationContext);
-							await startNow(operationGeneration, startOptions, operationContext);
+							await startNow(operationGeneration, preflightedStartOptions, operationContext);
 							if (operationGeneration !== lifecycleGeneration) {
 								throw new OpenClawZoneRestartTimeoutError(
 									options.zone.id,
@@ -805,9 +944,25 @@ export function createOpenClawZoneRuntime(
 								operationId,
 								operationTrigger: operationContext.operationTrigger,
 							});
+							const preflightedStartOptions = await preflightGatewayStartOptions(
+								startOptions,
+								operationContext,
+							);
+							await abortIfLifecycleGenerationStale({
+								operationContext,
+								operationGeneration,
+								stage: 'lease release',
+								timeoutMs: restartOptions.timeoutMs,
+							});
 							const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
+							await abortIfLifecycleGenerationStale({
+								operationContext,
+								operationGeneration,
+								stage: 'stale gateway close',
+								timeoutMs: restartOptions.timeoutMs,
+							});
 							await closeStaleGatewayBeforeColdStart(operationContext);
-							await startNow(operationGeneration, startOptions, operationContext);
+							await startNow(operationGeneration, preflightedStartOptions, operationContext);
 							if (operationGeneration !== lifecycleGeneration) {
 								throw new OpenClawZoneRestartTimeoutError(
 									options.zone.id,
@@ -858,9 +1013,25 @@ export function createOpenClawZoneRuntime(
 					operationId: operationContext.operationId,
 					operationTrigger: operationContext.operationTrigger,
 				});
+				const preflightedStartOptions = await preflightGatewayStartOptions(
+					startOptions,
+					operationContext,
+				);
+				await abortIfLifecycleGenerationStale({
+					operationContext,
+					operationGeneration,
+					stage: 'lease release',
+					timeoutMs: restartOptions.timeoutMs,
+				});
 				const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
+				await abortIfLifecycleGenerationStale({
+					operationContext,
+					operationGeneration,
+					stage: 'stale gateway close',
+					timeoutMs: restartOptions.timeoutMs,
+				});
 				await closeStaleGatewayBeforeColdStart(operationContext);
-				await startNow(operationGeneration, startOptions, operationContext);
+				await startNow(operationGeneration, preflightedStartOptions, operationContext);
 				if (operationGeneration !== lifecycleGeneration) {
 					throw new OpenClawZoneRestartTimeoutError(options.zone.id, restartOptions.timeoutMs ?? 0);
 				}
@@ -903,18 +1074,15 @@ export function createOpenClawZoneRuntime(
 		getHealth: async () => {
 			getLifecycleState();
 			const activeGateway = requireGateway();
-			const result = await runGatewayHealthCheck({
-				exec: async (command) => await executeGatewayCommand(activeGateway, command),
-				healthCheck: activeGateway.processSpec.healthCheck,
-			});
-			return {
-				ok: result.ok,
-				observation: result.observation,
-				...(result.path === undefined ? {} : { path: result.path }),
-				...(result.port === undefined ? {} : { port: result.port }),
-				...(result.statusCode === undefined ? {} : { statusCode: result.statusCode }),
-				zoneId: options.zone.id,
-			};
+			return await runGatewayHealthProbe(activeGateway, activeGateway.processSpec.healthCheck);
+		},
+		getServiceHealth: async () => {
+			getLifecycleState();
+			const activeGateway = requireGateway();
+			return await runGatewayHealthProbe(
+				activeGateway,
+				activeGateway.processSpec.serviceHealthCheck ?? activeGateway.processSpec.healthCheck,
+			);
 		},
 		getDiagnosis: () =>
 			deriveGatewayDiagnosisSnapshot({
@@ -1016,19 +1184,18 @@ export function createOpenClawZoneRuntime(
 				} catch (error) {
 					await failCredentialsRefreshSecretResolution(error);
 				}
+				let preflightedRefreshStartOptions: GatewayZoneStartOptions | undefined;
 				return await (
 					options.runControllerCredentialsRefresh ?? runControllerCredentialsRefreshDefault
 				)(
 					{ zoneId: options.zone.id },
 					{
-						refreshZoneSecrets: async (zoneId) => {
+						refreshZoneSecrets: async () => {
 							try {
-								await resolveZoneSecrets({
-									audience: 'gateway',
-									secretResolver: refreshedSecretResolver,
-									systemConfig: options.systemConfig,
-									zoneId,
-								});
+								preflightedRefreshStartOptions = await preflightGatewayStartOptions(
+									{ secretResolver: refreshedSecretResolver },
+									{ operationId, operationTrigger },
+								);
 							} catch (error) {
 								await failCredentialsRefreshSecretResolution(error);
 							}
@@ -1041,14 +1208,14 @@ export function createOpenClawZoneRuntime(
 							) {
 								await restartWithStartOptions(
 									{},
-									{ secretResolver: refreshedSecretResolver },
+									preflightedRefreshStartOptions ?? { secretResolver: refreshedSecretResolver },
 									{ operationId, operationTrigger },
 								);
 								return;
 							}
 							await coldStartWithStartOptions(
 								{},
-								{ secretResolver: refreshedSecretResolver },
+								preflightedRefreshStartOptions ?? { secretResolver: refreshedSecretResolver },
 								{ operationId, operationTrigger },
 							);
 						},

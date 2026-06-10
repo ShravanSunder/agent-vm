@@ -119,31 +119,21 @@ describe('applyAgentOverrides', () => {
 });
 
 describe('createServeSecretResolver', () => {
-	it('uses an explicit op-cli token source for external proxy 1Password refs', async () => {
+	it('rejects ambient op-cli token source for external proxy 1Password refs', async () => {
 		const resolveServiceAccountToken = vi.fn(async () => 'service-token');
 		const createOnePasswordSecretResolver = vi.fn(async () => createFakeOnePasswordResolver());
 
-		const resolver = await createServeSecretResolver(
-			{
-				AGENT_VM_MCP_PORTAL_OP_TOKEN_REF: 'op://agent-vm/mcp-portal-service-account/credential',
-				AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE: 'op-cli',
-			},
-			{ createOnePasswordSecretResolver, resolveServiceAccountToken },
-		);
-
 		await expect(
-			resolver.resolve({
-				ref: 'op://agent-vm/linear/credential',
-				source: '1password',
-			}),
-		).resolves.toBe('resolved:op://agent-vm/linear/credential');
-		expect(resolveServiceAccountToken).toHaveBeenCalledWith({
-			ref: 'op://agent-vm/mcp-portal-service-account/credential',
-			type: 'op-cli',
-		});
-		expect(createOnePasswordSecretResolver).toHaveBeenCalledWith({
-			serviceAccountToken: 'service-token',
-		});
+			createServeSecretResolver(
+				{
+					AGENT_VM_MCP_PORTAL_OP_TOKEN_REF: 'op://agent-vm/mcp-portal-service-account/credential',
+					AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE: 'op-cli',
+				},
+				{ createOnePasswordSecretResolver, resolveServiceAccountToken },
+			),
+		).rejects.toThrow('Unsupported AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE "op-cli"');
+		expect(resolveServiceAccountToken).not.toHaveBeenCalled();
+		expect(createOnePasswordSecretResolver).not.toHaveBeenCalled();
 	});
 
 	it('uses an explicit keychain token source for external proxy 1Password refs', async () => {

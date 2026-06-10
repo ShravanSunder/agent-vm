@@ -113,7 +113,7 @@ package.json owns which installed @agent-vm/* package version this deployment us
 
 The installed @agent-vm/agent-vm package owns managed-images.json. That manifest selects the managed GHCR base image tags and managed OpenClaw default version tested with that package. Deployment repos should not copy or edit managed-images.json.
 
-vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and openClawPackageOverrides for OpenClaw runtime package pins such as openclaw@2026.5.7 or @openclaw/discord@2026.5.7.
+vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and openClawPackageOverrides for OpenClaw runtime package pins such as openclaw@2026.6.5 or @openclaw/discord@2026.6.5.
 
 Do not edit cacheDir/generated-dockerfiles/... by hand. Generated Dockerfiles are build output. If a generated Dockerfile contains the wrong package version, change package.json or the overlay that produced it, then rebuild.
 
@@ -175,10 +175,14 @@ Local package scripts should be thin wrappers around these commands. Deployment 
 
 Health model:
 - GET /health is the global agent-vm controller liveness endpoint.
-- GET /zones/<zoneId>/health is an on-demand live gateway-service probe.
+- GET /zones/<zoneId>/health is an on-demand live readiness probe.
+- GET /zones/<zoneId>/service-health is an on-demand live gateway-service liveness probe.
 - GET /zones/<zoneId>/health-snapshot is an in-memory zone health view.
+- agent-vm controller health --config <system-config> --zone <zoneId> prints the live readiness probe result.
+- agent-vm controller service-health --config <system-config> --zone <zoneId> prints the live gateway-service liveness probe result.
+- agent-vm controller health-snapshot --config <system-config> --zone <zoneId> prints the in-memory zone health snapshot.
 - Health snapshots separate gateway infrastructure, gateway service, channel-provider, and Tool VM lease health.
-- gateway-service-health means the agent-vm controller can probe the gateway service through the gateway VM runtime.
+- gateway-service-health means the agent-vm controller can probe gateway service liveness through the gateway VM runtime. For OpenClaw, periodic monitoring and explicit service-health use /health; explicit zone health probes /readyz.
 - gateway-control-link means the gateway VM can call back to the agent-vm controller through controller.vm.host:18800.
 - agent-channel-provider-health means the gateway/plugin reports whether an agent channel provider can communicate. The controller reads only generic health values such as healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable.
 - gateway-recovery means the controller attempted an automatic gateway VM restart after repeated gateway-service or gateway-control-link failures.
@@ -191,9 +195,11 @@ Health snapshots and bounded event history are in-memory controller state for li
 
 By default, controller.health.gatewayServiceAutoRestart restarts a running OpenClaw gateway VM after 10 consecutive gateway-service or gateway-control-link failures. The same recovery path can cold-start a failed or stopped gateway when current ownership checks prove it is safe. It has a 61 minute cooldown per zone and a 10 minute restart deadline. Restart releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
 
-Channel-provider failures are gateway-service input only through the generic contract. A channel provider marked unhealthy-recoverable can trigger gateway restart when controller health policy allows it. A channel provider marked unhealthy-unrecoverable is surfaced for operator diagnosis and does not restart the gateway by default. Provider-specific details stay in the event payload; the controller must not branch on Discord, Slack, or other platform-specific names.
+Channel-provider failures are diagnostic input only through the generic contract by default. A channel provider marked unhealthy-recoverable degrades readiness/status but does not restart the gateway unless controller health policy explicitly enables restartGatewayOnRecoverable. A channel provider marked unhealthy-unrecoverable is surfaced for operator diagnosis and does not restart the gateway by default. Provider-specific details stay in the event payload; the controller must not branch on Discord, Slack, or other platform-specific names.
 
 secret-resolution-failed is a recovery blocker, not proof of the original outage cause. Show it as the reason a start, restart, credentials refresh, or cold-start cannot proceed now unless durable lifecycle evidence proves the outage began during that operation.
+
+Use agent-vm controller credentials check --zone <zone> to verify gateway secret resolution without contacting the controller or restarting the gateway. Use credentials refresh only when the operator intentionally wants a credential refresh and zone runtime restart.
 
 Tool VM lease failures retire or quarantine one lease before gateway restart. A tool-vm-ssh failure should not be treated as gateway infrastructure failure unless lease-manager or gateway control-link health also proves a broader gateway problem.
 
@@ -210,7 +216,7 @@ Agent-vm provides VM lifecycle, storage mounts, TCP/HTTP mediation, image build,
 OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
 The controller is the control plane: it issues leases and tracks active uses. Command stdout, stderr, and file bridge traffic stay on the gateway-to-Tool-VM SSH data path.
 OpenClaw application heartbeat turns are not infrastructure health checks. Use agent-vm health snapshots to distinguish gateway-service health, gateway-to-controller control link, lease-heartbeat, lease-renew, and Tool VM SSH health.
-Channel-provider details stay inside OpenClaw/plugin payloads. The controller branches only on generic channel-provider health: healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable.
+Channel-provider details stay inside OpenClaw/plugin payloads. The controller branches only on generic channel-provider health: healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable. Recoverable channel-provider failures degrade readiness/status by default; gateway VM restart is opt-in through controller health policy.
 
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
 OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.

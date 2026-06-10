@@ -1,9 +1,13 @@
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 import { createClient, type ResolveAllResponse, type ResolveReferenceError } from '@1password/sdk';
 
 import type { SecretRef, SecretResolver } from './contracts.js';
+import { withOpCliServiceAccountEnv } from './op-cli-service-account-env.js';
+import { execFileAsync, type ExecFileOptions, type ExecFileResult } from './redacted-exec-file.js';
+import { redactOnePasswordReferences } from './secret-redaction.js';
+
+export type { ExecFileOptions, ExecFileResult } from './redacted-exec-file.js';
 
 type ConfigSecretRef = Extract<SecretRef, { readonly source: 'config' }>;
 type OnePasswordSecretRef = Extract<SecretRef, { readonly source: '1password' }>;
@@ -15,23 +19,16 @@ export interface SecretResolverClient {
 	};
 }
 
+export interface OnePasswordServiceAccountHeadlessAuthProbeResult {
+	readonly hint: string;
+	readonly ok: boolean;
+}
+
 // --- Token source: how to obtain the 1Password service account token ---
 
 export type TokenSource =
-	| { readonly type: 'op-cli'; readonly ref: string }
 	| { readonly type: 'env'; readonly envVar?: string | undefined }
 	| { readonly type: 'keychain'; readonly service: string; readonly account: string };
-
-export interface ExecFileOptions {
-	readonly env?: Readonly<Record<string, string | undefined>>;
-	readonly input?: string | undefined;
-	readonly redactErrorOutput?: boolean | undefined;
-}
-
-export interface ExecFileResult {
-	readonly stdout: string;
-	readonly stderr: string;
-}
 
 function formatUnknownError(error: unknown): string {
 	if (error instanceof AggregateError) {
@@ -45,15 +42,19 @@ function formatUnknownError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-class RedactedExecFileError extends Error {
-	constructor(
-		message: string,
-		readonly safeDetail: string,
-		options?: { readonly cause?: unknown },
-	) {
-		super(message, options);
-		this.name = 'RedactedExecFileError';
-	}
+function redactKnownSecretValues(message: string, secretValues: readonly string[]): string {
+	return secretValues.reduce((redactedMessage, secretValue) => {
+		if (secretValue.length === 0) {
+			return redactedMessage;
+		}
+		return redactedMessage.replaceAll(secretValue, '<redacted>');
+	}, message);
+}
+
+function formatUnknownErrorWithRedactions(error: unknown, secretValues: readonly string[]): string {
+	return redactOnePasswordReferences(
+		redactKnownSecretValues(formatUnknownError(error), secretValues),
+	);
 }
 
 class OpInjectOutputError extends Error {
@@ -63,127 +64,12 @@ class OpInjectOutputError extends Error {
 	}
 }
 
-function formatErrorMetadataValue(value: unknown): string | undefined {
-	if (typeof value === 'number' || typeof value === 'string') {
-		return String(value);
-	}
-	return undefined;
-}
-
-function readErrorCode(error: Error): string | undefined {
-	if (!('code' in error)) {
-		return undefined;
-	}
-	return formatErrorMetadataValue(error.code);
-}
-
-function readErrorSignal(error: Error): string | undefined {
-	if (!('signal' in error)) {
-		return undefined;
-	}
-	return formatErrorMetadataValue(error.signal);
-}
-
-function formatRedactedExecErrorDetail(error: Error): string {
-	const exitCode = readErrorCode(error) ?? 'unknown';
-	const signal = readErrorSignal(error);
-	return signal === undefined ? `exit code ${exitCode}` : `exit code ${exitCode}, signal ${signal}`;
-}
-
-function createExecFileError(options: {
-	readonly command: string;
-	readonly error: Error;
-	readonly redactErrorOutput?: boolean | undefined;
-	readonly stderr: string;
-}): Error {
-	if (options.redactErrorOutput) {
-		const safeDetail = formatRedactedExecErrorDetail(options.error);
-		return new RedactedExecFileError(`${options.command} failed: ${safeDetail}`, safeDetail);
-	}
-
-	const errorDetail = options.stderr.trim() || options.error.message;
-	return new Error(`${options.command} failed: ${errorDetail}`);
-}
-
-function formatStdinWriteErrorDetail(error: Error): string {
-	const errorCode = readErrorCode(error);
-	return errorCode === undefined ? 'stdin write failed' : `stdin write failed: ${errorCode}`;
-}
-
-function createStdinWriteError(command: string, error: Error, redactErrorOutput?: boolean): Error {
-	if (redactErrorOutput) {
-		const safeDetail = formatStdinWriteErrorDetail(error);
-		return new RedactedExecFileError(`${command} failed writing stdin: ${safeDetail}`, safeDetail, {
-			cause: error,
-		});
-	}
-	return new Error(`${command} failed writing stdin: ${formatUnknownError(error)}`, {
-		cause: error,
-	});
-}
-
 function ensureMacOsForKeychain(): void {
 	if (process.platform !== 'darwin') {
 		throw new Error(
-			'Keychain token source is only supported on macOS. Use an env or op-cli token source on this platform so cmd-ts can surface a clear startup error.',
+			'Keychain token source is only supported on macOS. Use an env token source on this platform so cmd-ts can surface a clear startup error.',
 		);
 	}
-}
-
-function execFileAsync(
-	command: string,
-	args: readonly string[],
-	options?: ExecFileOptions,
-): Promise<ExecFileResult> {
-	return new Promise((resolve, reject) => {
-		let hasSettled = false;
-		const rejectOnce = (error: Error): void => {
-			if (hasSettled) {
-				return;
-			}
-			hasSettled = true;
-			reject(error);
-		};
-		const resolveOnce = (result: ExecFileResult): void => {
-			if (hasSettled) {
-				return;
-			}
-			hasSettled = true;
-			resolve(result);
-		};
-		const child = execFile(
-			command,
-			[...args],
-			{ env: options?.env, timeout: 30_000 },
-			(error, stdout, stderr) => {
-				if (error) {
-					rejectOnce(
-						createExecFileError({
-							command,
-							error,
-							redactErrorOutput: options?.redactErrorOutput,
-							stderr,
-						}),
-					);
-					return;
-				}
-
-				resolveOnce({ stdout, stderr });
-			},
-		);
-		if (options?.input !== undefined) {
-			if (!child.stdin) {
-				child.kill();
-				rejectOnce(new Error(`${command} did not expose stdin for input`));
-				return;
-			}
-			child.stdin.once('error', (error: Error) => {
-				child.kill();
-				rejectOnce(createStdinWriteError(command, error, options.redactErrorOutput));
-			});
-			child.stdin.end(options.input);
-		}
-	});
 }
 
 const SAFE_IDENTIFIER_PATTERN = /^[\w.@-]+$/u;
@@ -201,17 +87,6 @@ export async function resolveServiceAccountToken(
 	const exec = dependencies?.execFileAsync ?? execFileAsync;
 
 	switch (source.type) {
-		case 'op-cli': {
-			// Uses `op read` which triggers biometric auth (Touch ID) on macOS
-			const result = await exec('op', ['read', source.ref], { redactErrorOutput: true });
-			const token = result.stdout.trim();
-			if (token.length === 0) {
-				throw new Error('op-cli token resolution returned empty value');
-			}
-
-			return token;
-		}
-
 		case 'env': {
 			const envVar = source.envVar ?? 'OP_SERVICE_ACCOUNT_TOKEN';
 			const token = process.env[envVar]?.trim();
@@ -339,11 +214,13 @@ async function resolveSecretWithOpCli(
 		options?: ExecFileOptions,
 	) => Promise<ExecFileResult>,
 ): Promise<string> {
-	const result = await exec('op', ['read', secretReference], {
-		env: createOpCliServiceAccountEnv(serviceAccountToken),
-		redactErrorOutput: true,
+	return await withOpCliServiceAccountEnv(serviceAccountToken, async (env) => {
+		const result = await exec('op', ['read', secretReference], {
+			env,
+			redactErrorOutput: true,
+		});
+		return stripOpReadStdoutTerminator(result.stdout);
 	});
-	return stripOpReadStdoutTerminator(result.stdout);
 }
 
 function stripOpReadStdoutTerminator(stdout: string): string {
@@ -356,51 +233,49 @@ function stripOpReadStdoutTerminator(stdout: string): string {
 	return stdout;
 }
 
-// This is an allowlist for process plumbing only. Do not add ambient OP_* auth
-// variables here; they can switch `op` away from agent-vm's service account token.
-const opCliProcessPlumbingEnvNames = [
-	'APPDATA',
-	'ALL_PROXY',
-	'all_proxy',
-	'COMSPEC',
-	'HOME',
-	'HTTP_PROXY',
-	'http_proxy',
-	'HTTPS_PROXY',
-	'https_proxy',
-	'LANG',
-	'LC_ALL',
-	'LC_CTYPE',
-	'LOCALAPPDATA',
-	'NO_PROXY',
-	'no_proxy',
-	'PATH',
-	'SSL_CERT_DIR',
-	'SSL_CERT_FILE',
-	'TEMP',
-	'TMP',
-	'TMPDIR',
-	'TZ',
-	'USERPROFILE',
-	'WINDIR',
-	'XDG_CACHE_HOME',
-	'XDG_CONFIG_HOME',
-	'XDG_DATA_HOME',
-	'XDG_RUNTIME_DIR',
-] satisfies readonly string[];
+function opWhoamiReportsServiceAccount(stdout: string): boolean {
+	return /^User Type:\s*SERVICE_ACCOUNT\s*$/imu.test(stdout);
+}
 
-function createOpCliServiceAccountEnv(
-	serviceAccountToken: string,
-): Readonly<Record<string, string | undefined>> {
-	const env: Record<string, string | undefined> = {};
-	for (const envName of opCliProcessPlumbingEnvNames) {
-		const envValue = process.env[envName];
-		if (envValue !== undefined) {
-			env[envName] = envValue;
-		}
+export async function probeOnePasswordServiceAccountHeadlessAuth(
+	options: {
+		readonly serviceAccountToken: string;
+	},
+	dependencies: {
+		readonly execFileAsync?: (
+			command: string,
+			args: readonly string[],
+			options?: ExecFileOptions,
+		) => Promise<ExecFileResult>;
+	} = {},
+): Promise<OnePasswordServiceAccountHeadlessAuthProbeResult> {
+	const exec = dependencies.execFileAsync ?? execFileAsync;
+	try {
+		return await withOpCliServiceAccountEnv(options.serviceAccountToken, async (env) => {
+			const result = await exec('op', ['whoami'], {
+				env,
+				redactErrorOutput: true,
+			});
+			if (opWhoamiReportsServiceAccount(result.stdout)) {
+				return {
+					hint: 'op whoami returned SERVICE_ACCOUNT with isolated service-account env',
+					ok: true,
+				};
+			}
+			return {
+				hint: 'op whoami did not report SERVICE_ACCOUNT with isolated service-account env',
+				ok: false,
+			};
+		});
+	} catch (error) {
+		return {
+			hint: `op whoami failed with isolated service-account env: ${formatUnknownErrorWithRedactions(
+				error,
+				[options.serviceAccountToken],
+			)}`,
+			ok: false,
+		};
 	}
-	env.OP_SERVICE_ACCOUNT_TOKEN = serviceAccountToken;
-	return env;
 }
 
 const opInjectTemplateDelimiterPattern = /(?:\{\{|\}\})/u;
@@ -467,27 +342,42 @@ function createAggregateErrorWithCause(options: {
 	return aggregateError;
 }
 
-function createFallbackStageError(stage: string, error: unknown): Error {
-	return new Error(`${stage} failed before op CLI fallback: ${formatUnknownError(error)}`, {
-		cause: error,
-	});
+function createFallbackStageError(
+	stage: string,
+	error: unknown,
+	secretValues: readonly string[] = [],
+): Error {
+	const message = `${stage} failed before op CLI fallback: ${formatUnknownErrorWithRedactions(
+		error,
+		secretValues,
+	)}`;
+	return secretValues.length === 0 ? new Error(message, { cause: error }) : new Error(message);
 }
 
 function createFallbackFailureError(options: {
 	readonly fallbackError: unknown;
 	readonly message: string;
+	readonly secretValues?: readonly string[] | undefined;
 	readonly stageError: Error;
 }): AggregateError {
+	const fallbackMessage = formatUnknownErrorWithRedactions(
+		options.fallbackError,
+		options.secretValues ?? [],
+	);
+	const redactedFallbackError =
+		options.secretValues === undefined || options.secretValues.length === 0
+			? new Error(fallbackMessage, { cause: options.fallbackError })
+			: new Error(fallbackMessage);
 	if (options.fallbackError instanceof AggregateError) {
 		return createAggregateErrorWithCause({
-			cause: options.fallbackError,
-			errors: [options.stageError, ...readAggregateErrorChildren(options.fallbackError)],
-			message: options.fallbackError.message,
+			cause: redactedFallbackError,
+			errors: [options.stageError, redactedFallbackError],
+			message: fallbackMessage,
 		});
 	}
 	return createAggregateErrorWithCause({
-		cause: options.fallbackError,
-		errors: [options.stageError, options.fallbackError],
+		cause: redactedFallbackError,
+		errors: [options.stageError, redactedFallbackError],
 		message: options.message,
 	});
 }
@@ -534,12 +424,11 @@ function findUniqueOpInjectMarker(options: {
 	readonly markerDescription: string;
 	readonly output: string;
 	readonly secretName: string;
-	readonly secretReference: string;
 }): number {
 	const markerIndex = options.output.indexOf(options.marker);
 	if (markerIndex === -1) {
 		throw new OpInjectOutputError(
-			`op inject output omitted ${options.markerDescription} marker for secret '${options.secretName}' (${options.secretReference}).`,
+			`op inject output omitted ${options.markerDescription} marker for secret '${options.secretName}'.`,
 		);
 	}
 	const repeatedMarkerIndex = options.output.indexOf(
@@ -548,7 +437,7 @@ function findUniqueOpInjectMarker(options: {
 	);
 	if (repeatedMarkerIndex !== -1) {
 		throw new OpInjectOutputError(
-			`op inject output for secret '${options.secretName}' (${options.secretReference}) contained repeated ${options.markerDescription} marker.`,
+			`op inject output for secret '${options.secretName}' contained repeated ${options.markerDescription} marker.`,
 		);
 	}
 	return markerIndex;
@@ -565,7 +454,6 @@ function extractInjectedSecret(options: {
 		markerDescription: 'start',
 		output: options.output,
 		secretName: options.entry.secretName,
-		secretReference: options.entry.secretRef.ref,
 	});
 	const secretStartIndex = valueStartIndex + startToken.length;
 	const secretEndIndex = findUniqueOpInjectMarker({
@@ -573,7 +461,6 @@ function extractInjectedSecret(options: {
 		markerDescription: 'end',
 		output: options.output,
 		secretName: options.entry.secretName,
-		secretReference: options.entry.secretRef.ref,
 	});
 	return options.output.slice(secretStartIndex, secretEndIndex);
 }
@@ -607,12 +494,14 @@ async function resolveAllSecretsWithOpInject(
 		return {};
 	}
 
-	const result = await exec('op', ['inject', '--in-file', '/dev/stdin'], {
-		env: createOpCliServiceAccountEnv(serviceAccountToken),
-		input: buildOpInjectTemplate(entries),
-		redactErrorOutput: true,
+	return await withOpCliServiceAccountEnv(serviceAccountToken, async (env) => {
+		const result = await exec('op', ['inject', '--in-file', '/dev/stdin'], {
+			env,
+			input: buildOpInjectTemplate(entries),
+			redactErrorOutput: true,
+		});
+		return mapOpInjectOutput(entries, result.stdout);
 	});
-	return mapOpInjectOutput(entries, result.stdout);
 }
 
 function formatResolveReferenceError(error: ResolveReferenceError): string {
@@ -623,25 +512,23 @@ function formatResolveReferenceError(error: ResolveReferenceError): string {
 
 function readSdkBatchSecret(options: {
 	readonly response: ResolveAllResponse;
-	readonly secretName: string;
 	readonly secretReference: string;
+	readonly secretName: string;
 }): string {
 	const individualResponse = options.response.individualResponses[options.secretReference];
 	if (!individualResponse) {
-		throw new Error(
-			`1Password SDK resolveAll response omitted '${options.secretName}' (${options.secretReference}).`,
-		);
+		throw new Error(`1Password SDK resolveAll response omitted '${options.secretName}'.`);
 	}
 	if (individualResponse.content !== undefined) {
 		return individualResponse.content.secret;
 	}
 	if (individualResponse.error !== undefined) {
 		throw new Error(
-			`1Password SDK resolveAll failed for '${options.secretName}' (${options.secretReference}): ${formatResolveReferenceError(individualResponse.error)}`,
+			`1Password SDK resolveAll failed for '${options.secretName}': ${formatResolveReferenceError(individualResponse.error)}`,
 		);
 	}
 	throw new Error(
-		`1Password SDK resolveAll returned neither content nor error for '${options.secretName}' (${options.secretReference}).`,
+		`1Password SDK resolveAll returned neither content nor error for '${options.secretName}'.`,
 	);
 }
 
@@ -692,13 +579,16 @@ export async function createSecretResolver(
 				try {
 					return await client.secrets.resolve(ref.ref);
 				} catch (error) {
-					const sdkResolveError = createFallbackStageError('1Password SDK resolve', error);
+					const sdkResolveError = createFallbackStageError('1Password SDK resolve', error, [
+						options.serviceAccountToken,
+					]);
 					try {
 						return await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec);
 					} catch (fallbackError) {
 						throw createFallbackFailureError({
 							fallbackError,
 							message: '1Password SDK resolve and op CLI fallback both failed.',
+							secretValues: [options.serviceAccountToken],
 							stageError: sdkResolveError,
 						});
 					}
@@ -718,7 +608,9 @@ export async function createSecretResolver(
 						mapSdkResolveAllResponse(splitRefs.onePasswordRefs, response),
 					);
 				} catch (error) {
-					const sdkResolveAllError = createFallbackStageError('1Password SDK resolveAll', error);
+					const sdkResolveAllError = createFallbackStageError('1Password SDK resolveAll', error, [
+						options.serviceAccountToken,
+					]);
 					try {
 						return mergeResolvedSecrets(
 							splitRefs.resolvedSecrets,
@@ -732,6 +624,7 @@ export async function createSecretResolver(
 						throw createFallbackFailureError({
 							fallbackError,
 							message: '1Password SDK resolveAll and op CLI fallback both failed.',
+							secretValues: [options.serviceAccountToken],
 							stageError: sdkResolveAllError,
 						});
 					}
@@ -739,7 +632,11 @@ export async function createSecretResolver(
 			},
 		};
 	} catch (error) {
-		const sdkClientCreationError = createFallbackStageError('1Password SDK client creation', error);
+		const sdkClientCreationError = createFallbackStageError(
+			'1Password SDK client creation',
+			error,
+			[options.serviceAccountToken],
+		);
 		return {
 			resolve: async (ref: SecretRef): Promise<string> => {
 				switch (ref.source) {
@@ -762,6 +659,7 @@ export async function createSecretResolver(
 					throw createFallbackFailureError({
 						fallbackError,
 						message: '1Password SDK client creation and op CLI fallback both failed.',
+						secretValues: [options.serviceAccountToken],
 						stageError: sdkClientCreationError,
 					});
 				}
@@ -784,6 +682,7 @@ export async function createSecretResolver(
 					throw createFallbackFailureError({
 						fallbackError,
 						message: '1Password SDK client creation and op CLI fallback both failed.',
+						secretValues: [options.serviceAccountToken],
 						stageError: sdkClientCreationError,
 					});
 				}

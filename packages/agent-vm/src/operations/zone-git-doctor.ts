@@ -22,6 +22,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 
 export async function collectZoneGitDoctorChecks(options: {
 	readonly githubToken: string | null;
+	readonly githubTokenResolutionError?: string | undefined;
 	readonly systemConfig: LoadedSystemConfig;
 }): Promise<readonly DoctorCheck[]> {
 	const checks: DoctorCheck[] = [];
@@ -39,7 +40,9 @@ export async function collectZoneGitDoctorChecks(options: {
 			ok: hasGithubToken,
 			hint: hasGithubToken
 				? 'host GitHub token available to controller'
-				: `Set host.githubToken so the controller can push zone '${zone.id}' without exposing credentials to VMs.`,
+				: options.githubTokenResolutionError !== undefined
+					? `Configured host.githubToken could not be resolved: ${options.githubTokenResolutionError}`
+					: `Set host.githubToken so the controller can push zone '${zone.id}' without exposing credentials to VMs.`,
 		});
 		// oxlint-disable-next-line no-await-in-loop -- doctor output should stay zone ordered
 		const initialized = await pathExists(zoneGitPaths.hostGitDir);
