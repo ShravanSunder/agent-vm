@@ -118,7 +118,7 @@ output=redacted with exit/signal/elapsed metadata
 When Discord `403` / websocket `1006` appears, capture these facts:
 
 ```sh
-pnpm exec agent-vm controller status --config config/system.jsonc --zone sunfam
+pnpm exec agent-vm controller status --config config/system.jsonc
 pnpm exec agent-vm controller health --config config/system.jsonc --zone sunfam
 pnpm exec agent-vm controller service-health --config config/system.jsonc --zone sunfam
 pnpm exec agent-vm controller health-snapshot --config config/system.jsonc --zone sunfam
