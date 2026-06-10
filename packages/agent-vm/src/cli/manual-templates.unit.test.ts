@@ -288,6 +288,9 @@ describe('manual templates', () => {
 		const operationsManual = files.find((file) =>
 			file.relativePath.endsWith('operations.md'),
 		)?.content;
+		expect(operationsManual).toContain('agent-vm controller health --config');
+		expect(operationsManual).toContain('agent-vm controller service-health --config');
+		expect(operationsManual).toContain('agent-vm controller health-snapshot --config');
 		expect(operationsManual).toContain('gateway-recovery');
 		expect(operationsManual).toContain('gateway-recovery-suspended');
 		expect(operationsManual).toContain(

@@ -12,6 +12,7 @@ import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
+import type { ControllerRuntimeDependencies } from './controller-runtime-types.js';
 import {
 	classifyGatewayRecoveryRestartError,
 	startControllerRuntime,
@@ -48,11 +49,55 @@ const defaultGatewayServiceAutoRestart = {
 	restartTimeoutMs: 10 * 60 * 1000,
 } as const;
 
-beforeEach(() => {
+const preflightedGatewayImage = {
+	built: false,
+	fingerprint: 'preflighted-fingerprint',
+	imagePath: '/tmp/preflighted-gateway-image',
+} as const;
+
+const preflightGatewayZoneStart: NonNullable<
+	ControllerRuntimeDependencies['preflightGatewayZoneStart']
+> = async (startOptions) => ({
+	image: preflightedGatewayImage,
+	secretResolver: startOptions.secretResolver,
+});
+
+async function writeDefaultOpenClawConfigFixture(): Promise<void> {
+	const zone = systemConfig.zones[0];
+	if (zone === undefined || zone.gateway.type !== 'openclaw') {
+		throw new Error('Expected OpenClaw test zone.');
+	}
+	await mkdir(path.dirname(zone.gateway.config), { recursive: true });
+	await writeFile(
+		zone.gateway.config,
+		JSON.stringify({
+			agents: {
+				defaults: {
+					sandbox: {
+						backend: 'gondolin',
+						mode: 'all',
+						scope: 'agent',
+						workspaceAccess: 'rw',
+					},
+					workspace: '/zone/agents/default',
+				},
+				list: [],
+			},
+			gateway: {
+				auth: { mode: 'token' },
+				bind: 'loopback',
+			},
+		}),
+		'utf8',
+	);
+}
+
+beforeEach(async () => {
 	previousOnePasswordServiceAccountToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
 	previousOpenClawGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
 	process.env.OP_SERVICE_ACCOUNT_TOKEN = 'test-op-service-account-token';
 	process.env.OPENCLAW_GATEWAY_TOKEN = 'test-openclaw-gateway-token';
+	await writeDefaultOpenClawConfigFixture();
 });
 
 afterEach(async () => {
@@ -153,7 +198,7 @@ const systemConfig = {
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './config/shravan/openclaw.json',
+				config: path.join(controllerRuntimeTestRoot, 'config', 'shravan', 'openclaw.json'),
 				stateDir: path.join(controllerRuntimeTestRoot, 'state', 'shravan'),
 				zoneFilesDir: path.join(controllerRuntimeTestRoot, 'zone-files', 'shravan'),
 			},
@@ -445,6 +490,7 @@ describe('startControllerRuntime', () => {
 					command: 'qemu-system-x86_64 -m 1G',
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
+				preflightGatewayZoneStart,
 				startGatewayZone,
 				startHttpServer: vi.fn(async (options) => {
 					startHttpServerArgs = options;
@@ -468,7 +514,7 @@ describe('startControllerRuntime', () => {
 		expect(startGatewayZone).toHaveBeenCalledTimes(2);
 		expect(startGatewayZone.mock.calls[0]?.[0]).toMatchObject({ zoneId: 'shravan' });
 		expect(startGatewayZone.mock.calls[1]?.[0]).toMatchObject({ zoneId: 'shravan' });
-		expect(resolveAllCallCounts).toEqual([1, 2]);
+		expect(resolveAllCallCounts).toEqual([1, 1]);
 		await expect(runtime.close()).resolves.toBeUndefined();
 	});
 
@@ -564,7 +610,6 @@ describe('startControllerRuntime', () => {
 				dnsResultOrder: 'ipv4first',
 			} as const;
 		});
-
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig: absoluteLeaseSystemConfig,
@@ -608,6 +653,7 @@ describe('startControllerRuntime', () => {
 					await fn();
 				},
 				now: () => statusNowMs,
+				preflightGatewayZoneStart,
 				startGatewayZone,
 				startHttpServer,
 				setIntervalImpl: setIntervalMock,
@@ -919,6 +965,7 @@ describe('startControllerRuntime', () => {
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				now: () => nowMs,
+				preflightGatewayZoneStart,
 				startGatewayZone,
 				startHttpServer: vi.fn(async (options) => {
 					startHttpServerArgs = options;
@@ -1163,6 +1210,7 @@ describe('startControllerRuntime', () => {
 					runTask: async (_title, fn) => {
 						await fn();
 					},
+					preflightGatewayZoneStart,
 					startGatewayZone,
 					startHttpServer: vi.fn(async (options) => {
 						startHttpServerArgs = options;
@@ -1242,6 +1290,7 @@ describe('startControllerRuntime', () => {
 			| undefined;
 		const fakeInterval = setTimeout(() => undefined, 0);
 		clearTimeout(fakeInterval);
+		const preflightGatewayZoneStartMock = vi.fn(preflightGatewayZoneStart);
 		const startGatewayZone = vi.fn(async () => {
 			gatewayStartCount += 1;
 			return {
@@ -1318,6 +1367,7 @@ describe('startControllerRuntime', () => {
 					intervalCallbacks.push({ callback, delayMs });
 					return fakeInterval;
 				},
+				preflightGatewayZoneStart: preflightGatewayZoneStartMock,
 				startGatewayZone,
 				startHttpServer: async (options) => {
 					startHttpServerArgs = options;
@@ -1363,6 +1413,141 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 	});
 
+	it('does not auto restart when OpenClaw readiness is red but service liveness is healthy', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const runtimeSystemConfig = {
+			...systemConfig,
+			controller: {
+				health: {
+					...systemConfig.controller.health,
+					gatewayServiceAutoRestart: {
+						...defaultGatewayServiceAutoRestart,
+						consecutiveFailureThreshold: 2,
+					},
+				},
+			},
+		} satisfies LoadedSystemConfig;
+		const zone = runtimeSystemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		let nowMs = Date.parse('2026-05-27T13:00:00.000Z');
+		const closeGatewayVm = vi.fn(async () => {});
+		const healthProbeCommands: string[] = [];
+		const intervalCallbacks: {
+			readonly callback: () => void | Promise<void>;
+			readonly delayMs: number;
+		}[] = [];
+		const fakeInterval = setTimeout(() => undefined, 0);
+		clearTimeout(fakeInterval);
+		const startGatewayZone = vi.fn(async () => ({
+			image: {
+				built: true,
+				fingerprint: 'gateway-image',
+				imagePath: '/tmp/gateway-image',
+			},
+			ingress: {
+				host: '127.0.0.1',
+				port: 18791,
+			},
+			processSpec: {
+				...openClawProcessSpec,
+				healthCheck: { type: 'http', port: 18789, path: '/readyz' } as const,
+				serviceHealthCheck: { type: 'http', port: 18789, path: '/health' } as const,
+			},
+			vm: {
+				close: closeGatewayVm,
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh ...',
+					host: '127.0.0.1',
+					identityFile: '/tmp/key',
+					port: 19000,
+					user: 'sandbox',
+				})),
+				exec: vi.fn((command: string) => {
+					healthProbeCommands.push(command);
+					return createManagedExecProcessStub({
+						exitCode: 0,
+						stderr: '',
+						stdout: command.includes('/health') ? '200' : '503',
+					});
+				}),
+				fs: createManagedVmFsStub(),
+				getHostPid: vi.fn(() => 48_000),
+				getVmInstance: vi.fn(),
+				id: 'gateway-vm-readiness-red-service-green',
+				setIngressRoutes: vi.fn(),
+			},
+			zone,
+		}));
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: runtimeSystemConfig,
+				zoneIds: ['shravan'],
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 12345,
+					getVmInstance: vi.fn(),
+					id: 'tool-vm-readiness-red-service-green',
+					setIngressRoutes: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				now: () => nowMs,
+				isProcessAlive: () => true,
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
+				}),
+				runTask: async (_title, fn) => {
+					await fn();
+				},
+				setIntervalImpl: (callback, delayMs) => {
+					intervalCallbacks.push({ callback, delayMs });
+					return fakeInterval;
+				},
+				preflightGatewayZoneStart,
+				startGatewayZone,
+				startHttpServer: async () => ({ close: async () => {} }),
+			},
+		);
+		const monitorTick = intervalCallbacks.find(
+			(interval) =>
+				interval.delayMs === runtimeSystemConfig.controller.health.gatewayServiceIntervalMs,
+		)?.callback;
+		if (!monitorTick) {
+			throw new Error('Expected gateway-service monitor interval callback.');
+		}
+
+		await monitorTick();
+		nowMs += 10_000;
+		await monitorTick();
+
+		expect(startGatewayZone).toHaveBeenCalledTimes(1);
+		expect(closeGatewayVm).not.toHaveBeenCalled();
+		expect(healthProbeCommands).toHaveLength(2);
+		expect(healthProbeCommands.every((command) => command.includes('/health'))).toBe(true);
+		expect(healthProbeCommands.some((command) => command.includes('/readyz'))).toBe(false);
+
+		await runtime.close();
+	});
+
 	it('cold-starts recovery when the gateway runtime is already missing its host process', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
@@ -1398,6 +1583,7 @@ describe('startControllerRuntime', () => {
 			| undefined;
 		const fakeInterval = setTimeout(() => undefined, 0);
 		clearTimeout(fakeInterval);
+		const preflightGatewayZoneStartMock = vi.fn(preflightGatewayZoneStart);
 		const startGatewayZone = vi.fn(async () => {
 			gatewayStartCount += 1;
 			return {
@@ -1473,6 +1659,7 @@ describe('startControllerRuntime', () => {
 					intervalCallbacks.push({ callback, delayMs });
 					return fakeInterval;
 				},
+				preflightGatewayZoneStart: preflightGatewayZoneStartMock,
 				startGatewayZone,
 				startHttpServer: async (options) => {
 					startHttpServerArgs = options;
@@ -1491,6 +1678,25 @@ describe('startControllerRuntime', () => {
 		nowMs += 10_000;
 		await monitorTick();
 
+		expect(preflightGatewayZoneStartMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				runtimeEnvironment: {
+					AGENT_VM_ZONE_GIT_TOKEN: expect.any(String),
+				},
+				runtimePluginConfigs: {
+					gondolin: {
+						gatewayControlLinkMonitor: {
+							baseIntervalMs: 10_000,
+							enabled: true,
+							maxIntervalMs: 120_000,
+						},
+						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+					},
+				},
+				zoneId: 'shravan',
+			}),
+			undefined,
+		);
 		expect(startGatewayZone).toHaveBeenCalledTimes(2);
 		if (!startHttpServerArgs) {
 			throw new Error('Expected startHttpServer to be called.');
@@ -1626,6 +1832,7 @@ describe('startControllerRuntime', () => {
 					intervalCallbacks.push({ callback, delayMs });
 					return fakeInterval;
 				},
+				preflightGatewayZoneStart,
 				startGatewayZone,
 				startHttpServer: async (options) => {
 					startHttpServerArgs = options;
@@ -1778,6 +1985,7 @@ describe('startControllerRuntime', () => {
 					intervalCallbacks.push({ callback, delayMs });
 					return fakeInterval;
 				},
+				preflightGatewayZoneStart,
 				startGatewayZone,
 				startHttpServer: async (options) => {
 					startHttpServerArgs = options;
@@ -2868,6 +3076,7 @@ describe('startControllerRuntime', () => {
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				deleteGatewayRuntimeRecord,
+				preflightGatewayZoneStart,
 				startGatewayZone,
 				startHttpServer: vi.fn(async () => ({
 					close: async () => {},
@@ -3231,6 +3440,7 @@ describe('startControllerRuntime', () => {
 					command: 'qemu-system-x86_64 -m 1G',
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
+				preflightGatewayZoneStart,
 				startGatewayZone,
 				startHttpServer: vi.fn(async (options) => {
 					startHttpServerArgs = options;

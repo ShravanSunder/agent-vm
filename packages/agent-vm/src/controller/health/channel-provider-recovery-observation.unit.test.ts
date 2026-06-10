@@ -15,6 +15,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		).toEqual({
 			kind: 'record-observation',
 			observation: {
+				channelProviderHealth: 'healthy',
 				channelProviderId: 'primary-channel',
 				observedAtMs: 1_000,
 				result: 'ok',
@@ -56,6 +57,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		).toEqual({
 			kind: 'record-observation',
 			observation: {
+				channelProviderHealth: 'transitioning',
 				channelProviderId: 'primary-channel',
 				observedAtMs: 40_001,
 				result: 'failed',
@@ -65,7 +67,24 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		});
 	});
 
-	it('classifies recoverable provider failures through health, not provider-specific details', () => {
+	it('keeps recoverable provider failures observe-only by default', () => {
+		expect(
+			deriveChannelProviderRecoveryObservation({
+				event: channelProviderEvent({
+					health: 'unhealthy-recoverable',
+					result: 'failed',
+				}),
+				nowMs: 10_000,
+				staleAfterMs: 30_000,
+				transitioningTimeoutMs: 30_000,
+			}),
+		).toEqual({
+			kind: 'observe-only',
+			reason: 'channel-provider-restart-disabled',
+		});
+	});
+
+	it('classifies opt-in recoverable provider failures through health, not provider-specific details', () => {
 		const discordClose = deriveChannelProviderRecoveryObservation({
 			event: channelProviderEvent({
 				details: { closeCode: 1006, providerType: 'discord' },
@@ -73,6 +92,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 				result: 'failed',
 			}),
 			nowMs: 10_000,
+			restartGatewayOnRecoverable: true,
 			staleAfterMs: 30_000,
 			transitioningTimeoutMs: 30_000,
 		});
@@ -83,6 +103,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 				result: 'failed',
 			}),
 			nowMs: 10_000,
+			restartGatewayOnRecoverable: true,
 			staleAfterMs: 30_000,
 			transitioningTimeoutMs: 30_000,
 		});
@@ -91,6 +112,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		expect(discordClose).toEqual({
 			kind: 'record-observation',
 			observation: {
+				channelProviderHealth: 'unhealthy-recoverable',
 				channelProviderId: 'primary-channel',
 				observedAtMs: 1_000,
 				result: 'failed',
@@ -165,6 +187,7 @@ describe('deriveChannelProviderRecoveryObservation', () => {
 		).toEqual({
 			kind: 'record-observation',
 			observation: {
+				channelProviderHealth: 'healthy',
 				channelProviderId: 'primary-channel',
 				observedAtMs: 31_001,
 				result: 'stale',

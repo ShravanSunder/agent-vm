@@ -92,7 +92,12 @@ intentionally checked-in test deployments.
 | --- | --- |
 | `env` | Read 1Password service account token from an env var. Defaults to `OP_SERVICE_ACCOUNT_TOKEN`. |
 | `keychain` | Read the service account token from macOS Keychain. |
-| `op-cli` | Resolve the service account token through the 1Password CLI. |
+
+For 1Password-backed configs, `agent-vm doctor` also runs a headless fallback
+probe with the resolved service-account token: `op whoami` under an isolated
+`OP_CONFIG_DIR`, `OP_BIOMETRIC_UNLOCK_ENABLED=false`, and `OP_CACHE=false`.
+The probe verifies that the CLI reports `SERVICE_ACCOUNT` without using ambient
+desktop/session auth and does not resolve deployment secret refs.
 
 ## controller.health
 
@@ -102,7 +107,7 @@ the defaults.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Enables periodic health monitors. Health routes remain available when disabled. |
-| `gatewayServiceIntervalMs` | `10000` | Host-side interval for the agent-vm controller to probe each running gateway-service through the gateway VM health check. |
+| `gatewayServiceIntervalMs` | `10000` | Host-side interval for the agent-vm controller to probe each running gateway-service through the gateway VM service liveness check. |
 | `gatewayControlLinkIntervalMs` | `10000` | In-VM interval for the OpenClaw Gondolin plugin to call the agent-vm controller `GET /health` endpoint. |
 | `gatewayControlLinkBackoffCeilingMs` | `120000` | Maximum backoff interval for repeated gateway-to-controller failures. Must be at least `gatewayControlLinkIntervalMs`. |
 | `gatewayServiceAutoRestart.enabled` | `true` | Enables automatic restart for a running OpenClaw gateway VM after repeated gateway-service or gateway-control-link health failures. |
@@ -114,7 +119,7 @@ the defaults.
 | `gatewayServiceAutoRestart.channelProviderHealth.enabled` | `true` | Enables generic agent channel-provider health as recovery input when the gateway/plugin publishes `agent-channel-provider-health` events. |
 | `gatewayServiceAutoRestart.channelProviderHealth.consecutiveFailureThreshold` | `3` | Consecutive generic channel-provider failures required before channel-provider health can select recovery. |
 | `gatewayServiceAutoRestart.channelProviderHealth.transitioningTimeoutMs` | `120000` | Maximum time a `transitioning` channel provider can remain in transition before policy treats it as unhealthy. |
-| `gatewayServiceAutoRestart.channelProviderHealth.restartGatewayOnRecoverable` | `true` | Allows `unhealthy-recoverable` channel-provider events to trigger gateway recovery after threshold/cooldown. |
+| `gatewayServiceAutoRestart.channelProviderHealth.restartGatewayOnRecoverable` | `false` | Keeps `unhealthy-recoverable` channel-provider events as readiness/status degradation by default. Set to `true` only when gateway restart is an intentional recovery action for that provider class. |
 | `gatewayServiceAutoRestart.channelProviderHealth.restartGatewayOnUnrecoverable` | `false` | Prevents `unhealthy-unrecoverable` channel-provider events from restarting the gateway by default. |
 | `staleAfterMs` | `30000` | Age after which a latest health event is treated as stale in zone health snapshots. |
 | `eventHistoryLimit` | `500` | Rolling in-memory event history retained by the agent-vm controller. Latest per-boundary state is retained separately. |
@@ -138,7 +143,10 @@ durable lifecycle evidence proves the outage began during that operation.
 Channel-provider recovery is generic. Gateway implementations may include
 redacted provider details in `agent-channel-provider-health` events, but the
 controller branches only on `healthy`, `transitioning`,
-`unhealthy-recoverable`, and `unhealthy-unrecoverable`.
+`unhealthy-recoverable`, and `unhealthy-unrecoverable`. By default,
+`unhealthy-recoverable` degrades readiness/status without restarting the gateway
+VM; set `restartGatewayOnRecoverable` to `true` to opt in to VM restart after
+the channel-provider threshold and cooldown.
 
 Example:
 
@@ -161,7 +169,7 @@ Example:
           "enabled": true,
           "consecutiveFailureThreshold": 3,
           "transitioningTimeoutMs": 120000,
-          "restartGatewayOnRecoverable": true,
+          "restartGatewayOnRecoverable": false,
           "restartGatewayOnUnrecoverable": false
         }
       },
@@ -291,6 +299,11 @@ listener at `zones[].gateway.port`. The current OpenClaw gateway route maps `/`
 to the OpenClaw guest gateway port, so the Control UI, `/healthz`, `/readyz`,
 OpenAI-compatible HTTP endpoints, SSE streaming, and WebSocket traffic share the
 same route.
+
+OpenClaw startup waits on `/health` service liveness. Explicit zone health
+probes use `/readyz`. The controller's periodic gateway-service monitor also
+uses `/health` as service liveness so channel or provider readiness degradation
+can be reported without automatically treating the gateway VM process as dead.
 
 agent-vm keeps Gondolin response buffering disabled for gateway ingress so
 streaming responses can pass through incrementally. Long-running non-streaming

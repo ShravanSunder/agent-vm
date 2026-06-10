@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
+import { redactOnePasswordReferences } from '@agent-vm/secret-management';
 import { dim, green, red } from 'ansis';
 import { execa } from 'execa';
 
@@ -45,7 +46,10 @@ interface RunControllerOperationCommandOptions {
 		| 'credentials'
 		| 'destroy'
 		| 'doctor'
+		| 'health'
+		| 'health-snapshot'
 		| 'logs'
+		| 'service-health'
 		| 'status'
 		| 'stop'
 		| 'upgrade';
@@ -81,11 +85,54 @@ export interface ControllerDoctorEnvironment {
 export interface CollectDynamicDoctorChecksOptions {
 	readonly availableBinaries: ReadonlySet<string>;
 	readonly controllerGithubToken: string | null;
+	readonly controllerGithubTokenResolutionError?: string | undefined;
+	readonly dependencies: CliDependencies;
 	readonly dockerDaemonReady: boolean;
 	readonly systemConfig: LoadedSystemConfig;
 }
 
 const defaultPassingPreviewLimit = 3;
+const secretTokenPattern = /(OP_SERVICE_ACCOUNT_TOKEN=)[^\s;]+/gu;
+const bearerTokenPattern = /\b(Bearer\s+)[^\s;,'")]+/giu;
+
+function redactDoctorErrorMessage(
+	message: string,
+	literalSecretValues: readonly string[] = [],
+): string {
+	let redactedMessage = redactOnePasswordReferences(message)
+		.replaceAll(secretTokenPattern, '$1<redacted>')
+		.replaceAll(bearerTokenPattern, '$1<redacted>');
+	for (const literalSecretValue of literalSecretValues) {
+		if (literalSecretValue.length === 0) {
+			continue;
+		}
+		redactedMessage = redactedMessage.replaceAll(literalSecretValue, '<redacted>');
+	}
+	return redactedMessage;
+}
+
+function formatDoctorSafeError(error: unknown): string {
+	return redactDoctorErrorMessage(error instanceof Error ? error.message : String(error));
+}
+
+async function resolveControllerGithubTokenForDoctor(options: {
+	readonly dependencies: CliDependencies;
+	readonly systemConfig: LoadedSystemConfig;
+}): Promise<{ readonly error?: string | undefined; readonly token: string | null }> {
+	try {
+		return {
+			token: await resolveControllerGithubToken(
+				options.systemConfig,
+				await createResolverFromSystemConfig(options.systemConfig, options.dependencies),
+			),
+		};
+	} catch (error) {
+		return {
+			error: formatDoctorSafeError(error),
+			token: null,
+		};
+	}
+}
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -114,6 +161,50 @@ function createImageProfileDoctorTarget(
 		target.source = source;
 	}
 	return target;
+}
+
+async function collectOnePasswordHeadlessDoctorChecks(options: {
+	readonly availableBinaries: ReadonlySet<string>;
+	readonly dependencies: CliDependencies;
+	readonly systemConfig: LoadedSystemConfig;
+}): Promise<readonly DoctorCheck[]> {
+	const tokenSource = options.systemConfig.host.secretsProvider?.tokenSource;
+	if (tokenSource === undefined) {
+		return [];
+	}
+	if (!options.availableBinaries.has('op')) {
+		return [
+			{
+				name: '1password-op-cli-headless',
+				ok: false,
+				hint: 'Install 1Password CLI so SDK fallback can run headlessly: brew install 1password-cli',
+			},
+		];
+	}
+
+	let serviceAccountToken: string;
+	try {
+		serviceAccountToken = await options.dependencies.resolveServiceAccountToken(tokenSource);
+	} catch (error) {
+		return [
+			{
+				name: '1password-service-account-token-resolution',
+				ok: false,
+				hint: `Configured 1Password service-account token did not resolve: ${formatDoctorSafeError(error)}`,
+			},
+		];
+	}
+
+	const probe = await options.dependencies.probeOnePasswordServiceAccountHeadlessAuth({
+		serviceAccountToken,
+	});
+	return [
+		{
+			name: '1password-op-cli-headless',
+			ok: probe.ok,
+			hint: redactDoctorErrorMessage(probe.hint, [serviceAccountToken]),
+		},
+	];
 }
 
 function imageProfileHasProducer(imageProfileTarget: ImageProfileDoctorTarget): boolean {
@@ -240,8 +331,16 @@ export async function collectDynamicDoctorChecks(
 	const openClawDeploymentChecks = await collectOpenClawDeploymentDoctorChecks(
 		options.systemConfig,
 	);
+	const onePasswordHeadlessChecks = await collectOnePasswordHeadlessDoctorChecks({
+		availableBinaries: options.availableBinaries,
+		dependencies: options.dependencies,
+		systemConfig: options.systemConfig,
+	});
 	const zoneGitChecks = await collectZoneGitDoctorChecks({
 		githubToken: options.controllerGithubToken,
+		...(options.controllerGithubTokenResolutionError !== undefined
+			? { githubTokenResolutionError: options.controllerGithubTokenResolutionError }
+			: {}),
 		systemConfig: options.systemConfig,
 	});
 	const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
@@ -255,6 +354,7 @@ export async function collectDynamicDoctorChecks(
 		...workerGatewayConfigChecks,
 		...openClawConfigChecks,
 		...openClawDeploymentChecks,
+		...onePasswordHeadlessChecks,
 		...zoneGitChecks,
 	] as const;
 }
@@ -491,17 +591,21 @@ export async function runControllerOperationCommand(
 				...(doctorEnvironment.zigVersion ? { zigVersion: doctorEnvironment.zigVersion } : {}),
 			});
 			const hasZoneGitConfig = options.systemConfig.zones.some(isOpenClawZoneGitConfigured);
-			const controllerGithubToken = hasZoneGitConfig
-				? await resolveControllerGithubToken(
-						options.systemConfig,
-						await createResolverFromSystemConfig(options.systemConfig, options.dependencies),
-					)
-				: null;
+			const controllerGithubTokenResolution = hasZoneGitConfig
+				? await resolveControllerGithubTokenForDoctor({
+						dependencies: options.dependencies,
+						systemConfig: options.systemConfig,
+					})
+				: { token: null };
 			const dynamicChecks = await (
 				options.collectDynamicDoctorChecks ?? collectDynamicDoctorChecks
 			)({
 				availableBinaries: doctorEnvironment.availableBinaries,
-				controllerGithubToken,
+				controllerGithubToken: controllerGithubTokenResolution.token,
+				...(controllerGithubTokenResolution.error !== undefined
+					? { controllerGithubTokenResolutionError: controllerGithubTokenResolution.error }
+					: {}),
+				dependencies: options.dependencies,
 				dockerDaemonReady: doctorEnvironment.dockerDaemonReady,
 				systemConfig: options.systemConfig,
 			});
@@ -527,6 +631,30 @@ export async function runControllerOperationCommand(
 		case 'status':
 			writeJson(options.io, await controllerClient.getControllerStatus());
 			return;
+		case 'health': {
+			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			if (!controllerClient.getZoneHealth) {
+				throw new Error('Controller client does not support zone health.');
+			}
+			writeJson(options.io, await controllerClient.getZoneHealth(zoneId));
+			return;
+		}
+		case 'health-snapshot': {
+			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			if (!controllerClient.getZoneHealthSnapshot) {
+				throw new Error('Controller client does not support zone health snapshots.');
+			}
+			writeJson(options.io, await controllerClient.getZoneHealthSnapshot(zoneId));
+			return;
+		}
+		case 'service-health': {
+			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			if (!controllerClient.getZoneServiceHealth) {
+				throw new Error('Controller client does not support zone service health.');
+			}
+			writeJson(options.io, await controllerClient.getZoneServiceHealth(zoneId));
+			return;
+		}
 		case 'stop':
 			writeJson(options.io, await controllerClient.stopController());
 			return;
@@ -549,7 +677,8 @@ export async function runControllerOperationCommand(
 			return;
 		}
 		case 'credentials': {
-			if (options.restArguments[0] !== 'refresh') {
+			const credentialsSubcommand = options.restArguments[0];
+			if (credentialsSubcommand !== 'refresh' && credentialsSubcommand !== 'check') {
 				throw new Error(
 					`Unknown controller credentials subcommand '${options.restArguments[0] ?? 'undefined'}'.`,
 				);
@@ -560,12 +689,21 @@ export async function runControllerOperationCommand(
 				options.systemConfig,
 				options.dependencies,
 			);
-			await resolveZoneSecrets({
+			const resolvedSecrets = await resolveZoneSecrets({
 				audience: 'gateway',
 				secretResolver,
 				systemConfig: options.systemConfig,
 				zoneId,
 			});
+			if (credentialsSubcommand === 'check') {
+				writeJson(options.io, {
+					ok: true,
+					audience: 'gateway',
+					resolvedSecretCount: Object.keys(resolvedSecrets).length,
+					zoneId,
+				});
+				return;
+			}
 			writeJson(options.io, await controllerClient.refreshZoneCredentials(zoneId));
 			return;
 		}

@@ -2,6 +2,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
@@ -13,7 +14,7 @@ import {
 import { ActiveTaskRegistry, type ActiveWorkerTask } from '../active-task-registry.js';
 import type { Lease } from '../leases/lease-manager.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from '../worker-task-runner.js';
-import { createOpenClawZoneRuntime } from './openclaw-zone-runtime.js';
+import { createOpenClawZoneRuntime as createOpenClawZoneRuntimeImpl } from './openclaw-zone-runtime.js';
 import { createWorkerZoneRuntime } from './worker-zone-runtime.js';
 import { createZoneRuntimeRegistry } from './zone-runtime-registry.js';
 import type {
@@ -137,6 +138,42 @@ const loadedSystemConfig = {
 afterEach(async () => {
 	await rm(zoneRuntimeRegistryTestRoot, { force: true, recursive: true });
 });
+
+function createOpenClawZoneRuntime(
+	options: Parameters<typeof createOpenClawZoneRuntimeImpl>[0],
+): ReturnType<typeof createOpenClawZoneRuntimeImpl> {
+	return createOpenClawZoneRuntimeImpl({
+		preflightGatewayZoneStart: async (startOptions) => {
+			const secretResolver = startOptions.secretResolver ?? options.secretResolver;
+			const gatewaySecretRefs = {
+				OPENCLAW_GATEWAY_TOKEN: { ref: 'OPENCLAW_GATEWAY_TOKEN', source: 'environment' },
+			} as const;
+			const resolvedGatewaySecrets = await secretResolver.resolveAll(gatewaySecretRefs);
+			return {
+				secretResolver: {
+					resolve: async (secretRef) => await secretResolver.resolve(secretRef),
+					resolveAll: async (refs) => {
+						const resolvedSecrets: Record<string, string> = {};
+						const missingRefs: Record<string, (typeof refs)[string]> = {};
+						for (const [secretName, secretRef] of Object.entries(refs)) {
+							const cachedSecretValue = resolvedGatewaySecrets[secretName];
+							if (cachedSecretValue === undefined) {
+								missingRefs[secretName] = secretRef;
+							} else {
+								resolvedSecrets[secretName] = cachedSecretValue;
+							}
+						}
+						if (Object.keys(missingRefs).length > 0) {
+							Object.assign(resolvedSecrets, await secretResolver.resolveAll(missingRefs));
+						}
+						return resolvedSecrets;
+					},
+				},
+			};
+		},
+		...options,
+	});
+}
 
 function isPathInsideDirectory(candidatePath: string, directoryPath: string): boolean {
 	const relativePath = path.relative(path.resolve(directoryPath), path.resolve(candidatePath));
@@ -325,6 +362,16 @@ function createTestLease(options: { readonly id: string; readonly zoneId: string
 	};
 }
 
+function createResolvingSecretResolver(): SecretResolver {
+	return {
+		resolve: async () => 'resolved-secret',
+		resolveAll: async (secretRefs) =>
+			Object.fromEntries(
+				Object.keys(secretRefs).map((secretName) => [secretName, `resolved:${secretName}`]),
+			),
+	};
+}
+
 describe('zone runtime contracts', () => {
 	it('keeps OpenClaw and Worker runtimes behind one discriminated zone runtime interface', () => {
 		const openClawRuntime = {
@@ -348,6 +395,7 @@ describe('zone runtime contracts', () => {
 				toolVmPlane: 'unknown',
 			}),
 			getHealth: async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' }),
+			getServiceHealth: async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' }),
 			getLifecycleState: () => ({ kind: 'stopped' }),
 			getLogs: async () => ({ output: 'logs', zoneId: 'shravan' }),
 			getSnapshot: () => ({ lifecycleState: 'stopped' }),
@@ -465,7 +513,7 @@ describe('createOpenClawZoneRuntime', () => {
 				await dependencies.restartGatewayZone('shravan');
 				return { ok: true, zoneId: 'shravan' };
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -515,7 +563,7 @@ describe('createOpenClawZoneRuntime', () => {
 			restartGatewayZone: async () => {
 				throw new Error('gateway boot failed');
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -580,7 +628,7 @@ describe('createOpenClawZoneRuntime', () => {
 					zone: openClawZone,
 				};
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -647,7 +695,7 @@ describe('createOpenClawZoneRuntime', () => {
 					zone: openClawZone,
 				};
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			setTimeoutImpl: (callback, delayMs) => {
 				expect(delayMs).toBe(5_000);
 				closeTimeoutCallbacks.push(callback);
@@ -731,7 +779,7 @@ describe('createOpenClawZoneRuntime', () => {
 				}
 				return createGatewayStartResult(`gateway-vm-${gatewayStartCount}`);
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			setTimeoutImpl: (callback, delayMs) => {
 				expect(delayMs).toBe(5_000);
 				restartTimeoutCallbacks.push(callback);
@@ -826,7 +874,7 @@ describe('createOpenClawZoneRuntime', () => {
 			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-04-30T10:00:00.000Z'),
 			restartGatewayZone: optionsRestartGatewayZone,
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -974,7 +1022,7 @@ describe('createWorkerZoneRuntime', () => {
 				acquire: vi.fn(),
 				release: vi.fn(),
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getWorkerZone(),
 		});
@@ -1019,7 +1067,7 @@ describe('createWorkerZoneRuntime', () => {
 				acquire: vi.fn(),
 				release: vi.fn(),
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getWorkerZone(),
 		});
@@ -1059,7 +1107,7 @@ describe('createWorkerZoneRuntime', () => {
 				acquire: vi.fn(),
 				release: vi.fn(),
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getWorkerZone(),
 		});
@@ -1101,7 +1149,7 @@ describe('createWorkerZoneRuntime', () => {
 				acquire: vi.fn(),
 				release: vi.fn(),
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getWorkerZone(),
 		});
@@ -1148,7 +1196,7 @@ describe('createWorkerZoneRuntime', () => {
 				acquire: vi.fn(),
 				release: vi.fn(),
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getWorkerZone(),
 		});
@@ -1206,7 +1254,7 @@ describe('createWorkerZoneRuntime', () => {
 				acquire: vi.fn(),
 				release: vi.fn(),
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getWorkerZone(),
 		});
@@ -1267,7 +1315,7 @@ describe('createWorkerZoneRuntime', () => {
 					acquire: vi.fn(),
 					release: vi.fn(),
 				},
-				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				secretResolver: createResolvingSecretResolver(),
 				systemConfig: {
 					...loadedSystemConfig,
 					runtimeDir,
@@ -1314,7 +1362,7 @@ describe('createWorkerZoneRuntime', () => {
 				acquire: vi.fn(),
 				release: vi.fn(),
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getWorkerZone(),
 		});
@@ -1433,6 +1481,7 @@ function createFakeOpenClawRuntime(
 			toolVmPlane: 'unknown',
 		}),
 		getHealth: async () => ({ ok: true, observation: 'http 200', zoneId }),
+		getServiceHealth: async () => ({ ok: true, observation: 'http 200', zoneId }),
 		getLifecycleState: () => {
 			switch (lifecycleState) {
 				case 'failed':

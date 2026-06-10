@@ -185,6 +185,9 @@ export function classifyGatewayStartError(error: unknown): GatewayLifecycleError
 	if (normalizedMessage.includes('readyz') || normalizedMessage.includes('readiness')) {
 		return { code: 'readiness-failed', message };
 	}
+	if (normalizedMessage.includes('stale-generation-closed')) {
+		return { code: 'stale-generation-closed', message };
+	}
 	return { code: 'vm-start-failed', message };
 }
 

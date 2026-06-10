@@ -67,8 +67,8 @@ For `macos-local`, `.env.local` is written so you can adjust local values.
 Optional tweaks:
 
 - adjust any `*_REF` values if your 1Password vault paths differ
-- set `OP_SERVICE_ACCOUNT_TOKEN` if you want a service account instead of
-  Keychain storage
+- set `OP_SERVICE_ACCOUNT_TOKEN` if you want an env-backed service-account token
+  instead of keychain-backed service-account token storage
 
 For container-host or CI scaffolds, use:
 

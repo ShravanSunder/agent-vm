@@ -52,7 +52,9 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
 | TCP hosts | Controller only | Controller + all tool VM SSH ports + WebSocket bypass |
 | Auth | None | Auth profiles (1Password → disk → VFS) |
 | prepareHostState | None | Writes effective config + auth profiles |
-| Health check | `GET /health` | `GET /readyz` |
+| Startup service check | `GET /health` | `GET /health` |
+| Explicit readiness check | `GET /health` | `GET /readyz` |
+| Service liveness check | `GET /health` | `GET /health` |
 
 See [overview.md](overview.md#gateway-lifecycle-contract) for the GatewayLifecycle interface that both gateways implement.
 
@@ -66,18 +68,24 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
   controller start
        |
        v
-  1. Resolve zone secrets
-  2. Build gateway image (cached by fingerprint)
-  3. prepareHostState:
+  1. Non-destructive runtime ownership preflight
+  2. Preflight gateway start:
+     - Resolve and cache all gateway/startup secrets
+     - Preflight effective-openclaw.json and auth-profile writes
+     - Preflight MCP Portal effective config materialization
+     - Validate OpenClaw Tool VM requirements
+  3. Build/preselect gateway image (cached by fingerprint)
+  4. Clean owned orphan Tool VMs and gateway runtime, if present
+  5. prepareHostState using preflight-cached secrets:
      - Write effective-openclaw.json (env SecretRef for gateway token)
      - Write per-agent auth-profiles.json files from configured sources
-  4. buildVmSpec → GatewayVmSpec (4 mounts, TCP pool, env)
-  5. buildProcessSpec → bootstrap + start commands
-  6. createManagedVm → Gondolin VM
-  7. Bootstrap: write shell/admin profiles and runtime secret env files
-  8. Start: source runtime secrets, then run openclaw gateway --port 18789
-  9. Wait for health check (GET /readyz on :18789)
-  10. Enable ingress
+  6. buildVmSpec → GatewayVmSpec (4 mounts, TCP pool, env)
+  7. buildProcessSpec → bootstrap + start commands
+  8. createManagedVm → Gondolin VM
+  9. Bootstrap: write shell/admin profiles and runtime secret env files
+  10. Start: source runtime secrets, then run openclaw gateway --port 18789
+  11. Wait for service liveness check (GET /health on :18789)
+  12. Enable ingress
 ```
 
 The gateway stays alive until `controller stop`, `controller destroy`, process
@@ -97,15 +105,17 @@ OpenClaw/provider details stay below the plugin boundary. The plugin may publish
 generic `agent-channel-provider-health` events with redacted details such as a
 provider type or status code, but controller recovery branches only on
 `healthy`, `transitioning`, `unhealthy-recoverable`, and
-`unhealthy-unrecoverable`. Recoverable channel-provider failures can feed
-gateway recovery when policy allows it; unrecoverable provider failures are
-surfaced for diagnosis and do not restart the gateway by default.
+`unhealthy-unrecoverable`. Recoverable channel-provider failures degrade
+readiness/status by default and feed gateway recovery only when policy
+explicitly enables `restartGatewayOnRecoverable`; unrecoverable provider
+failures are surfaced for diagnosis and do not restart the gateway by default.
 
 Gateway ingress has two different ports in play. `processSpec.guestListenPort`
 is the OpenClaw HTTP/WebSocket port inside the VM. `zones[].gateway.port` is the
-host-facing Gondolin ingress listener. After readiness, agent-vm writes one
-Gondolin route, `/` to `processSpec.guestListenPort`, then enables ingress on
-`zones[].gateway.port`.
+host-facing Gondolin ingress listener. After service liveness, agent-vm writes
+one Gondolin route, `/` to `processSpec.guestListenPort`, then enables ingress
+on `zones[].gateway.port`. OpenClaw readiness can still be degraded after
+ingress when a channel/provider is unavailable.
 
 That single route is the OpenClaw serving surface. The Control UI, gateway
 WebSocket, `/healthz`, `/readyz`, `/v1/chat/completions`, `/v1/responses`, and
@@ -441,6 +451,12 @@ The controller exposes operations for managing the OpenClaw Gateway:
 | Upgrade | `POST /zones/:id/upgrade` | Rebuild image, restart gateway |
 | SSH | `POST /zones/:id/enable-ssh` | SSH access to gateway VM |
 | Exec | `POST /zones/:id/execute-command` | Run command in gateway VM after zone admin authorization when configured |
+
+For OpenClaw zones, startup waits on `/health` service liveness. Explicit
+`GET /zones/:id/health` uses `/readyz`, which includes application readiness.
+Explicit `GET /zones/:id/service-health` and the controller's periodic
+gateway-service monitor use `/health` as service liveness so channel/provider
+readiness degradation does not by itself classify the VM process as dead.
 
 For implementation details, see [subsystems/controller.md](../subsystems/controller.md#operations).
 

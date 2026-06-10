@@ -10,6 +10,7 @@ export interface GatewayProcessSpec {
 	readonly bootstrapCommand: string;
 	readonly startCommand: string;
 	readonly healthCheck: GatewayHealthCheck;
+	readonly serviceHealthCheck?: GatewayHealthCheck | undefined;
 	readonly guestListenPort: number;
 	readonly logPath: string;
 }

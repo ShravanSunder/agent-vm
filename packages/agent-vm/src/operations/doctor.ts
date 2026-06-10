@@ -146,7 +146,7 @@ function buildOpenClawCliCheck(
 			...(openClawCliReady
 				? { hint: 'openclaw' }
 				: {
-						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.5.7.',
+						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.5.',
 					}),
 		},
 	];
@@ -484,8 +484,6 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 				const envVar = tokenSource.envVar ?? 'OP_SERVICE_ACCOUNT_TOKEN';
 				return typeof options.env[envVar] === 'string' && options.env[envVar].length > 0;
 			}
-			case 'op-cli':
-				return availableBinaries.has('op');
 			case 'keychain':
 				return availableBinaries.has('security');
 			default:
@@ -509,9 +507,6 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 							? {
 									hint: `Set ${tokenSource.envVar ?? 'OP_SERVICE_ACCOUNT_TOKEN'} environment variable`,
 								}
-							: {}),
-						...(!tokenSourceReady && tokenSource.type === 'op-cli'
-							? { hint: 'Install 1Password CLI: brew install 1password-cli' }
 							: {}),
 					} satisfies DoctorCheck,
 				]

@@ -161,6 +161,13 @@ describe('createControllerRuntimeOperations', () => {
 			getHealth: vi.fn(async () => ({
 				ok: true,
 				observation: 'http 200',
+				path: '/readyz',
+				zoneId: 'shravan',
+			})),
+			getServiceHealth: vi.fn(async () => ({
+				ok: true,
+				observation: 'http 200',
+				path: '/health',
 				zoneId: 'shravan',
 			})),
 			getLogs: vi.fn(async () => ({ output: 'shravan logs', zoneId: 'shravan' })),
@@ -168,7 +175,14 @@ describe('createControllerRuntimeOperations', () => {
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 		} satisfies Pick<
 			OpenClawZoneRuntime,
-			'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+			| 'destroy'
+			| 'enableSsh'
+			| 'exec'
+			| 'getHealth'
+			| 'getLogs'
+			| 'getServiceHealth'
+			| 'refreshCredentials'
+			| 'upgrade'
 		>;
 		const alevtinaRuntime = {
 			destroy: vi.fn(async (purged: boolean) => ({
@@ -185,6 +199,13 @@ describe('createControllerRuntimeOperations', () => {
 			getHealth: vi.fn(async () => ({
 				ok: true,
 				observation: 'http 200',
+				path: '/readyz',
+				zoneId: 'alevtina',
+			})),
+			getServiceHealth: vi.fn(async () => ({
+				ok: true,
+				observation: 'http 200',
+				path: '/health',
 				zoneId: 'alevtina',
 			})),
 			getLogs: vi.fn(async () => ({ output: 'alevtina logs', zoneId: 'alevtina' })),
@@ -192,7 +213,14 @@ describe('createControllerRuntimeOperations', () => {
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'alevtina' })),
 		} satisfies Pick<
 			OpenClawZoneRuntime,
-			'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+			| 'destroy'
+			| 'enableSsh'
+			| 'exec'
+			| 'getHealth'
+			| 'getLogs'
+			| 'getServiceHealth'
+			| 'refreshCredentials'
+			| 'upgrade'
 		>;
 		const operations = createControllerRuntimeOperations({
 			destroyZoneRuntime: async (zoneId, purged) =>
@@ -219,6 +247,13 @@ describe('createControllerRuntimeOperations', () => {
 		await expect(operations.getZoneHealth('alevtina')).resolves.toEqual({
 			ok: true,
 			observation: 'http 200',
+			path: '/readyz',
+			zoneId: 'alevtina',
+		});
+		await expect(operations.getZoneServiceHealth('alevtina')).resolves.toEqual({
+			ok: true,
+			observation: 'http 200',
+			path: '/health',
 			zoneId: 'alevtina',
 		});
 		await expect(operations.destroyZone('alevtina', true)).resolves.toEqual({
@@ -229,6 +264,7 @@ describe('createControllerRuntimeOperations', () => {
 
 		expect(alevtinaRuntime.getLogs).toHaveBeenCalledTimes(1);
 		expect(alevtinaRuntime.getHealth).toHaveBeenCalledTimes(1);
+		expect(alevtinaRuntime.getServiceHealth).toHaveBeenCalledTimes(1);
 		expect(shravanRuntime.exec).toHaveBeenCalledWith('pwd');
 		expect(alevtinaRuntime.destroy).toHaveBeenCalledWith(true);
 	});
@@ -239,12 +275,24 @@ describe('createControllerRuntimeOperations', () => {
 			enableSsh: vi.fn(async () => ({ command: 'ssh shravan', host: '127.0.0.1', port: 22 })),
 			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'shravan' })),
 			getHealth: vi.fn(async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' })),
+			getServiceHealth: vi.fn(async () => ({
+				ok: true,
+				observation: 'http 200',
+				zoneId: 'shravan',
+			})),
 			getLogs: vi.fn(async () => ({ output: 'shravan logs', zoneId: 'shravan' })),
 			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 		} satisfies Pick<
 			OpenClawZoneRuntime,
-			'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+			| 'destroy'
+			| 'enableSsh'
+			| 'exec'
+			| 'getHealth'
+			| 'getLogs'
+			| 'getServiceHealth'
+			| 'refreshCredentials'
+			| 'upgrade'
 		>;
 		const operations = createControllerRuntimeOperations({
 			destroyZoneRuntime: async (_zoneId, purged) => await runtime.destroy(purged),
@@ -271,12 +319,24 @@ describe('createControllerRuntimeOperations', () => {
 			enableSsh,
 			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'shravan' })),
 			getHealth: vi.fn(async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' })),
+			getServiceHealth: vi.fn(async () => ({
+				ok: true,
+				observation: 'http 200',
+				zoneId: 'shravan',
+			})),
 			getLogs: vi.fn(async () => ({ output: 'shravan logs', zoneId: 'shravan' })),
 			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 		} satisfies Pick<
 			OpenClawZoneRuntime,
-			'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+			| 'destroy'
+			| 'enableSsh'
+			| 'exec'
+			| 'getHealth'
+			| 'getLogs'
+			| 'getServiceHealth'
+			| 'refreshCredentials'
+			| 'upgrade'
 		>;
 		const resolveSecret = vi.fn(async () => 'expected-admin-token');
 		const operations = createControllerRuntimeOperations({
@@ -340,12 +400,24 @@ describe('createControllerRuntimeOperations', () => {
 			enableSsh: vi.fn(async () => ({ command: 'ssh shravan', host: '127.0.0.1', port: 22 })),
 			exec,
 			getHealth: vi.fn(async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' })),
+			getServiceHealth: vi.fn(async () => ({
+				ok: true,
+				observation: 'http 200',
+				zoneId: 'shravan',
+			})),
 			getLogs: vi.fn(async () => ({ output: 'shravan logs', zoneId: 'shravan' })),
 			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 		} satisfies Pick<
 			OpenClawZoneRuntime,
-			'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+			| 'destroy'
+			| 'enableSsh'
+			| 'exec'
+			| 'getHealth'
+			| 'getLogs'
+			| 'getServiceHealth'
+			| 'refreshCredentials'
+			| 'upgrade'
 		>;
 		const operations = createControllerRuntimeOperations({
 			destroyZoneRuntime: async (_zoneId, purged) => await runtime.destroy(purged),

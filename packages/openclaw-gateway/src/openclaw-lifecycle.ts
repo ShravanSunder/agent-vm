@@ -1,4 +1,5 @@
-import { chmod, mkdir, readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { chmod, lstat, mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -19,7 +20,11 @@ import {
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
 import { writeFileAtomically } from '@agent-vm/gondolin-adapter';
-import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
+import {
+	redactOnePasswordReferences,
+	type SecretRef,
+	type SecretResolver,
+} from '@agent-vm/secret-management';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
@@ -153,6 +158,32 @@ function buildOpenClawBootstrapCommand(
 
 function getEffectiveOpenClawConfigHostPath(zone: GatewayZoneConfig): string {
 	return path.join(zone.gateway.stateDir, effectiveOpenClawConfigFileName);
+}
+
+async function assertEffectiveConfigPathWritable(
+	zone: GatewayZoneConfig,
+	content: string,
+): Promise<void> {
+	const effectiveConfigPath = getEffectiveOpenClawConfigHostPath(zone);
+	const existingEffectiveConfig = await lstat(effectiveConfigPath).catch((error: unknown) => {
+		if (isObjectRecord(error) && error.code === 'ENOENT') {
+			return undefined;
+		}
+		throw error;
+	});
+	if (existingEffectiveConfig?.isDirectory()) {
+		throw new Error(`Effective OpenClaw config path '${effectiveConfigPath}' is a directory.`);
+	}
+
+	const preflightPath = path.join(
+		zone.gateway.stateDir,
+		`.agent-vm-effective-openclaw-preflight-${process.pid}-${randomUUID()}.json`,
+	);
+	try {
+		await writeFileAtomically(preflightPath, content, { mode: 0o600 });
+	} finally {
+		await rm(preflightPath, { force: true });
+	}
 }
 
 function shellQuote(value: string): string {
@@ -289,7 +320,7 @@ function describeSecretReference(secret: SourceAwareSecretReference): string {
 		case 'environment':
 			return secret.envVar;
 		case '1password':
-			return secret.ref;
+			return redactOnePasswordReferences(secret.ref);
 		case 'config':
 			return 'config value';
 		default: {
@@ -297,6 +328,10 @@ function describeSecretReference(secret: SourceAwareSecretReference): string {
 			throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`);
 		}
 	}
+}
+
+function formatSafeOpenClawErrorMessage(error: unknown): string {
+	return redactOnePasswordReferences(error instanceof Error ? error.message : String(error));
 }
 
 function buildEffectiveSecretsConfig(
@@ -407,37 +442,20 @@ async function writeAuthProfilesIfConfigured(
 	zone: GatewayZoneConfig,
 	secretResolver: SecretResolver,
 ): Promise<void> {
-	const authProfilesByAgent = {
-		...(zone.gateway.authProfilesRef ? { main: zone.gateway.authProfilesRef } : {}),
-		...(zone.gateway.type === 'openclaw' ? (zone.gateway.authProfilesByAgent ?? {}) : {}),
-	};
+	const resolvedAuthProfiles = await resolveAuthProfilesIfConfigured(zone, secretResolver);
 
 	const writeResults = await Promise.allSettled(
-		Object.entries(authProfilesByAgent).map(async ([agentId, authProfilesSecretCandidate]) => {
-			if (!isSourceAwareSecretReference(authProfilesSecretCandidate)) {
-				throw new Error(
-					`Zone '${zone.id}' has an invalid auth profile shape for agent '${agentId}'.`,
-				);
-			}
-			const authProfilesSecret = authProfilesSecretCandidate;
-
-			try {
-				const authProfilesDirectory = path.join(zone.gateway.stateDir, 'agents', agentId, 'agent');
-				await mkdir(authProfilesDirectory, { recursive: true, mode: 0o700 });
-				await chmod(authProfilesDirectory, 0o700);
-				const authProfiles = await secretResolver.resolve(toSecretRef(authProfilesSecret));
-				await writeFileAtomically(
-					path.join(authProfilesDirectory, 'auth-profiles.json'),
-					authProfiles,
-					{ mode: 0o600 },
-				);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				throw new Error(
-					`Failed to write OpenClaw auth profiles for zone '${zone.id}' agent '${agentId}' from '${describeSecretReference(authProfilesSecret)}': ${message}`,
-					{ cause: error },
-				);
-			}
+		resolvedAuthProfiles.map(async ({ agentId, authProfiles }) => {
+			const authProfilesDirectory = path.join(zone.gateway.stateDir, 'agents', agentId, 'agent');
+			await mkdir(authProfilesDirectory, { recursive: true, mode: 0o700 });
+			await chmod(authProfilesDirectory, 0o700);
+			await writeFileAtomically(
+				path.join(authProfilesDirectory, 'auth-profiles.json'),
+				authProfiles,
+				{
+					mode: 0o600,
+				},
+			);
 		}),
 	);
 	const writeErrors = writeResults
@@ -453,7 +471,112 @@ async function writeAuthProfilesIfConfigured(
 	}
 }
 
-async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<void> {
+async function assertAuthProfilePathWritable(
+	zone: GatewayZoneConfig,
+	agentId: string,
+): Promise<void> {
+	const authProfilesDirectory = path.join(zone.gateway.stateDir, 'agents', agentId, 'agent');
+	const authProfilesPath = path.join(authProfilesDirectory, 'auth-profiles.json');
+	const existingAuthProfilesPath = await lstat(authProfilesPath).catch((error: unknown) => {
+		if (isObjectRecord(error) && error.code === 'ENOENT') {
+			return undefined;
+		}
+		throw error;
+	});
+	if (existingAuthProfilesPath?.isDirectory()) {
+		throw new Error(`OpenClaw auth profiles path '${authProfilesPath}' is a directory.`);
+	}
+
+	const preflightPath = path.join(
+		authProfilesDirectory,
+		`.agent-vm-auth-profiles-preflight-${process.pid}-${randomUUID()}.json`,
+	);
+	try {
+		await mkdir(authProfilesDirectory, { recursive: true, mode: 0o700 });
+		await chmod(authProfilesDirectory, 0o700);
+		await writeFileAtomically(preflightPath, '{}\n', { mode: 0o600 });
+	} finally {
+		await rm(preflightPath, { force: true });
+	}
+}
+
+async function preflightAuthProfilesIfConfigured(
+	zone: GatewayZoneConfig,
+	secretResolver: SecretResolver,
+): Promise<void> {
+	const resolvedAuthProfiles = await resolveAuthProfilesIfConfigured(zone, secretResolver);
+	const writeResults = await Promise.allSettled(
+		resolvedAuthProfiles.map(async ({ agentId }) => {
+			await assertAuthProfilePathWritable(zone, agentId);
+		}),
+	);
+	const writeErrors = writeResults
+		.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+		.map((result) =>
+			result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
+		);
+	if (writeErrors.length > 0) {
+		throw new AggregateError(
+			writeErrors,
+			`Failed to preflight ${String(writeErrors.length)} OpenClaw auth profile file write(s) for zone '${zone.id}'.`,
+		);
+	}
+}
+
+async function resolveAuthProfilesIfConfigured(
+	zone: GatewayZoneConfig,
+	secretResolver: SecretResolver,
+): Promise<readonly { readonly agentId: string; readonly authProfiles: string }[]> {
+	const authProfilesByAgent = {
+		...(zone.gateway.authProfilesRef ? { main: zone.gateway.authProfilesRef } : {}),
+		...(zone.gateway.type === 'openclaw' ? (zone.gateway.authProfilesByAgent ?? {}) : {}),
+	};
+
+	const resolveResults = await Promise.allSettled(
+		Object.entries(authProfilesByAgent).map(async ([agentId, authProfilesSecretCandidate]) => {
+			if (!isSourceAwareSecretReference(authProfilesSecretCandidate)) {
+				throw new Error(
+					`Zone '${zone.id}' has an invalid auth profile shape for agent '${agentId}'.`,
+				);
+			}
+			const authProfilesSecret = authProfilesSecretCandidate;
+
+			try {
+				const authProfiles = await secretResolver.resolve(toSecretRef(authProfilesSecret));
+				return { agentId, authProfiles };
+			} catch (error) {
+				const message = formatSafeOpenClawErrorMessage(error);
+				throw new Error(
+					`Failed to resolve OpenClaw auth profiles for zone '${zone.id}' agent '${agentId}' from '${describeSecretReference(authProfilesSecret)}': ${message}`,
+					{ cause: error },
+				);
+			}
+		}),
+	);
+	const resolveErrors = resolveResults
+		.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+		.map((result) =>
+			result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
+		);
+	if (resolveErrors.length > 0) {
+		throw new AggregateError(
+			resolveErrors,
+			`Failed to resolve ${String(resolveErrors.length)} OpenClaw auth profile secret(s) for zone '${zone.id}'.`,
+		);
+	}
+	return resolveResults
+		.filter(
+			(
+				result,
+			): result is PromiseFulfilledResult<{
+				readonly agentId: string;
+				readonly authProfiles: string;
+			}> => result.status === 'fulfilled',
+		)
+		.map((result) => result.value);
+}
+
+async function buildEffectiveOpenClawConfigContent(zone: GatewayZoneConfig): Promise<string> {
 	if (zone.gateway.type !== 'openclaw') {
 		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 	}
@@ -461,7 +584,7 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 	const gatewayTokenSecret = zone.secrets[gatewayTokenSecretName];
 	if (!gatewayTokenSecret) {
 		throw new Error(
-			`Zone '${zone.id}' secret '${gatewayTokenSecretName}' is missing. Add an explicit 1Password or environment reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
+			`Zone '${zone.id}' secret '${gatewayTokenSecretName}' is missing. Add an explicit 1Password or environment reference for the gateway token.`,
 		);
 	}
 	if (!isSourceAwareSecretReference(gatewayTokenSecret)) {
@@ -471,7 +594,7 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 	try {
 		if (gatewayTokenSecret.source === '1password' && !gatewayTokenSecret.ref) {
 			throw new Error(
-				`Zone '${zone.id}' secret '${gatewayTokenSecretName}' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
+				`Zone '${zone.id}' secret '${gatewayTokenSecretName}' is missing 'ref'. Add an explicit 1Password reference for the gateway token.`,
 			);
 		}
 		if (gatewayTokenSecret.source === 'environment' && !gatewayTokenSecret.envVar) {
@@ -526,18 +649,41 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 			plugins: buildEffectivePluginsConfig(parsedBaseConfig, runtimePluginConfigs),
 			secrets: buildEffectiveSecretsConfig(parsedBaseConfig),
 		};
+		return `${JSON.stringify(effectiveConfig, null, 2)}\n`;
+	} catch (error) {
+		const message = formatSafeOpenClawErrorMessage(error);
+		throw new Error(
+			`Failed to build effective OpenClaw config for zone '${zone.id}' from '${zone.gateway.config}' using secret '${describeSecretReference(gatewayTokenSecret)}': ${message}`,
+			{ cause: error },
+		);
+	}
+}
+
+async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<void> {
+	const content = await buildEffectiveOpenClawConfigContent(zone);
+	try {
 		const effectiveConfigPath = getEffectiveOpenClawConfigHostPath(zone);
 		await mkdir(zone.gateway.stateDir, { recursive: true, mode: 0o700 });
 		await chmod(zone.gateway.stateDir, 0o700);
-		await writeFileAtomically(
-			effectiveConfigPath,
-			`${JSON.stringify(effectiveConfig, null, 2)}\n`,
-			{ mode: 0o600 },
-		);
+		await writeFileAtomically(effectiveConfigPath, content, { mode: 0o600 });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to write effective OpenClaw config for zone '${zone.id}': ${message}`, {
+			cause: error,
+		});
+	}
+}
+
+async function preflightEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<void> {
+	const content = await buildEffectiveOpenClawConfigContent(zone);
+	try {
+		await mkdir(zone.gateway.stateDir, { recursive: true, mode: 0o700 });
+		await chmod(zone.gateway.stateDir, 0o700);
+		await assertEffectiveConfigPathWritable(zone, content);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(
-			`Failed to write effective OpenClaw config for zone '${zone.id}' from '${zone.gateway.config}' using secret '${describeSecretReference(gatewayTokenSecret)}': ${message}`,
+			`Failed to preflight effective OpenClaw config for zone '${zone.id}': ${message}`,
 			{ cause: error },
 		);
 	}
@@ -665,6 +811,11 @@ export const openclawLifecycle: GatewayLifecycle = {
 				port: 18789,
 				path: '/readyz',
 			},
+			serviceHealthCheck: {
+				type: 'http',
+				port: 18789,
+				path: '/health',
+			},
 			guestListenPort: 18789,
 			logPath: openClawGatewayBootLogFileVmPath,
 		};
@@ -673,5 +824,10 @@ export const openclawLifecycle: GatewayLifecycle = {
 	async prepareHostState(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void> {
 		await writeEffectiveOpenClawConfig(zone);
 		await writeAuthProfilesIfConfigured(zone, secretResolver);
+	},
+
+	async preflightHostState(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void> {
+		await preflightEffectiveOpenClawConfig(zone);
+		await preflightAuthProfilesIfConfigured(zone, secretResolver);
 	},
 };

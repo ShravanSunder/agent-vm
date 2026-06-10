@@ -60,6 +60,9 @@ export interface ControllerRouteOperations {
 	readonly getZoneHealth?: (
 		zoneId: string,
 	) => Promise<{ readonly ok: boolean } & Record<string, unknown>>;
+	readonly getZoneServiceHealth?: (
+		zoneId: string,
+	) => Promise<{ readonly ok: boolean } & Record<string, unknown>>;
 	readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 	readonly getZoneGitStatus?: (zoneId: string) => Promise<unknown>;
 	readonly getZoneStatus: (zoneId: string) => Promise<unknown>;

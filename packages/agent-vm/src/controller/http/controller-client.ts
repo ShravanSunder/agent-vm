@@ -8,6 +8,9 @@ export interface ControllerClient {
 	enableZoneSsh(zoneId: string, options?: EnableZoneSshOptions): Promise<unknown>;
 	execInZone?(zoneId: string, command: string, options?: ExecInZoneOptions): Promise<unknown>;
 	getControllerStatus(): Promise<unknown>;
+	getZoneHealth?(zoneId: string): Promise<unknown>;
+	getZoneHealthSnapshot?(zoneId: string): Promise<unknown>;
+	getZoneServiceHealth?(zoneId: string): Promise<unknown>;
 	getZoneLogs(zoneId: string): Promise<unknown>;
 	listLeases(): Promise<unknown>;
 	peekLease(leaseId: string): Promise<ControllerLeasePeekResponse>;
@@ -108,6 +111,18 @@ export function createControllerClient(options: {
 		getControllerStatus: async (): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/controller-status`);
 			return await readJsonResponse(response, 'Get controller status');
+		},
+		getZoneHealth: async (zoneId: string): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/health`);
+			return await readJsonResponse(response, `Get health for zone '${zoneId}'`);
+		},
+		getZoneHealthSnapshot: async (zoneId: string): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/health-snapshot`);
+			return await readJsonResponse(response, `Get health snapshot for zone '${zoneId}'`);
+		},
+		getZoneServiceHealth: async (zoneId: string): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/service-health`);
+			return await readJsonResponse(response, `Get service health for zone '${zoneId}'`);
 		},
 		getZoneLogs: async (zoneId: string): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/logs`);

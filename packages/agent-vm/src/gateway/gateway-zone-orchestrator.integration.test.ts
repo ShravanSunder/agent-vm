@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -9,7 +9,7 @@ import type {
 	ManagedVm,
 	ManagedVmInstance,
 } from '@agent-vm/gondolin-adapter';
-import type { SecretResolver } from '@agent-vm/secret-management';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
@@ -18,27 +18,30 @@ import {
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
-import { startGatewayZone } from './gateway-zone-orchestrator.js';
+import { preflightGatewayZoneStart, startGatewayZone } from './gateway-zone-orchestrator.js';
 
 interface DeferredPromise<TResult> {
 	readonly promise: Promise<TResult>;
 	readonly resolve: (result: TResult) => void;
 }
 
-const { cleanupOrphanedGatewayIfPresentMock, cleanupOrphanedToolVmsIfPresentMock } = vi.hoisted(
-	() => ({
-		cleanupOrphanedGatewayIfPresentMock: vi.fn(async () => ({
-			cleanedUp: false,
-			killedPid: null,
-		})),
-		cleanupOrphanedToolVmsIfPresentMock: vi.fn(async () => ({
-			cleanedCount: 0,
-			killedPids: [] as readonly number[],
-			quarantinedCount: 0,
-			warnings: [] as readonly string[],
-		})),
-	}),
-);
+const {
+	cleanupOrphanedGatewayIfPresentMock,
+	cleanupOrphanedToolVmsIfPresentMock,
+	preflightOrphanedGatewayCleanupIfPresentMock,
+} = vi.hoisted(() => ({
+	cleanupOrphanedGatewayIfPresentMock: vi.fn(async () => ({
+		cleanedUp: false,
+		killedPid: null,
+	})),
+	cleanupOrphanedToolVmsIfPresentMock: vi.fn(async () => ({
+		cleanedCount: 0,
+		killedPids: [] as readonly number[],
+		quarantinedCount: 0,
+		warnings: [] as readonly string[],
+	})),
+	preflightOrphanedGatewayCleanupIfPresentMock: vi.fn(async () => ({})),
+}));
 
 // Stub the ps shell-out so buildGatewayRuntimeRecord doesn't try to query a
 // real pid in the test environment. Production uses the real implementation.
@@ -55,6 +58,7 @@ vi.mock('../shared/managed-vm-process.js', async (importOriginal) => {
 
 vi.mock('./gateway-recovery.js', () => ({
 	cleanupOrphanedGatewayIfPresent: cleanupOrphanedGatewayIfPresentMock,
+	preflightOrphanedGatewayCleanupIfPresent: preflightOrphanedGatewayCleanupIfPresentMock,
 }));
 
 vi.mock('../controller/leases/tool-vm-recovery.js', () => ({
@@ -89,6 +93,7 @@ function createDeferredPromise<TResult>(): DeferredPromise<TResult> {
 afterEach(async () => {
 	cleanupOrphanedGatewayIfPresentMock.mockClear();
 	cleanupOrphanedToolVmsIfPresentMock.mockClear();
+	preflightOrphanedGatewayCleanupIfPresentMock.mockClear();
 	await Promise.all(
 		createdDirectories
 			.splice(0)
@@ -321,23 +326,39 @@ function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
 }
 
 function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
+	const resolveKnownSecretRef = (secretRef: SecretRef): string => {
+		if (secretRef.source === 'config') {
+			return secretRef.value;
+		}
+
+		if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
+			return resolvedSecrets.DISCORD_BOT_TOKEN ?? 'resolved-discord-token';
+		}
+
+		if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
+			return resolvedSecrets.PERPLEXITY_API_KEY ?? 'resolved-perplexity-key';
+		}
+
+		if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
+			return resolvedSecrets.OPENCLAW_GATEWAY_TOKEN ?? 'resolved-gateway-token';
+		}
+
+		const resolvedSecret = resolvedSecrets[secretRef.ref];
+		if (resolvedSecret !== undefined) {
+			return resolvedSecret;
+		}
+
+		throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
+	};
 	return {
-		resolve: async (secretRef): Promise<string> => {
-			if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
-				return resolvedSecrets.DISCORD_BOT_TOKEN ?? 'resolved-discord-token';
-			}
-
-			if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
-				return resolvedSecrets.PERPLEXITY_API_KEY ?? 'resolved-perplexity-key';
-			}
-
-			if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
-				return resolvedSecrets.OPENCLAW_GATEWAY_TOKEN ?? 'resolved-gateway-token';
-			}
-
-			throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
-		},
-		resolveAll: async () => resolvedSecrets,
+		resolve: async (secretRef): Promise<string> => resolveKnownSecretRef(secretRef),
+		resolveAll: async (secretRefs): Promise<Record<string, string>> =>
+			Object.fromEntries(
+				Object.entries(secretRefs).map(([secretName, secretRef]) => [
+					secretName,
+					resolveKnownSecretRef(secretRef),
+				]),
+			),
 	};
 }
 
@@ -466,20 +487,23 @@ describe('startGatewayZone', () => {
 			bufferResponseBody: false,
 			listenPort: 18791,
 		});
-		// Phase A proves ownership first. Phase B then runs the remaining
-		// host-side prerequisites in parallel. The mcpPortalMaterialization
-		// branch does not push a title.
+		// Phase A proves ownership without cleanup. Phase B preflights
+		// replacement secrets/host state. Phase D then builds the startup
+		// artifacts before any orphan cleanup is allowed. The
+		// mcpPortalMaterialization branch does not push a title.
 		expect(taskTitles).toEqual([
-			'Cleaning orphaned tool VMs',
-			'Cleaning orphaned gateway runtime',
+			'Preflighting gateway runtime ownership',
+			'Preflighting gateway start',
 			'Validating OpenClaw Tool VM requirements',
 			'Resolving zone secrets',
 			'Building gateway image',
+			'Cleaning orphaned tool VMs',
+			'Cleaning orphaned gateway runtime',
 			'Preparing host state',
 			'Booting gateway VM',
 			'Configuring gateway',
 			'Starting gateway',
-			'Waiting for readiness',
+			'Waiting for service health',
 			'Recording gateway runtime',
 		]);
 		expect(result).toMatchObject({
@@ -704,7 +728,7 @@ describe('startGatewayZone', () => {
 		});
 	});
 
-	it('cleans orphaned gateway runtime before rejecting invalid OpenClaw Tool VM requirements', async () => {
+	it('does not clean orphaned gateway runtime before rejecting invalid OpenClaw Tool VM requirements', async () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (!zone || zone.gateway.type !== 'openclaw') {
@@ -753,16 +777,93 @@ describe('startGatewayZone', () => {
 			),
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 
-		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
-			configuredIngressPort: 18791,
-			expectedConfigPath: systemConfig.systemConfigPath,
-			expectedControllerPort: systemConfig.host.controllerPort,
-			mode: 'in-process-recovery',
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			stateDir: zone.gateway.stateDir,
-			zoneId: 'shravan',
-		});
+		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
 		expect(buildImage).not.toHaveBeenCalled();
+	});
+
+	it('does not clean orphaned gateway runtime when secret preflight fails', async () => {
+		const systemConfig = await createSystemConfig();
+		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
+			cleanedUp: true,
+			killedPid: 28282,
+		}));
+		const cleanupOrphanedToolVmsIfPresent = vi.fn(async () => ({
+			cleanedCount: 1,
+			killedPids: [28282] as readonly number[],
+			quarantinedCount: 0,
+			warnings: [] as readonly string[],
+		}));
+		const buildImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fp',
+			imagePath: '/tmp/img',
+		}));
+		const secretResolver: SecretResolver = {
+			resolve: async () => {
+				throw new Error('Failed to resolve zone secrets: op failed');
+			},
+			resolveAll: async () => {
+				throw new Error('Failed to resolve zone secrets: op failed');
+			},
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver,
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage,
+					cleanupOrphanedGatewayIfPresent,
+					cleanupOrphanedToolVmsIfPresent,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow('Failed to resolve zone secrets: op failed');
+
+		expect(cleanupOrphanedToolVmsIfPresent).not.toHaveBeenCalled();
+		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
+		expect(buildImage).not.toHaveBeenCalled();
+	});
+
+	it('rejects invalid OpenClaw Tool VM requirements during protected restart preflight', async () => {
+		const systemConfig = await createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw gateway test zone.');
+		}
+		await writeFile(
+			zone.gateway.config,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: {
+							backend: 'host',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
+						workspace: '/zone/agents/default',
+					},
+					list: [],
+				},
+			}),
+			'utf8',
+		);
+
+		await expect(
+			preflightGatewayZoneStart({
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'resolved-discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 	});
 
 	it('does not create a gateway VM when orphan gateway cleanup blocks cold-start ownership', async () => {
@@ -811,7 +912,7 @@ describe('startGatewayZone', () => {
 
 	it('reports owner-unsafe before secret resolution when both startup preflights fail', async () => {
 		const systemConfig = await createSystemConfig();
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => {
+		const preflightOrphanedGatewayCleanupIfPresent = vi.fn(async () => {
 			await new Promise<void>((resolve) => setImmediate(resolve));
 			throw new GatewayOwnershipUnsafeError({
 				evidence: {
@@ -847,8 +948,8 @@ describe('startGatewayZone', () => {
 				},
 				{
 					buildImage,
-					cleanupOrphanedGatewayIfPresent,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					preflightOrphanedGatewayCleanupIfPresent,
 				},
 			),
 		).rejects.toMatchObject({
@@ -860,10 +961,19 @@ describe('startGatewayZone', () => {
 			},
 		});
 
+		expect(preflightOrphanedGatewayCleanupIfPresent).toHaveBeenCalledWith({
+			configuredIngressPort: 18791,
+			expectedConfigPath: systemConfig.systemConfigPath,
+			expectedControllerPort: systemConfig.host.controllerPort,
+			mode: 'in-process-recovery',
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			stateDir: systemConfig.zones[0]?.gateway.stateDir,
+			zoneId: 'shravan',
+		});
 		expect(buildImage).not.toHaveBeenCalled();
 	});
 
-	it('cleans orphaned tool VMs for OpenClaw zones during Phase A', async () => {
+	it('cleans orphaned tool VMs for OpenClaw zones after startup preflight succeeds', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-tool-cleanup',
 			close: vi.fn(async () => {}),
@@ -921,7 +1031,7 @@ describe('startGatewayZone', () => {
 		});
 	});
 
-	it('cleans OpenClaw tool VM children before gateway recovery during Phase A', async () => {
+	it('cleans OpenClaw tool VM children before gateway runtime cleanup', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-ordered-recovery',
 			close: vi.fn(async () => {}),
@@ -967,9 +1077,9 @@ describe('startGatewayZone', () => {
 			},
 		);
 
-		await Promise.resolve();
-
-		expect(cleanupOrphanedToolVmsIfPresent).toHaveBeenCalledTimes(1);
+		await vi.waitFor(() => {
+			expect(cleanupOrphanedToolVmsIfPresent).toHaveBeenCalledTimes(1);
+		});
 		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
 
 		toolVmCleanup.resolve({
@@ -1181,6 +1291,40 @@ describe('startGatewayZone', () => {
 			'mcp-portal': { configDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective' },
 		});
 		expect(lifecycleZones[0]?.runtimeMcpServers).toBeUndefined();
+	});
+
+	it('does not write MCP Portal effective config files during protected restart preflight', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		await writeMinimalMcpPortalConfigs(configDir);
+		const effectiveConfigDir = path.join(
+			systemConfig.cacheDir,
+			'gateways',
+			baseZone.id,
+			'mcp-portal-effective',
+		);
+
+		await preflightGatewayZoneStart({
+			prebuiltImage: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/gateway-image' },
+			secretResolver: createOpenClawSecretResolver({
+				DISCORD_BOT_TOKEN: 'resolved-discord-token',
+				OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+			}),
+			systemConfig,
+			zoneId: 'shravan',
+			zoneOverride: {
+				...baseZone,
+				agents: [{ id: 'shravan' }],
+				mcpPortal: { configDir },
+			},
+		});
+
+		await expect(readdir(effectiveConfigDir)).resolves.toEqual([]);
 	});
 
 	it('does not generate OpenClaw mcp.servers entries for managed MCP Portal', async () => {
@@ -1694,6 +1838,61 @@ describe('startGatewayZone', () => {
 		expect(result.processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/health' });
 	});
 
+	it('waits for service health instead of OpenClaw readiness during startup', async () => {
+		const closeMock = vi.fn(async () => {});
+		const executedCommands: string[] = [];
+		const execMock = vi.fn((command: string) => {
+			executedCommands.push(command);
+			if (command.includes('http://127.0.0.1:18789/readyz')) {
+				return createManagedExecProcessStub({ stdout: '503' });
+			}
+			if (command.includes('http://127.0.0.1:18789/health')) {
+				return createManagedExecProcessStub({ stdout: '200' });
+			}
+			return createManagedExecProcessStub();
+		});
+		const managedVm: ManagedVm = {
+			id: 'vm-openclaw-live-not-ready',
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: execMock,
+			fs: createManagedVmFsStub(),
+			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28285),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
+		};
+
+		const result = await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: await createSystemConfig(),
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(result.processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/readyz' });
+		expect(result.processSpec.serviceHealthCheck).toEqual({
+			type: 'http',
+			port: 18789,
+			path: '/health',
+		});
+		expect(executedCommands.some((command) => command.includes('/health'))).toBe(true);
+		expect(executedCommands.some((command) => command.includes('/readyz'))).toBe(false);
+		expect(closeMock).not.toHaveBeenCalled();
+	});
+
 	it('splits env secrets from http-mediation secrets based on injection config', async () => {
 		const closeMock = vi.fn(async () => {});
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
@@ -1810,7 +2009,7 @@ describe('startGatewayZone', () => {
 		});
 	});
 
-	it('throws with the gateway log tail and closes the vm when readiness polling exhausts all attempts', async () => {
+	it('throws with the gateway log tail and closes the vm when service health polling exhausts all attempts', async () => {
 		const closeMock = vi.fn(async () => {});
 		const execMock = vi.fn((command: string) => {
 			if (command.includes('tail -n 80')) {
@@ -1818,7 +2017,7 @@ describe('startGatewayZone', () => {
 					stdout: 'OpenClaw failed to parse config: unknown thinkingDefault\n',
 				});
 			}
-			if (command.includes('http://127.0.0.1:18789/readyz')) {
+			if (command.includes('http://127.0.0.1:18789/health')) {
 				return createManagedExecProcessStub({ exitCode: 1 });
 			}
 			return createManagedExecProcessStub({ stdout: '000' });
@@ -1857,7 +2056,7 @@ describe('startGatewayZone', () => {
 				},
 			),
 		).rejects.toThrow(
-			/Gateway readiness check failed after 2 attempts.*Last probe: http \(empty\).*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
+			/Gateway service health check failed after 2 attempts.*Last probe: http \(empty\).*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
 		);
 		expect(execMock).toHaveBeenCalledWith(
 			'tail -n 80 /agent-vm/logs/gateway-boot-latest.log 2>/dev/null || true',
@@ -1865,12 +2064,12 @@ describe('startGatewayZone', () => {
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('defaults gateway readiness polling to about 60 seconds', async () => {
+	it('defaults gateway service health polling to about 60 seconds', async () => {
 		const execMock = vi.fn((command: string) => {
 			if (command.includes('tail -n 80')) {
 				return createManagedExecProcessStub();
 			}
-			if (command.includes('http://127.0.0.1:18789/readyz')) {
+			if (command.includes('http://127.0.0.1:18789/health')) {
 				return createManagedExecProcessStub({ exitCode: 1 });
 			}
 			return createManagedExecProcessStub({ stdout: '000' });
@@ -1907,7 +2106,7 @@ describe('startGatewayZone', () => {
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
-		).rejects.toThrow(/Gateway readiness check failed after 120 attempts/su);
+		).rejects.toThrow(/Gateway service health check failed after 120 attempts/su);
 	});
 
 	it('throws command stdout and stderr and closes the vm when gateway configuration fails', async () => {
@@ -2280,13 +2479,18 @@ describe('startGatewayZone', () => {
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('throws AggregateError when both prepareHostState and createManagedVm fail in Phase C', async () => {
+	it('does not create a gateway VM when final host-state preparation fails', async () => {
 		const prepError = new Error('prep failed: disk full');
-		const vmError = new Error('vm failed: kernel panic');
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
+			throw new Error('createManagedVm should not run after prepareHostState fails');
+		});
+		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
+			cleanedUp: true,
+			killedPid: 48282,
+		}));
 
-		let caught: unknown;
-		try {
-			await startGatewayZone(
+		await expect(
+			startGatewayZone(
 				{
 					secretResolver: createOpenClawSecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
@@ -2302,13 +2506,8 @@ describe('startGatewayZone', () => {
 						fingerprint: 'fp',
 						imagePath: '/tmp/img',
 					})),
-					cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
-						cleanedUp: false,
-						killedPid: null,
-					})),
-					createManagedVm: vi.fn(async () => {
-						throw vmError;
-					}),
+					cleanupOrphanedGatewayIfPresent,
+					createManagedVm,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 					loadGatewayLifecycle: () => ({
 						...createHttpHealthGatewayLifecycle(),
@@ -2317,26 +2516,18 @@ describe('startGatewayZone', () => {
 						},
 					}),
 				},
-			);
-		} catch (error) {
-			caught = error;
-		}
+			),
+		).rejects.toThrow(prepError.message);
 
-		expect(caught).toBeInstanceOf(AggregateError);
-		const aggregate = caught as AggregateError;
-		expect(aggregate.errors).toContain(prepError);
-		expect(aggregate.errors).toContain(vmError);
+		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledTimes(1);
+		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('aggregates prep error and close error when VM came up but prep failed', async () => {
-		const prepError = new Error('prep failed: disk full');
-		const closeError = new Error('close failed: qemu unresponsive');
-		const closeMock = vi.fn(async () => {
-			throw closeError;
-		});
+	it('prepares host state before booting a gateway VM', async () => {
+		const prepareHostState = vi.fn(async () => {});
 		const managedVm: ManagedVm = {
-			id: 'vm-prep-fail-close-fail',
-			close: closeMock,
+			id: 'vm-prep-before-boot',
+			close: vi.fn(async () => {}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2345,62 +2536,50 @@ describe('startGatewayZone', () => {
 			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
 			getHostPid: vi.fn(() => 28291),
 		};
+		const createManagedVm = vi.fn(async () => managedVm);
 
-		let caught: unknown;
-		try {
-			await startGatewayZone(
-				{
-					secretResolver: createOpenClawSecretResolver({
-						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
-						PERPLEXITY_API_KEY: 'pplx-key',
-					}),
-					systemConfig: await createSystemConfig(),
-					zoneId: 'shravan',
-				},
-				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
-						cleanedUp: false,
-						killedPid: null,
-					})),
-					createManagedVm: vi.fn(async () => managedVm),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
-					loadGatewayLifecycle: () => ({
-						...createHttpHealthGatewayLifecycle(),
-						prepareHostState: async () => {
-							throw prepError;
-						},
-					}),
-				},
-			);
-		} catch (error) {
-			caught = error;
-		}
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					PERPLEXITY_API_KEY: 'pplx-key',
+				}),
+				systemConfig: await createSystemConfig(),
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+					cleanedUp: false,
+					killedPid: null,
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				loadGatewayLifecycle: () => ({
+					...createHttpHealthGatewayLifecycle(),
+					prepareHostState,
+				}),
+			},
+		);
 
-		expect(caught).toBeInstanceOf(AggregateError);
-		const aggregate = caught as AggregateError;
-		expect(aggregate.errors).toContain(prepError);
-		expect(
-			aggregate.errors.some(
-				(error: unknown) => error instanceof Error && error.cause === closeError,
-			),
-		).toBe(true);
-		expect(closeMock).toHaveBeenCalledTimes(1);
+		expect(prepareHostState.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+			createManagedVm.mock.invocationCallOrder[0] ?? 0,
+		);
 	});
 
-	it('continues Phase A and starts the gateway when cleanup skips a foreign runtime record', async () => {
+	it('continues startup when cleanup skips a foreign runtime record after preflight', async () => {
 		// cleanupOrphanedGatewayIfPresent's scoped fences (projectNamespace,
 		// configPath, controllerPort, zoneId, sessionLabel) can find that an
 		// existing runtime record belongs to a DIFFERENT controller. In
 		// 'in-process-recovery' mode it skips that record and returns
 		// cleanedUp:false with a cleanupWarning, WITHOUT signalling the
-		// foreign process. Phase A's other branches should not care; the
-		// gateway should start normally.
+		// foreign process. Startup should continue after replacement
+		// prerequisites have already been proven.
 		const cleanupQuarantineMock = vi.fn(async () => ({
 			cleanedUp: false,
 			cleanupWarning: `Gateway runtime record at '/state' belongs to projectNamespace 'other', not 'claw-tests-a1b2c3d4'. Refusing scoped cleanup. Skipping the stale runtime record without signaling its recorded process during in-process recovery.`,

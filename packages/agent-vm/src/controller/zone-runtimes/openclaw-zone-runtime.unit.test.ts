@@ -2,6 +2,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,13 +13,20 @@ import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
+import type { Lease } from '../leases/lease-manager.js';
 import type { GatewayLifecycleOperationRecord } from './gateway-lifecycle-operation-record.js';
-import { createOpenClawZoneRuntime } from './openclaw-zone-runtime.js';
+import { createOpenClawZoneRuntime as createOpenClawZoneRuntimeImpl } from './openclaw-zone-runtime.js';
 
 const openClawZoneRuntimeTestRoot = path.join(
 	tmpdir(),
 	`agent-vm-openclaw-zone-runtime-test-${process.pid}`,
 );
+
+const preflightedGatewayImage = {
+	built: false,
+	fingerprint: 'preflighted-fingerprint',
+	imagePath: '/tmp/preflighted-gateway-image',
+} satisfies BuildImageResult;
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -85,6 +93,89 @@ const loadedSystemConfig = {
 afterEach(async () => {
 	await rm(openClawZoneRuntimeTestRoot, { force: true, recursive: true });
 });
+
+function createOpenClawZoneRuntime(
+	options: Parameters<typeof createOpenClawZoneRuntimeImpl>[0],
+): ReturnType<typeof createOpenClawZoneRuntimeImpl> {
+	return createOpenClawZoneRuntimeImpl({
+		preflightGatewayZoneStart: async (startOptions) => {
+			const secretResolver = startOptions.secretResolver ?? options.secretResolver;
+			const gatewaySecretRefs = {
+				OPENCLAW_GATEWAY_TOKEN: { ref: 'OPENCLAW_GATEWAY_TOKEN', source: 'environment' },
+			} as const;
+			const resolvedGatewaySecrets = await secretResolver.resolveAll(gatewaySecretRefs);
+			return {
+				image: preflightedGatewayImage,
+				secretResolver: {
+					resolve: async (secretRef) => await secretResolver.resolve(secretRef),
+					resolveAll: async (refs) => {
+						const resolvedSecrets: Record<string, string> = {};
+						const missingRefs: Record<string, (typeof refs)[string]> = {};
+						for (const [secretName, secretRef] of Object.entries(refs)) {
+							const cachedSecretValue = resolvedGatewaySecrets[secretName];
+							if (cachedSecretValue === undefined) {
+								missingRefs[secretName] = secretRef;
+							} else {
+								resolvedSecrets[secretName] = cachedSecretValue;
+							}
+						}
+						if (Object.keys(missingRefs).length > 0) {
+							Object.assign(resolvedSecrets, await secretResolver.resolveAll(missingRefs));
+						}
+						return resolvedSecrets;
+					},
+				},
+			};
+		},
+		...options,
+	});
+}
+
+function createTestLease(options: { readonly id: string; readonly zoneId: string }): Lease {
+	return {
+		agentId: 'agent-main',
+		agentWorkspaceDir: '/workspace',
+		createdAt: 1_000,
+		effectiveIdleTtlMs: 60_000,
+		guestWorkdir: '/work',
+		hostWorkMountDir: '/tmp/work',
+		id: options.id,
+		lastUsedAt: 2_000,
+		profileId: 'standard',
+		runtimeRecordId: `record-${options.id}`,
+		sshAccess: {
+			host: '127.0.0.1',
+			port: 22,
+		},
+		tcpSlot: 0,
+		vm: {
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 19000 })),
+			enableSsh: vi.fn(async () => ({
+				command: 'ssh root@127.0.0.1',
+				host: '127.0.0.1',
+				port: 22,
+			})),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
+			getVmInstance: vi.fn(),
+			id: `tool-vm-${options.id}`,
+			setIngressRoutes: vi.fn(),
+		},
+		zoneId: options.zoneId,
+	};
+}
+
+function createResolvingSecretResolver(): SecretResolver {
+	return {
+		resolve: async () => 'resolved-secret',
+		resolveAll: async (secretRefs) =>
+			Object.fromEntries(
+				Object.keys(secretRefs).map((secretName) => [secretName, `resolved:${secretName}`]),
+			),
+	};
+}
 
 function isPathInsideDirectory(candidatePath: string, directoryPath: string): boolean {
 	const relativePath = path.relative(path.resolve(directoryPath), path.resolve(candidatePath));
@@ -154,7 +245,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -196,7 +287,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -238,7 +329,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -273,7 +364,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 			restartGatewayZone: async () => {
 				throw ownershipError;
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -332,7 +423,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -356,7 +447,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 		});
 	});
 
-	it('resolves gateway secrets and restarts with a fresh controller-side resolver', async () => {
+	it('resolves gateway secrets once and restarts with a preflighted controller-side resolver', async () => {
 		const staleResolveAll = vi.fn(async () => {
 			throw new Error('stale resolver should not resolve during credentials refresh');
 		});
@@ -430,7 +521,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 		await expect(runtime.refreshCredentials()).resolves.toEqual({ ok: true, zoneId: 'shravan' });
 
 		expect(staleResolveAll).not.toHaveBeenCalled();
-		expect(freshResolveAll).toHaveBeenCalledTimes(2);
+		expect(freshResolveAll).toHaveBeenCalledTimes(1);
 		expect(restartResolverRefs).toEqual([
 			{ OPENCLAW_GATEWAY_TOKEN: 'fresh:OPENCLAW_GATEWAY_TOKEN' },
 		]);
@@ -474,7 +565,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			restartGatewayZone: async () => {
 				throw new Error('start should not run');
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -531,7 +622,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -574,7 +665,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			restartGatewayZone: async () => {
 				throw new Error('start should not run');
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -639,7 +730,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -707,7 +798,7 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone,
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -763,7 +854,7 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone,
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -783,6 +874,259 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 });
 
 describe('createOpenClawZoneRuntime stop and restart safety', () => {
+	it('uses preflighted secret values for replacement start before closing a running gateway', async () => {
+		const closeGateway = vi.fn(async () => {});
+		const releaseLease = vi.fn(async () => {});
+		let startCount = 0;
+		let underlyingResolveAllCount = 0;
+		const replacementStartImages: unknown[] = [];
+		const secretResolver: SecretResolver = {
+			resolve: async () => 'resolved-auth-profile',
+			resolveAll: async (secretRefs) => {
+				underlyingResolveAllCount += 1;
+				if (underlyingResolveAllCount > 1) {
+					throw new Error('post-close 1Password lookup should not run');
+				}
+				return Object.fromEntries(
+					Object.keys(secretRefs).map((secretName) => [secretName, `resolved:${secretName}`]),
+				);
+			},
+		};
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: {
+				listLeases: () => [createTestLease({ id: 'lease-1', zoneId: 'shravan' })],
+				releaseLease,
+			},
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (_zoneId, startOptions = {}) => {
+				startCount += 1;
+				if (startCount > 1) {
+					replacementStartImages.push(startOptions.prebuiltImage);
+					await (startOptions.secretResolver ?? secretResolver).resolveAll({
+						OPENCLAW_GATEWAY_TOKEN: {
+							ref: 'OPENCLAW_GATEWAY_TOKEN',
+							source: 'environment',
+						},
+					});
+				}
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: startCount === 1 ? 'gateway-vm-live' : 'gateway-vm-replacement',
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver,
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.restart()).resolves.toMatchObject({ leaseReleaseFailureCount: 0 });
+
+		expect(underlyingResolveAllCount).toBe(1);
+		expect(replacementStartImages).toEqual([preflightedGatewayImage]);
+		expect(closeGateway).toHaveBeenCalledTimes(1);
+		expect(releaseLease).toHaveBeenCalledTimes(1);
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { id: 'gateway-vm-replacement' } },
+			lifecycleState: 'running',
+		});
+	});
+
+	it('preflights gateway secrets before closing a running gateway for restart', async () => {
+		const closeGateway = vi.fn(async () => {});
+		const releaseLease = vi.fn(async () => {});
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: {
+				listLeases: () => [createTestLease({ id: 'lease-1', zoneId: 'shravan' })],
+				releaseLease,
+			},
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async () => ({
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					startCommand: 'start',
+				},
+				vm: {
+					close: closeGateway,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 48_284,
+					getVmInstance: vi.fn(),
+					id: 'gateway-vm-live-before-preflight-failure',
+					setIngressRoutes: vi.fn(),
+				},
+				zone: getOpenClawZone(),
+			}),
+			secretResolver: {
+				resolve: async () => '',
+				resolveAll: async () => {
+					throw new Error('1Password SDK resolveAll failed before op CLI fallback');
+				},
+			},
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.restart()).rejects.toMatchObject({
+			gatewayLifecycleErrorCode: 'secret-resolution-failed',
+		});
+
+		expect(closeGateway).not.toHaveBeenCalled();
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { id: 'gateway-vm-live-before-preflight-failure' } },
+			lifecycleState: 'running',
+		});
+		expect(runtime.getDiagnosis().originalOutageCause).toEqual({ kind: 'unknown' });
+	});
+
+	it('preflights replacement image before closing a running gateway for restart', async () => {
+		const closeGateway = vi.fn(async () => {});
+		const releaseLease = vi.fn(async () => {});
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: {
+				listLeases: () => [createTestLease({ id: 'lease-1', zoneId: 'shravan' })],
+				releaseLease,
+			},
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			preflightGatewayZoneStart: async () => {
+				throw new Error('gateway image build failed before replacement close');
+			},
+			restartGatewayZone: async () => ({
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					startCommand: 'start',
+				},
+				vm: {
+					close: closeGateway,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 48_284,
+					getVmInstance: vi.fn(),
+					id: 'gateway-vm-live-before-image-preflight-failure',
+					setIngressRoutes: vi.fn(),
+				},
+				zone: getOpenClawZone(),
+			}),
+			secretResolver: {
+				resolve: async () => 'resolved',
+				resolveAll: async (secretRefs) =>
+					Object.fromEntries(
+						Object.keys(secretRefs).map((secretName) => [secretName, `resolved:${secretName}`]),
+					),
+			},
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.restart()).rejects.toThrow(
+			'gateway image build failed before replacement close',
+		);
+
+		expect(closeGateway).not.toHaveBeenCalled();
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { id: 'gateway-vm-live-before-image-preflight-failure' } },
+			lifecycleState: 'running',
+		});
+	});
+
+	it('uses service health check for runtime liveness without changing readiness health', async () => {
+		const executedCommands: string[] = [];
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async () => ({
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					serviceHealthCheck: { type: 'http', port: 18789, path: '/health' },
+					startCommand: 'start',
+				},
+				vm: {
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					exec: vi.fn((command: string) => {
+						executedCommands.push(command);
+						return createManagedExecProcessStub({ stdout: '200' });
+					}),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 48_284,
+					getVmInstance: vi.fn(),
+					id: 'gateway-vm-liveness',
+					setIngressRoutes: vi.fn(),
+				},
+				zone: getOpenClawZone(),
+			}),
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+
+		await expect(runtime.getHealth()).resolves.toMatchObject({
+			ok: true,
+			path: '/readyz',
+			statusCode: 200,
+		});
+		await expect(runtime.getServiceHealth()).resolves.toMatchObject({
+			ok: true,
+			path: '/health',
+			statusCode: 200,
+		});
+		expect(executedCommands.some((command) => command.includes('/readyz'))).toBe(true);
+		expect(executedCommands.some((command) => command.includes('/health'))).toBe(true);
+	});
+
 	it('exposes stopping state and blocks gateway commands while stop is pending', async () => {
 		const closeDeferred = createDeferredPromise<void>();
 		const gatewayExec = vi.fn(() => createManagedExecProcessStub({ stdout: 'unexpected' }));
@@ -814,7 +1158,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -872,7 +1216,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -940,7 +1284,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					zone: getOpenClawZone(),
 				};
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -1015,7 +1359,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				}
 				return gatewayStartResult;
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			setTimeoutImpl: (callback, delayMs) => {
 				if (delayMs === 5_000) {
 					restartTimeoutCallbacks.push(callback);
@@ -1079,6 +1423,94 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'stopped' });
 	});
 
+	it('does not close the live gateway when restart preflight resolves after timeout', async () => {
+		let gatewayStartCount = 0;
+		const closeGateway = vi.fn(async () => {});
+		const releaseLease = vi.fn(async () => {});
+		const operationRecords: GatewayLifecycleOperationRecord[] = [];
+		const restartTimeoutCallbacks: (() => void)[] = [];
+		const preflightDeferred = createDeferredPromise<{
+			readonly image: GatewayZoneStartResult['image'];
+			readonly secretResolver: ReturnType<typeof createResolvingSecretResolver>;
+		}>();
+		const runtime = createOpenClawZoneRuntime({
+			appendGatewayLifecycleOperationRecord: vi.fn(async (record) => {
+				operationRecords.push(record);
+			}),
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: {
+				listLeases: () => [createTestLease({ id: 'lease-1', zoneId: 'shravan' })],
+				releaseLease,
+			},
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			preflightGatewayZoneStart: async () => await preflightDeferred.promise,
+			restartGatewayZone: async () => {
+				gatewayStartCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			setTimeoutImpl: (callback, delayMs) => {
+				if (delayMs === 5_000) {
+					restartTimeoutCallbacks.push(callback);
+				}
+				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+			},
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		const restartPromise = runtime.restart({ timeoutMs: 5_000 });
+		await vi.waitFor(() => {
+			expect(restartTimeoutCallbacks).toHaveLength(1);
+		});
+		restartTimeoutCallbacks[0]?.();
+		await expect(restartPromise).rejects.toThrow('restart timed out');
+
+		preflightDeferred.resolve({
+			image: { built: false, fingerprint: 'preflighted', imagePath: '/tmp/preflighted-image' },
+			secretResolver: createResolvingSecretResolver(),
+		});
+		await vi.waitFor(() => {
+			expect(operationRecords).toContainEqual(
+				expect.objectContaining({
+					errorCode: 'stale-generation-closed',
+					kind: 'operation-failed',
+				}),
+			);
+		});
+
+		expect(closeGateway).not.toHaveBeenCalled();
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { id: 'gateway-vm-1' } },
+			lifecycleState: 'running',
+		});
+	});
+
 	it('deletes the stale runtime record after closing a timed-out replacement gateway', async () => {
 		let gatewayStartCount = 0;
 		let resolveStaleGatewayStart: ((value: GatewayZoneStartResult) => void) | undefined;
@@ -1122,7 +1554,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				}
 				return gatewayStartResult;
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			setTimeoutImpl: (callback, delayMs) => {
 				if (delayMs === 5_000) {
 					restartTimeoutCallbacks.push(callback);
@@ -1215,7 +1647,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				}
 				return gatewayStartResult;
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			setTimeoutImpl: (callback, delayMs) => {
 				if (delayMs === 5_000) {
 					restartTimeoutCallbacks.push(callback);
@@ -1299,7 +1731,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				},
 				zone: getOpenClawZone(),
 			}),
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});
@@ -1357,7 +1789,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					zone: getOpenClawZone(),
 				};
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
 			zone: getOpenClawZone(),
 		});

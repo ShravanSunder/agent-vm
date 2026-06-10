@@ -63,6 +63,14 @@ export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 		readonly statusCode?: number | undefined;
 		readonly zoneId: string;
 	}>;
+	getServiceHealth(): Promise<{
+		readonly ok: boolean;
+		readonly observation: string;
+		readonly path?: string | undefined;
+		readonly port?: number | undefined;
+		readonly statusCode?: number | undefined;
+		readonly zoneId: string;
+	}>;
 	getLifecycleState(): GatewayZoneLifecycleState;
 	getDiagnosis(): GatewayDiagnosisSnapshot;
 	getLogs(): Promise<{ readonly output: string; readonly zoneId: string }>;

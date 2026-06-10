@@ -10,6 +10,7 @@ import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
 } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
 import { assertOpenClawToolVmRequirements } from '../operations/openclaw-deployment-requirements.js';
@@ -22,7 +23,10 @@ import {
 } from './gateway-image-builder.js';
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';
 import { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
-import { cleanupOrphanedGatewayIfPresent } from './gateway-recovery.js';
+import {
+	cleanupOrphanedGatewayIfPresent,
+	preflightOrphanedGatewayCleanupIfPresent,
+} from './gateway-recovery.js';
 import {
 	buildGatewayRuntimeRecord,
 	writeGatewayRuntimeRecord,
@@ -36,7 +40,10 @@ import {
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
 } from './gateway-zone-support.js';
-import { writeMcpPortalEffectiveConfig } from './mcp-portal-effective-config.js';
+import {
+	preflightMcpPortalEffectiveConfig,
+	writeMcpPortalEffectiveConfig,
+} from './mcp-portal-effective-config.js';
 
 const defaultGatewayReadinessRetryDelayMs = 500;
 const defaultGatewayReadinessTimeoutMs = 60_000;
@@ -51,6 +58,7 @@ export interface GatewayManagerDependencies extends GatewayImageBuilderDependenc
 	readonly gatewayReadinessMaxAttempts?: number;
 	readonly gatewayReadinessRetryDelayMs?: number;
 	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
+	readonly preflightOrphanedGatewayCleanupIfPresent?: typeof preflightOrphanedGatewayCleanupIfPresent;
 	// Injected by tests so the gateway record build doesn't shell out to ps
 	// against a fake pid. Production omits this; uses the real default.
 	readonly readProcessIdentity?: (
@@ -60,6 +68,107 @@ export interface GatewayManagerDependencies extends GatewayImageBuilderDependenc
 		stateDirectory: string,
 		record: GatewayRuntimeRecord,
 	) => Promise<void>;
+}
+
+export interface GatewayZoneStartPreflightResult {
+	readonly image?: import('@agent-vm/gondolin-adapter').BuildImageResult | undefined;
+	readonly secretResolver: SecretResolver;
+}
+
+interface GatewayZoneStartPrerequisitePreflightResult {
+	readonly secretResolver: SecretResolver;
+}
+
+interface PreflightCachingSecretResolver {
+	readonly resolver: SecretResolver;
+	readonly freeze: () => SecretResolver;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stableJson(value: unknown): string {
+	if (Array.isArray(value)) {
+		return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+	}
+	if (isRecord(value)) {
+		return `{${Object.keys(value)
+			.sort()
+			.map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+			.join(',')}}`;
+	}
+	return JSON.stringify(value) ?? 'undefined';
+}
+
+function secretRefCacheKey(secretRef: SecretRef): string {
+	return stableJson(secretRef);
+}
+
+function createPreflightCachingSecretResolver(
+	secretResolver: SecretResolver,
+): PreflightCachingSecretResolver {
+	const cachedSecrets = new Map<string, string>();
+	let frozen = false;
+	const resolver: SecretResolver = {
+		resolve: async (secretRef) => {
+			const cacheKey = secretRefCacheKey(secretRef);
+			if (cachedSecrets.has(cacheKey)) {
+				const cachedSecret = cachedSecrets.get(cacheKey);
+				if (cachedSecret === undefined) {
+					throw new Error('Preflight secret cache contained an undefined value.');
+				}
+				return cachedSecret;
+			}
+			if (frozen) {
+				throw new Error('Gateway secret preflight cache missed a post-preflight resolve call.');
+			}
+			const resolvedSecret = await secretResolver.resolve(secretRef);
+			cachedSecrets.set(cacheKey, resolvedSecret);
+			return resolvedSecret;
+		},
+		resolveAll: async (secretRefs) => {
+			const resolvedSecrets: Record<string, string> = {};
+			const missingSecretRefs: Record<string, SecretRef> = {};
+			for (const [secretName, secretRef] of Object.entries(secretRefs)) {
+				const cacheKey = secretRefCacheKey(secretRef);
+				if (cachedSecrets.has(cacheKey)) {
+					const cachedSecret = cachedSecrets.get(cacheKey);
+					if (cachedSecret === undefined) {
+						throw new Error('Preflight secret cache contained an undefined value.');
+					}
+					resolvedSecrets[secretName] = cachedSecret;
+				} else {
+					missingSecretRefs[secretName] = secretRef;
+				}
+			}
+			if (Object.keys(missingSecretRefs).length === 0) {
+				return resolvedSecrets;
+			}
+			if (frozen) {
+				throw new Error(
+					`Gateway secret preflight cache missed ${String(Object.keys(missingSecretRefs).length)} post-preflight resolveAll secret(s).`,
+				);
+			}
+			const freshSecrets = await secretResolver.resolveAll(missingSecretRefs);
+			for (const [secretName, secretRef] of Object.entries(missingSecretRefs)) {
+				const resolvedSecret = freshSecrets[secretName];
+				if (resolvedSecret === undefined) {
+					throw new Error(`Secret resolver omitted preflight secret '${secretName}'.`);
+				}
+				cachedSecrets.set(secretRefCacheKey(secretRef), resolvedSecret);
+				resolvedSecrets[secretName] = resolvedSecret;
+			}
+			return resolvedSecrets;
+		},
+	};
+	return {
+		freeze: () => {
+			frozen = true;
+			return resolver;
+		},
+		resolver,
+	};
 }
 
 interface GatewayCommandResult {
@@ -88,10 +197,6 @@ function formatCommandOutput(name: string, value: string): string {
 
 function formatGatewayCommandFailure(stepName: string, result: GatewayCommandResult): string {
 	return `${stepName} failed with exit ${result.exitCode}.${formatCommandOutput('stdout', result.stdout)}${formatCommandOutput('stderr', result.stderr)}`;
-}
-
-function toPhaseCError(reason: unknown): Error {
-	return reason instanceof Error ? reason : new Error(String(reason));
 }
 
 async function execGatewayCommand(options: {
@@ -148,7 +253,7 @@ async function waitForHealth(options: {
 			managedVm: options.managedVm,
 		});
 		throw new Error(
-			`Gateway readiness check failed after ${maxAttempts} attempts over ${formatElapsedSeconds(startedAtMs)}s. Last probe: ${lastObservation}. Gateway process may still be booting, or it may have crashed before opening its health port.${logTail ? `\nGateway log tail (${options.logPath}):\n${logTail}` : ''}`,
+			`Gateway service health check failed after ${maxAttempts} attempts over ${formatElapsedSeconds(startedAtMs)}s. Last probe: ${lastObservation}. Gateway process may still be booting, or it may have crashed before opening its health port.${logTail ? `\nGateway log tail (${options.logPath}):\n${logTail}` : ''}`,
 		);
 	}
 
@@ -176,6 +281,7 @@ async function waitForHealth(options: {
 async function buildRuntimeMcpPortalMaterialization(props: {
 	readonly cacheDir: string;
 	readonly secretResolver: StartGatewayZoneOptions['secretResolver'];
+	readonly writeEffectiveConfig?: boolean | undefined;
 	readonly zone: GatewayZone;
 }): Promise<
 	Partial<
@@ -200,7 +306,11 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		'mcp-portal-effective',
 	);
 	const effectiveVmConfigDir = '/home/openclaw/.openclaw/cache/mcp-portal-effective';
-	const materialization = await writeMcpPortalEffectiveConfig({
+	const buildEffectiveConfig =
+		props.writeEffectiveConfig === false
+			? preflightMcpPortalEffectiveConfig
+			: writeMcpPortalEffectiveConfig;
+	const materialization = await buildEffectiveConfig({
 		authoredConfigDir: zone.mcpPortal.configDir,
 		effectiveHostConfigDir,
 		effectiveVmConfigDir,
@@ -226,6 +336,107 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 	};
 }
 
+async function buildGatewayImageForZone(
+	options: {
+		readonly systemConfig: StartGatewayZoneOptions['systemConfig'];
+		readonly zone: GatewayZone;
+	},
+	dependencies: GatewayImageBuilderDependencies = {},
+): Promise<import('@agent-vm/gondolin-adapter').BuildImageResult> {
+	const gatewayImageProfile = selectGatewayImageProfile({
+		systemConfig: options.systemConfig,
+		zone: options.zone,
+	});
+	return await buildGatewayImage(
+		{
+			buildConfigPath: gatewayImageProfile.buildConfig,
+			cacheDir: path.join(
+				options.systemConfig.cacheDir,
+				'gateway-images',
+				options.zone.gateway.imageProfile,
+			),
+		},
+		{
+			...(dependencies.buildImage ? { buildImage: dependencies.buildImage } : {}),
+			...(dependencies.buildGondolinImage
+				? { buildGondolinImage: dependencies.buildGondolinImage }
+				: {}),
+			...(dependencies.loadBuildConfig ? { loadBuildConfig: dependencies.loadBuildConfig } : {}),
+		},
+	);
+}
+
+export async function preflightGatewayZoneStart(
+	options: StartGatewayZoneOptions,
+	dependencies: Pick<
+		GatewayManagerDependencies,
+		'buildGondolinImage' | 'buildImage' | 'loadBuildConfig' | 'loadGatewayLifecycle'
+	> = {},
+): Promise<GatewayZoneStartPreflightResult> {
+	const prerequisites = await preflightGatewayZoneStartPrerequisites(options, dependencies);
+	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
+	const image =
+		options.prebuiltImage ??
+		(await buildGatewayImageForZone(
+			{
+				systemConfig: options.systemConfig,
+				zone,
+			},
+			dependencies,
+		));
+	return { image, secretResolver: prerequisites.secretResolver };
+}
+
+async function preflightGatewayZoneStartPrerequisites(
+	options: StartGatewayZoneOptions,
+	dependencies: Pick<GatewayManagerDependencies, 'loadGatewayLifecycle'> = {},
+): Promise<GatewayZoneStartPrerequisitePreflightResult> {
+	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
+	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
+	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
+	const cachingSecretResolver = createPreflightCachingSecretResolver(options.secretResolver);
+	const [mcpPortalMaterialization] = await Promise.all([
+		buildRuntimeMcpPortalMaterialization({
+			cacheDir: options.systemConfig.cacheDir,
+			secretResolver: cachingSecretResolver.resolver,
+			writeEffectiveConfig: false,
+			zone,
+		}),
+		resolveZoneSecrets({
+			audience: 'gateway',
+			secretResolver: cachingSecretResolver.resolver,
+			systemConfig: options.systemConfig,
+			zoneId: zone.id,
+		}),
+	]);
+	const lifecycleZone = {
+		...mappedLifecycleZone,
+		...mcpPortalMaterialization,
+		egressHosts: mcpPortalMaterialization.egressHosts ?? mappedLifecycleZone.egressHosts,
+		...(options.runtimeEnvironment === undefined
+			? {}
+			: {
+					runtimeEnvironment: {
+						...mcpPortalMaterialization.runtimeEnvironment,
+						...options.runtimeEnvironment,
+					},
+				}),
+		...(options.runtimePluginConfigs === undefined
+			? {}
+			: {
+					runtimePluginConfigs: {
+						...mcpPortalMaterialization.runtimePluginConfigs,
+						...options.runtimePluginConfigs,
+					},
+				}),
+	};
+	if (zone.gateway.type === 'openclaw') {
+		await assertOpenClawToolVmRequirements({ ...options.systemConfig, zones: [zone] }, zone.id);
+	}
+	await lifecycle.preflightHostState?.(lifecycleZone, cachingSecretResolver.resolver);
+	return { secretResolver: cachingSecretResolver.freeze() };
+}
+
 export async function startGatewayZone(
 	options: StartGatewayZoneOptions,
 	dependencies: GatewayManagerDependencies = {},
@@ -242,10 +453,44 @@ export async function startGatewayZone(
 	// owner-unsafe evidence cannot be masked by a faster 1Password, config,
 	// or build failure. Safety beats diagnostic speed here: if an unknown
 	// process owns the gateway ingress, the controller must report that as
-	// the current blocker and must not proceed toward a second gateway.
-	//
-	// Tool VM children are cleaned before the gateway so an old gateway
-	// cannot continue issuing work while child recovery runs.
+	// the current blocker and must not proceed toward a second gateway. This
+	// preflight is intentionally non-destructive; actual cleanup happens only
+	// after secrets, host-state preflight, and image build have succeeded.
+	const preflightOrphanedGatewayCleanup = async (): Promise<void> => {
+		const preflightResult = await (
+			dependencies.preflightOrphanedGatewayCleanupIfPresent ??
+			preflightOrphanedGatewayCleanupIfPresent
+		)({
+			configuredIngressPort: zone.gateway.port,
+			expectedConfigPath: options.systemConfig.systemConfigPath,
+			expectedControllerPort: options.systemConfig.host.controllerPort,
+			mode: 'in-process-recovery',
+			projectNamespace: options.systemConfig.host.projectNamespace,
+			stateDir: zone.gateway.stateDir,
+			zoneId: zone.id,
+		});
+		if (preflightResult.ownershipEvidence !== undefined) {
+			throw new GatewayOwnershipUnsafeError({
+				evidence: preflightResult.ownershipEvidence,
+				message: `Gateway ownership is unsafe for zone '${zone.id}': ${preflightResult.ownershipEvidence.kind}.`,
+			});
+		}
+	};
+	await runTaskStep('Preflighting gateway runtime ownership', preflightOrphanedGatewayCleanup);
+
+	// Phase B: prove non-ownership host-side prerequisites before any
+	// destructive cleanup. The returned resolver is frozen to preflighted
+	// secret values so post-cleanup startup cannot re-enter 1Password.
+	const startupPreflight = await runTaskWithResult(
+		runTaskStep,
+		'Preflighting gateway start',
+		async () => await preflightGatewayZoneStartPrerequisites(options, dependencies),
+	);
+	const startupSecretResolver = startupPreflight.secretResolver;
+
+	// Phase C cleanup runs after replacement prerequisites are proven. Tool VM
+	// children are cleaned before the gateway so an old gateway cannot continue
+	// issuing work while child recovery runs.
 	const cleanupOrphanedGateway = async (): Promise<void> => {
 		const cleanupResult = await (
 			dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent
@@ -279,23 +524,15 @@ export async function startGatewayZone(
 			zoneId: zone.id,
 		});
 	};
-	if (zone.gateway.type === 'openclaw') {
-		await runTaskStep('Cleaning orphaned tool VMs', async () => {
-			await cleanupOrphanedToolVms();
-			await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
-		});
-	} else {
-		await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
-	}
 
-	// Phase B: collect non-ownership host-side prerequisites in parallel.
+	// Phase D: collect startup artifacts in parallel.
 	//
 	// All four branches operate on disjoint paths and have no shared in-process
 	// state:
 	//   - mcpPortalMaterialization writes $cacheDir/gateways/$zoneId/mcp-portal-effective/
 	//   - assertions reads $zone.gateway.config (pure validation)
 	//   - resolveZoneSecrets reads zone.secrets (no IO beyond secretResolver)
-	//   - buildGatewayImage operates on $cacheDir/gateway-images/$profile
+	//   - image is the prebuilt Phase B image whenever protected preflight ran
 	//
 	// mcpPortalMaterialization and resolveZoneSecrets both call
 	// secretResolver.resolveAll concurrently with disjoint ref sets. The
@@ -308,7 +545,7 @@ export async function startGatewayZone(
 	// concurrent `op read` hazard at the outer-call layer).
 	const mcpPortalMaterializationPromise = buildRuntimeMcpPortalMaterialization({
 		cacheDir: options.systemConfig.cacheDir,
-		secretResolver: options.secretResolver,
+		secretResolver: startupSecretResolver,
 		zone,
 	});
 	const assertionsPromise =
@@ -325,29 +562,22 @@ export async function startGatewayZone(
 				audience: 'gateway',
 				systemConfig: options.systemConfig,
 				zoneId: zone.id,
-				secretResolver: options.secretResolver,
+				secretResolver: startupSecretResolver,
 			}),
 	);
-	const imagePromise = runTaskWithResult(runTaskStep, 'Building gateway image', async () => {
-		const gatewayImageProfile = selectGatewayImageProfile({
-			systemConfig: options.systemConfig,
-			zone,
-		});
-		return await buildGatewayImage(
-			{
-				buildConfigPath: gatewayImageProfile.buildConfig,
-				cacheDir: path.join(
-					options.systemConfig.cacheDir,
-					'gateway-images',
-					zone.gateway.imageProfile,
-				),
-			},
-			{
-				...(dependencies.buildImage ? { buildImage: dependencies.buildImage } : {}),
-				...(dependencies.loadBuildConfig ? { loadBuildConfig: dependencies.loadBuildConfig } : {}),
-			},
-		);
-	});
+	const imagePromise = runTaskWithResult(
+		runTaskStep,
+		'Building gateway image',
+		async () =>
+			options.prebuiltImage ??
+			(await buildGatewayImageForZone(
+				{
+					systemConfig: options.systemConfig,
+					zone,
+				},
+				dependencies,
+			)),
+	);
 	// Promise.all (fail-fast) rather than Promise.allSettled here. Rationale:
 	//   - The image build branch can be slow on a cold cache (minutes for a
 	//     full Gondolin rebuild). If any other branch fails fast (e.g., a
@@ -357,9 +587,8 @@ export async function startGatewayZone(
 	//     secretResolver.resolveAll callers with the same root cause at the
 	//     same op-CLI timeout (~30s). Promise.all surfaces the first; that's
 	//     diagnostically sufficient.
-	//   - Phase C uses allSettled for a DIFFERENT reason: it has a live
-	//     QEMU resource to close on partial failure. Phase B produces no
-	//     such resource.
+	//   - Later phases create live QEMU resources and must keep narrower,
+	//     sequential cleanup rules.
 	//
 	// Cost of fail-fast: if multiple branches reject simultaneously, the
 	// other reasons are lost (only the first reaches the caller). Background
@@ -371,6 +600,14 @@ export async function startGatewayZone(
 		resolvedSecretsPromise,
 		imagePromise,
 	]);
+	if (zone.gateway.type === 'openclaw') {
+		await runTaskStep('Cleaning orphaned tool VMs', async () => {
+			await cleanupOrphanedToolVms();
+			await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
+		});
+	} else {
+		await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
+	}
 	const lifecycleZone = {
 		...mappedLifecycleZone,
 		...mcpPortalMaterialization,
@@ -426,15 +663,13 @@ export async function startGatewayZone(
 		...options.vfsMountsOverride,
 	};
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
-	// Phase C: prepareHostState writes to stateDir (realfs-mounted live in
-	// the VM), which is only read by the bootstrap exec running INSIDE the
-	// VM — that runs after createManagedVm resolves. So the host-side
-	// writes can overlap with QEMU boot. Promise.allSettled lets us close
-	// an orphan VM if prep fails after the VM came up.
-	const prepHostStatePromise = runTaskStep('Preparing host state', async () => {
-		await lifecycle.prepareHostState?.(lifecycleZone, options.secretResolver);
+	// Phase E: write host state before creating a new VM. This is deliberately
+	// sequential: if the final write fails after orphan cleanup, startup aborts
+	// without creating a second gateway VM that then needs cleanup.
+	await runTaskStep('Preparing host state', async () => {
+		await lifecycle.prepareHostState?.(lifecycleZone, startupSecretResolver);
 	});
-	const managedVmPromise = runTaskWithResult(
+	const managedVm = await runTaskWithResult(
 		runTaskStep,
 		'Booting gateway VM',
 		async () =>
@@ -452,46 +687,6 @@ export async function startGatewayZone(
 				vfsMounts,
 			}),
 	);
-	const [prepHostStateResult, managedVmResult] = await Promise.allSettled([
-		prepHostStatePromise,
-		managedVmPromise,
-	]);
-	// Aggregate any failures from either Phase C branch. If prep failed
-	// after the VM came up, close the VM before throwing. The outer guard
-	// handles all failure paths in one place so the happy path below can
-	// rely on TypeScript narrowing both settled results to `fulfilled`
-	// without a dead-code assertion.
-	if (prepHostStateResult.status === 'rejected' || managedVmResult.status === 'rejected') {
-		const phaseCErrors: Error[] = [];
-		if (prepHostStateResult.status === 'rejected') {
-			phaseCErrors.push(toPhaseCError(prepHostStateResult.reason));
-			if (managedVmResult.status === 'fulfilled') {
-				try {
-					await managedVmResult.value.close();
-				} catch (closeError) {
-					phaseCErrors.push(
-						new Error(
-							`Failed to close gateway VM after host-state prep failure: ${closeError instanceof Error ? closeError.message : String(closeError)}`,
-							{ cause: closeError },
-						),
-					);
-				}
-			}
-		}
-		if (managedVmResult.status === 'rejected') {
-			phaseCErrors.push(toPhaseCError(managedVmResult.reason));
-		}
-		if (phaseCErrors.length > 1) {
-			throw new AggregateError(phaseCErrors, 'Phase C failed: prep host state and/or VM boot');
-		}
-		// At least one branch rejected, so phaseCErrors has exactly one entry.
-		const [singlePhaseCError] = phaseCErrors;
-		if (singlePhaseCError === undefined) {
-			throw new Error('Phase C unreachable: rejection branch with no collected errors');
-		}
-		throw singlePhaseCError;
-	}
-	const managedVm = managedVmResult.value;
 	try {
 		await runTaskStep('Configuring gateway', async () => {
 			await execGatewayCommand({
@@ -507,9 +702,10 @@ export async function startGatewayZone(
 				stepName: 'Starting gateway',
 			});
 		});
-		await runTaskStep('Waiting for readiness', async () => {
+		const startupHealthCheck = processSpec.serviceHealthCheck ?? processSpec.healthCheck;
+		await runTaskStep('Waiting for service health', async () => {
 			await waitForHealth({
-				healthCheck: processSpec.healthCheck,
+				healthCheck: startupHealthCheck,
 				logPath: processSpec.logPath,
 				managedVm,
 				...(dependencies.gatewayReadinessMaxAttempts !== undefined

@@ -223,16 +223,104 @@ export interface GatewayRecoveryDependencies {
 	readonly sleep?: (delayMs: number) => Promise<void>;
 }
 
+export interface GatewayOrphanCleanupOptions {
+	readonly configuredIngressPort?: number | undefined;
+	readonly expectedConfigPath: string;
+	readonly expectedControllerPort: number;
+	readonly mode?: 'in-process-recovery' | 'offline-cleanup';
+	readonly projectNamespace: string;
+	readonly stateDir: string;
+	readonly zoneId: string;
+}
+
+export async function preflightOrphanedGatewayCleanupIfPresent(
+	options: GatewayOrphanCleanupOptions,
+	dependencies: Pick<
+		GatewayRecoveryDependencies,
+		'loadGatewayRuntimeRecordResult' | 'log' | 'readTcpListenPortOwner'
+	> = {},
+): Promise<{
+	readonly cleanupWarning?: string;
+	readonly ownershipEvidence?: GatewayOwnershipEvidence | undefined;
+}> {
+	const log = dependencies.log ?? writeRecoveryLog;
+	const runtimeRecordResult = await (
+		dependencies.loadGatewayRuntimeRecordResult ?? loadGatewayRuntimeRecordResult
+	)(options.stateDir);
+	const expectedControllerPid = options.mode === 'in-process-recovery' ? process.pid : undefined;
+	if (runtimeRecordResult.kind === 'missing') {
+		if (options.configuredIngressPort !== undefined) {
+			const portPreflight = await checkMissingGatewayRuntimeRecordPortPreflight({
+				...(expectedControllerPid === undefined ? {} : { expectedControllerPid }),
+				gatewayIngressPort: options.configuredIngressPort,
+				readTcpListenPortOwner:
+					dependencies.readTcpListenPortOwner ?? defaultReadTcpListenPortOwner,
+			});
+			if (portPreflight.kind === 'blocked') {
+				throw new GatewayOwnershipUnsafeError({
+					evidence: portPreflight.evidence,
+					message: `Gateway runtime record is missing but configured ingress port ${String(portPreflight.evidence.port)} is owned by pid ${String(portPreflight.evidence.ownerPid)} (${portPreflight.evidence.ownerCommand}). Refusing gateway cold-start until ownership is resolved.`,
+				});
+			}
+		}
+		return {};
+	}
+	if (runtimeRecordResult.kind === 'parse-error') {
+		const cleanupWarning = `Malformed gateway runtime record '${runtimeRecordResult.path}': ${runtimeRecordResult.error.message}.`;
+		if (options.mode !== 'in-process-recovery') {
+			throw new Error(cleanupWarning, { cause: runtimeRecordResult.error });
+		}
+		log(`Skipping ${cleanupWarning}`);
+		return {
+			cleanupWarning,
+			ownershipEvidence: {
+				kind: 'record-parse-error',
+				message: runtimeRecordResult.error.message,
+				path: runtimeRecordResult.path,
+			},
+		};
+	}
+	const runtimeRecord = runtimeRecordResult.record;
+	const scopeMismatch = validateRuntimeRecordCleanupScope({
+		expectedConfigPath: options.expectedConfigPath,
+		expectedControllerPort: options.expectedControllerPort,
+		projectNamespace: options.projectNamespace,
+		runtimeRecord,
+		stateDir: options.stateDir,
+		zoneId: options.zoneId,
+	});
+	if (scopeMismatch.kind === 'mismatch') {
+		if (options.mode !== 'in-process-recovery') {
+			throw new Error(scopeMismatch.warning);
+		}
+		const cleanupWarning = `${scopeMismatch.warning} Skipping the stale runtime record without signaling its recorded process during in-process recovery.`;
+		log(cleanupWarning);
+		return {
+			cleanupWarning,
+			ownershipEvidence: scopeMismatch.evidence,
+		};
+	}
+	const portOwnershipProof = await verifyGatewayPortOwnership({
+		...(expectedControllerPid === undefined ? {} : { expectedControllerPid }),
+		readTcpListenPortOwner: dependencies.readTcpListenPortOwner ?? defaultReadTcpListenPortOwner,
+		runtimeRecord,
+	});
+	if (portOwnershipProof.kind === 'unproven') {
+		if (options.mode !== 'in-process-recovery') {
+			throw new Error(portOwnershipProof.warning);
+		}
+		const cleanupWarning = `Skipping ${portOwnershipProof.warning}`;
+		log(cleanupWarning);
+		return {
+			cleanupWarning,
+			ownershipEvidence: portOwnershipProof.evidence,
+		};
+	}
+	return {};
+}
+
 export async function cleanupOrphanedGatewayIfPresent(
-	options: {
-		readonly configuredIngressPort?: number | undefined;
-		readonly expectedConfigPath: string;
-		readonly expectedControllerPort: number;
-		readonly mode?: 'in-process-recovery' | 'offline-cleanup';
-		readonly projectNamespace: string;
-		readonly stateDir: string;
-		readonly zoneId: string;
-	},
+	options: GatewayOrphanCleanupOptions,
 	dependencies: GatewayRecoveryDependencies = {},
 ): Promise<{
 	readonly cleanedUp: boolean;

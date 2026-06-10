@@ -79,6 +79,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
 			startCommand: `{ printf 'worker-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > /tmp/agent-vm-worker.log; } && cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state >> /tmp/agent-vm-worker.log 2>&1 &`,
 			healthCheck: { type: 'http', port: 18789, path: '/health' },
+			serviceHealthCheck: { type: 'http', port: 18789, path: '/health' },
 			guestListenPort: 18789,
 			logPath: '/tmp/agent-vm-worker.log',
 		};

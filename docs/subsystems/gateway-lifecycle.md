@@ -35,6 +35,7 @@ Defined in `packages/gateway-interface/src/gateway-lifecycle.ts`.
 GatewayLifecycle
   |-- buildVmSpec(options)        -> GatewayVmSpec       pure data
   |-- buildProcessSpec(zone, rs)  -> GatewayProcessSpec  pure data
+  |-- preflightHostState?(zone,sr)-> Promise<void>       secret preflight
   |-- prepareHostState?(zone, sr) -> Promise<void>       side effects
   |-- authConfig?                 -> GatewayAuthConfig    static
 ```
@@ -63,6 +64,12 @@ Pure data -- describes bootstrap, startup, health checking, and logging.
 Async hook that runs before the VM boots.  Performs host-side side effects
 such as writing config files or resolving secrets to disk.  Only OpenClaw
 implements this; Worker does not.
+
+### preflightHostState (optional)
+
+Async hook that resolves host-state secret dependencies without writing host
+state. Protected OpenClaw restarts use this before closing a live gateway so a
+1Password or environment-secret failure does not strand the zone without a VM.
 
 ### authConfig (optional)
 
@@ -110,6 +117,7 @@ Defined in `packages/gateway-interface/src/gateway-process-spec.ts`.
 | `bootstrapCommand` | `string`              | Runs once after VM boot, before start        |
 | `startCommand`     | `string`              | Launches the gateway process (backgrounded)  |
 | `healthCheck`      | `GatewayHealthCheck`  | HTTP or command-based health check           |
+| `serviceHealthCheck` | `GatewayHealthCheck` | Optional liveness check for controller health monitors |
 | `guestListenPort`  | `number`              | Port the gateway listens on inside the guest |
 | `logPath`          | `string`              | Guest-side path to the process log file      |
 
@@ -143,6 +151,12 @@ Two host-side writes before VM boot:
    `<stateDir>/agents/<agentId>/agent/` with mode 0600. Legacy
    `authProfilesRef` is still accepted as a shared single-agent fallback and
    writes only `<stateDir>/agents/main/agent/auth-profiles.json`.
+
+### preflightHostState
+
+Resolves configured auth-profile secrets without writing the corresponding
+`auth-profiles.json` files. This mirrors the secret-resolution part of
+`prepareHostState` for protected restart preflight.
 
 ### buildVmSpec
 
@@ -205,7 +219,8 @@ rebuildable and must not be included in encrypted zone backups.
   `/run/openclaw/gateway-token.env` for controller SSH admin shells.
 - **start**: sources `/run/openclaw/secrets.env`, then runs
   `cd /home/openclaw && nohup openclaw gateway --port 18789`
-- **healthCheck**: HTTP on port 18789, path `/readyz`
+- **healthCheck**: HTTP on port 18789, path `/readyz` for explicit readiness probes
+- **serviceHealthCheck**: HTTP on port 18789, path `/health` for startup and controller liveness monitoring
 - **guestListenPort**: 18789
 - **logPath**: `/agent-vm/logs/gateway-boot-latest.log`
 
@@ -291,6 +306,7 @@ Not implemented.  Worker has no interactive auth.
 | **bootstrap**         | Shell env file in `/etc/profile.d/`              | `npm install -g` codex + worker tarball         |
 | **startCommand**      | `openclaw gateway --port 18789`                  | `agent-vm-worker serve --port 18789`            |
 | **healthCheck path**  | `/readyz`                                        | `/health`                                       |
+| **serviceHealthCheck path** | `/health`                                 | `/health`                                       |
 | **guestListenPort**   | 18789                                            | 18789                                           |
 | **logPath**           | `/agent-vm/logs/gateway-boot-latest.log`         | `/tmp/agent-vm-worker.log`                      |
 | **rootfsMode**        | `cow`                                            | `cow`                                            |

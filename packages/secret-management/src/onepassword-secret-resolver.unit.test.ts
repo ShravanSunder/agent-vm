@@ -7,13 +7,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	createOpCliSecretResolver,
 	createSecretResolver,
+	probeOnePasswordServiceAccountHeadlessAuth,
 	resolveServiceAccountToken,
 	type ExecFileOptions,
 	type ExecFileResult,
 	type SecretResolverClient,
 } from './onepassword-secret-resolver.js';
 
-const emptyExecFileResult = async (): Promise<ExecFileResult> => ({ stdout: '', stderr: '' });
 const originalPlatform = process.platform;
 const originalPath = process.env.PATH;
 
@@ -123,6 +123,20 @@ async function expectRejects<TValue>(
 		return;
 	}
 	throw new Error('Expected promise to reject.');
+}
+
+function renderErrorTree(error: unknown): string {
+	const lines = [String(error)];
+	if (error instanceof AggregateError) {
+		lines.push(...error.errors.map(renderErrorTree));
+	}
+	if (typeof error === 'object' && error !== null && 'cause' in error) {
+		const cause = (error as { readonly cause?: unknown }).cause;
+		if (cause !== undefined) {
+			lines.push(renderErrorTree(cause));
+		}
+	}
+	return lines.join('\n');
 }
 
 async function createTemporaryDirectory(prefix: string): Promise<string> {
@@ -270,25 +284,6 @@ afterEach(async () => {
 });
 
 describe('resolveServiceAccountToken', () => {
-	it('resolves token via op-cli', async () => {
-		const fakeExec = async (
-			command: string,
-			args: readonly string[],
-			options?: ExecFileOptions,
-		): Promise<ExecFileResult> => {
-			expect(command).toBe('op');
-			expect(args).toEqual(['read', 'op://vault/item/field']);
-			expect(options).toEqual({ redactErrorOutput: true });
-			return { stdout: 'resolved-token\n', stderr: '' };
-		};
-
-		const token = await resolveServiceAccountToken(
-			{ type: 'op-cli', ref: 'op://vault/item/field' },
-			{ execFileAsync: fakeExec },
-		);
-		expect(token).toBe('resolved-token');
-	});
-
 	it('resolves token via env var', async () => {
 		const original = process.env.OP_SERVICE_ACCOUNT_TOKEN;
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'env-token';
@@ -357,15 +352,6 @@ describe('resolveServiceAccountToken', () => {
 				account: 'service-account',
 			}),
 		).rejects.toThrow(/macOS/u);
-	});
-
-	it('throws when op-cli returns empty', async () => {
-		await expect(
-			resolveServiceAccountToken(
-				{ type: 'op-cli', ref: 'op://vault/item/field' },
-				{ execFileAsync: emptyExecFileResult },
-			),
-		).rejects.toThrow('empty value');
 	});
 });
 
@@ -644,6 +630,7 @@ describe('createSecretResolver', () => {
 					'Error: 1Password SDK resolveAll failed before op CLI fallback: request library compatibility issue: reqwest library',
 					'Error: op failed:inject --in-file /dev/stdin',
 				]);
+				expect(renderErrorTree(error)).not.toContain('op://');
 			},
 		);
 	});
@@ -696,6 +683,36 @@ describe('createSecretResolver', () => {
 			secretReferences: ['op://agent-vm/agent-gateway/token'],
 			serviceAccountToken: 'service-token',
 		});
+	});
+
+	it('redacts service-account token values from sdk and fallback error messages', async () => {
+		const serviceAccountToken = 'SUPER-SECRET-SERVICE-ACCOUNT-TOKEN';
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken },
+			{
+				createClient: async (): Promise<SecretResolverClient> => {
+					throw new Error(`sdk auth failed for token ${serviceAccountToken}`);
+				},
+				execFileAsync: async (): Promise<ExecFileResult> => {
+					throw new Error(`op fallback failed for token ${serviceAccountToken}`);
+				},
+			},
+		);
+
+		await expectRejects(
+			secretResolver.resolveAll({
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: '1password',
+					ref: 'op://agent-vm/agent-gateway/token',
+				},
+			}),
+			(error: unknown): void => {
+				const renderedError = renderErrorTree(error);
+				expect(renderedError).toContain('sdk auth failed for token <redacted>');
+				expect(renderedError).toContain('op fallback failed for token <redacted>');
+				expect(renderedError).not.toContain(serviceAccountToken);
+			},
+		);
 	});
 
 	it('falls back to op read when sdk secret resolution fails after client creation', async () => {
@@ -1052,6 +1069,11 @@ describe('createOpCliSecretResolver', () => {
 				A: { source: '1password', ref: 'op://vault/item/a' },
 			}),
 		).rejects.toThrow(/op inject output for secret 'A'.*marker/u);
+		await expect(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+			}),
+		).rejects.not.toThrow(/op:\/\//u);
 	});
 
 	it.each([
@@ -1135,16 +1157,23 @@ describe('createOpCliSecretResolver', () => {
 				LC_ALL: 'C',
 				LOCALAPPDATA: '/tmp/op-localappdata',
 				NO_PROXY: 'localhost,127.0.0.1',
+				OP_ACCOUNT: 'human-account-should-not-forward',
+				OP_BIOMETRIC_UNLOCK_ENABLED: 'true',
+				OP_CACHE: 'true',
 				OP_CONNECT_HOST: 'https://connect.example.test',
 				OP_CONNECT_TOKEN: 'connect-token-should-not-forward',
+				OP_CONFIG_DIR: '/tmp/human-op-config-should-not-forward',
 				OP_SERVICE_ACCOUNT_TOKEN: 'ambient-token-should-not-forward',
 				OP_SESSION: 'session-token-should-not-forward',
+				OP_SESSION_human: 'named-session-token-should-not-forward',
 				PATH: '/tmp/op-bin',
 				SSH_AUTH_SOCK: '/tmp/ssh-agent-should-not-forward.sock',
 				SSL_CERT_FILE: '/tmp/custom-ca.pem',
 				TMPDIR: '/tmp/op-tmpdir',
 				USERPROFILE: '/tmp/op-userprofile',
 				XDG_CONFIG_HOME: '/tmp/op-config',
+				XDG_CACHE_HOME: '/tmp/op-cache',
+				XDG_DATA_HOME: '/tmp/op-data',
 				XDG_RUNTIME_DIR: '/tmp/op-runtime',
 			},
 			async () => {
@@ -1190,21 +1219,28 @@ describe('createOpCliSecretResolver', () => {
 					LC_ALL: 'C',
 					LOCALAPPDATA: '/tmp/op-localappdata',
 					NO_PROXY: 'localhost,127.0.0.1',
+					OP_BIOMETRIC_UNLOCK_ENABLED: 'false',
+					OP_CACHE: 'false',
+					OP_CONFIG_DIR: expect.stringContaining('agent-vm-op-config-'),
 					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
 					PATH: '/tmp/op-bin',
 					SSL_CERT_FILE: '/tmp/custom-ca.pem',
 					TMPDIR: '/tmp/op-tmpdir',
 					USERPROFILE: '/tmp/op-userprofile',
-					XDG_CONFIG_HOME: '/tmp/op-config',
 					XDG_RUNTIME_DIR: '/tmp/op-runtime',
 				}),
 			);
 			expect(env).not.toHaveProperty('AWS_SECRET_ACCESS_KEY');
 			expect(env).not.toHaveProperty('GITHUB_TOKEN');
+			expect(env).not.toHaveProperty('OP_ACCOUNT');
 			expect(env).not.toHaveProperty('OP_CONNECT_HOST');
 			expect(env).not.toHaveProperty('OP_CONNECT_TOKEN');
 			expect(env).not.toHaveProperty('OP_SESSION');
+			expect(env).not.toHaveProperty('OP_SESSION_human');
 			expect(env).not.toHaveProperty('SSH_AUTH_SOCK');
+			expect(env).not.toHaveProperty('XDG_CACHE_HOME');
+			expect(env).not.toHaveProperty('XDG_CONFIG_HOME');
+			expect(env).not.toHaveProperty('XDG_DATA_HOME');
 		}
 	});
 
@@ -1237,8 +1273,17 @@ describe('createOpCliSecretResolver', () => {
 			}),
 			(error: unknown): void => {
 				expect(error).toBeInstanceOf(Error);
+				expect(error).not.toHaveProperty('cause');
 				const renderedError = String(error);
 				expect(renderedError).toContain('op failed: exit code 1');
+				expect(renderedError).toContain('output=redacted');
+				expect(renderedError).toContain('opEnvIsolation=enabled');
+				expect(renderedError).toContain('opAuth=service-account-token');
+				expect(renderedError).toContain('opConfig=isolated');
+				expect(renderedError).toContain('opBiometricUnlock=false');
+				expect(renderedError).toContain('opConnectEnv=absent');
+				expect(renderedError).toContain('opSessionEnv=absent');
+				expect(renderedError).toContain('opAccountEnv=absent');
 				expect(renderedError).not.toContain('SUPER-SECRET-VALUE');
 			},
 		);
@@ -1274,6 +1319,7 @@ describe('createOpCliSecretResolver', () => {
 			}),
 			(error: unknown): void => {
 				expect(error).toBeInstanceOf(Error);
+				expect(error).not.toHaveProperty('cause');
 				const renderedError = String(error);
 				expect(renderedError).toMatch(
 					/op failed( writing stdin)?: (stdin write failed|exit code 1)/u,
@@ -1281,5 +1327,51 @@ describe('createOpCliSecretResolver', () => {
 				expect(renderedError).not.toContain('SUPER-SECRET-VALUE');
 			},
 		);
+	});
+
+	it('redacts stderr from service-account headless auth probe failures', async () => {
+		const temporaryDirectory = await createTemporaryDirectory('agent-vm-op-shim-');
+		await writeExecutableOpShim({
+			directoryPath: temporaryDirectory,
+			script: [
+				'#!/bin/sh',
+				'if [ "$1" = "whoami" ]; then',
+				'  printf "SUPER-SECRET-VALUE" >&2',
+				'  exit 1',
+				'fi',
+				'exit 1',
+				'',
+			].join('\n'),
+		});
+		process.env.PATH = originalPath
+			? `${temporaryDirectory}${path.delimiter}${originalPath}`
+			: temporaryDirectory;
+
+		const probe = await probeOnePasswordServiceAccountHeadlessAuth({
+			serviceAccountToken: 'service-token',
+		});
+
+		expect(probe.ok).toBe(false);
+		expect(probe.hint).toContain('op whoami failed with isolated service-account env');
+		expect(probe.hint).toContain('output=redacted');
+		expect(probe.hint).toContain('opEnvIsolation=enabled');
+		expect(probe.hint).toContain('opAuth=service-account-token');
+		expect(probe.hint).not.toContain('SUPER-SECRET-VALUE');
+	});
+
+	it('redacts service-account token values from headless auth probe dependency failures', async () => {
+		const serviceAccountToken = 'SUPER-SECRET-SERVICE-ACCOUNT-TOKEN';
+		const probe = await probeOnePasswordServiceAccountHeadlessAuth(
+			{ serviceAccountToken },
+			{
+				execFileAsync: async (): Promise<ExecFileResult> => {
+					throw new Error(`probe failed for token ${serviceAccountToken}`);
+				},
+			},
+		);
+
+		expect(probe.ok).toBe(false);
+		expect(probe.hint).toContain('probe failed for token <redacted>');
+		expect(probe.hint).not.toContain(serviceAccountToken);
 	});
 });

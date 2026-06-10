@@ -41,7 +41,7 @@
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
-		"openclaw": "^2026.5.7",
+		"openclaw": "^2026.6.5",
 		"vitest": "^4.1.5"
 	}
 }

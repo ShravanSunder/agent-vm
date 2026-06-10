@@ -210,4 +210,11 @@ export interface GatewayLifecycle {
 	 * Example: writing auth-profiles.json from 1Password.
 	 */
 	prepareHostState?(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void>;
+
+	/**
+	 * Optional hook to resolve host-state secret dependencies without writing
+	 * host state. Protected restarts use this before closing a live gateway so
+	 * secret-resolution failures do not strand the zone without a VM.
+	 */
+	preflightHostState?(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void>;
 }

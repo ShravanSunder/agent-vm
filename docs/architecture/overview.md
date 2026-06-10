@@ -320,6 +320,7 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
   |     bootstrapCommand               Setup shell env, install packages
   |     startCommand                   Launch the gateway process
   |     healthCheck                    HTTP or command-based readiness probe
+  |     serviceHealthCheck?            Optional service-liveness probe
   |     guestListenPort                Port the process listens on inside VM
   |     logPath                        Guest-side log file path
   |
@@ -341,7 +342,8 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
 | **TCP hosts** | Controller + all tool VM slots + websocket bypass | Controller only |
 | **Bootstrap** | Write shell/admin profiles, configure bashrc, write runtime secret env files | Conditionally install worker tarball from `/state/` |
 | **Start command** | Source runtime secrets, then run `openclaw gateway --port 18789` | `agent-vm-worker serve --port 18789 --config ...` |
-| **Health check** | HTTP GET `:18789/readyz` | HTTP GET `:18789/health` |
+| **Readiness check** | HTTP GET `:18789/readyz` | HTTP GET `:18789/health` |
+| **Service-liveness check** | HTTP GET `:18789/health` | HTTP GET `:18789/health` |
 | **prepareHostState** | Writes effective-openclaw.json (config + env SecretRef), writes configured per-agent auth profile files | None |
 | **Rootfs mode** | `cow` (copy-on-write) | `cow` (copy-on-write) |
 
@@ -406,7 +408,7 @@ The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
     |-- 9. Create managed VM         createManagedVm(vmSpec) -> ManagedVm
     |-- 10. Bootstrap                vm.exec(processSpec.bootstrapCommand)
     |-- 11. Start process            vm.exec(processSpec.startCommand)
-    |-- 12. Wait for readiness       poll healthCheck (HTTP 2xx or exit 0, max 30 attempts)
+    |-- 12. Wait for service health  poll serviceHealthCheck ?? healthCheck (HTTP 2xx or exit 0)
     |-- 13. Set ingress routes       vm.setIngressRoutes([{ port, prefix: '/' }])
     |-- 14. Enable ingress           vm.enableIngress({ listenPort, bufferResponseBody: false, ...zone.gateway.ingress })
     |-- 15. Write runtime record     writeGatewayRuntimeRecord() for crash recovery
@@ -525,7 +527,7 @@ Secrets are resolved on the host and delivered to VMs through two channels. Host
   system.jsonc
     |
     |  host.secretsProvider.tokenSource
-    |    -> resolve 1Password service account token (op-cli | env | keychain)
+    |    -> resolve 1Password service account token (env | keychain)
     v
   Composite Secret Resolver
     |  Dispatches by SecretRef.source:

@@ -1503,6 +1503,7 @@ describe('runAgentVmCli', () => {
 				collectDynamicDoctorChecks: async () => [],
 				isGatewayImageCached: async () => true,
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					schemaVersion: 1,
@@ -1616,6 +1617,7 @@ describe('runAgentVmCli', () => {
 				}),
 				isGatewayImageCached: async () => true,
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					schemaVersion: 1,
@@ -1737,6 +1739,7 @@ describe('runAgentVmCli', () => {
 				}),
 				isGatewayImageCached: async () => true,
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					schemaVersion: 1,
@@ -2009,6 +2012,21 @@ describe('runAgentVmCli', () => {
 					},
 				],
 			})),
+			getZoneHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/readyz',
+				zoneId: 'shravan',
+			})),
+			getZoneHealthSnapshot: vi.fn(async () => ({
+				healthy: true,
+				issues: [],
+				zoneId: 'shravan',
+			})),
+			getZoneServiceHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/health',
+				zoneId: 'shravan',
+			})),
 			getZoneLogs: vi.fn(async () => ({ output: 'logs', zoneId: 'shravan' })),
 			listLeases: vi.fn(async () => []),
 			peekLease: vi.fn(async () => ({
@@ -2049,6 +2067,7 @@ describe('runAgentVmCli', () => {
 				listBackups: () => [],
 			}),
 			resolveGondolinMinimumZigVersion: async () => '0.15.2',
+			probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
 				schemaVersion: 1,
@@ -2140,9 +2159,13 @@ describe('runAgentVmCli', () => {
 		try {
 			for (const command of [
 				['controller', 'status'],
+				['controller', 'health', '--zone', 'shravan'],
+				['controller', 'health-snapshot', '--zone', 'shravan'],
+				['controller', 'service-health', '--zone', 'shravan'],
 				['controller', 'logs', '--zone', 'shravan'],
 				['controller', 'destroy', '--zone', 'shravan', '--purge'],
 				['controller', 'upgrade', '--zone', 'shravan'],
+				['controller', 'credentials', 'check', '--zone', 'shravan'],
 				['controller', 'credentials', 'refresh', '--zone', 'shravan'],
 			] as const) {
 				// oxlint-disable-next-line no-await-in-loop -- commands intentionally run serially against shared mocks
@@ -2171,11 +2194,15 @@ describe('runAgentVmCli', () => {
 		}
 
 		expect(controllerClient.getControllerStatus).toHaveBeenCalled();
+		expect(controllerClient.getZoneHealth).toHaveBeenCalledWith('shravan');
+		expect(controllerClient.getZoneHealthSnapshot).toHaveBeenCalledWith('shravan');
+		expect(controllerClient.getZoneServiceHealth).toHaveBeenCalledWith('shravan');
 		expect(controllerClient.getZoneLogs).toHaveBeenCalledWith('shravan');
 		expect(controllerClient.destroyZone).toHaveBeenCalledWith('shravan', true);
 		expect(controllerClient.upgradeZone).toHaveBeenCalledWith('shravan');
 		expect(controllerClient.refreshZoneCredentials).toHaveBeenCalledWith('shravan');
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
+		expect(outputs.join('\n')).toContain('"resolvedSecretCount": 1');
 	});
 
 	it('routes controller ssh through the gateway-token-loaded ssh command handler', async () => {
@@ -2913,6 +2940,7 @@ describe('runAgentVmCli', () => {
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -3081,6 +3109,7 @@ describe('runAgentVmCli', () => {
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},

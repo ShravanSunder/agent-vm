@@ -28,7 +28,7 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 			},
 		},
 		openAiCodexCliVersion: '0.134.0',
-		openClawVersion: '2026.5.20',
+		openClawVersion: '2026.6.5',
 	};
 }
 
@@ -48,7 +48,7 @@ describe('managed image release', () => {
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
 			tag: '2026.05.27.1',
 		});
-		expect(release.openClawVersion).toBe('2026.5.20');
+		expect(release.openClawVersion).toBe('2026.6.5');
 		expect(release.openAiCodexCliVersion).toBe('0.134.0');
 		expect(release.baseImages['tool-vm'].tag).not.toMatch(/^0\.0\.\d+$/u);
 	});
@@ -114,7 +114,7 @@ describe('managed image release', () => {
 			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.27.1 AS openclaw-runtime',
 		);
 		const openClawInstallIndex = generatedDockerfile.indexOf(
-			'RUN pnpm add -g "openclaw@2026.5.20" "@openclaw/codex@2026.5.20" "@openclaw/discord@2026.5.20"',
+			'RUN pnpm add -g "openclaw@2026.6.5" "@openclaw/codex@2026.6.5" "@openclaw/discord@2026.6.5"',
 		);
 		const openClawPostinstallIndex = generatedDockerfile.indexOf(
 			'(cd "$openclaw_package_root" && node scripts/postinstall-bundled-plugins.mjs)',

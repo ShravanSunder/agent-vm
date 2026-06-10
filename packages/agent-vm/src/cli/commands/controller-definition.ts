@@ -23,7 +23,15 @@ function createControllerOperationSubcommand(
 	io: CliIo,
 	dependencies: CliDependencies,
 	options: {
-		readonly name: 'destroy' | 'logs' | 'status' | 'stop' | 'upgrade';
+		readonly name:
+			| 'destroy'
+			| 'health'
+			| 'health-snapshot'
+			| 'logs'
+			| 'service-health'
+			| 'status'
+			| 'stop'
+			| 'upgrade';
 		readonly description: string;
 		readonly supportsPurge?: boolean;
 		readonly supportsZone?: boolean;
@@ -181,6 +189,21 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				description: 'Show controller status',
 				name: 'status',
 			}),
+			health: createControllerOperationSubcommand(io, dependencies, {
+				description: 'Run the configured live gateway health probe for a zone',
+				name: 'health',
+				supportsZone: true,
+			}),
+			'health-snapshot': createControllerOperationSubcommand(io, dependencies, {
+				description: 'Show the latest in-memory health snapshot for a zone',
+				name: 'health-snapshot',
+				supportsZone: true,
+			}),
+			'service-health': createControllerOperationSubcommand(io, dependencies, {
+				description: 'Run the live gateway service liveness probe for a zone',
+				name: 'service-health',
+				supportsZone: true,
+			}),
 			ssh: command({
 				name: 'ssh',
 				description: 'Open an SSH session into the gateway VM',
@@ -228,6 +251,25 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				name: 'credentials',
 				description: 'Manage credentials',
 				cmds: {
+					check: command({
+						name: 'check',
+						description: 'Check zone credential resolution without refreshing the gateway',
+						args: {
+							config: createConfigOption(),
+							zone: createZoneOption(),
+						},
+						handler: async ({ config, zone }) => {
+							const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+							const selectedZone = requireZone(systemConfig, zone);
+							await runControllerOperationCommand({
+								dependencies,
+								io,
+								restArguments: appendZoneArgument(['check'], selectedZone.id),
+								subcommand: 'credentials',
+								systemConfig,
+							});
+						},
+					}),
 					refresh: command({
 						name: 'refresh',
 						description: 'Refresh zone credentials',
