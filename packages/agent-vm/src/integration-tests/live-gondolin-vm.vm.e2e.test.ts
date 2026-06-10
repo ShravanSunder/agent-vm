@@ -1,7 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 
 import { createManagedVm } from '@agent-vm/gondolin-adapter';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
@@ -15,6 +14,7 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
  */
 import { describe, it, expect, afterAll } from 'vitest';
 
+import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
@@ -43,7 +43,7 @@ async function fetchIngressUntilReady(url: string): Promise<{
 			lastError = error instanceof Error ? error.message : String(error);
 		}
 		// oxlint-disable-next-line no-await-in-loop -- ingress readiness has no event source; use bounded protocol retry backoff.
-		await waitForRetryInterval(ingressRetryIntervalMs);
+		await waitForProtocolRetryInterval(ingressRetryIntervalMs);
 	}
 	throw new Error(
 		`Ingress did not become ready within ${String(ingressReadyTimeoutMs)}ms. Last error: ${lastError}`,

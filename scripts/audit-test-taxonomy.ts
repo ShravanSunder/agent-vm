@@ -2,6 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import * as ts from 'typescript';
+
 const allowedTestSuffixes = [
 	'.unit.test.ts',
 	'.unit.spec.ts',
@@ -47,6 +49,8 @@ const e2eWallClockSleepPatterns: readonly RegExp[] = [
 	/\bawait\s+sleep\s*\(/u,
 	/\bawait\s+delay\s*\(/u,
 ];
+
+const timerPromisesModuleSpecifiers = new Set(['node:timers/promises', 'timers/promises']);
 
 async function collectTestFiles(rootPath: string): Promise<readonly string[]> {
 	const entries = await readdir(rootPath, { withFileTypes: true });
@@ -191,6 +195,87 @@ export function classifyWallClockWaitViolation(filePath: string, source: string)
 	return null;
 }
 
+export function classifyTimerPromisesImportViolation(
+	filePath: string,
+	source: string,
+): string | null {
+	if (
+		(isUnitTest(filePath) || isIntegrationTest(filePath) || isE2eTest(filePath)) &&
+		importsTimerPromises(source)
+	) {
+		return `${filePath}: tests must use named protocol wait helpers instead of importing node:timers/promises directly`;
+	}
+	return null;
+}
+
+function importsTimerPromises(source: string): boolean {
+	const sourceFile = ts.createSourceFile(
+		'test-taxonomy-source.ts',
+		source,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TS,
+	);
+	let found = false;
+	const isTimerPromisesSpecifier = (specifier: ts.StringLiteral): boolean =>
+		timerPromisesModuleSpecifiers.has(specifier.text);
+	const visit = (node: ts.Node): void => {
+		if (found) {
+			return;
+		}
+		if (
+			ts.isImportDeclaration(node) &&
+			ts.isStringLiteral(node.moduleSpecifier) &&
+			isTimerPromisesSpecifier(node.moduleSpecifier)
+		) {
+			found = true;
+			return;
+		}
+		if (
+			ts.isExportDeclaration(node) &&
+			node.moduleSpecifier !== undefined &&
+			ts.isStringLiteral(node.moduleSpecifier) &&
+			isTimerPromisesSpecifier(node.moduleSpecifier)
+		) {
+			found = true;
+			return;
+		}
+		if (
+			ts.isImportEqualsDeclaration(node) &&
+			ts.isExternalModuleReference(node.moduleReference) &&
+			ts.isStringLiteral(node.moduleReference.expression) &&
+			isTimerPromisesSpecifier(node.moduleReference.expression)
+		) {
+			found = true;
+			return;
+		}
+		if (
+			ts.isCallExpression(node) &&
+			node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+			node.arguments.length === 1 &&
+			ts.isStringLiteral(node.arguments[0]) &&
+			isTimerPromisesSpecifier(node.arguments[0])
+		) {
+			found = true;
+			return;
+		}
+		if (
+			ts.isCallExpression(node) &&
+			ts.isIdentifier(node.expression) &&
+			node.expression.text === 'require' &&
+			node.arguments.length === 1 &&
+			ts.isStringLiteral(node.arguments[0]) &&
+			isTimerPromisesSpecifier(node.arguments[0])
+		) {
+			found = true;
+			return;
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(sourceFile);
+	return found;
+}
+
 async function collectViolations(): Promise<readonly string[]> {
 	const testFiles = await listTrackedTestFiles();
 	const fileViolations = await Promise.all(
@@ -217,6 +302,13 @@ async function collectViolations(): Promise<readonly string[]> {
 			const boundaryViolation = classifyUnitBoundaryViolation(filePath, rawSource);
 			if (boundaryViolation !== null) {
 				violations.push(boundaryViolation);
+			}
+			const timerPromisesImportViolation = classifyTimerPromisesImportViolation(
+				filePath,
+				rawSource,
+			);
+			if (timerPromisesImportViolation !== null) {
+				violations.push(timerPromisesImportViolation);
 			}
 			const wallClockViolation = classifyWallClockWaitViolation(
 				filePath,

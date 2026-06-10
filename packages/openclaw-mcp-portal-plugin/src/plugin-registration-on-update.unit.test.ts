@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { OpenClawToolFactory } from './openclaw-plugin-api.js';
 
 describe('native MCP Portal onUpdate forwarding', () => {
-	it('forwards core progress events through OpenClaw onUpdate', async () => {
+	it('forwards core stream events through OpenClaw onUpdate', async () => {
 		vi.resetModules();
 		const coreResult = {
 			items: [{ requestId: 'read-1', status: 'success' }],
@@ -25,6 +25,17 @@ describe('native MCP Portal onUpdate forwarding', () => {
 						requestId: 'read-1',
 						total: 10,
 					};
+					yield {
+						content: { text: 'first chunk', type: 'text' },
+						kind: 'partial_content',
+						requestId: 'read-1',
+					};
+					yield {
+						kind: 'upstream_notification',
+						method: 'notifications/message',
+						params: { level: 'info' },
+						requestId: 'read-1',
+					};
 					yield { kind: 'completed', result: coreResult };
 				},
 				close,
@@ -36,6 +47,17 @@ describe('native MCP Portal onUpdate forwarding', () => {
 								readonly progress: number;
 								readonly requestId: string;
 								readonly total: number;
+						  }
+						| {
+								readonly content: { readonly text: string; readonly type: 'text' };
+								readonly kind: 'partial_content';
+								readonly requestId: string;
+						  }
+						| {
+								readonly kind: 'upstream_notification';
+								readonly method: string;
+								readonly params: { readonly level: string };
+								readonly requestId: string;
 						  }
 						| { readonly kind: 'completed'; readonly result: typeof coreResult }
 					>,
@@ -117,6 +139,17 @@ describe('native MCP Portal onUpdate forwarding', () => {
 				requestId: 'read-1',
 				total: 10,
 				type: 'mcp_portal_progress',
+			});
+			expect(onUpdate).toHaveBeenCalledWith({
+				content: { text: 'first chunk', type: 'text' },
+				requestId: 'read-1',
+				type: 'mcp_portal_partial_content',
+			});
+			expect(onUpdate).toHaveBeenCalledWith({
+				method: 'notifications/message',
+				params: { level: 'info' },
+				requestId: 'read-1',
+				type: 'mcp_portal_upstream_notification',
 			});
 		} finally {
 			await rm(workspace, { force: true, recursive: true });

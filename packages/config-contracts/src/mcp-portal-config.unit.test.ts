@@ -251,6 +251,69 @@ describe('loadMcpPortalConfig', () => {
 		expect(profile.approval.annotationPolicy).toBe('always-require-approval');
 	});
 
+	it('compiles namespace approval fields only for active namespaces', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"agents": { "beta": { "profile": "default" } },
+			"profiles": {
+				"default": {
+					"namespaces": {
+						"linear": {
+							"tools": { "allow": ["list_issues", "create_issue"] },
+							"calls": {
+								"withoutApproval": { "allow": ["list_issues"] },
+								"requiresApproval": { "allow": ["create_issue"] }
+							},
+							"approval": {
+								"allowWithoutApproval": ["list_teams"],
+								"alwaysAsk": ["delete_issue"],
+								"trustedAnnotations": true,
+								"write": ["create_issue", "delete_issue"]
+							}
+						},
+						"inactive": {
+							"tools": { "allow": [] },
+							"calls": {
+								"withoutApproval": { "allow": ["read_hidden"] },
+								"requiresApproval": { "allow": ["write_hidden"] }
+							},
+							"approval": {
+								"allowWithoutApproval": ["bypass_hidden"],
+								"alwaysAsk": ["force_hidden"],
+								"trustedAnnotations": true,
+								"write": ["write_hidden"]
+							}
+						}
+					}
+				}
+			}
+		}`);
+
+		const config = await loadMcpPortalConfig(configPath);
+		const profile = resolveMcpPortalProfile(config, 'default');
+
+		expect(profile.enabledNamespaces).toEqual(['linear']);
+		expect(profile.approval.allowWithoutApprovalTools).toEqual([
+			{ namespace: 'linear', toolName: 'list_issues' },
+			{ namespace: 'linear', toolName: 'list_teams' },
+		]);
+		expect(profile.approval.alwaysAskTools).toEqual([
+			{ namespace: 'linear', toolName: 'create_issue' },
+			{ namespace: 'linear', toolName: 'delete_issue' },
+		]);
+		expect(profile.approval.trustedAnnotationNamespaces).toEqual(['linear']);
+		expect(profile.approval.writeTools).toEqual([
+			{ namespace: 'linear', toolName: 'create_issue' },
+			{ namespace: 'linear', toolName: 'delete_issue' },
+		]);
+		expect(profile.approval.callPoliciesByNamespace).toEqual({
+			linear: {
+				requiresApproval: { allow: ['create_issue'], deny: [] },
+				withoutApproval: { allow: ['list_issues'], deny: [] },
+			},
+		});
+	});
+
 	it('requires each namespace tool policy to declare an allow selector', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,

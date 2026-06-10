@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	formatVitestEvidenceSummary,
 	normalizeVitestFilters,
 	parseVitestJsonResults,
 	resolveVitestJsonOutputFilePath,
@@ -101,5 +102,33 @@ describe('validateProofProjectResults', () => {
 
 		expect(result.ok).toBe(true);
 		expect(result.messages).toEqual([]);
+	});
+
+	it('includes proof counts and artifact path when result path is provided', () => {
+		const result = validateProofProjectResults(
+			'e2e-vm',
+			{
+				numPendingTests: 0,
+				numTodoTests: 0,
+				numTotalTests: 10,
+				testResults: [{ assertionResults: [], name: '/repo/packages/example.vm.e2e.test.ts' }],
+			},
+			'/repo/tmp/vitest-results/e2e-vm/results.json',
+		);
+
+		expect(result.summary).toEqual({
+			pendingTests: 0,
+			projectName: 'e2e-vm',
+			resultFilePath: '/repo/tmp/vitest-results/e2e-vm/results.json',
+			testFiles: 1,
+			todoTests: 0,
+			totalTests: 10,
+		});
+		if (result.summary === undefined) {
+			throw new Error('expected proof summary');
+		}
+		expect(formatVitestEvidenceSummary(result.summary)).toBe(
+			'e2e-vm: 10 tests, 1 files, 0 skipped, 0 todo, result=/repo/tmp/vitest-results/e2e-vm/results.json',
+		);
 	});
 });

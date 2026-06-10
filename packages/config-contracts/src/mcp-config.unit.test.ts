@@ -47,6 +47,48 @@ describe('loadMcpConfig', () => {
 		]);
 	});
 
+	it('resolves stdio MCP providers with command, args, cwd, and env', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"localSearch": {
+					"kind": "mcp",
+					"namespace": "local-search",
+					"transport": {
+						"kind": "stdio",
+						"command": "node",
+						"args": ["dist/server.js", "--stdio"],
+						"cwd": "/work/mcp/local-search",
+						"env": {
+							"LOCAL_SEARCH_TOKEN": {
+								"source": "environment",
+								"name": "LOCAL_SEARCH_TOKEN"
+							}
+						}
+					}
+				}
+			}
+		}`);
+
+		const config = await loadMcpConfig(configPath);
+
+		expect(mcpConfigToResolvedProviders(config)).toEqual([
+			{
+				args: ['dist/server.js', '--stdio'],
+				command: 'node',
+				cwd: '/work/mcp/local-search',
+				env: {
+					LOCAL_SEARCH_TOKEN: {
+						name: 'LOCAL_SEARCH_TOKEN',
+						source: 'environment',
+					},
+				},
+				namespace: 'local-search',
+				transport: 'stdio',
+			},
+		]);
+	});
+
 	it('rejects unknown provider fields', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,
