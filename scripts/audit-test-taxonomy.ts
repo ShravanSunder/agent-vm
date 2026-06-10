@@ -50,6 +50,8 @@ const e2eWallClockSleepPatterns: readonly RegExp[] = [
 	/\bawait\s+delay\s*\(/u,
 ];
 
+const timerPromisesModuleSpecifiers = new Set(['node:timers/promises', 'timers/promises']);
+
 async function collectTestFiles(rootPath: string): Promise<readonly string[]> {
 	const entries = await readdir(rootPath, { withFileTypes: true });
 	const files = await Promise.all(
@@ -215,6 +217,8 @@ function importsTimerPromises(source: string): boolean {
 		ts.ScriptKind.TS,
 	);
 	let found = false;
+	const isTimerPromisesSpecifier = (specifier: ts.StringLiteral): boolean =>
+		timerPromisesModuleSpecifiers.has(specifier.text);
 	const visit = (node: ts.Node): void => {
 		if (found) {
 			return;
@@ -222,7 +226,25 @@ function importsTimerPromises(source: string): boolean {
 		if (
 			ts.isImportDeclaration(node) &&
 			ts.isStringLiteral(node.moduleSpecifier) &&
-			node.moduleSpecifier.text === 'node:timers/promises'
+			isTimerPromisesSpecifier(node.moduleSpecifier)
+		) {
+			found = true;
+			return;
+		}
+		if (
+			ts.isExportDeclaration(node) &&
+			node.moduleSpecifier !== undefined &&
+			ts.isStringLiteral(node.moduleSpecifier) &&
+			isTimerPromisesSpecifier(node.moduleSpecifier)
+		) {
+			found = true;
+			return;
+		}
+		if (
+			ts.isImportEqualsDeclaration(node) &&
+			ts.isExternalModuleReference(node.moduleReference) &&
+			ts.isStringLiteral(node.moduleReference.expression) &&
+			isTimerPromisesSpecifier(node.moduleReference.expression)
 		) {
 			found = true;
 			return;
@@ -232,7 +254,18 @@ function importsTimerPromises(source: string): boolean {
 			node.expression.kind === ts.SyntaxKind.ImportKeyword &&
 			node.arguments.length === 1 &&
 			ts.isStringLiteral(node.arguments[0]) &&
-			node.arguments[0].text === 'node:timers/promises'
+			isTimerPromisesSpecifier(node.arguments[0])
+		) {
+			found = true;
+			return;
+		}
+		if (
+			ts.isCallExpression(node) &&
+			ts.isIdentifier(node.expression) &&
+			node.expression.text === 'require' &&
+			node.arguments.length === 1 &&
+			ts.isStringLiteral(node.arguments[0]) &&
+			isTimerPromisesSpecifier(node.arguments[0])
 		) {
 			found = true;
 			return;

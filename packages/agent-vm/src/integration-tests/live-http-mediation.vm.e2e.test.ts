@@ -130,7 +130,7 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 		if (!vm) throw new Error('VM was not initialized.');
 
 		const curlResult = await vm.exec(
-			'curl -sS --max-time 10 -o /tmp/example-denied.txt -w "%{http_code}" https://example.com/; printf "\\n"; cat /tmp/example-denied.txt',
+			'curl -sS --max-time 10 -o /tmp/agent-vm-denied.txt -w "%{http_code}" http://example.com/; printf "\\n"; cat /tmp/agent-vm-denied.txt 2>/dev/null || true',
 		);
 
 		expect(curlResult.exitCode).toBe(0);

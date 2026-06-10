@@ -111,6 +111,30 @@ describe('classifyTimerPromisesImportViolation', () => {
 				"const timers = await import('node:timers/promises');",
 			),
 		).toContain('tests must use named protocol wait helpers');
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/example.vm.e2e.test.ts',
+				"import { setTimeout as waitForRetryInterval } from 'timers/promises';",
+			),
+		).toContain('tests must use named protocol wait helpers');
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/example.vm.e2e.test.ts',
+				"const timers = require('node:timers/promises');",
+			),
+		).toContain('tests must use named protocol wait helpers');
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/example.vm.e2e.test.ts',
+				"export { setTimeout as waitForRetryInterval } from 'node:timers/promises';",
+			),
+		).toContain('tests must use named protocol wait helpers');
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/example.vm.e2e.test.ts',
+				"import timers = require('node:timers/promises');",
+			),
+		).toContain('tests must use named protocol wait helpers');
 	});
 
 	it('allows non-test protocol wait helpers to own timer-promises imports', () => {
