@@ -852,7 +852,7 @@ When Discord starts `403` / `1006` again, capture state before any manual
 restart:
 
 ```sh
-pnpm exec agent-vm controller status --config config/system.jsonc --zone sunfam
+pnpm exec agent-vm controller status --config config/system.jsonc
 pnpm exec agent-vm controller health --config config/system.jsonc --zone sunfam
 pnpm exec agent-vm controller service-health --config config/system.jsonc --zone sunfam
 pnpm exec agent-vm controller health-snapshot --config config/system.jsonc --zone sunfam

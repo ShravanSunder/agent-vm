@@ -231,7 +231,7 @@ else
 	print_summary "skipped=set AGENT_VM_PROOF_RUN_REFRESH=1 to exercise runtime secret refresh"
 fi
 
-record_command "controller-status" pnpm exec agent-vm controller status --config "$CONFIG_PATH" --zone "$ZONE_ID"
+record_command "controller-status" pnpm exec agent-vm controller status --config "$CONFIG_PATH"
 record_command "controller-health-readiness" pnpm exec agent-vm controller health --config "$CONFIG_PATH" --zone "$ZONE_ID"
 record_command "controller-service-health-liveness" pnpm exec agent-vm controller service-health --config "$CONFIG_PATH" --zone "$ZONE_ID"
 record_command "controller-health-snapshot" pnpm exec agent-vm controller health-snapshot --config "$CONFIG_PATH" --zone "$ZONE_ID"
