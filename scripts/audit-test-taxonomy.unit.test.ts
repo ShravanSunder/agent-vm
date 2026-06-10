@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	classifyTimerPromisesImportViolation,
 	classifyUnitBoundaryViolation,
 	classifyWallClockWaitViolation,
 	hasAllowedTestSuffix,
@@ -81,6 +82,56 @@ describe('classifyWallClockWaitViolation', () => {
 			classifyWallClockWaitViolation(
 				'packages/example/example.openclaw.e2e.test.ts',
 				'const timer = setTimeout(() => reject(new Error("protocol timeout")), timeoutMs);',
+			),
+		).toBeNull();
+	});
+});
+
+describe('classifyTimerPromisesImportViolation', () => {
+	it('rejects direct timer-promises imports in tests', () => {
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/example.vm.e2e.test.ts',
+				"import { setTimeout as waitForRetryInterval } from 'node:timers/promises';",
+			),
+		).toContain('tests must use named protocol wait helpers');
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/example.vm.e2e.test.ts',
+				[
+					'import {',
+					'  setTimeout as waitForRetryInterval,',
+					"} from 'node:timers/promises';",
+				].join('\n'),
+			),
+		).toContain('tests must use named protocol wait helpers');
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/example.vm.e2e.test.ts',
+				"const timers = await import('node:timers/promises');",
+			),
+		).toContain('tests must use named protocol wait helpers');
+	});
+
+	it('allows non-test protocol wait helpers to own timer-promises imports', () => {
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/e2e-protocol-wait.ts',
+				"import { setTimeout as waitForRetryInterval } from 'node:timers/promises';",
+			),
+		).toBeNull();
+	});
+
+	it('ignores timer-promises import examples inside fixture strings', () => {
+		expect(
+			classifyTimerPromisesImportViolation(
+				'packages/example/example.unit.test.ts',
+				[
+					'const fixture = [',
+					'  "import { setTimeout as waitForRetryInterval } from \'node:timers/promises\';",',
+					'  "const timers = await import(\'node:timers/promises\');",',
+					'].join("\\n");',
+				].join('\n'),
 			),
 		).toBeNull();
 	});

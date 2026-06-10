@@ -172,6 +172,9 @@ document the exact shared resource in the test and keep that exception narrow.
 E2E test control flow must wait on real process, filesystem, protocol, or VM
 events instead of wall-clock sleeps. A protocol timeout that rejects a hung
 WebSocket/request is allowed; an `await sleep(...)` between probes is not.
+When a bounded protocol retry has no event source, use a named helper such as
+`waitForProtocolRetryInterval`; test files must not import
+`node:timers/promises` directly.
 Live e2e tests must not write deployment `config/`, `runtime/`, `state/`, or
 `zone-files/` under the source checkout. Use the e2e harness scaffolds so each
 deployment gets an owned OS-temp project root, and use `AGENT_VM_E2E_CACHE_DIR`

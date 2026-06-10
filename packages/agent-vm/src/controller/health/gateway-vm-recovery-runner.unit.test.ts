@@ -5,11 +5,68 @@ import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-st
 import { ControllerZoneRuntimeStartError } from '../zone-runtimes/zone-runtime-errors.js';
 import type { GatewayZoneRuntimeHandle } from '../zone-runtimes/zone-runtime-types.js';
 import {
+	classifyGatewayRecoveryRestartError,
 	createGatewayVmRecoveryRunner,
 	type RecoverableGatewayRuntime,
 } from './gateway-vm-recovery-runner.js';
 
 describe('createGatewayVmRecoveryRunner', () => {
+	it('observes only when the controller is stopping', async () => {
+		const getRecoverableGatewayRuntime = vi.fn(() => createRuntime({}));
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime,
+			getRuntimeReadiness: () => ({
+				ready: false,
+				reason: 'shutdown requested',
+				state: 'stopping',
+			}),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog: vi.fn(),
+		});
+
+		const result = await recoverGatewayVm({
+			consecutiveFailures: 1,
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+
+		expect(result).toEqual({
+			action: 'observe-only',
+			elapsedMs: 0,
+			errorCode: 'controller-stopping',
+			result: 'failed',
+		});
+		expect(getRecoverableGatewayRuntime).not.toHaveBeenCalled();
+	});
+
+	it('observes only when the runtime is unavailable', async () => {
+		const writeLog = vi.fn();
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime: () => {
+				throw new Error('zone runtime not found');
+			},
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog,
+		});
+
+		const result = await recoverGatewayVm({
+			consecutiveFailures: 1,
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+
+		expect(result).toEqual({
+			action: 'observe-only',
+			elapsedMs: 0,
+			errorCode: 'runtime-unavailable',
+			result: 'failed',
+		});
+		expect(writeLog).toHaveBeenCalledWith(expect.stringContaining('zone runtime not found'));
+	});
+
 	it('preserves refresh failure operation id and classifies it as secret resolution', async () => {
 		const runtime = createRuntime({
 			getLifecycleState: () => ({
@@ -131,6 +188,140 @@ describe('createGatewayVmRecoveryRunner', () => {
 		});
 	});
 
+	it('fails cold-start verification when the new snapshot lacks running VM identity', async () => {
+		const runtime = createRuntime({
+			coldStart: async () => ({ leaseReleaseFailureCount: 2, operationId: 'cold-start-op' }),
+			getLifecycleState: () => ({
+				coldStartEligible: true,
+				error: { code: 'vm-process-missing', message: 'missing' },
+				kind: 'failed',
+			}),
+			getSnapshot: () => ({
+				gateway: {
+					ingress: { host: '127.0.0.1', port: 18_791 },
+					vm: { id: 'new-gateway' },
+				},
+				lifecycleState: 'running',
+			}),
+		});
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime: () => runtime,
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog: vi.fn(),
+		});
+
+		const result = await recoverGatewayVm({
+			consecutiveFailures: 1,
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+
+		expect(result).toEqual({
+			action: 'gateway-vm-cold-start',
+			elapsedMs: 0,
+			errorCode: 'cold-start-verification-failed',
+			result: 'failed',
+		});
+	});
+
+	it('fails restart verification when the replacement VM identity does not change', async () => {
+		const runtime = createRuntime({
+			getLifecycleState: () => ({
+				gateway: createGatewayHandle('same-gateway', 111),
+				kind: 'running',
+			}),
+			getSnapshot: () => ({
+				bootedAt: '2026-06-07T10:00:00.000Z',
+				gateway: {
+					ingress: { host: '127.0.0.1', port: 18_791 },
+					vm: { hostPid: 111, id: 'same-gateway' },
+				},
+				lifecycleState: 'running',
+			}),
+			restart: async () => ({ leaseReleaseFailureCount: 0, operationId: 'restart-op' }),
+		});
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime: () => runtime,
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog: vi.fn(),
+		});
+
+		const result = await recoverGatewayVm({
+			consecutiveFailures: 1,
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+
+		expect(result).toEqual({
+			action: 'gateway-vm-restart',
+			elapsedMs: 0,
+			errorCode: 'restart-verification-failed',
+			oldBootedAt: '2026-06-07T10:00:00.000Z',
+			oldHostPid: 111,
+			oldVmId: 'same-gateway',
+			result: 'failed',
+		});
+	});
+
+	it('preserves restart operation id when replacement VM identity changes', async () => {
+		let snapshot = {
+			bootedAt: '2026-06-07T10:00:00.000Z',
+			gateway: {
+				ingress: { host: '127.0.0.1', port: 18_791 },
+				vm: { hostPid: 111, id: 'old-gateway' },
+			},
+			lifecycleState: 'running' as const,
+		};
+		const runtime = createRuntime({
+			getLifecycleState: () => ({
+				gateway: createGatewayHandle('old-gateway', 111),
+				kind: 'running',
+			}),
+			getSnapshot: () => snapshot,
+			restart: async () => {
+				snapshot = {
+					bootedAt: '2026-06-07T10:01:00.000Z',
+					gateway: {
+						ingress: { host: '127.0.0.1', port: 18_791 },
+						vm: { hostPid: 222, id: 'new-gateway' },
+					},
+					lifecycleState: 'running',
+				};
+				return { leaseReleaseFailureCount: 3, operationId: 'restart-op' };
+			},
+		});
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime: () => runtime,
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog: vi.fn(),
+		});
+
+		const result = await recoverGatewayVm({
+			consecutiveFailures: 1,
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+
+		expect(result).toEqual({
+			elapsedMs: 0,
+			leaseReleaseFailureCount: 3,
+			newBootedAt: '2026-06-07T10:01:00.000Z',
+			newHostPid: 222,
+			newVmId: 'new-gateway',
+			oldBootedAt: '2026-06-07T10:00:00.000Z',
+			oldHostPid: 111,
+			oldVmId: 'old-gateway',
+			operationId: 'restart-op',
+			result: 'ok',
+		});
+	});
+
 	it('preserves owner-unsafe classification when restart cleanup fails', async () => {
 		let lifecycleState: GatewayZoneLifecycleState = {
 			gateway: createGatewayHandle('old-gateway', 111),
@@ -178,6 +369,23 @@ describe('createGatewayVmRecoveryRunner', () => {
 			oldVmId: 'old-gateway',
 			result: 'failed',
 		});
+	});
+});
+
+describe('classifyGatewayRecoveryRestartError', () => {
+	it('classifies disk, secret, VM-create, and unknown restart failures', () => {
+		expect(
+			classifyGatewayRecoveryRestartError(Object.assign(new Error('full'), { code: 'ENOSPC' })),
+		).toBe('restart-disk-failure');
+		expect(classifyGatewayRecoveryRestartError(new Error('1Password credential unavailable'))).toBe(
+			'restart-secret-failure',
+		);
+		expect(classifyGatewayRecoveryRestartError(new Error('qemu vm.create failed'))).toBe(
+			'restart-vm-create-failed',
+		);
+		expect(classifyGatewayRecoveryRestartError(new Error('unexpected close'))).toBe(
+			'restart-threw',
+		);
 	});
 });
 

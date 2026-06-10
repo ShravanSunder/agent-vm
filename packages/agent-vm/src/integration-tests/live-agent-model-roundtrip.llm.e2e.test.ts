@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 
 import { describe, expect, it } from 'vitest';
 
 import { runBuildCommand } from '../cli/build-command.js';
 import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import {
 	createLiveRoundtripDeploymentConfig,
 	resolveLiveRoundtripCacheDir,
@@ -202,7 +202,7 @@ async function waitForControllerHealth(controllerPort: number): Promise<void> {
 			lastError = error instanceof Error ? error.message : String(error);
 		}
 		// oxlint-disable-next-line no-await-in-loop -- controller readiness has no event source from the runtime boundary.
-		await waitForRetryInterval(retryIntervalMs);
+		await waitForProtocolRetryInterval(retryIntervalMs);
 	}
 	throw new Error(
 		`Controller health did not report ready within ${String(timeoutMs)}ms. Last error: ${lastError}`,

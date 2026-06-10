@@ -32,6 +32,36 @@ function describeValue(value: unknown): string {
 	}
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function parseJsonRpcResult(text: string): Record<string, unknown> {
+	const dataLine = text
+		.split('\n')
+		.find((line) => line.startsWith('data:'))
+		?.slice('data:'.length)
+		.trim();
+	const rawPayload = dataLine ?? text;
+	const parsed: unknown = JSON.parse(rawPayload);
+	if (!isObjectRecord(parsed) || !isObjectRecord(parsed.result)) {
+		throw new Error(`Expected JSON-RPC result object, received ${text}`);
+	}
+	return parsed.result;
+}
+
+function readFirstTextContent(result: Record<string, unknown>): string {
+	const content = result.content;
+	if (
+		!Array.isArray(content) ||
+		!isObjectRecord(content[0]) ||
+		typeof content[0].text !== 'string'
+	) {
+		throw new Error('Expected first MCP content item to be text.');
+	}
+	return content[0].text;
+}
+
 describe('local-tool-mcp-server', () => {
 	let serverUrl: string | null = null;
 
@@ -100,5 +130,51 @@ describe('local-tool-mcp-server', () => {
 		});
 		expect(callResponse.status).toBe(200);
 		expect(callResponse.text).toContain('hello');
+	});
+
+	it('returns MCP tool errors for unknown and thrown tools over HTTP', async () => {
+		const tool: ToolDefinition = {
+			name: 'throw-tool',
+			description: 'Throws an error',
+			inputSchema: {},
+			execute: async () => {
+				throw new Error('tool exploded');
+			},
+		};
+
+		const server = await getOrCreateLocalToolMcpServer([tool]);
+		expect(server).not.toBeNull();
+		serverUrl = server?.url ?? null;
+		if (!serverUrl) {
+			throw new Error('Expected local MCP server URL.');
+		}
+
+		const unknownToolResponse = await postJson(serverUrl, {
+			jsonrpc: '2.0',
+			id: 'unknown',
+			method: 'tools/call',
+			params: {
+				name: 'missing-tool',
+				arguments: {},
+			},
+		});
+		const thrownToolResponse = await postJson(serverUrl, {
+			jsonrpc: '2.0',
+			id: 'thrown',
+			method: 'tools/call',
+			params: {
+				name: 'throw-tool',
+				arguments: {},
+			},
+		});
+
+		expect(unknownToolResponse.status).toBe(200);
+		const unknownToolResult = parseJsonRpcResult(unknownToolResponse.text);
+		expect(unknownToolResult.isError).toBe(true);
+		expect(readFirstTextContent(unknownToolResult)).toBe('Unknown tool: missing-tool');
+		expect(thrownToolResponse.status).toBe(200);
+		const thrownToolResult = parseJsonRpcResult(thrownToolResponse.text);
+		expect(thrownToolResult.isError).toBe(true);
+		expect(readFirstTextContent(thrownToolResult)).toBe('tool exploded');
 	});
 });

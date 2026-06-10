@@ -24,6 +24,16 @@ interface VitestJsonResults {
 interface EvidenceValidationResult {
 	readonly messages: readonly string[];
 	readonly ok: boolean;
+	readonly summary?: VitestEvidenceSummary | undefined;
+}
+
+export interface VitestEvidenceSummary {
+	readonly pendingTests: number;
+	readonly projectName: string;
+	readonly resultFilePath: string;
+	readonly testFiles: number;
+	readonly todoTests: number;
+	readonly totalTests: number;
 }
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -101,6 +111,7 @@ export function parseVitestJsonResults(rawJson: string): VitestJsonResults {
 export function validateProofProjectResults(
 	projectName: string,
 	results: VitestJsonResults,
+	resultFilePath?: string,
 ): EvidenceValidationResult {
 	const messages: string[] = [];
 	if (results.numTotalTests === 0) {
@@ -117,7 +128,25 @@ export function validateProofProjectResults(
 		);
 	}
 
-	return { messages, ok: messages.length === 0 };
+	return {
+		messages,
+		ok: messages.length === 0,
+		summary:
+			resultFilePath === undefined
+				? undefined
+				: {
+						pendingTests: results.numPendingTests,
+						projectName,
+						resultFilePath,
+						testFiles: results.testResults.length,
+						todoTests: results.numTodoTests,
+						totalTests: results.numTotalTests,
+					},
+	};
+}
+
+export function formatVitestEvidenceSummary(summary: VitestEvidenceSummary): string {
+	return `${summary.projectName}: ${String(summary.totalTests)} tests, ${String(summary.testFiles)} files, ${String(summary.pendingTests)} skipped, ${String(summary.todoTests)} todo, result=${summary.resultFilePath}`;
 }
 
 async function runVitestProject(
@@ -173,7 +202,7 @@ export async function runEvidenceProject(
 	await runVitestProject(projectName, outputFilePath, filters);
 
 	const results = parseVitestJsonResults(await readFile(outputFilePath, 'utf8'));
-	return validateProofProjectResults(projectName, results);
+	return validateProofProjectResults(projectName, results, outputFilePath);
 }
 
 export function normalizeVitestFilters(filters: readonly string[]): readonly string[] {
@@ -199,6 +228,9 @@ async function main(): Promise<void> {
 			process.stderr.write(`- ${message}\n`);
 		}
 		process.exit(1);
+	}
+	if (result.summary !== undefined) {
+		process.stdout.write(`${formatVitestEvidenceSummary(result.summary)}\n`);
 	}
 }
 
