@@ -92,7 +92,7 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('runOpenClawAuthCommand', () => {
-	it('runs OpenClaw provider login for openai-codex when requested', async () => {
+	it('runs OpenClaw provider login for openai when requested', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runOpenClawAuthCommand({
@@ -111,14 +111,14 @@ describe('runOpenClawAuthCommand', () => {
 				runInteractiveProcess,
 			},
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
-			provider: 'openai-codex',
+			provider: 'openai',
 			systemConfig,
 			zoneId: 'shravan',
 		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
-			expect.arrayContaining([expect.stringContaining('login --provider openai-codex')]),
+			expect.arrayContaining([expect.stringContaining('login --provider openai')]),
 		);
 	});
 

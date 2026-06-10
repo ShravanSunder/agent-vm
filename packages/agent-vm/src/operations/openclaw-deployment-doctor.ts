@@ -119,8 +119,8 @@ function resolveOpenClawModelName(model: unknown): string | undefined {
 	return typeof model.primary === 'string' ? model.primary : undefined;
 }
 
-function isOpenAiCodexModel(modelName: string | undefined): boolean {
-	return modelName?.startsWith('openai-codex/') === true || modelName === 'openai-codex';
+function isOpenAiModel(modelName: string | undefined): boolean {
+	return modelName?.startsWith('openai/') === true || modelName === 'openai';
 }
 
 function hasOpenAiProviderConfig(config: OpenClawDeploymentConfig): boolean {
@@ -149,13 +149,11 @@ function openAiProviderUsesPiRuntime(config: OpenClawDeploymentConfig): boolean 
 	return isObjectRecord(agentRuntime) && agentRuntime.id === 'pi';
 }
 
-function collectOpenClawCodexAgentIds(config: OpenClawDeploymentConfig): readonly string[] {
+function collectOpenClawOpenAiAgentIds(config: OpenClawDeploymentConfig): readonly string[] {
 	const defaultModelName = resolveOpenClawModelName(config.agents?.defaults?.model);
 	return (config.agents?.list ?? [])
 		.filter(isObjectRecord)
-		.filter((agent) =>
-			isOpenAiCodexModel(resolveOpenClawModelName(agent.model) ?? defaultModelName),
-		)
+		.filter((agent) => isOpenAiModel(resolveOpenClawModelName(agent.model) ?? defaultModelName))
 		.map((agent) => agent.id)
 		.filter((agentId): agentId is string => typeof agentId === 'string' && agentId.length > 0);
 }
@@ -219,7 +217,7 @@ function buildAgentAuthProfileChecks(
 	const configuredCodexHarnessAuthAgentIds = new Set(
 		target.configuredCodexHarnessAuthAgentIds ?? [],
 	);
-	return collectOpenClawCodexAgentIds(target.config).map((agentId) => {
+	return collectOpenClawOpenAiAgentIds(target.config).map((agentId) => {
 		const hasAuthProfile = configuredAuthProfileAgentIds.has(agentId);
 		const hasCodexHarnessAuth = configuredCodexHarnessAuthAgentIds.has(agentId);
 		const hasAuthMaterial = hasAuthProfile || hasCodexHarnessAuth;
@@ -229,7 +227,7 @@ function buildAgentAuthProfileChecks(
 			hint: hasAuthProfile
 				? `OpenClaw auth profile configured for agent ${agentId}`
 				: hasCodexHarnessAuth
-					? `Codex harness auth.json present for agent ${agentId}`
+					? `OpenAI OAuth auth.json present for agent ${agentId}`
 					: `Run agent-vm auth codex-harness --zone ${target.zoneId} --agent ${agentId} or configure gateway.authProfilesByAgent.${agentId}.`,
 		} satisfies DoctorCheck;
 	});
@@ -243,7 +241,7 @@ function buildCodexHarnessAuthReadErrorChecks(
 			({
 				name: `openclaw-codex-harness-auth-readable-${target.zoneId}-${readError.agentId}`,
 				ok: false,
-				hint: `Cannot read Codex harness auth.json at ${readError.path}: ${readError.message}`,
+				hint: `Cannot read OpenAI OAuth auth.json at ${readError.path}: ${readError.message}`,
 			}) satisfies DoctorCheck,
 	);
 }
@@ -359,7 +357,7 @@ export function buildOpenClawDeploymentDoctorChecks(
 				name: `openclaw-openai-provider-runtime-${target.zoneId}`,
 				ok: openAiProviderUsesPiRuntime(config),
 				hint: hasOpenAiProviderConfig(config)
-					? 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI API-key models do not get claimed by the Codex OAuth runtime.'
+					? 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI provider requests use the PI runtime.'
 					: 'No models.providers.openai config present.',
 			},
 			...buildCodexHarnessAuthReadErrorChecks(target),
@@ -380,7 +378,7 @@ async function collectCodexHarnessAuthAgentIds(
 ): Promise<CodexHarnessAuthScan> {
 	const agentIds: string[] = [];
 	const readErrors: CodexHarnessAuthReadError[] = [];
-	for (const agentId of collectOpenClawCodexAgentIds(config)) {
+	for (const agentId of collectOpenClawOpenAiAgentIds(config)) {
 		const authJsonPath = join(
 			zone.gateway.stateDir,
 			'agents',

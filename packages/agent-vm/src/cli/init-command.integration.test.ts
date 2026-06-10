@@ -911,10 +911,12 @@ describe('scaffoldAgentVmProject', () => {
 			'/pnpm/global/5/node_modules/@agent-vm',
 		]);
 		expect(openClawConfig.gateway.http.endpoints.chatCompletions.enabled).toBe(true);
-		expect(openClawConfig.agents.defaults.model.primary).toBe('openai-codex/gpt-5.5');
+		expect(openClawConfig.agents.defaults.model.primary).toBe('openai/gpt-5.5');
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
-		expect(openClawConfig.agents.defaults.models).toBeUndefined();
+		expect(openClawConfig.agents.defaults.models).toEqual({
+			'openai/gpt-5.5': { agentRuntime: { id: 'pi' } },
+		});
 		expect(openClawConfig.approvals).toEqual({
 			plugin: {
 				enabled: true,

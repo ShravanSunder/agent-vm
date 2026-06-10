@@ -1182,7 +1182,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		await runAgentVmCli(
-			['auth', 'openclaw', 'openai-codex', '--zone', 'shravan', '--agent', 'shravan'],
+			['auth', 'openclaw', 'openai', '--zone', 'shravan', '--agent', 'shravan'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -1211,7 +1211,7 @@ describe('runAgentVmCli', () => {
 		expect(remoteCommand).toEqual(expect.stringContaining('--agent'));
 		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
 		expect(remoteCommand).toEqual(expect.stringContaining('login --provider'));
-		expect(remoteCommand).toEqual(expect.stringContaining('openai-codex'));
+		expect(remoteCommand).toEqual(expect.stringContaining('openai'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('CODEX_HOME='));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('codex login'));
 	});
@@ -1222,7 +1222,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		await runAgentVmCli(
-			['auth', 'openclaw', 'openai-codex', '--zone', 'shravan', '--all-agents'],
+			['auth', 'openclaw', 'openai', '--zone', 'shravan', '--all-agents'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -2320,7 +2320,7 @@ describe('runAgentVmCli', () => {
 		expect(remoteCommand).toEqual(expect.stringContaining('CODEX_HOME="$codex_home"'));
 		expect(remoteCommand).toEqual(expect.stringContaining('login --device-auth'));
 		expect(remoteCommand).toEqual(expect.stringContaining('auth.json: present'));
-		expect(remoteCommand).toEqual(expect.stringContaining('openai-codex profiles:'));
+		expect(remoteCommand).toEqual(expect.stringContaining('openai profiles:'));
 		expect(remoteCommand).toEqual(expect.stringContaining('auth-profiles.json'));
 		expect(remoteCommand).toEqual(expect.stringContaining('Install @openai/codex'));
 		expect(remoteCommand).toEqual(

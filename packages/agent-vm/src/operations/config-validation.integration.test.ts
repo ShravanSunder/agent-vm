@@ -196,7 +196,10 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'openclaw.json'), {
 		agents: {
 			defaults: {
-				model: { primary: 'openai-codex/gpt-5.5' },
+				model: { primary: 'openai/gpt-5.5' },
+				models: {
+					'openai/gpt-5.5': { agentRuntime: { id: 'pi' } },
+				},
 				sandbox: {
 					backend: 'gondolin',
 					mode: 'all',

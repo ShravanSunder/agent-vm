@@ -4,7 +4,7 @@
 
 **Goal:** Make fresh OpenClaw/Gondolin deployments match the working `shravan-claw` defaults and expose the operational feedback needed to debug them.
 
-**Architecture:** Keep the first patch set small and directly tied to the deployment lessons: scaffold OpenClaw defaults for `web_fetch` fake-IP SSRF policy and `openai-codex/gpt-5.5`, expand existing zone logs to include runtime OpenClaw logs, improve doctor output/checks, and add a multi-agent scaffold flag. Defer provider-mediated public web fetch and tool-scoped `webFetchAllowlist` to a separate design because that changes the network trust boundary.
+**Architecture:** Keep the first patch set small and directly tied to the deployment lessons: scaffold OpenClaw defaults for `web_fetch` fake-IP SSRF policy and `openai/gpt-5.5` with the PI runtime, expand existing zone logs to include runtime OpenClaw logs, improve doctor output/checks, and add a multi-agent scaffold flag. Defer provider-mediated public web fetch and tool-scoped `webFetchAllowlist` to a separate design because that changes the network trust boundary.
 
 **Tech Stack:** TypeScript, pnpm, Vitest, OpenClaw config JSON, agent-vm controller HTTP/CLI.
 
@@ -21,7 +21,7 @@
 Add assertions to the existing OpenClaw scaffold test so it expects:
 
 ```ts
-expect(openClawConfig.agents.defaults.model.primary).toBe('openai-codex/gpt-5.5');
+expect(openClawConfig.agents.defaults.model.primary).toBe('openai/gpt-5.5');
 expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
 expect(openClawConfig.tools.web.fetch.ssrfPolicy).toEqual({
 	allowRfc2544BenchmarkRange: true,
@@ -37,14 +37,17 @@ Run:
 pnpm test:unit -- packages/agent-vm/src/cli/init-command.test.ts
 ```
 
-Expected: FAIL because scaffold still uses `openai-codex/gpt-5.4` and lacks `tools.web.fetch.ssrfPolicy`.
+Expected: FAIL because scaffold still uses an older OpenAI model default and lacks `tools.web.fetch.ssrfPolicy`.
 
 - [x] **Step 3: Update `defaultOpenClawConfig()`**
 
 Set:
 
 ```ts
-model: { primary: 'openai-codex/gpt-5.5' },
+model: { primary: 'openai/gpt-5.5' },
+models: {
+	'openai/gpt-5.5': { agentRuntime: { id: 'pi' } },
+},
 thinkingDefault: 'low',
 tools: {
 	elevated: { enabled: false },
@@ -59,7 +62,7 @@ tools: {
 },
 ```
 
-Remove stale `openai-codex/gpt-5.4` model params from the scaffold unless the test shows OpenClaw still requires the `models` block.
+Keep the OpenAI model params in the scaffold so the `openai/gpt-5.5` model uses the PI runtime.
 
 - [x] **Step 4: Re-run test**
 
@@ -120,7 +123,10 @@ Given an OpenClaw config with:
 ```json
 {
 	"agents": {
-		"defaults": { "model": { "primary": "openai-codex/gpt-5.5" } },
+		"defaults": {
+			"model": { "primary": "openai/gpt-5.5" },
+			"models": { "openai/gpt-5.5": { "agentRuntime": { "id": "pi" } } }
+		},
 		"list": [{ "id": "shravan" }]
 	}
 }

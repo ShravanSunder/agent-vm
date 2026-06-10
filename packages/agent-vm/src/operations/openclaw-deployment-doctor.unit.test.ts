@@ -119,7 +119,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
+							model: { primary: 'openai/gpt-5.5' },
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
@@ -184,7 +184,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
+							model: { primary: 'openai/gpt-5.5' },
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
@@ -262,7 +262,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-openai-provider-runtime-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI API-key models do not get claimed by the Codex OAuth runtime.',
+			hint: 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI provider requests use the PI runtime.',
 		});
 	});
 
@@ -299,7 +299,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
+							model: { primary: 'openai/gpt-5.5' },
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
@@ -348,7 +348,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
+							model: { primary: 'openai/gpt-5.5' },
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
@@ -753,7 +753,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
+							model: { primary: 'openai/gpt-5.5' },
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
@@ -841,7 +841,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
+							model: { primary: 'openai/gpt-5.5' },
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
@@ -882,7 +882,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
+							model: { primary: 'openai/gpt-5.5' },
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
@@ -914,7 +914,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
+							model: { primary: 'openai/gpt-5.5' },
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
@@ -928,7 +928,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-codex-harness-auth-readable-shravan-sun'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Cannot read Codex harness auth.json at /state/agents/sun/agent/codex-home/auth.json: EACCES: permission denied',
+			hint: 'Cannot read OpenAI OAuth auth.json at /state/agents/sun/agent/codex-home/auth.json: EACCES: permission denied',
 		});
 		expect(
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
@@ -938,7 +938,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		});
 	});
 
-	it('skips per-agent auth profile checks for non-Codex agents', () => {
+	it('skips per-agent auth profile checks for non-OpenAI agents', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				zoneId: 'shravan',
@@ -951,7 +951,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 						list: [
 							{ id: 'claude-agent' },
-							{ id: 'codex-agent', model: { primary: 'openai-codex/gpt-5.5' } },
+							{ id: 'openai-agent', model: { primary: 'openai/gpt-5.5' } },
 						],
 					},
 					plugins: {
@@ -967,7 +967,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			'openclaw-agent-auth-profile-shravan-claude-agent',
 		);
 		expect(checks.map((check) => check.name)).toContain(
-			'openclaw-agent-auth-profile-shravan-codex-agent',
+			'openclaw-agent-auth-profile-shravan-openai-agent',
 		);
 	});
 
@@ -979,7 +979,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					config: {
 						agents: {
 							defaults: {
-								model: { primary: 'openai-codex/gpt-5.5' },
+								model: { primary: 'openai/gpt-5.5' },
 								sandbox: openClawToolVmSandbox,
 								workspace: '/zone/agents/default',
 							},
@@ -1055,7 +1055,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 		}
 	});
 
-	it('accepts Codex harness auth.json as per-agent Codex auth material', async () => {
+	it('accepts OpenAI OAuth auth.json as per-agent OpenAI auth material', async () => {
 		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
 		const configDirectory = path.join(temporaryDirectory, 'config');
 		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
@@ -1074,7 +1074,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 			JSON.stringify({
 				agents: {
 					defaults: {
-						model: { primary: 'openai-codex/gpt-5.5' },
+						model: { primary: 'openai/gpt-5.5' },
 						sandbox: openClawToolVmSandbox,
 						workspace: '/zone/agents/default',
 					},
@@ -1093,7 +1093,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
 			).toMatchObject({
 				ok: true,
-				hint: 'Codex harness auth.json present for agent sun',
+				hint: 'OpenAI OAuth auth.json present for agent sun',
 			});
 			expect(
 				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),

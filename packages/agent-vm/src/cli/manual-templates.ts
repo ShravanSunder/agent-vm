@@ -257,7 +257,8 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.sandbox.backend is gondolin, mode is all, and scope is agent. Agent-vm rejects OpenClaw Tool VM leases that are not agent-scoped.
 	agents.defaults.sandbox.workspaceAccess is rw so agents can write their workspace.
 	agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
-	agents.defaults.model.primary is openai-codex/gpt-5.5 with thinkingDefault low.
+	agents.defaults.model.primary is openai/gpt-5.5 with thinkingDefault low.
+	agents.defaults.models.openai/gpt-5.5 sets agentRuntime.id to pi so the OpenAI provider uses the PI runtime.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
 	approvals.plugin.enabled is true with approvals.plugin.mode=session so MCP Portal plugin approval prompts route back to the originating session by default. Exec approval forwarding remains deployment-owned.
 	tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
