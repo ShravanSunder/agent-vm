@@ -229,6 +229,66 @@ const systemConfig = {
 	},
 } satisfies LoadedSystemConfig;
 
+function createObservabilitySystemConfig(
+	controllerStartPolicy: 'degraded' | 'require-ready' | 'off',
+): LoadedSystemConfig {
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected test zone.');
+	}
+	const observabilityZone = {
+		...zone,
+		observability: {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+				traces: true,
+				metrics: true,
+				logs: true,
+				sampleRate: 1,
+				flushIntervalMs: 10_000,
+				captureContent: { enabled: false },
+				diagnosticsFlags: [],
+			},
+		},
+	} satisfies LoadedSystemConfig['zones'][number];
+	return {
+		...systemConfig,
+		host: {
+			...systemConfig.host,
+			observability: {
+				enabled: true,
+				stack: 'victoria',
+				runner: 'docker-compose',
+				mode: 'collector',
+				dataDir: path.join(controllerRuntimeTestRoot, 'observability'),
+				bindAddress: '127.0.0.1',
+				prepareOnBuild: true,
+				waitOnBuild: true,
+				startupCheckTimeoutMs: 500,
+				controllerStartPolicy,
+				ports: {
+					collectorGrpc: 4317,
+					collectorHttp: 4318,
+					collectorHealth: 13_133,
+					metrics: 8428,
+					logs: 9428,
+					traces: 10_428,
+				},
+				retention: {
+					metrics: { period: '30d' },
+					logs: { period: '14d' },
+					traces: { period: '7d' },
+				},
+			},
+		},
+		zones: [
+			observabilityZone,
+			...systemConfig.zones.filter((candidateZone) => candidateZone.id !== zone.id),
+		],
+	};
+}
+
 describe('controller runtime test fixture paths', () => {
 	it('keeps generated runtime, state, and zone files outside the repository checkout', () => {
 		const repositoryRoot = process.cwd();
@@ -880,6 +940,128 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 		await rm(absoluteLeaseRoot, { force: true, recursive: true });
 		expect(clearIntervalMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not block controller startup on default degraded host observability readiness', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const startupEvents: string[] = [];
+		const observabilitySystemConfig = createObservabilitySystemConfig('degraded');
+		const observabilityZone = observabilitySystemConfig.zones[0];
+		if (!observabilityZone) {
+			throw new Error('Expected observability test zone.');
+		}
+		const closeGatewayVm = vi.fn(async () => {});
+		const startGatewayZone = vi.fn(async () => {
+			startupEvents.push('gateway-start');
+			return {
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
+				},
+				ingress: {
+					host: '127.0.0.1',
+					port: 18791,
+				},
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: closeGatewayVm,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: vi.fn(() => 48_282),
+					id: 'gateway-vm-1',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				},
+				zone: observabilityZone,
+			};
+		});
+		const checkObservabilityStackReadiness = vi.fn(async () => {
+			startupEvents.push('observability-check');
+			await new Promise(() => {});
+			return { ok: true, status: 'ready' } as const;
+		});
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: observabilitySystemConfig,
+				zoneIds: ['shravan'],
+			},
+			{
+				checkObservabilityStackReadiness,
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				isProcessAlive: () => true,
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
+				}),
+				startGatewayZone,
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {},
+				})),
+			},
+		);
+
+		expect(checkObservabilityStackReadiness).toHaveBeenCalledOnce();
+		expect(startGatewayZone).toHaveBeenCalledOnce();
+		expect(startupEvents).toEqual(['observability-check', 'gateway-start']);
+		await expect(runtime.close()).resolves.toBeUndefined();
+	});
+
+	it('closes the controller server when required host observability readiness fails', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const closeHttpServer = vi.fn(async () => {});
+		const startGatewayZone = vi.fn(async () => {
+			throw new Error('gateway start should not run');
+		});
+
+		await expect(
+			startControllerRuntime(
+				{
+					systemConfig: createObservabilitySystemConfig('require-ready'),
+					zoneIds: ['shravan'],
+				},
+				{
+					checkObservabilityStackReadiness: vi.fn(
+						async () =>
+							({
+								ok: false,
+								reason: 'collector health check returned HTTP 503',
+								status: 'unavailable',
+							}) as const,
+					),
+					createSecretResolver: async () => ({
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					}),
+					isProcessAlive: () => true,
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-x86_64 -m 1G',
+						lstart: 'Fri May 22 10:00:00 2026',
+					}),
+					startGatewayZone,
+					startHttpServer: vi.fn(async () => ({
+						close: closeHttpServer,
+					})),
+				},
+			),
+		).rejects.toThrow(/Host observability stack is not ready/u);
+
+		expect(closeHttpServer).toHaveBeenCalledOnce();
+		expect(startGatewayZone).not.toHaveBeenCalled();
 	});
 
 	it('keeps May 30-shaped channel-provider outage separate from later secret recovery blockers', async () => {

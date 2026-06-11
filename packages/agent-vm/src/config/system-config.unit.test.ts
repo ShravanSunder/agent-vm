@@ -2509,4 +2509,479 @@ describe('loadSystemConfig', () => {
 			/runtimeDir must not overlap zoneFilesDir/u,
 		);
 	});
+
+	test('parses host and OpenClaw zone observability defaults', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			dataDir: '../observability',
+			retention: {
+				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+			},
+		};
+		config.zones[0].observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+				traces: true,
+				metrics: true,
+				logs: true,
+			},
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-observability-', config);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		if (loadedConfig.host.observability?.enabled !== true) {
+			throw new Error('Expected host observability to be enabled.');
+		}
+		const loadedZone = loadedConfig.zones[0];
+		if (loadedZone?.observability?.enabled !== true) {
+			throw new Error('Expected zone observability to be enabled.');
+		}
+		expect(loadedConfig.host.observability).toMatchObject({
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			bindAddress: '127.0.0.1',
+			prepareOnBuild: true,
+			waitOnBuild: true,
+			startupCheckTimeoutMs: 500,
+		});
+		expect(loadedConfig.host.observability.dataDir).toBe(
+			path.join(path.dirname(configPath), '..', 'observability'),
+		);
+		expect(loadedZone.observability).toMatchObject({
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+				traces: true,
+				metrics: true,
+				logs: true,
+				sampleRate: 1,
+				flushIntervalMs: 10_000,
+				captureContent: { enabled: false },
+				diagnosticsFlags: [],
+			},
+		});
+	});
+
+	test('rejects enabled host observability without dataDir', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			retention: {
+				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-observability-missing-data-dir-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/dataDir/u);
+	});
+
+	test.each(['Bad Name', 'bad:name', 'bad\nname', '-bad-name', 'BadName'])(
+		'rejects invalid observability projectName %s',
+		async (projectName) => {
+			const config = createValidSystemConfigInput();
+			config.host.observability = {
+				enabled: true,
+				stack: 'victoria',
+				runner: 'docker-compose',
+				mode: 'collector',
+				dataDir: '../observability',
+				projectName,
+				retention: {
+					metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+					logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+					traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+				},
+			};
+			const configPath = await writeSystemConfigForTest(
+				'agent-vm-system-observability-project-name-',
+				config,
+			);
+
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(/projectName/u);
+		},
+	);
+
+	test.each([
+		['collectorHttp too high', { collectorHttp: 70_000 }, /collectorHttp/u],
+		['duplicate logs and traces', { logs: 9428, traces: 9428 }, /ports must be unique/u],
+	])('rejects invalid observability ports for %s', async (_label, portPatch, messagePattern) => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			dataDir: '../observability',
+			ports: {
+				collectorGrpc: 4317,
+				collectorHttp: 4318,
+				collectorHealth: 13_133,
+				metrics: 8428,
+				logs: 9428,
+				traces: 10_428,
+				...portPatch,
+			},
+			retention: {
+				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-observability-ports-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(messagePattern);
+	});
+
+	test.each(['0.0.0.0', '::', '192.168.1.50'])(
+		'rejects non-loopback observability bindAddress %s',
+		async (bindAddress) => {
+			const config = createValidSystemConfigInput();
+			config.host.observability = {
+				enabled: true,
+				stack: 'victoria',
+				runner: 'docker-compose',
+				mode: 'collector',
+				dataDir: '../observability',
+				bindAddress,
+				retention: {
+					metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+					logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+					traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+				},
+			};
+			const configPath = await writeSystemConfigForTest(
+				'agent-vm-system-observability-bind-address-',
+				config,
+			);
+
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(/bindAddress/u);
+		},
+	);
+
+	test('rejects zone observability when host observability is disabled', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+				traces: true,
+				metrics: true,
+				logs: true,
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-zone-observability-no-host-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/host.observability/u);
+	});
+
+	test('rejects worker zone observability in v1', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			dataDir: '../observability',
+			retention: {
+				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+			},
+		};
+		const zone = configureFirstZoneAsWorker(config);
+		zone.egressHosts = [{ host: 'example.com', audience: 'gateway' }];
+		zone.observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-worker-shravan',
+				traces: true,
+				metrics: true,
+				logs: true,
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-worker-zone-observability-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OpenClaw/u);
+	});
+
+	test('rejects OpenClaw observability on custom image profiles without managed diagnostics package installation', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			dataDir: '../observability',
+			retention: {
+				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+			},
+		};
+		const zone = config.zones[0];
+		if (zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		config.imageProfiles = {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: '../vm-images/gateways/openclaw/custom-build-config.json',
+				},
+				worker: {
+					type: 'worker',
+					buildConfig: '../vm-images/gateways/worker/build-config.json',
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '../vm-images/tool-vms/default/build-config.json',
+				},
+			},
+		};
+		zone.observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-observability-custom-openclaw-image-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/diagnostics-otel/u);
+	});
+
+	test.each([
+		'*',
+		'all',
+		'payload-dump',
+		'request.body',
+		'prompt-transcript',
+		'token-debug',
+		'1',
+		'telegram.*',
+		'gateway.http.query',
+		'query.capture',
+		'http.request.header.authorization',
+		'OPENCLAW_DIAGNOSTICS=*',
+	])('rejects sensitive observability diagnostics flag %s', async (diagnosticsFlag) => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			dataDir: '../observability',
+			retention: {
+				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+			},
+		};
+		config.zones[0].observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+				diagnosticsFlags: [diagnosticsFlag],
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-observability-sensitive-flags-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/too broad or can capture sensitive content/u,
+		);
+	});
+
+	test('rejects OPENCLAW_DIAGNOSTICS raw env override for observability zones', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			dataDir: '../observability',
+			retention: {
+				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+			},
+		};
+		const zone = config.zones[0];
+		if (zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		zone.gateway.rawEnvSecrets = ['OPENCLAW_DIAGNOSTICS'];
+		zone.secrets.OPENCLAW_DIAGNOSTICS = {
+			source: 'environment',
+			envVar: 'OPENCLAW_DIAGNOSTICS',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		zone.observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-observability-raw-diagnostics-env-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_DIAGNOSTICS/u);
+	});
+
+	test.each([
+		['metrics max bytes', { metrics: { period: '30d', maxDiskSpaceUsageBytes: '50GiB' } }],
+		['metrics max percent', { metrics: { period: '30d', maxDiskUsagePercent: 80 } }],
+		['logs max percent', { logs: { period: '14d', maxDiskUsagePercent: 80 } }],
+		[
+			'traces max bytes and percent',
+			{ traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB', maxDiskUsagePercent: 80 } },
+		],
+	])('rejects unsupported observability retention field for %s', async (_label, retentionPatch) => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: 'victoria',
+			runner: 'docker-compose',
+			mode: 'collector',
+			dataDir: '../observability',
+			retention: {
+				metrics: { period: '30d' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+				...retentionPatch,
+			},
+		};
+		config.zones[0].observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-observability-retention-unsupported-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow();
+	});
+
+	test.each([
+		['metrics period', { metrics: { period: 'forever' } }, /retention period/u],
+		[
+			'metrics min free disk',
+			{ metrics: { period: '30d', minFreeDiskSpaceBytes: 'lots' } },
+			/retention byte size/u,
+		],
+		[
+			'logs max bytes',
+			{ logs: { period: '14d', maxDiskSpaceUsageBytes: '50gib' } },
+			/retention byte size/u,
+		],
+		['traces period', { traces: { period: 'one-week' } }, /retention period/u],
+		[
+			'traces max bytes',
+			{ traces: { period: '7d', maxDiskSpaceUsageBytes: '20 gib' } },
+			/retention byte size/u,
+		],
+	])(
+		'rejects invalid observability retention value for %s',
+		async (_label, retentionPatch, messagePattern) => {
+			const config = createValidSystemConfigInput();
+			config.host.observability = {
+				enabled: true,
+				stack: 'victoria',
+				runner: 'docker-compose',
+				mode: 'collector',
+				dataDir: '../observability',
+				retention: {
+					metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+					logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+					traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+					...retentionPatch,
+				},
+			};
+			config.zones[0].observability = {
+				enabled: true,
+				openclaw: {
+					serviceName: 'agent-vm-openclaw-shravan',
+				},
+			};
+			const configPath = await writeSystemConfigForTest(
+				'agent-vm-system-observability-retention-invalid-value-',
+				config,
+			);
+
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(messagePattern);
+		},
+	);
+
+	test.each([
+		['cacheDir', '../cache/observability', /dataDir must not overlap cacheDir/u],
+		['runtimeDir', '../runtime/observability', /dataDir must not overlap runtimeDir/u],
+		['stateDir', '../state/shravan/observability', /dataDir must not overlap stateDir/u],
+		[
+			'zoneFilesDir',
+			'../zone-files/shravan/observability',
+			/dataDir must not overlap zoneFilesDir/u,
+		],
+	])(
+		'rejects observability dataDir overlap with %s after resolving paths',
+		async (_fieldName, dataDir, messagePattern) => {
+			const config = createValidSystemConfigInput();
+			config.host.observability = {
+				enabled: true,
+				stack: 'victoria',
+				runner: 'docker-compose',
+				mode: 'collector',
+				dataDir,
+				retention: {
+					metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+					logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+					traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+				},
+			};
+			const configPath = await writeSystemConfigForTest(
+				'agent-vm-system-observability-data-overlap-',
+				config,
+			);
+
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(messagePattern);
+		},
+	);
 });

@@ -2,6 +2,7 @@ import type {
 	GatewayIngressConfig,
 	GatewayProcessSpec,
 	GatewayZoneConfig,
+	GatewayZoneObservabilityConfig,
 } from '@agent-vm/gateway-interface';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
@@ -11,6 +12,7 @@ export type GatewayZone = SystemConfig['zones'][number];
 
 export interface StartGatewayZoneOptions {
 	readonly environmentOverride?: Record<string, string>;
+	readonly observabilityStartupCheck?: 'default' | 'skip';
 	readonly prebuiltImage?: import('@agent-vm/gondolin-adapter').BuildImageResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
@@ -19,6 +21,7 @@ export interface StartGatewayZoneOptions {
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tcpHostsOverride?: Record<string, string>;
 	readonly vfsMountsOverride?: GatewayManagedVmFactoryOptions['vfsMounts'];
+	readonly writeLog?: (message: string) => void;
 	readonly zoneId: string;
 	readonly zoneOverride?: GatewayZone;
 }
@@ -79,6 +82,10 @@ export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): Gat
 	return zone;
 }
 
+const observabilityCollectorHost = 'otel-collector.observability.vm.host';
+const otlpGrpcPort = 4317;
+const otlpHttpPort = 4318;
+
 function resolveGatewayIngressConfig(
 	ingress: GatewayZone['gateway']['ingress'],
 ): GatewayIngressConfig | undefined {
@@ -98,8 +105,52 @@ function resolveGatewayIngressConfig(
 	return Object.keys(resolvedIngress).length > 0 ? resolvedIngress : undefined;
 }
 
-export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZoneConfig {
+function resolveObservabilityTargetHost(bindAddress: '127.0.0.1' | '::1'): string {
+	return bindAddress === '::1' ? '[::1]' : bindAddress;
+}
+
+function mapSystemZoneObservabilityToLifecycleObservability(
+	zone: GatewayZone,
+	hostObservability: LoadedSystemConfig['host']['observability'] | undefined,
+): GatewayZoneObservabilityConfig | undefined {
+	if (hostObservability?.enabled !== true || zone.observability?.enabled !== true) {
+		return undefined;
+	}
+
+	const { openclaw } = zone.observability;
+	return {
+		mode: 'collector',
+		collector: {
+			host: observabilityCollectorHost,
+			grpcPort: otlpGrpcPort,
+			httpPort: otlpHttpPort,
+			targetHost: resolveObservabilityTargetHost(hostObservability.bindAddress),
+			targetGrpcPort: hostObservability.ports.collectorGrpc,
+			targetHttpPort: hostObservability.ports.collectorHttp,
+		},
+		openclaw: {
+			serviceName: openclaw.serviceName,
+			traces: openclaw.traces,
+			metrics: openclaw.metrics,
+			logs: openclaw.logs,
+			sampleRate: openclaw.sampleRate,
+			flushIntervalMs: openclaw.flushIntervalMs,
+			diagnosticsFlags: openclaw.diagnosticsFlags,
+		},
+	};
+}
+
+export function mapSystemGatewayZoneToLifecycleZone(
+	zone: GatewayZone,
+	options: {
+		readonly hostObservability?: LoadedSystemConfig['host']['observability'];
+	} = {},
+): GatewayZoneConfig {
 	const ingress = resolveGatewayIngressConfig(zone.gateway.ingress);
+	const observability = mapSystemZoneObservabilityToLifecycleObservability(
+		zone,
+		options.hostObservability,
+	);
 	const baseGateway = {
 		cpus: zone.gateway.cpus,
 		config: zone.gateway.config,
@@ -137,6 +188,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 		egressHosts: zone.egressHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
 		...(zone.mcpPortal === undefined ? {} : { mcpPortal: zone.mcpPortal }),
+		...(observability === undefined ? {} : { observability }),
 		websocketBypass: zone.websocketBypass,
 	};
 }

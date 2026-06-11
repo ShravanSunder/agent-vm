@@ -7,6 +7,8 @@ import {
 	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
 	startGatewayZone,
 } from '../gateway/gateway-zone-orchestrator.js';
+import { createObservabilityRuntimeConfig } from '../observability/observability-config.js';
+import { checkObservabilityStackReadiness as checkObservabilityStackReadinessDefault } from '../observability/observability-readiness.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 import { ActiveTaskRegistry } from './active-task-registry.js';
@@ -112,6 +114,41 @@ function buildOpenClawRuntimePluginConfig(options: {
 			},
 		},
 	};
+}
+
+function selectConfiguredObservabilityStartupCheck(options: {
+	readonly systemConfig: StartControllerRuntimeOptions['systemConfig'];
+	readonly zoneIds?: readonly string[];
+}): Extract<ReturnType<typeof createObservabilityRuntimeConfig>, { enabled: true }> | undefined {
+	const observabilityConfig = createObservabilityRuntimeConfig(options.systemConfig);
+	if (!observabilityConfig.enabled || observabilityConfig.controllerStartPolicy === 'off') {
+		return undefined;
+	}
+	const selectedZoneIds = new Set(
+		options.zoneIds ?? options.systemConfig.zones.map((zone) => zone.id),
+	);
+	const selectedZones = observabilityConfig.zones.filter((zone) =>
+		selectedZoneIds.has(zone.zoneId),
+	);
+	if (selectedZones.length === 0) {
+		return undefined;
+	}
+	return {
+		...observabilityConfig,
+		zones: selectedZones,
+	};
+}
+
+async function assertObservabilityStackReady(options: {
+	readonly checkObservabilityStackReadiness: NonNullable<
+		ControllerRuntimeDependencies['checkObservabilityStackReadiness']
+	>;
+	readonly config: Extract<ReturnType<typeof createObservabilityRuntimeConfig>, { enabled: true }>;
+}): Promise<void> {
+	const result = await options.checkObservabilityStackReadiness({ config: options.config });
+	if (!result.ok) {
+		throw new Error(`Host observability stack is not ready: ${result.reason}`);
+	}
 }
 
 function channelProviderPlaneForHealth(
@@ -497,6 +534,14 @@ export async function startControllerRuntime(
 								}),
 								...preflightOptions.runtimePluginConfigs,
 							};
+							const effectivePreflightDependencies =
+								dependencies.checkObservabilityStackReadiness === undefined
+									? preflightDependencies
+									: {
+											...preflightDependencies,
+											checkObservabilityStackReadiness:
+												dependencies.checkObservabilityStackReadiness,
+										};
 							return await (
 								dependencies.preflightGatewayZoneStart ?? preflightGatewayZoneStartDefault
 							)(
@@ -504,12 +549,16 @@ export async function startControllerRuntime(
 									...preflightOptions,
 									runtimeEnvironment,
 									runtimePluginConfigs,
+									writeLog: writeControllerRuntimeLog,
 								},
-								preflightDependencies,
+								effectivePreflightDependencies,
 							);
 						},
-						restartGatewayZone: async (zoneId, startOptions) =>
-							await (dependencies.startGatewayZone ?? startGatewayZone)({
+						restartGatewayZone: async (zoneId, startOptions) => {
+							const startGatewayZoneOptions = {
+								...(startOptions?.observabilityStartupCheck
+									? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
+									: {}),
 								...(startOptions?.prebuiltImage
 									? { prebuiltImage: startOptions.prebuiltImage }
 									: {}),
@@ -528,8 +577,21 @@ export async function startControllerRuntime(
 								},
 								secretResolver: startOptions?.secretResolver ?? secretResolver,
 								systemConfig: options.systemConfig,
+								writeLog: writeControllerRuntimeLog,
 								zoneId,
-							}),
+							};
+							if (dependencies.checkObservabilityStackReadiness === undefined) {
+								return await (dependencies.startGatewayZone ?? startGatewayZone)(
+									startGatewayZoneOptions,
+								);
+							}
+							return await (dependencies.startGatewayZone ?? startGatewayZone)(
+								startGatewayZoneOptions,
+								{
+									checkObservabilityStackReadiness: dependencies.checkObservabilityStackReadiness,
+								},
+							);
+						},
 						secretResolver,
 						systemConfig: options.systemConfig,
 						zone,
@@ -750,7 +812,41 @@ export async function startControllerRuntime(
 			port: options.systemConfig.host.controllerPort,
 		});
 	});
+	const observabilityStartupCheck = selectConfiguredObservabilityStartupCheck({
+		systemConfig: options.systemConfig,
+		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
+	});
+	const checkObservabilityStackReadiness =
+		dependencies.checkObservabilityStackReadiness ?? checkObservabilityStackReadinessDefault;
+	if (
+		observabilityStartupCheck?.enabled === true &&
+		observabilityStartupCheck.controllerStartPolicy !== 'require-ready'
+	) {
+		void assertObservabilityStackReady({
+			checkObservabilityStackReadiness,
+			config: observabilityStartupCheck,
+		})
+			.then(() => {
+				writeControllerRuntimeLog('Host observability stack is ready.');
+			})
+			.catch((error: unknown) => {
+				writeControllerRuntimeLog(
+					`Host observability stack degraded: ${formatUnknownError(error)}`,
+				);
+			});
+	}
 	try {
+		if (
+			observabilityStartupCheck?.enabled === true &&
+			observabilityStartupCheck.controllerStartPolicy === 'require-ready'
+		) {
+			await runTaskStep('Checking host observability stack', async () => {
+				await assertObservabilityStackReady({
+					checkObservabilityStackReadiness,
+					config: observabilityStartupCheck,
+				});
+			});
+		}
 		await runTaskStep('Starting selected gateway zones', async () => {
 			await registry.startSelectedZones();
 		});

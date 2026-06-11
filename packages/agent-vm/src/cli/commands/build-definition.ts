@@ -16,14 +16,19 @@ export function createBuildCommand(_io: CliIo, dependencies: CliDependencies) {
 				long: 'force',
 				description: 'Force rebuild, ignoring cache',
 			}),
+			noObservability: flag({
+				long: 'no-observability',
+				description: 'Skip configured host observability preparation for this build run',
+			}),
 		},
-		handler: async ({ config, force }) => {
+		handler: async ({ config, force, noObservability }) => {
 			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 			const runTask = await createRunTask(_io);
 			const runTaskGroup = await createRunTaskGroup(_io, runTask);
 			await (dependencies.runBuildCommand ?? runBuildCommand)(
 				{
 					forceRebuild: force,
+					skipObservability: noObservability,
 					systemConfig,
 				},
 				{ runTask, runTaskGroup },

@@ -204,6 +204,50 @@ function createTestSystemConfig(): LoadedSystemConfig {
 	);
 }
 
+function createObservabilitySystemConfig(
+	options: {
+		readonly prepareOnBuild?: boolean;
+	} = {},
+): LoadedSystemConfig {
+	const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+	return createLoadedSystemConfig(
+		{
+			...baseConfig,
+			host: {
+				...baseConfig.host,
+				observability: {
+					enabled: true,
+					stack: 'victoria',
+					runner: 'docker-compose',
+					mode: 'collector',
+					dataDir: '/observability',
+					...(options.prepareOnBuild === undefined
+						? {}
+						: { prepareOnBuild: options.prepareOnBuild }),
+					retention: {
+						metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+						logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+						traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+					},
+				},
+			},
+			zones: baseConfig.zones.map((zone) => ({
+				...zone,
+				observability: {
+					enabled: true,
+					openclaw: {
+						serviceName: `agent-vm-openclaw-${zone.id}`,
+						traces: true,
+						metrics: true,
+						logs: true,
+					},
+				},
+			})),
+		},
+		{ systemConfigPath: '/project/config/system.json' },
+	);
+}
+
 const noOpPluginSync: NonNullable<
 	BuildCommandDependencies['syncBundledOpenClawPlugin']
 > = async () => 'created';
@@ -273,6 +317,138 @@ describe('runBuildCommand', () => {
 		expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:latest');
 		expect(resolvedProjectRoots).toEqual(['/project/vm-images/gateways/openclaw/Dockerfile']);
 		expect(pluginSyncs).toEqual(['/project']);
+	});
+
+	it('prepares configured observability after image preparation', async () => {
+		const events: string[] = [];
+		const dependencies: BuildCommandDependencies = {
+			runTask: async (title, fn) => {
+				events.push(`task:${title}`);
+				await fn();
+			},
+			buildDockerImage: async () => {
+				events.push('docker');
+			},
+			buildGondolinImage: async () => {
+				events.push('gondolin');
+				return {
+					built: true,
+					fingerprint: 'abc123',
+					imagePath: '/cache/abc123',
+				};
+			},
+			prepareObservabilityStack: async (options) => {
+				events.push(`observability:${String(options.wait)}`);
+				return {
+					collectorConfigPath: '/runtime/observability/otel-collector-config.yaml',
+					composePath: '/runtime/observability/docker-compose.observability.yml',
+					status: options.wait ? 'ready' : 'started',
+				};
+			},
+			resolveProjectRootFromDockerfile: async () => '/project',
+			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+			syncBundledOpenClawPlugin: noOpPluginSync,
+			findPrunableImageDirectories: async () => [],
+		};
+
+		await runBuildCommand({ systemConfig: createObservabilitySystemConfig() }, dependencies);
+
+		expect(events.indexOf('observability:true')).toBeGreaterThan(events.indexOf('gondolin'));
+	});
+
+	it('skips build-time observability when disabled by config', async () => {
+		const prepareObservabilityStack =
+			vi.fn<NonNullable<BuildCommandDependencies['prepareObservabilityStack']>>();
+		const dependencies: BuildCommandDependencies = {
+			runTask: async (_title, fn) => fn(),
+			buildDockerImage: async () => {},
+			buildGondolinImage: async () => ({
+				built: true,
+				fingerprint: 'abc123',
+				imagePath: '/cache/abc123',
+			}),
+			prepareObservabilityStack,
+			resolveProjectRootFromDockerfile: async () => '/project',
+			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+			syncBundledOpenClawPlugin: noOpPluginSync,
+			findPrunableImageDirectories: async () => [],
+		};
+
+		await runBuildCommand(
+			{ systemConfig: createObservabilitySystemConfig({ prepareOnBuild: false }) },
+			dependencies,
+		);
+
+		expect(prepareObservabilityStack).not.toHaveBeenCalled();
+	});
+
+	it('skips build-time observability for the no-observability escape hatch', async () => {
+		const prepareObservabilityStack =
+			vi.fn<NonNullable<BuildCommandDependencies['prepareObservabilityStack']>>();
+		const outputLines: string[] = [];
+		const dependencies: BuildCommandDependencies = {
+			runTask: createRecordingRunTask(outputLines),
+			buildDockerImage: async () => {},
+			buildGondolinImage: async () => ({
+				built: true,
+				fingerprint: 'abc123',
+				imagePath: '/cache/abc123',
+			}),
+			prepareObservabilityStack,
+			resolveProjectRootFromDockerfile: async () => '/project',
+			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+			syncBundledOpenClawPlugin: noOpPluginSync,
+			findPrunableImageDirectories: async () => [],
+		};
+
+		await runBuildCommand(
+			{ systemConfig: createObservabilitySystemConfig(), skipObservability: true },
+			dependencies,
+		);
+
+		expect(prepareObservabilityStack).not.toHaveBeenCalled();
+		expect(outputLines.join('\n')).toContain('observability preparation skipped');
+		expect(outputLines.join('\n')).toContain('--no-observability');
+	});
+
+	it('reports disabled build-time observability without calling Docker Compose', async () => {
+		const prepareObservabilityStack =
+			vi.fn<NonNullable<BuildCommandDependencies['prepareObservabilityStack']>>();
+		const outputLines: string[] = [];
+		const dependencies: BuildCommandDependencies = {
+			runTask: createRecordingRunTask(outputLines),
+			buildDockerImage: async () => {},
+			buildGondolinImage: async () => ({
+				built: true,
+				fingerprint: 'abc123',
+				imagePath: '/cache/abc123',
+			}),
+			prepareObservabilityStack,
+			resolveProjectRootFromDockerfile: async () => '/project',
+			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+			syncBundledOpenClawPlugin: noOpPluginSync,
+			findPrunableImageDirectories: async () => [],
+		};
+
+		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		await runBuildCommand(
+			{
+				systemConfig: createLoadedSystemConfig(
+					{
+						...baseConfig,
+						host: {
+							...baseConfig.host,
+							observability: { enabled: false },
+						},
+					},
+					{ systemConfigPath: '/project/config/system.json' },
+				),
+			},
+			dependencies,
+		);
+
+		expect(prepareObservabilityStack).not.toHaveBeenCalled();
+		expect(outputLines.join('\n')).toContain('observability disabled');
 	});
 
 	it('builds Docker image from a managed base profile', async () => {
@@ -611,6 +787,79 @@ describe('runBuildCommand', () => {
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain(
 			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/codex@2026.5.7" "@openclaw/discord@2026.5.7"',
+		);
+	});
+
+	it('adds diagnostics OTEL OpenClaw package when a managed openclaw profile serves an observability zone', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
+		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
+		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
+		fs.writeFileSync(gatewayConfigPath, JSON.stringify({ channels: {} }), 'utf8');
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:observability' } }),
+			'utf8',
+		);
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const baseConfig = createObservabilitySystemConfig();
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...baseConfig,
+					cacheDir: temporaryDirectory,
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								config: gatewayConfigPath,
+							},
+						},
+					],
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								source: {
+									kind: 'managedBase',
+									base: 'openclaw-gateway',
+								},
+							},
+						},
+						toolVms: {},
+					},
+				},
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options);
+				},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'observability-fp',
+					imagePath: '/cache/observability',
+				}),
+				prepareObservabilityStack: async () => ({
+					collectorConfigPath: '/runtime/observability/otel-collector-config.yaml',
+					composePath: '/runtime/observability/docker-compose.observability.yml',
+					status: 'ready',
+				}),
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
+				runTask: async (_title, fn) => fn(),
+			},
+		);
+
+		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/codex@2026.5.7" "@openclaw/diagnostics-otel@2026.5.7"',
 		);
 	});
 

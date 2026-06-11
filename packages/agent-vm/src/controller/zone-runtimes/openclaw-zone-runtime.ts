@@ -81,6 +81,7 @@ export interface CreateOpenClawZoneRuntimeOptions {
 const defaultGatewayCloseTimeoutMs = 60_000;
 
 interface GatewayZoneStartOptions {
+	readonly observabilityStartupCheck?: 'default' | 'skip';
 	readonly prebuiltImage?: BuildImageResult | undefined;
 	readonly runtimeEnvironment?: StartGatewayZoneRequestOptions['runtimeEnvironment'];
 	readonly runtimePluginConfigs?: StartGatewayZoneRequestOptions['runtimePluginConfigs'];
@@ -234,6 +235,9 @@ export function createOpenClawZoneRuntime(
 		options.restartGatewayZone
 			? await options.restartGatewayZone(options.zone.id, startOptions)
 			: await startGatewayZone({
+					...(startOptions.observabilityStartupCheck
+						? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
+						: {}),
 					...(startOptions.prebuiltImage ? { prebuiltImage: startOptions.prebuiltImage } : {}),
 					...(startOptions.runtimeEnvironment
 						? { runtimeEnvironment: startOptions.runtimeEnvironment }
@@ -832,6 +836,7 @@ export function createOpenClawZoneRuntime(
 			return {
 				...startOptions,
 				...(preflightResult.image ? { prebuiltImage: preflightResult.image } : {}),
+				observabilityStartupCheck: 'skip',
 				protectedRestartPreflighted: true,
 				secretResolver: preflightResult.secretResolver,
 			};

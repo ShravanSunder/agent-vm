@@ -294,6 +294,57 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 	);
 }
 
+function createObservabilitySystemConfig(
+	systemConfig: LoadedSystemConfig,
+	options: {
+		readonly controllerStartPolicy?: 'degraded' | 'require-ready' | 'off';
+		readonly zoneEnabled?: boolean;
+	} = {},
+): LoadedSystemConfig {
+	const { systemConfigPath, ...baseConfig } = systemConfig;
+	const zoneEnabled = options.zoneEnabled ?? true;
+	return createLoadedSystemConfig(
+		{
+			...baseConfig,
+			host: {
+				...baseConfig.host,
+				observability: {
+					enabled: true,
+					stack: 'victoria',
+					runner: 'docker-compose',
+					mode: 'collector',
+					dataDir: path.join(path.dirname(systemConfig.cacheDir), 'observability-data'),
+					...(options.controllerStartPolicy === undefined
+						? {}
+						: { controllerStartPolicy: options.controllerStartPolicy }),
+					retention: {
+						metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+						logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+						traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+					},
+				},
+			},
+			zones: baseConfig.zones.map((zone) => ({
+				...zone,
+				...(zoneEnabled
+					? {
+							observability: {
+								enabled: true,
+								openclaw: {
+									serviceName: `agent-vm-openclaw-${zone.id}`,
+									traces: true,
+									metrics: true,
+									logs: true,
+								},
+							},
+						}
+					: {}),
+			})),
+		},
+		{ systemConfigPath },
+	);
+}
+
 const minimalBuildConfig: BuildConfig = {
 	arch: 'aarch64',
 	distro: 'alpine',
@@ -971,6 +1022,279 @@ describe('startGatewayZone', () => {
 			zoneId: 'shravan',
 		});
 		expect(buildImage).not.toHaveBeenCalled();
+	});
+
+	it('requires prepared host observability before gateway startup when policy is require-ready', async () => {
+		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
+			controllerStartPolicy: 'require-ready',
+		});
+		const taskTitles: string[] = [];
+		const checkObservabilityStackReadiness = vi.fn(async () => ({
+			ok: false as const,
+			reason: 'collector health check failed: connection refused',
+			status: 'unavailable' as const,
+		}));
+		const buildImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fp',
+			imagePath: '/tmp/img',
+		}));
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
+			throw new Error('createManagedVm should not be called');
+		});
+
+		await expect(
+			startGatewayZone(
+				{
+					runTask: async (title, fn) => {
+						taskTitles.push(title);
+						await fn();
+					},
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'resolved-discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+					}),
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage,
+					checkObservabilityStackReadiness,
+					createManagedVm,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow(
+			'Host observability stack is not ready: collector health check failed: connection refused',
+		);
+
+		expect(taskTitles).toEqual([
+			'Preflighting gateway runtime ownership',
+			'Checking host observability stack',
+		]);
+		expect(checkObservabilityStackReadiness).toHaveBeenCalledWith({
+			config: expect.objectContaining({
+				enabled: true,
+				controllerStartPolicy: 'require-ready',
+				zones: [
+					expect.objectContaining({
+						logs: true,
+						metrics: true,
+						traces: true,
+						zoneId: 'shravan',
+					}),
+				],
+			}),
+		});
+		expect(buildImage).not.toHaveBeenCalled();
+		expect(createManagedVm).not.toHaveBeenCalled();
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
+	});
+
+	it('continues gateway startup and logs degradation when host observability is unavailable in degraded mode', async () => {
+		const observabilityCheck = createDeferredPromise<{
+			readonly ok: false;
+			readonly reason: string;
+			readonly status: 'unavailable';
+		}>();
+		const managedVm: ManagedVm = {
+			id: 'vm-observability-degraded',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28311),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28311)),
+			setIngressRoutes: vi.fn(),
+		};
+		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
+			controllerStartPolicy: 'degraded',
+		});
+		const writeLog = vi.fn();
+		const checkObservabilityStackReadiness = vi.fn(() => observabilityCheck.promise);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'resolved-discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+				}),
+				systemConfig,
+				writeLog,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				checkObservabilityStackReadiness,
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(checkObservabilityStackReadiness).toHaveBeenCalledTimes(1);
+		expect(writeLog).not.toHaveBeenCalled();
+		observabilityCheck.resolve({
+			ok: false,
+			reason: 'victoria-logs health check failed: connection refused',
+			status: 'unavailable',
+		});
+		await vi.waitFor(() => {
+			expect(writeLog).toHaveBeenCalledWith(
+				"Host observability stack degraded for zone 'shravan': Host observability stack is not ready: victoria-logs health check failed: connection refused",
+			);
+		});
+		expect(writeLog).toHaveBeenCalledWith(
+			"Host observability stack degraded for zone 'shravan': Host observability stack is not ready: victoria-logs health check failed: connection refused",
+		);
+	});
+
+	it('skips gateway observability readiness checks when policy is off', async () => {
+		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
+			controllerStartPolicy: 'off',
+		});
+		const checkObservabilityStackReadiness = vi.fn(async () => ({
+			ok: true as const,
+			status: 'ready' as const,
+		}));
+		const managedVm: ManagedVm = {
+			id: 'vm-observability-off',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28312),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28312)),
+			setIngressRoutes: vi.fn(),
+		};
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'resolved-discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				checkObservabilityStackReadiness,
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(checkObservabilityStackReadiness).not.toHaveBeenCalled();
+	});
+
+	it('does not repeat the observability readiness check after protected preflight', async () => {
+		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
+			controllerStartPolicy: 'require-ready',
+		});
+		const checkObservabilityStackReadiness = vi.fn(async () => ({
+			ok: true as const,
+			status: 'ready' as const,
+		}));
+		const managedVm: ManagedVm = {
+			id: 'vm-observability-preflighted',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28313),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28313)),
+			setIngressRoutes: vi.fn(),
+		};
+
+		await startGatewayZone(
+			{
+				observabilityStartupCheck: 'skip',
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'resolved-discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				checkObservabilityStackReadiness,
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(checkObservabilityStackReadiness).not.toHaveBeenCalled();
+	});
+
+	it('preflights effective OpenClaw observability config before protected restart image work', async () => {
+		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
+			controllerStartPolicy: 'require-ready',
+		});
+		const preflightHostState = vi.fn(async () => {});
+		const buildImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fp',
+			imagePath: '/tmp/img',
+		}));
+
+		await preflightGatewayZoneStart(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'resolved-discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage,
+				checkObservabilityStackReadiness: vi.fn(async () => ({
+					ok: true as const,
+					status: 'ready' as const,
+				})),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				loadGatewayLifecycle: () => ({
+					...createHttpHealthGatewayLifecycle(),
+					preflightHostState,
+				}),
+			},
+		);
+
+		expect(preflightHostState).toHaveBeenCalledWith(
+			expect.objectContaining({
+				observability: expect.objectContaining({
+					mode: 'collector',
+					openclaw: expect.objectContaining({
+						logs: true,
+						metrics: true,
+						traces: true,
+					}),
+				}),
+			}),
+			expect.any(Object),
+		);
+		expect(buildImage).toHaveBeenCalled();
 	});
 
 	it('cleans orphaned tool VMs for OpenClaw zones after startup preflight succeeds', async () => {

@@ -34,6 +34,7 @@ Use docs/manual/image-versioning.md before changing agent-vm package pins, manag
 Use docs/manual/tool-vm-leases.md before changing agent-vm Tool VM lease identity, renewal, or reuse behavior.
 Use docs/manual/gateway-ingress.md before changing gateway ports, OpenClaw Control UI access, SSE/streaming behavior, WebSocket access, or serving additional webservers from inside a VM.
 Use docs/manual/operations.md before debugging agent-vm controller health, gateway service health, lease-heartbeat, lease-renew, Tool VM SSH, or Gondolin tcpHosts timeouts.
+Use docs/manual/observability.md before changing host observability, Victoria storage, OpenTelemetry collector ports, OpenClaw diagnostics flags, or logging behavior.
 Use docs/manual/mcp-portal.md before changing MCP providers, MCP Portal profiles, MCP package pins, or live MCP validation.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
@@ -64,14 +65,15 @@ Read in this order:
 4. openclaw.md explains OpenClaw gateway configuration.
 5. gateway-ingress.md explains host-facing gateway ports, OpenClaw web serving, SSE, WebSockets, and the boundary between single-route OpenClaw ingress and additional guest webservers.
 6. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
-7. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
-8. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
-9. channels.md explains how deployments add Discord or other channels.
-10. runtime-paths.md explains /workspace, /work, and other in-VM paths.
-11. per-agent-setup.md explains multi-agent layout and tool access choices.
-12. migration-discord.md explains how existing Discord deployments keep working.
-13. secrets.md explains runtime auth and HTTP mediation.
-14. operations.md explains start, graceful stop, scoped offline cleanup, health snapshots, lease-heartbeat, lease-renew, gateway-service health, and gateway-to-controller control-link checks.
+7. observability.md explains host-owned Victoria and OpenTelemetry setup, build-time Docker Compose startup, controller startup behavior, and telemetry safety rules.
+8. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
+9. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
+10. channels.md explains how deployments add Discord or other channels.
+11. runtime-paths.md explains /workspace, /work, and other in-VM paths.
+12. per-agent-setup.md explains multi-agent layout and tool access choices.
+13. migration-discord.md explains how existing Discord deployments keep working.
+14. secrets.md explains runtime auth and HTTP mediation.
+15. operations.md explains start, graceful stop, scoped offline cleanup, health snapshots, lease-heartbeat, lease-renew, gateway-service health, and gateway-to-controller control-link checks.
 
 Local deployment notes belong in docs/manual/local-notes.md or another non-generated file.
 `,
@@ -222,6 +224,29 @@ The default scaffold enables Gondolin and memory-core support. It does not enabl
 OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.
 
 Multi-zone controller work makes one controller process manage multiple typed zones. Use defaultToolVmProfile, agentToolVmProfiles, gateway.authProfilesByAgent, agentSandboxSeeds, leaseIdleTtl, and tcpPool from the current system config reference for exact field names.
+`,
+			),
+		},
+		{
+			relativePath: 'docs/manual/observability.md',
+			content: generatedPage(
+				'Host Observability',
+				`
+Host observability is deployment-owned. Enable host.observability in ${options.systemConfigPath}, then opt in each OpenClaw zone with zones[].observability.
+
+agent-vm build prepares the host stack when host.observability.prepareOnBuild is true and at least one selected OpenClaw zone opts in. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under runtimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
+
+Controller startup does not start Docker Compose. With controllerStartPolicy=degraded, the controller binds and starts while it checks the configured OpenTelemetry collector and Victoria endpoints in the background. With controllerStartPolicy=require-ready, startup waits only for the configured total bounded readiness budget and fails if the already-prepared stack is unavailable. With controllerStartPolicy=off, startup does not check host observability.
+
+Use a durable host.observability.dataDir outside cacheDir, runtimeDir, stateDir, and zoneFilesDir. Victoria data is intentionally not stored in rebuildable cache or disposable runtime folders. Retention is configured separately for metrics, logs, and traces with period plus optional disk bounds.
+
+Published ports bind to loopback only. Do not publish collector or Victoria ports on broad host interfaces unless a separate, authenticated access layer owns that exposure.
+
+OpenClaw observability is collector mode. Agent-vm owns the effective OpenClaw diagnostics config, installs diagnostics-otel in the managed OpenClaw gateway image, and points logs, metrics, and traces at the host OpenTelemetry collector through a synthetic Gondolin tcpHosts mapping.
+
+Do not inject OPENCLAW_DIAGNOSTICS through rawEnvSecrets for observability-enabled zones. Use zones[].observability.openclaw.diagnosticsFlags for narrow debug categories. Broad or content-capturing flags are rejected. Authored OpenClaw logging.redactSensitive must stay enabled.
+
+Never log secrets, prompts, message bodies, tool payloads, cookies, authorization headers, token values, raw URLs with query strings, private keys, or command content. The OpenTelemetry collector drops known sensitive attributes before export and Victoria Logs ignores known sensitive fields, but that is defense-in-depth. Source logging still owns the first safety boundary.
 `,
 			),
 		},

@@ -1,2048 +1,647 @@
-# Observability — Host-Owned Debug/Log Policy + Zone External Resources Implementation Plan
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+# Observability Host Policy Implementation Plan
+
+Date: 2026-06-09
+Status: implemented in branch; pending review and merge decision
+Branch: `feat/observability-host-policy`
+Companion spec:
+`docs/superpowers/specs/2026-05-21-observability-host-policy-design.md`
+
+## Current branch state
+
+This branch has been rebased onto current `origin/master` and now contains the
+observability implementation plus the refreshed plan/spec docs. Do not resurrect
+stale code from the old branch.
+
+The old plan is intentionally superseded. It modeled operator-managed Compose
+and zone-level `externalResources`; the revised design models a host-owned
+observability service plane prepared before controller startup.
+
+## Current implementation evidence
+
+- Host observability config, retention, storage isolation, loopback bind, and
+  OpenClaw-only zone opt-in live in `system.json`.
+- `agent-vm build` prepares a generated Victoria + OpenTelemetry Collector
+  Compose stack when config enables it.
+- `agent-vm build --no-observability` skips the stack for a single run.
+- Controller startup does not call Docker or Compose. It only performs bounded
+  readiness checks according to `controllerStartPolicy`.
+- OpenClaw collector mode generates `diagnostics-otel`, `diagnostics.otel`
+  logs/metrics/traces, and `tcpHosts` for the synthetic collector host.
+- Generated collector exporters use protobuf OTLP with gzip compression for
+  metrics, logs, and traces.
+- Collector and VictoriaLogs scrub known sensitive fields; source config rejects
+  broad diagnostics flags, raw `OPENCLAW_DIAGNOSTICS`, and content capture.
+- A live host e2e canary sends OTLP protobuf logs, metrics, and traces through
+  the collector and verifies storage in VictoriaLogs, VictoriaMetrics, and
+  VictoriaTraces.
+- Native controller OpenTelemetry instrumentation is not implemented in this
+  branch. The companion spec records the intended facade and library path.
+
+## Goal
+
+Implement local, durable, Victoria-backed observability for OpenClaw debugging
+without slowing controller startup.
+
+The implementation must:
+
+1. Add a host-owned observability config surface.
+2. Generate and manage a local Docker Compose Victoria + OpenTelemetry Collector
+   stack from the configured build/prepare path.
+3. Prepare that stack during plain `agent-vm build` when config enables it.
+4. Keep `agent-vm controller start` free of slow Docker work.
+5. Map ready host observability endpoints into the OpenClaw Gateway VM.
+6. Generate effective OpenClaw diagnostics config for metrics, traces, and logs.
+7. Add OpenClaw diagnostics/debug policy without enabling content capture.
+8. Enforce no-secret telemetry invariants at source, collector, and VictoriaLogs
+   ingestion/query boundaries.
+9. Provide tests, docs, and a black-box deployment smoke before claiming done.
+
+## Required mode
+
+Implementation has started on this branch. Continue with review, fixes, and
+verification only. Do not commit, merge, tag, push, or rewrite remote history
+unless explicitly instructed.
+
+## Design summary
+
+```text
+slow path:
+
+  agent-vm build
+        |
+        v
+  generate compose + collector config
+        |
+        v
+  docker compose up + readiness wait
+        |
+        v
+  durable bind-mounted dataDir
+
+fast path:
+
+  agent-vm controller start
+        |
+        +--> fast observability status check only
+        +--> synthetic DNS/tcpHosts for Gateway VM
+        +--> effective OpenClaw diagnostics config
+        |
+        v
+  OpenClaw diagnostics-otel exports to collector
+```
+
+## Phase 0 - Revalidate before coding
+
+- [ ] Re-read `AGENTS.md`.
+- [ ] Confirm branch state:
+
+```bash
+git status --short --branch
+git rev-list --left-right --count origin/master...HEAD
+git diff --name-status origin/master...HEAD
+```
+
+Expected before implementation: only the plan/spec docs differ from
+`origin/master`.
+
+- [ ] Re-check current code paths:
+  - `packages/agent-vm/src/config/system-config.ts`
+  - `packages/agent-vm/src/cli/commands/controller-definition.ts`
+  - `packages/agent-vm/src/cli/build-command.ts`
+  - `packages/agent-vm/src/controller/zone-runtimes/openclaw-zone-runtime.ts`
+  - `packages/agent-vm/src/controller/health/gateway-vm-recovery-runner.ts`
+  - `packages/openclaw-gateway/src/openclaw-lifecycle.ts`
+  - `packages/gateway-interface/src/gateway-lifecycle.ts`
+  - `packages/agent-vm/src/resources/resource-compiler.ts`
+  - `docs/reference/configuration/resource-contracts.md`
+
+Stop if current code has materially changed from the companion spec evidence.
+
+## Phase 1 - Config schema and types
+
+Files likely touched:
+
+- `packages/agent-vm/src/config/system-config.ts`
+- `packages/agent-vm/src/config/system-config.unit.test.ts`
+- New module under `packages/agent-vm/src/observability/`
+
+Tasks:
+
+- [ ] Add `host.observability` schema.
+- [ ] Require `host.observability.dataDir` when enabled.
+- [ ] Resolve `dataDir` through the same config path-resolution path as other
+  config directories before overlap checks.
+- [ ] Validate `dataDir` is outside `cacheDir`, `runtimeDir`, every zone
+  `stateDir`, every OpenClaw `zoneFilesDir`, and any other known
+  cleanup/destructive-command root.
+- [ ] Constrain v1 `host.observability.bindAddress` to loopback only. Accept
+  `127.0.0.1` and, if implemented, `::1`; reject `0.0.0.0`, `::`, and LAN
+  addresses.
+- [ ] Add `controllerStartPolicy` enum:
+  - `degraded`
+  - `require-ready`
+  - `off`
+- [ ] Add retention schemas for metrics, logs, and traces. Metrics accept
+  period plus optional minimum free disk; logs accept period plus optional max
+  bytes; traces accept period plus one disk cap, either max bytes or max
+  percent.
+- [ ] Validate retention period and byte-size strings before Compose renders
+  Victoria flags.
+- [ ] Validate `projectName` against Docker Compose project-name-safe grammar.
+- [ ] Validate observability ports are in range and unique.
+- [ ] Add `mode` with only `collector` accepted in v1. Reject other values
+  clearly even if the field is shaped to allow future expansion.
+- [ ] Add `prepareOnBuild`, default true when host observability is enabled.
+- [ ] Add `waitOnBuild`, default true for local developer deployments.
+- [ ] Add `startupCheckTimeoutMs`, default 500.
+- [ ] Add `zones[].observability` OpenClaw opt-in schema.
+- [ ] Reject zone observability when host observability is disabled.
+- [ ] Reject zone observability for non-OpenClaw gateways in v1.
+- [ ] Reject OpenClaw observability when the selected gateway image profile is
+  not the managed `openclaw-gateway` base that installs
+  `@openclaw/diagnostics-otel`.
+
+Test expectations:
+
+- Defaults are stable and explicit.
+- Invalid retention/disk-cap combinations fail with clear paths.
+- `host.observability.enabled: true` without `dataDir` fails.
+- Relative and tilde `dataDir` inputs are validated after resolution.
+- `dataDir` under cache/runtime/state/zone-files cleanup roots fails.
+- Non-loopback `bindAddress` values fail.
+- `zones[].observability.enabled: true` without host observability fails.
+- Non-OpenClaw zone opt-in fails.
+
+Suggested targeted command:
+
+```bash
+pnpm exec vitest run --config vitest.config.ts --project unit packages/agent-vm/src/config/system-config.unit.test.ts
+```
+
+## Phase 2 - Render host observability artifacts
+
+Files likely touched:
+
+- New `packages/agent-vm/src/observability/observability-config.ts`
+- New `packages/agent-vm/src/observability/observability-compose.ts`
+- New `packages/agent-vm/src/observability/otel-collector-config.ts`
+- New unit tests beside those modules, such as
+  `observability-config.unit.test.ts`, `observability-compose.unit.test.ts`,
+  and `otel-collector-config.unit.test.ts`
+
+Tasks:
+
+- [ ] Build a normalized runtime model from system config.
+- [ ] Render `docker-compose.observability.yml`.
+- [ ] Render `otel-collector-config.yaml` for collector mode.
+- [ ] Use pinned image tags or configurable image tags. Do not use floating tags
+  unless the final design explicitly accepts that tradeoff.
+- [ ] Bind host ports to `host.observability.bindAddress`, default
+  `127.0.0.1`.
+- [ ] Render all collector and Victoria services with `restart: unless-stopped`
+  so Docker can restore prepared services without involving controller startup.
+- [ ] Bind-mount durable storage directories:
+  - `${dataDir}/metrics`
+  - `${dataDir}/logs`
+  - `${dataDir}/traces`
+- [ ] Pass Victoria retention and disk flags from config.
+- [ ] Add collector health extension on a configured local health port.
+- [ ] Ensure rendered files contain no secrets.
+- [ ] Add collector-side sanitization before any Victoria exporter:
+  - drop known sensitive attributes such as auth headers, cookies, API keys,
+    token fields, password fields, private key fields, and credentialed URLs
+  - keep raw body/message/payload fields out of the pipeline by default
+  - hash, truncate, or drop identifiers that do not need full fidelity
+- [ ] Add VictoriaLogs ingest defense-in-depth for known sensitive fields using
+  `ignore_fields` / `VL-Ignore-Fields` where the selected ingestion path
+  supports it.
+
+Test expectations:
+
+- Rendered Compose is deterministic.
+- Rendered collector config points metrics/logs/traces at the Victoria service
+  names and official OTLP paths.
+- Data mounts use bind paths under `dataDir`.
+- No generated command uses `down -v` or removes data.
+- Collector config contains a sanitization stage before Victoria exporters.
+- Object tests prove the sanitization processor is wired into every logs,
+  traces, and metrics pipeline.
+- VictoriaLogs ingest configuration drops known sensitive field names/prefixes
+  where supported.
+- Snapshot/object tests assert no generated config contains secret values or
+  secret-looking placeholders.
+- Fixture tests cover known-bad fields such as `authorization`, `cookie`,
+  `token`, `password`, `body`, `message`, `payload`, and credentialed URLs.
+- Compose render tests prove every published port is bound to a loopback host.
+
+Suggested targeted command:
+
+```bash
+pnpm exec vitest run --config vitest.config.ts --project unit packages/agent-vm/src/observability
+```
+
+## Phase 3 - Add observability lifecycle adapter
+
+Files likely touched:
+
+- New observability lifecycle modules/tests
+
+Tasks:
+
+- [ ] Shell out to Docker Compose through a narrow adapter so tests can stub it.
+- [ ] Render Compose and collector config into
+  `<runtimeDir>/observability/<projectNamespace>/`.
+- [ ] Create durable Victoria data subdirectories under `host.observability.dataDir`.
+- [ ] Implement build-time `waitOnBuild` readiness through the collector health
+  endpoint after Compose returns.
+- [ ] Do not add `down -v` or data deletion behavior in v1. Data deletion remains
+  an explicit manual operator action outside the default `agent-vm` lifecycle.
+- [ ] Leave explicit `agent-vm observability render|up|status|down` commands as
+  a follow-up CLI convenience unless this slice is explicitly expanded.
 
-**Goal:** Make `agent-vm` the source of truth for unified debug/log policy AND zone-level external TCP resources, so deployments like `shravan-claw` configure both via `system.json` (with CLI/env overrides) and the controller fans the policy out to OpenClaw, Gondolin, the worker, and the Gateway VM's tcpHosts.
-
-**Architecture:** Phase A adds a `host.logging` schema, an effective-policy resolver (`CLI flag ▸ env ▸ config ▸ defaults`), and a translation layer that drives OpenClaw `logging.level`, Gondolin `sandbox.debug` + `debugLog`, and worker `LOG_LEVEL`. Phase B reuses the existing per-task `externalResourcesSchema` at zone scope and merges its tcpHosts overlay into `buildGatewayTcpHosts`. Phase C registers a new manual page so generated `AGENTS.md` points debugging sessions at the observability runbook. Phase D bumps versions and pulls the changes into shravan-claw with a working Victoria stack.
-
-**Tech Stack:** TypeScript, zod, vitest, commander-style CLI plumbing in agent-vm, Gondolin VM adapter, OpenClaw config injection, Docker Compose (VictoriaMetrics/VictoriaLogs/VictoriaTraces).
-
-**Companion spec:** `docs/superpowers/specs/2026-05-21-observability-host-policy-design.md` (in this worktree).
-
----
-
-## File structure
-
-This plan lives in the agent-vm worktree at `~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy`. All `agent-vm/...` paths below are relative to that worktree root unless noted.
-
-**agent-vm — Phase A (debug/log policy):**
-- Modify: `packages/agent-vm/src/config/system-config.ts` — add `logging` to host schema.
-- Modify: `packages/agent-vm/src/config/system-config.test.ts` (create if missing) — schema tests.
-- Create: `packages/agent-vm/src/logging/effective-logging-policy.ts` — resolver `CLI ▸ env ▸ config ▸ defaults`.
-- Create: `packages/agent-vm/src/logging/effective-logging-policy.test.ts`.
-- Modify: `packages/agent-vm/src/cli/commands/controller-definition.ts` — add CLI flags.
-- Modify: `packages/agent-vm/src/cli/agent-vm-cli-support.ts` — thread effective policy into `startControllerRuntime`.
-- Modify: `packages/agent-vm/src/cli/vm-host-system-templates.ts` — let generated systemd ExecStart honor `AGENT_VM_LOG_LEVEL`.
-- Modify: `packages/gondolin-adapter/src/vm-adapter.ts` — accept `debug` + `debugLog` options and pass through.
-- Modify: `packages/gondolin-adapter/src/vm-adapter.test.ts` (create if missing) — option-passthrough test.
-- Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.ts` — `buildEffectiveLoggingConfig` consumes policy; gateway passes `debug`/`debugLog` to createManagedVm.
-- Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts` (create if missing) — translation test.
-- Modify: `packages/worker-gateway/src/worker-lifecycle.ts` — same Gondolin debug plumbing + `LOG_LEVEL` env.
-
-**agent-vm — Phase B (zone externalResources):**
-- Modify: `packages/agent-vm/src/config/system-config.ts` — add `externalResources` to zone schema.
-- Modify: `packages/agent-vm/src/config/system-config.test.ts` — externalResources tests.
-- Modify: `packages/gateway-interface/src/gateway-lifecycle.ts` — `externalResources` on `GatewayZoneConfig`.
-- Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.ts` — merge overlay into `buildGatewayTcpHosts`.
-- Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts` — merge test.
-
-**agent-vm — Phase C (docs):**
-- Modify: `packages/agent-vm/src/cli/manual-templates.ts` — register `docs/manual/observability.md`.
-
-**shravan-claw — Phase D (consume):**
-- Modify: `/Users/shravansunder/dev/shravan-claw/package.json` — bump `@agent-vm/agent-vm`.
-- Create: `/Users/shravansunder/dev/shravan-claw/docker-compose.observability.yml`.
-- Modify: `/Users/shravansunder/dev/shravan-claw/config/system.jsonc` — declare three externalResources + (optional) `host.logging.level`.
-- Modify: `/Users/shravansunder/dev/shravan-claw/config/gateways/sunfam/openclaw.json` — add `diagnostics-otel` plugin + `diagnostics.otel` block.
-- Regenerated by agent-vm: `/Users/shravansunder/dev/shravan-claw/AGENTS.md` and `/Users/shravansunder/dev/shravan-claw/docs/manual/observability.md`.
-
----
-
-## Phase A — Unified `host.logging` policy
-
-### Task 1: Define `LogLevel` + `GondolinDebugSetting` types
-
-**Files:**
-- Create: `packages/agent-vm/src/logging/log-level.ts`
-- Create: `packages/agent-vm/src/logging/log-level.test.ts`
-
-- [ ] **Step 1: Write the failing test**
-
-Create `packages/agent-vm/src/logging/log-level.test.ts`:
-
-```typescript
-import { describe, expect, it } from 'vitest';
-import {
-  LOG_LEVELS,
-  parseLogLevel,
-  parseGondolinDebugSetting,
-  GONDOLIN_DEBUG_FLAGS,
-} from './log-level.js';
-
-describe('parseLogLevel', () => {
-  it('accepts every level', () => {
-    for (const level of LOG_LEVELS) {
-      expect(parseLogLevel(level)).toBe(level);
-    }
-  });
-
-  it('rejects unknown levels', () => {
-    expect(() => parseLogLevel('verbose')).toThrow(/unknown log level/);
-  });
-
-  it('rejects empty strings', () => {
-    expect(() => parseLogLevel('')).toThrow();
-  });
-});
-
-describe('parseGondolinDebugSetting', () => {
-  it('accepts the keywords default, off, all', () => {
-    expect(parseGondolinDebugSetting('default')).toBe('default');
-    expect(parseGondolinDebugSetting('off')).toBe('off');
-    expect(parseGondolinDebugSetting('all')).toBe('all');
-  });
-
-  it('parses a comma-separated flag list', () => {
-    expect(parseGondolinDebugSetting('net,exec')).toEqual(['net', 'exec']);
-  });
-
-  it('rejects unknown flags', () => {
-    expect(() => parseGondolinDebugSetting('net,bogus')).toThrow(/unknown gondolin debug flag/);
-  });
-
-  it('exposes the canonical flag list', () => {
-    expect(GONDOLIN_DEBUG_FLAGS).toEqual(['net', 'exec', 'vfs', 'protocol']);
-  });
-});
-```
-
-- [ ] **Step 2: Run the test and confirm it fails**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-pnpm test --run packages/agent-vm/src/logging/log-level.test.ts 2>&1 | tail -20
-```
-Expected: fails because `./log-level.js` does not exist.
-
-- [ ] **Step 3: Create the implementation**
-
-Create `packages/agent-vm/src/logging/log-level.ts`:
-
-```typescript
-export const LOG_LEVELS = [
-  'silent',
-  'fatal',
-  'error',
-  'warn',
-  'info',
-  'debug',
-  'trace',
-] as const;
-export type LogLevel = (typeof LOG_LEVELS)[number];
-
-export const GONDOLIN_DEBUG_FLAGS = ['net', 'exec', 'vfs', 'protocol'] as const;
-export type GondolinDebugFlag = (typeof GONDOLIN_DEBUG_FLAGS)[number];
-
-export type GondolinDebugSetting =
-  | 'default'
-  | 'off'
-  | 'all'
-  | readonly GondolinDebugFlag[];
-
-export function parseLogLevel(value: string): LogLevel {
-  if (!value) {
-    throw new Error('log level must not be empty');
-  }
-  const candidate = value.trim().toLowerCase();
-  if ((LOG_LEVELS as readonly string[]).includes(candidate)) {
-    return candidate as LogLevel;
-  }
-  throw new Error(`unknown log level '${value}' (allowed: ${LOG_LEVELS.join(', ')})`);
-}
-
-export function parseGondolinDebugSetting(value: string): GondolinDebugSetting {
-  const trimmed = value.trim().toLowerCase();
-  if (trimmed === 'default' || trimmed === 'off' || trimmed === 'all') {
-    return trimmed;
-  }
-  if (!trimmed) {
-    throw new Error('gondolin debug setting must not be empty');
-  }
-  const flags = trimmed.split(',').map((part) => part.trim()).filter(Boolean);
-  for (const flag of flags) {
-    if (!(GONDOLIN_DEBUG_FLAGS as readonly string[]).includes(flag)) {
-      throw new Error(
-        `unknown gondolin debug flag '${flag}' (allowed: ${GONDOLIN_DEBUG_FLAGS.join(', ')})`,
-      );
-    }
-  }
-  return flags as GondolinDebugFlag[];
-}
-```
-
-- [ ] **Step 4: Run the test and confirm it passes**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-pnpm test --run packages/agent-vm/src/logging/log-level.test.ts 2>&1 | tail -10
-```
-Expected: all tests pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-git add packages/agent-vm/src/logging/log-level.ts packages/agent-vm/src/logging/log-level.test.ts
-git commit -m "feat(logging): add LogLevel + GondolinDebugSetting parsers"
-```
-
----
-
-### Task 2: Add `host.logging` to `systemConfigSchema` (TDD)
-
-**Files:**
-- Modify: `packages/agent-vm/src/config/system-config.ts` (host schema around line 344-360)
-- Test: `packages/agent-vm/src/config/system-config.test.ts` (create if missing)
-
-- [ ] **Step 1: Check whether the test file exists**
-
-```bash
-ls ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm/src/config/system-config.test.ts 2>/dev/null \
-  || echo "create new test file"
-```
-
-If it does not exist, create with this scaffold:
-
-```typescript
-import { describe, expect, it } from 'vitest';
-import { systemConfigSchema } from './system-config.js';
-```
-
-- [ ] **Step 2: Write the failing test**
-
-Append:
-
-```typescript
-describe('host.logging schema', () => {
-  const baseSystem = {
-    host: {
-      controllerPort: 18800,
-      projectNamespace: 'test',
-    },
-    zones: [
-      {
-        id: 'test-zone',
-        gateway: {
-          type: 'openclaw' as const,
-          stateDir: '/tmp/state',
-          /* IMPORTANT: copy the full set of currently-required gateway fields
-             from an existing valid test fixture in this repo. The point of
-             this test is the host.logging field, not the gateway shape. */
-        } as unknown,
-        secrets: {},
-        egressHosts: [{ host: 'example.com', audience: 'gateway' as const }],
-      },
-    ],
-    toolVmProfiles: {},
-    tcpPool: { basePort: 30000, size: 4 },
-  };
-
-  it('defaults host.logging to {level:info, gondolin:default, openclaw:inherit, worker:inherit}', () => {
-    const parsed = systemConfigSchema.parse(baseSystem);
-    expect(parsed.host.logging).toEqual({
-      level: 'info',
-      gondolin: 'default',
-      openclaw: 'inherit',
-      worker: 'inherit',
-    });
-  });
-
-  it('accepts host.logging.level=debug', () => {
-    const parsed = systemConfigSchema.parse({
-      ...baseSystem,
-      host: { ...baseSystem.host, logging: { level: 'debug' } },
-    });
-    expect(parsed.host.logging.level).toBe('debug');
-  });
-
-  it('accepts host.logging.gondolin as a flag array', () => {
-    const parsed = systemConfigSchema.parse({
-      ...baseSystem,
-      host: { ...baseSystem.host, logging: { gondolin: ['net', 'exec'] } },
-    });
-    expect(parsed.host.logging.gondolin).toEqual(['net', 'exec']);
-  });
-
-  it('rejects unknown log level', () => {
-    expect(() =>
-      systemConfigSchema.parse({
-        ...baseSystem,
-        host: { ...baseSystem.host, logging: { level: 'verbose' } },
-      }),
-    ).toThrow();
-  });
-
-  it('rejects unknown gondolin flag', () => {
-    expect(() =>
-      systemConfigSchema.parse({
-        ...baseSystem,
-        host: { ...baseSystem.host, logging: { gondolin: ['bogus'] } },
-      }),
-    ).toThrow();
-  });
-});
-```
-
-**Important:** The `gateway` block above is a stub. Read the existing zoneSchema in `system-config.ts:369-389` and copy the full required-field shape from an existing test (look in `packages/agent-vm/src/controller/controller-integration.test.ts` for a working fixture). Do not guess.
-
-- [ ] **Step 3: Run the test and confirm it fails**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-pnpm test --run packages/agent-vm/src/config/system-config.test.ts 2>&1 | tail -30
-```
-Expected: all `host.logging schema` tests fail because the field isn't declared yet.
-
-- [ ] **Step 4: Add the schema**
-
-Open `packages/agent-vm/src/config/system-config.ts`. At the top of the file add:
-
-```typescript
-import { GONDOLIN_DEBUG_FLAGS, LOG_LEVELS } from '../logging/log-level.js';
-```
-
-In the `host: z.object({ ... })` block (around line 344-360), add as a sibling of `controllerPort`/`projectNamespace`/`secretsProvider`/`githubToken`:
-
-```typescript
-logging: z
-  .object({
-    level: z.enum(LOG_LEVELS).default('info'),
-    gondolin: z
-      .union([
-        z.literal('default'),
-        z.literal('off'),
-        z.literal('all'),
-        z.array(z.enum(GONDOLIN_DEBUG_FLAGS)).min(1),
-      ])
-      .default('default'),
-    openclaw: z
-      .union([z.literal('inherit'), z.enum(LOG_LEVELS)])
-      .default('inherit'),
-    worker: z
-      .union([z.literal('inherit'), z.enum(LOG_LEVELS)])
-      .default('inherit'),
-  })
-  .default(() => ({
-    level: 'info',
-    gondolin: 'default',
-    openclaw: 'inherit',
-    worker: 'inherit',
-  })),
-```
-
-- [ ] **Step 5: Run the test and confirm it passes**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-pnpm test --run packages/agent-vm/src/config/system-config.test.ts 2>&1 | tail -15
-```
-Expected: all `host.logging schema` tests pass; existing tests still pass.
-
-- [ ] **Step 6: Commit**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-git add packages/agent-vm/src/config/system-config.ts \
-  packages/agent-vm/src/config/system-config.test.ts
-git commit -m "feat(config): add host.logging policy schema"
-```
-
----
-
-### Task 3: Effective-logging-policy resolver (TDD)
-
-**Files:**
-- Create: `packages/agent-vm/src/logging/effective-logging-policy.ts`
-- Create: `packages/agent-vm/src/logging/effective-logging-policy.test.ts`
-
-- [ ] **Step 1: Write the failing test**
-
-Create `packages/agent-vm/src/logging/effective-logging-policy.test.ts`:
-
-```typescript
-import { describe, expect, it } from 'vitest';
-import { resolveEffectiveLoggingPolicy } from './effective-logging-policy.js';
-
-const baseConfig = {
-  level: 'info',
-  gondolin: 'default',
-  openclaw: 'inherit',
-  worker: 'inherit',
-} as const;
-
-describe('resolveEffectiveLoggingPolicy', () => {
-  it('uses defaults when no CLI/env/config override', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: {},
-      env: {},
-      config: baseConfig,
-    });
-    expect(policy.level).toBe('info');
-    expect(policy.gondolin).toEqual([]);
-    expect(policy.openclaw).toBe('info');
-    expect(policy.worker).toBe('info');
-  });
-
-  it('expands level=debug to gondolin=[net,exec,vfs], openclaw=debug, worker=debug', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: {},
-      env: {},
-      config: { ...baseConfig, level: 'debug' },
-    });
-    expect(policy.gondolin).toEqual(['net', 'exec', 'vfs']);
-    expect(policy.openclaw).toBe('debug');
-    expect(policy.worker).toBe('debug');
-  });
-
-  it('expands level=trace to gondolin=all four flags, openclaw=trace, worker=trace', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: {},
-      env: {},
-      config: { ...baseConfig, level: 'trace' },
-    });
-    expect(policy.gondolin).toEqual(['net', 'exec', 'vfs', 'protocol']);
-    expect(policy.openclaw).toBe('trace');
-    expect(policy.worker).toBe('trace');
-  });
-
-  it('CLI flag wins over env', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: { logLevel: 'warn' },
-      env: { AGENT_VM_LOG_LEVEL: 'debug' },
-      config: { ...baseConfig, level: 'info' },
-    });
-    expect(policy.level).toBe('warn');
-  });
-
-  it('env wins over config', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: {},
-      env: { AGENT_VM_LOG_LEVEL: 'error' },
-      config: { ...baseConfig, level: 'info' },
-    });
-    expect(policy.level).toBe('error');
-  });
-
-  it('honors explicit host.logging.gondolin override even at debug level', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: {},
-      env: {},
-      config: { ...baseConfig, level: 'debug', gondolin: ['net'] },
-    });
-    expect(policy.gondolin).toEqual(['net']);
-  });
-
-  it('honors explicit host.logging.openclaw override', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: {},
-      env: {},
-      config: { ...baseConfig, level: 'debug', openclaw: 'warn' },
-    });
-    expect(policy.openclaw).toBe('warn');
-  });
-
-  it('--gondolin-debug CLI flag overrides everything', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: { gondolinDebug: 'off' },
-      env: { AGENT_VM_GONDOLIN_DEBUG: 'all' },
-      config: { ...baseConfig, level: 'debug' },
-    });
-    expect(policy.gondolin).toEqual([]);
-  });
-
-  it('--debug is equivalent to --log-level debug', () => {
-    const policy = resolveEffectiveLoggingPolicy({
-      cliFlags: { debug: true },
-      env: {},
-      config: baseConfig,
-    });
-    expect(policy.level).toBe('debug');
-    expect(policy.gondolin).toEqual(['net', 'exec', 'vfs']);
-  });
-});
-```
-
-- [ ] **Step 2: Run the test and confirm it fails**
-
-```bash
-pnpm test --run packages/agent-vm/src/logging/effective-logging-policy.test.ts 2>&1 | tail -10
-```
-Expected: fails — file does not exist.
-
-- [ ] **Step 3: Implement the resolver**
-
-Create `packages/agent-vm/src/logging/effective-logging-policy.ts`:
-
-```typescript
-import {
-  GONDOLIN_DEBUG_FLAGS,
-  type GondolinDebugFlag,
-  type GondolinDebugSetting,
-  type LogLevel,
-  parseGondolinDebugSetting,
-  parseLogLevel,
-} from './log-level.js';
-
-export interface HostLoggingConfig {
-  readonly level: LogLevel;
-  readonly gondolin: GondolinDebugSetting;
-  readonly openclaw: LogLevel | 'inherit';
-  readonly worker: LogLevel | 'inherit';
-}
-
-export interface EffectiveLoggingPolicyInput {
-  readonly cliFlags: {
-    readonly logLevel?: string;
-    readonly debug?: boolean;
-    readonly gondolinDebug?: string;
-  };
-  readonly env: Partial<Record<'AGENT_VM_LOG_LEVEL' | 'AGENT_VM_GONDOLIN_DEBUG', string | undefined>>;
-  readonly config: HostLoggingConfig;
-}
-
-export interface EffectiveLoggingPolicy {
-  readonly level: LogLevel;
-  readonly gondolin: readonly GondolinDebugFlag[];
-  readonly openclaw: LogLevel;
-  readonly worker: LogLevel;
-}
-
-const DEBUG_GONDOLIN_FLAGS: readonly GondolinDebugFlag[] = ['net', 'exec', 'vfs'];
-const TRACE_GONDOLIN_FLAGS: readonly GondolinDebugFlag[] = [...GONDOLIN_DEBUG_FLAGS];
-
-function resolveLevel(input: EffectiveLoggingPolicyInput): LogLevel {
-  if (input.cliFlags.logLevel) {
-    return parseLogLevel(input.cliFlags.logLevel);
-  }
-  if (input.cliFlags.debug) {
-    return 'debug';
-  }
-  const envLevel = input.env.AGENT_VM_LOG_LEVEL;
-  if (envLevel) {
-    return parseLogLevel(envLevel);
-  }
-  return input.config.level;
-}
-
-function resolveGondolin(
-  level: LogLevel,
-  input: EffectiveLoggingPolicyInput,
-): readonly GondolinDebugFlag[] {
-  // CLI > env > config-explicit > level-derived default
-  if (input.cliFlags.gondolinDebug) {
-    return expandGondolinSetting(parseGondolinDebugSetting(input.cliFlags.gondolinDebug));
-  }
-  const envValue = input.env.AGENT_VM_GONDOLIN_DEBUG;
-  if (envValue) {
-    return expandGondolinSetting(parseGondolinDebugSetting(envValue));
-  }
-  if (input.config.gondolin !== 'default') {
-    return expandGondolinSetting(input.config.gondolin);
-  }
-  return defaultGondolinForLevel(level);
-}
-
-function expandGondolinSetting(setting: GondolinDebugSetting): readonly GondolinDebugFlag[] {
-  if (setting === 'off') {
-    return [];
-  }
-  if (setting === 'all') {
-    return TRACE_GONDOLIN_FLAGS;
-  }
-  if (setting === 'default') {
-    // Explicit "default" at config level is the same as level-derived; the
-    // caller handles this via resolveGondolin. Returning [] here is a safety
-    // net; in practice resolveGondolin should not pass 'default' through.
-    return [];
-  }
-  return setting;
-}
-
-function defaultGondolinForLevel(level: LogLevel): readonly GondolinDebugFlag[] {
-  switch (level) {
-    case 'debug':
-      return DEBUG_GONDOLIN_FLAGS;
-    case 'trace':
-      return TRACE_GONDOLIN_FLAGS;
-    default:
-      return [];
-  }
-}
-
-function resolveSubsystem(
-  level: LogLevel,
-  configValue: LogLevel | 'inherit',
-): LogLevel {
-  if (configValue !== 'inherit') {
-    return configValue;
-  }
-  return level;
-}
-
-export function resolveEffectiveLoggingPolicy(
-  input: EffectiveLoggingPolicyInput,
-): EffectiveLoggingPolicy {
-  const level = resolveLevel(input);
-  return {
-    level,
-    gondolin: resolveGondolin(level, input),
-    openclaw: resolveSubsystem(level, input.config.openclaw),
-    worker: resolveSubsystem(level, input.config.worker),
-  };
-}
-```
-
-- [ ] **Step 4: Run the test and confirm it passes**
-
-```bash
-pnpm test --run packages/agent-vm/src/logging/effective-logging-policy.test.ts 2>&1 | tail -15
-```
-Expected: all green.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agent-vm/src/logging/effective-logging-policy.ts \
-  packages/agent-vm/src/logging/effective-logging-policy.test.ts
-git commit -m "feat(logging): add effective-logging-policy resolver (CLI ▸ env ▸ config ▸ defaults)"
-```
-
----
-
-### Task 4: Add CLI flags to `controller start`
-
-**Files:**
-- Modify: `packages/agent-vm/src/cli/commands/controller-definition.ts` (lines 109-128)
-
-- [ ] **Step 1: Read the existing args block**
-
-```bash
-sed -n '108,142p' ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm/src/cli/commands/controller-definition.ts
-```
-Expected: shows `args: { config: createConfigOption(), zone: createZoneOption() }` and the handler.
-
-- [ ] **Step 2: Inspect `createConfigOption`/`createZoneOption` patterns**
-
-```bash
-grep -n "createConfigOption\|createZoneOption\|cmd-ts\|@drizzle-team\|option(" \
-  ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm/src/cli/commands/command-definition-support.ts | head -10
-```
-Note the library used (likely `cmd-ts` based on `command`/`subcommands` imports). Read the imports at the top of `controller-definition.ts` to confirm. Use the same library's `option(...)` helpers for the new flags.
-
-- [ ] **Step 3: Add the new flags**
-
-Open `controller-definition.ts`. Above the `start: command({...})` block, define the three new options reusing the file's existing option style. If the codebase uses `cmd-ts`, the pattern is:
-
-```typescript
-import { option, optional, flag, string as cmdString } from 'cmd-ts';
-
-const logLevelOption = option({
-  type: optional(cmdString),
-  long: 'log-level',
-  description:
-    'Logging level: silent|fatal|error|warn|info|debug|trace. Overrides host.logging.level and AGENT_VM_LOG_LEVEL.',
-});
-
-const debugFlag = flag({
-  long: 'debug',
-  description: 'Alias for --log-level debug.',
-});
-
-const gondolinDebugOption = option({
-  type: optional(cmdString),
-  long: 'gondolin-debug',
-  description:
-    'Gondolin debug flags: comma-separated subset of net,exec,vfs,protocol, or one of off|all. Overrides AGENT_VM_GONDOLIN_DEBUG.',
-});
-```
-
-Then inside the start command, change `args:` to include all three:
-
-```typescript
-args: {
-  config: createConfigOption(),
-  zone: createZoneOption(),
-  logLevel: logLevelOption,
-  debug: debugFlag,
-  gondolinDebug: gondolinDebugOption,
-},
-handler: async ({ config, zone, logLevel, debug, gondolinDebug }) => {
-  // existing config + zone resolution stays
-  const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-  const selectedZone = requireZone(systemConfig, zone);
-
-  // pass the raw CLI flags downstream — the resolver consumes them
-  await requireGatewayImageCache(systemConfig, selectedZone.id, dependencies);
-  const runTask = await createRunTask(io);
-  const runtime = await dependencies.startControllerRuntime(
-    {
-      systemConfig,
-      zoneId: selectedZone.id,
-      cliLoggingFlags: { logLevel, debug, gondolinDebug },
-    },
-    { runTask },
-  );
-  io.stdout.write(
-    `${JSON.stringify(
-      {
-        controllerPort: runtime.controllerPort,
-        ingress: runtime.gateway?.ingress ?? null,
-        vmId: runtime.gateway?.vm.id ?? null,
-        zoneId: selectedZone.id,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-},
-```
-
-If the actual CLI library is not `cmd-ts`, look at how `createConfigOption()` and `createZoneOption()` are constructed in `command-definition-support.ts` and add the new flags in the same style.
-
-- [ ] **Step 4: Update `startControllerRuntime` signature**
-
-Open `packages/agent-vm/src/cli/agent-vm-cli-support.ts` (lines 89-106). Add the new field to the input type:
-
-```typescript
-readonly startControllerRuntime: (
-  options: {
-    readonly systemConfig: SystemConfig;
-    readonly zoneId: string;
-    readonly cliLoggingFlags?: {
-      readonly logLevel?: string;
-      readonly debug?: boolean;
-      readonly gondolinDebug?: string;
-    };
-  },
-  dependencies?: { readonly runTask?: RunTask },
-) => Promise<...>;
-```
-
-And update the default implementation around line 136-137 to forward the new field.
-
-- [ ] **Step 5: Build and type-check**
-
-```bash
-pnpm -r --filter @agent-vm/agent-vm exec tsc --noEmit 2>&1 | tail -10
-```
-Expected: clean.
-
-- [ ] **Step 6: Run controller tests**
-
-```bash
-pnpm test --run packages/agent-vm/src/cli/commands/controller-definition.test.ts 2>&1 | tail -10
-```
-Expected: still green. If a test verifies the exact CLI surface, update it to include the new flags.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add packages/agent-vm/src/cli/commands/controller-definition.ts \
-  packages/agent-vm/src/cli/agent-vm-cli-support.ts
-git commit -m "feat(cli): controller start accepts --log-level, --debug, --gondolin-debug"
-```
-
----
-
-### Task 5: Resolve effective policy at controller startup
-
-**Files:**
-- Modify: `packages/agent-vm/src/controller/controller-runtime.ts`
-
-- [ ] **Step 1: Locate where the controller materializes its inputs**
-
-```bash
-grep -n "systemConfig\|zoneId\|export.*startControllerRuntime\|cliLoggingFlags" \
-  ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm/src/controller/controller-runtime.ts | head -10
-```
-
-- [ ] **Step 2: Call the resolver and attach effective policy to the runtime context**
-
-Inside `startControllerRuntime`, before the gateway VM is built, call:
-
-```typescript
-import { resolveEffectiveLoggingPolicy } from '../logging/effective-logging-policy.js';
-
-const effectiveLogging = resolveEffectiveLoggingPolicy({
-  cliFlags: options.cliLoggingFlags ?? {},
-  env: {
-    AGENT_VM_LOG_LEVEL: process.env.AGENT_VM_LOG_LEVEL,
-    AGENT_VM_GONDOLIN_DEBUG: process.env.AGENT_VM_GONDOLIN_DEBUG,
-  },
-  config: options.systemConfig.host.logging,
-});
-```
-
-Store `effectiveLogging` on the runtime context object (whatever shape the existing controller uses) so downstream lifecycle code can read it.
-
-- [ ] **Step 3: Pass effective policy into the gateway zone builder**
-
-Find the call to the gateway lifecycle (e.g. `openclawGateway.buildVmSpec(...)`) and pass the effective policy as a new option. This requires extending `GatewayZoneConfig` or adding a separate `effectiveLogging` field on the orchestrator input. Keep it on the orchestrator input (less type churn) and pull it from there in the gateway lifecycle.
-
-- [ ] **Step 4: Build + test**
-
-```bash
-pnpm -r build 2>&1 | tail -10
-pnpm test --run packages/agent-vm 2>&1 | tail -10
-```
-Expected: clean.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agent-vm/src/controller/controller-runtime.ts \
-  packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts
-git commit -m "feat(controller): resolve effective logging policy at start and thread to gateway"
-```
-
----
-
-### Task 6: Thread debug options into the Gondolin adapter (TDD)
-
-**Files:**
-- Modify: `packages/gondolin-adapter/src/vm-adapter.ts` (CreateVmOptions ~ line 90-103; VM.create call ~ line 294-324)
-- Test: `packages/gondolin-adapter/src/vm-adapter.test.ts` (create if missing)
-
-- [ ] **Step 1: Write the failing test**
-
-Create or extend `packages/gondolin-adapter/src/vm-adapter.test.ts`:
-
-```typescript
-import { describe, expect, it, vi } from 'vitest';
-import { createManagedVm } from './vm-adapter.js';
-
-describe('createManagedVm passes debug options to Gondolin', () => {
-  it('passes sandbox.debug and debugLog when provided', async () => {
-    const createVm = vi.fn(async (opts) => ({
-      id: 'vm-test',
-      exec: vi.fn(),
-      enableSsh: vi.fn(),
-      enableIngress: vi.fn(),
-      close: vi.fn(),
-    }));
-    const debugLogSink = vi.fn();
-
-    await createManagedVm(
-      {
-        imagePath: '/dev/null',
-        memory: '512M',
-        cpus: 1,
-        rootfsMode: 'memory',
-        allowedHosts: [],
-        secrets: {},
-        vfsMounts: {},
-        debug: ['net', 'exec'],
-        debugLog: debugLogSink,
-      },
-      {
-        createVm,
-        createHttpHooks: () => ({ env: {}, httpHooks: {} as never }),
-        closePinnedRealFsRoot: vi.fn(),
-        createPinnedRealFsProvider: vi.fn() as never,
-        createRealFsProvider: vi.fn() as never,
-        createReadonlyProvider: vi.fn() as never,
-        createMemoryProvider: vi.fn() as never,
-        createShadowProvider: vi.fn() as never,
-        createShadowPathPredicate: vi.fn() as never,
-      } as never,
-    );
-
-    const firstCall = createVm.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(firstCall.sandbox).toMatchObject({ debug: ['net', 'exec'] });
-    expect(firstCall.debugLog).toBe(debugLogSink);
-  });
-
-  it('omits sandbox.debug when not provided', async () => {
-    const createVm = vi.fn(async () => ({
-      id: 'vm-test',
-      exec: vi.fn(),
-      enableSsh: vi.fn(),
-      enableIngress: vi.fn(),
-      close: vi.fn(),
-    }));
-
-    await createManagedVm(
-      {
-        imagePath: '/dev/null',
-        memory: '512M',
-        cpus: 1,
-        rootfsMode: 'memory',
-        allowedHosts: [],
-        secrets: {},
-        vfsMounts: {},
-      },
-      {
-        createVm,
-        createHttpHooks: () => ({ env: {}, httpHooks: {} as never }),
-        closePinnedRealFsRoot: vi.fn(),
-        createPinnedRealFsProvider: vi.fn() as never,
-        createRealFsProvider: vi.fn() as never,
-        createReadonlyProvider: vi.fn() as never,
-        createMemoryProvider: vi.fn() as never,
-        createShadowProvider: vi.fn() as never,
-        createShadowPathPredicate: vi.fn() as never,
-      } as never,
-    );
-
-    const firstCall = createVm.mock.calls[0]?.[0] as Record<string, unknown>;
-    const sandbox = (firstCall.sandbox ?? {}) as Record<string, unknown>;
-    expect(sandbox.debug).toBeUndefined();
-    expect(firstCall.debugLog).toBeUndefined();
-  });
-});
-```
-
-- [ ] **Step 2: Run the test and confirm it fails**
-
-```bash
-pnpm test --run packages/gondolin-adapter/src/vm-adapter.test.ts 2>&1 | tail -15
-```
-Expected: fails because `CreateVmOptions` does not accept `debug` / `debugLog`.
-
-- [ ] **Step 3: Extend `CreateVmOptions`**
-
-In `packages/gondolin-adapter/src/vm-adapter.ts` around line 90-103, add to the interface:
-
-```typescript
-export interface CreateVmOptions {
-  // ... existing fields
-  readonly debug?: readonly ('net' | 'exec' | 'vfs' | 'protocol')[] | boolean;
-  readonly debugLog?: (component: string, message: string) => void;
-}
-```
-
-- [ ] **Step 4: Pass them into `VM.create({...})`**
-
-In the same file around line 294-324, inside the `createVm` call:
-
-```typescript
-vmInstance = await dependencies.createVm({
-  ...(options.imagePath.length > 0
-    ? { sandbox: { imagePath: options.imagePath, ...(options.debug !== undefined ? { debug: options.debug } : {}) } }
-    : {}),
-  ...(options.debugLog ? { debugLog: options.debugLog } : {}),
-  ...(options.sessionLabel ? { sessionLabel: options.sessionLabel } : {}),
-  rootfs: { mode: options.rootfsMode },
-  // ... rest unchanged
-});
-```
-
-Special case: when `imagePath` is empty AND `debug` is set, still create the `sandbox` block:
-
-```typescript
-const sandboxOptions =
-  options.imagePath.length > 0
-    ? { imagePath: options.imagePath, ...(options.debug !== undefined ? { debug: options.debug } : {}) }
-    : options.debug !== undefined
-      ? { debug: options.debug }
-      : undefined;
-
-vmInstance = await dependencies.createVm({
-  ...(sandboxOptions ? { sandbox: sandboxOptions } : {}),
-  ...(options.debugLog ? { debugLog: options.debugLog } : {}),
-  // ...
-});
-```
-
-- [ ] **Step 5: Run the test and confirm it passes**
-
-```bash
-pnpm test --run packages/gondolin-adapter/src/vm-adapter.test.ts 2>&1 | tail -10
-```
-Expected: green.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add packages/gondolin-adapter/src/vm-adapter.ts \
-  packages/gondolin-adapter/src/vm-adapter.test.ts
-git commit -m "feat(gondolin-adapter): pass sandbox.debug + debugLog through to VM.create"
-```
-
----
-
-### Task 7: Build the Gondolin debug log sink
-
-**Files:**
-- Create: `packages/agent-vm/src/logging/gondolin-debug-sink.ts`
-- Create: `packages/agent-vm/src/logging/gondolin-debug-sink.test.ts`
-
-- [ ] **Step 1: Write the failing test**
-
-Create `packages/agent-vm/src/logging/gondolin-debug-sink.test.ts`:
-
-```typescript
-import { describe, expect, it, vi } from 'vitest';
-import { createGondolinDebugSink } from './gondolin-debug-sink.js';
-
-describe('createGondolinDebugSink', () => {
-  it('writes formatted lines to the supplied appender', () => {
-    const appender = vi.fn();
-    const sink = createGondolinDebugSink({ append: appender });
-    sink('net', 'tcp blocked 10.0.0.1:443 -> 10.0.0.2:80');
-    expect(appender).toHaveBeenCalledOnce();
-    const line = appender.mock.calls[0]?.[0] as string;
-    expect(line).toMatch(/\[gondolin:net\] tcp blocked /);
-    expect(line.endsWith('\n')).toBe(true);
-  });
-
-  it('coerces non-string messages safely', () => {
-    const appender = vi.fn();
-    const sink = createGondolinDebugSink({ append: appender });
-    sink('exec', '');
-    expect(appender).toHaveBeenCalled();
-  });
-});
-```
-
-- [ ] **Step 2: Run test, expect fail**
-
-```bash
-pnpm test --run packages/agent-vm/src/logging/gondolin-debug-sink.test.ts 2>&1 | tail -10
-```
-
-- [ ] **Step 3: Implement**
-
-Create `packages/agent-vm/src/logging/gondolin-debug-sink.ts`:
-
-```typescript
-export interface GondolinDebugSinkOptions {
-  readonly append: (line: string) => void;
-}
-
-export type GondolinDebugSink = (component: string, message: string) => void;
-
-export function createGondolinDebugSink(
-  options: GondolinDebugSinkOptions,
-): GondolinDebugSink {
-  return (component, message) => {
-    const ts = new Date().toISOString();
-    options.append(`${ts} [gondolin:${component}] ${message ?? ''}\n`);
-  };
-}
-```
-
-- [ ] **Step 4: Test passes**
-
-```bash
-pnpm test --run packages/agent-vm/src/logging/gondolin-debug-sink.test.ts 2>&1 | tail -10
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agent-vm/src/logging/gondolin-debug-sink.ts \
-  packages/agent-vm/src/logging/gondolin-debug-sink.test.ts
-git commit -m "feat(logging): add gondolin debug sink formatter"
-```
-
----
-
-### Task 8: Wire effective logging into the openclaw gateway lifecycle
-
-**Files:**
-- Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.ts` (buildEffectiveLoggingConfig at line 348 + createManagedVm call site)
-- Test: `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts` (create if missing)
-
-- [ ] **Step 1: Write the failing translation test**
-
-Create `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts`:
-
-```typescript
-import { describe, expect, it } from 'vitest';
-import { buildEffectiveLoggingConfig } from './openclaw-lifecycle.js';
-
-describe('buildEffectiveLoggingConfig', () => {
-  it('injects logging.file and the effective openclaw level when no author level', () => {
-    const out = buildEffectiveLoggingConfig({}, 'debug');
-    expect(out.file).toMatch(/openclaw-/);
-    expect(out.level).toBe('debug');
-  });
-
-  it('host policy wins over any author-supplied level', () => {
-    const out = buildEffectiveLoggingConfig(
-      { logging: { level: 'warn' } } as Record<string, unknown>,
-      'debug',
-    );
-    expect(out.level).toBe('debug');
-  });
-
-  it('preserves unrelated author logging fields (e.g. transports)', () => {
-    const out = buildEffectiveLoggingConfig(
-      { logging: { level: 'warn', transports: ['file'] } } as Record<string, unknown>,
-      'info',
-    );
-    expect(out.transports).toEqual(['file']);
-    expect(out.level).toBe('info');
-  });
-});
-```
-
-Note: `buildEffectiveLoggingConfig` is currently NOT exported (it's a `function` declaration). Export it for testing — minimal change.
-
-- [ ] **Step 2: Run test, expect fail**
-
-```bash
-pnpm test --run packages/openclaw-gateway/src/openclaw-lifecycle.test.ts 2>&1 | tail -10
-```
-Expected: fails (signature mismatch — the current function takes only `parsedBaseConfig`).
-
-- [ ] **Step 3: Update `buildEffectiveLoggingConfig`**
-
-In `packages/openclaw-gateway/src/openclaw-lifecycle.ts:348`, change the function to:
-
-```typescript
-export function buildEffectiveLoggingConfig(
-  parsedBaseConfig: Record<string, unknown>,
-  effectiveOpenclawLevel: import('@agent-vm/agent-vm/logging/log-level').LogLevel,
-): Record<string, unknown> {
-  const existingLoggingConfig = isObjectRecord(parsedBaseConfig.logging)
-    ? (parsedBaseConfig.logging as Record<string, unknown>)
-    : {};
-
-  return {
-    file: openClawRuntimeLogFileVmPath,
-    ...existingLoggingConfig,
-    // Host policy wins. To author a different OpenClaw level per deployment,
-    // set host.logging.openclaw explicitly (e.g. "warn") instead of leaving it
-    // "inherit".
-    level: effectiveOpenclawLevel,
-  };
-}
-```
-
-- [ ] **Step 4: Update the call site (~line 445)**
-
-The current call is `logging: buildEffectiveLoggingConfig(parsedBaseConfig)`. Change to:
-
-```typescript
-logging: buildEffectiveLoggingConfig(parsedBaseConfig, effectiveLogging.openclaw),
-```
-
-`effectiveLogging` is the policy resolved in Task 5 and threaded onto the orchestrator/zone input.
-
-- [ ] **Step 5: Pass debug + debugLog to createManagedVm**
-
-In the same file, find the call to `createManagedVm(...)` (search for `createManagedVm` in `openclaw-lifecycle.ts`). Add:
-
-```typescript
-import { createGondolinDebugSink } from '@agent-vm/agent-vm/logging/gondolin-debug-sink';
-import { appendFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-
-// ...
-const gondolinLogPath = join(
-  zone.gateway.runtimeDir,
-  'zones',
-  zone.id,
-  'logs',
-  `gondolin-${new Date().toISOString().slice(0, 10)}.log`,
-);
-mkdirSync(join(zone.gateway.runtimeDir, 'zones', zone.id, 'logs'), { recursive: true });
-
-const debugLog =
-  effectiveLogging.gondolin.length > 0
-    ? createGondolinDebugSink({
-        append: (line) => appendFileSync(gondolinLogPath, line),
-      })
-    : undefined;
-
-const vm = await createManagedVm({
-  // ... existing options
-  ...(effectiveLogging.gondolin.length > 0
-    ? { debug: [...effectiveLogging.gondolin] }
-    : {}),
-  ...(debugLog ? { debugLog } : {}),
-});
-```
-
-(The exact path resolution for `runtimeDir` follows the existing pattern in this file — search for how the OpenClaw log file path is already computed.)
-
-- [ ] **Step 6: Test + build**
-
-```bash
-pnpm test --run packages/openclaw-gateway/src/openclaw-lifecycle.test.ts 2>&1 | tail -10
-pnpm -r build 2>&1 | tail -10
-```
-Expected: green.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add packages/openclaw-gateway/src/openclaw-lifecycle.ts \
-  packages/openclaw-gateway/src/openclaw-lifecycle.test.ts
-git commit -m "feat(openclaw-gateway): apply effective logging policy to OpenClaw + Gondolin"
-```
-
----
-
-### Task 9: Same wiring for the worker-gateway
+Test expectations:
 
-**Files:**
-- Modify: `packages/worker-gateway/src/worker-lifecycle.ts` (env + createManagedVm options)
+- The adapter writes deterministic compose and collector config paths.
+- `waitOnBuild: true` waits for collector readiness after Compose returns.
+- `waitOnBuild: false` does not wait.
+- No default lifecycle path invokes `docker compose down -v`.
 
-- [ ] **Step 1: Inspect the worker lifecycle env block (lines 25-75)**
+Suggested targeted command:
 
 ```bash
-sed -n '20,80p' ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/worker-gateway/src/worker-lifecycle.ts
+pnpm exec vitest run --config vitest.config.ts --project unit packages/agent-vm/src/observability
 ```
-Expected: shows the env map with HOME, CONTROLLER_BASE_URL, etc.
 
-- [ ] **Step 2: Add LOG_LEVEL env and Gondolin debug plumbing**
+## Phase 4 - Integrate with build, not controller startup
 
-Inside the env block (around the existing keys), add:
+Files likely touched:
 
-```typescript
-LOG_LEVEL: effectiveLogging.worker,
-```
-
-…where `effectiveLogging` is read from the same orchestrator context threaded in Task 5. The function may need an additional argument; mirror the openclaw-gateway change.
-
-In the VmSpec returned, add (parallel to openclaw-gateway):
-
-```typescript
-debug: effectiveLogging.gondolin.length > 0 ? [...effectiveLogging.gondolin] : undefined,
-debugLog: ... // identical to Task 8, but writing to a separate worker-specific gondolin log file
-```
-
-- [ ] **Step 3: Build + run any worker tests**
-
-```bash
-pnpm test --run packages/worker-gateway 2>&1 | tail -10
-```
-Expected: green.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add packages/worker-gateway/src/worker-lifecycle.ts
-git commit -m "feat(worker-gateway): apply effective logging policy to worker VM + Gondolin"
-```
-
----
-
-### Task 10: Phase A integration smoke
-
-This is a manual / scripted smoke test, NOT a vitest test. Run inside the worktree.
-
-- [ ] **Step 1: Build the full workspace**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-pnpm -r build 2>&1 | tail -10
-```
-
-- [ ] **Step 2: From shravan-claw, install the local agent-vm via tarball**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm
-pnpm pack
-TARBALL=$(ls -t *.tgz | head -1)
-cd /Users/shravansunder/dev/shravan-claw
-pnpm add "file:${PWD}/../../Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm/${TARBALL}"
-```
-
-(Adjust the file: path to whatever pnpm accepts on this machine.)
-
-- [ ] **Step 3: Run with --debug**
-
-```bash
-cd /Users/shravansunder/dev/shravan-claw
-pnpm stop 2>&1 | tail -2
-pnpm exec agent-vm controller start --config config/system.json --zone sunfam --debug &
-sleep 90
-```
-
-- [ ] **Step 4: Verify Gondolin debug logs**
-
-```bash
-TODAY=$(date -u +%Y-%m-%d)
-ls -lh /Users/shravansunder/.agent-vm/runtime/zones/sunfam/logs/gondolin-${TODAY}.log
-head -5 /Users/shravansunder/.agent-vm/runtime/zones/sunfam/logs/gondolin-${TODAY}.log
-```
-Expected: file exists with `[gondolin:net]`, `[gondolin:exec]`, or `[gondolin:vfs]` prefixed lines.
-
-- [ ] **Step 5: Verify OpenClaw log level is `debug`**
-
-```bash
-grep -m1 '"logLevelName":"DEBUG"' \
-  /Users/shravansunder/.agent-vm/runtime/zones/sunfam/logs/openclaw-${TODAY}.log
-```
-Expected: at least one DEBUG-level line. (If `debug` was not propagated, OpenClaw would default to INFO and DEBUG lines would be absent.)
-
-- [ ] **Step 6: Stop**
-
-```bash
-pnpm stop
-```
-
-- [ ] **Step 7: No commit; smoke verification only.**
-
----
-
-## Phase B — Zone `externalResources` for OTEL plumbing
-
-### Task 11: Add `externalResources` to zone schema (TDD)
-
-**Files:**
-- Modify: `packages/agent-vm/src/config/system-config.ts` (zone schema at lines 369-389)
-- Test: `packages/agent-vm/src/config/system-config.test.ts`
-
-- [ ] **Step 1: Write the failing test**
-
-In `system-config.test.ts` add:
-
-```typescript
-describe('zone.externalResources', () => {
-  it('defaults to {}', () => {
-    const parsed = systemConfigSchema.parse(baseSystem);
-    expect(parsed.zones[0]?.externalResources).toEqual({});
-  });
-
-  it('accepts a valid entry and parses binding/target/env', () => {
-    const parsed = systemConfigSchema.parse({
-      ...baseSystem,
-      zones: [
-        {
-          ...baseSystem.zones[0],
-          externalResources: {
-            'vm-metrics': {
-              name: 'vm-metrics',
-              binding: { host: 'vm-metrics.observability.vm.host', port: 8428 },
-              target: { host: '127.0.0.1', port: 8428 },
-              env: {},
-            },
-          },
-        },
-      ],
-    });
-    const r = parsed.zones[0]?.externalResources['vm-metrics'];
-    expect(r?.binding.port).toBe(8428);
-    expect(r?.target.host).toBe('127.0.0.1');
-  });
-
-  it('rejects when key does not match resource.name', () => {
-    expect(() =>
-      systemConfigSchema.parse({
-        ...baseSystem,
-        zones: [
-          {
-            ...baseSystem.zones[0],
-            externalResources: {
-              'vm-metrics': {
-                name: 'wrong',
-                binding: { host: 'a', port: 8428 },
-                target: { host: '127.0.0.1', port: 8428 },
-                env: {},
-              },
-            },
-          },
-        ],
-      }),
-    ).toThrow(/must match resource\.name/);
-  });
-});
-```
-
-- [ ] **Step 2: Run test, expect fail**
-
-```bash
-pnpm test --run packages/agent-vm/src/config/system-config.test.ts 2>&1 | tail -15
-```
-
-- [ ] **Step 3: Add the schema field**
-
-In `system-config.ts`, import:
-
-```typescript
-import { externalResourcesSchema } from './resource-contracts/index.js';
-```
-
-(Verify `externalResourcesSchema` is re-exported from `./resource-contracts/index.js`. If not, add `export { externalResourcesSchema } from './resource-contract-schemas.js';` there.)
-
-In the zone object schema (around line 377), add:
-
-```typescript
-externalResources: externalResourcesSchema,
-```
-
-- [ ] **Step 4: Test passes**
-
-```bash
-pnpm test --run packages/agent-vm/src/config/system-config.test.ts 2>&1 | tail -10
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agent-vm/src/config/system-config.ts \
-  packages/agent-vm/src/config/system-config.test.ts \
-  packages/agent-vm/src/config/resource-contracts/index.ts 2>/dev/null
-git commit -m "feat(zone-schema): expose externalResources at zone scope"
-```
-
----
-
-### Task 12: Add `externalResources` to `GatewayZoneConfig`
-
-**Files:**
-- Modify: `packages/gateway-interface/src/gateway-lifecycle.ts` (around line 118)
-
-- [ ] **Step 1: Add the field**
-
-Add to the `GatewayZoneConfig` interface (next to `egressHosts`):
-
-```typescript
-readonly externalResources: ExternalResources;
-```
-
-And import:
-
-```typescript
-import type { ExternalResources } from '@agent-vm/agent-vm/config/resource-contracts';
-```
-
-(Use whichever import path is canonical in this workspace — check how other types are imported by gateway-interface.)
-
-- [ ] **Step 2: Type check**
-
-```bash
-pnpm -r exec tsc --noEmit 2>&1 | tail -10
-```
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add packages/gateway-interface/src/gateway-lifecycle.ts
-git commit -m "feat(gateway-interface): add externalResources to GatewayZoneConfig"
-```
-
----
-
-### Task 13: Merge `externalResources` into `buildGatewayTcpHosts` (TDD)
-
-**Files:**
-- Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.ts` (lines 51-68)
-- Test: `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts` (already exists from Task 8)
-
-- [ ] **Step 1: Export `buildGatewayTcpHosts`**
-
-If the function is `function buildGatewayTcpHosts(...)` without `export`, add `export`:
-
-```typescript
-export function buildGatewayTcpHosts(...) { ... }
-```
+- `packages/agent-vm/src/cli/build-command.ts`
+- `packages/agent-vm/src/cli/build-command.integration.test.ts`
 
-- [ ] **Step 2: Write the failing test**
-
-Append to `openclaw-lifecycle.test.ts`:
-
-```typescript
-import { buildGatewayTcpHosts } from './openclaw-lifecycle.js';
-
-describe('buildGatewayTcpHosts merges externalResources', () => {
-  const baseZone = {
-    id: 'test',
-    egressHosts: [{ host: 'example.com', audience: 'gateway' as const }],
-    websocketBypass: [],
-    externalResources: {},
-    /* gateway: fill in minimal valid shape from an existing fixture */
-  } as unknown as Parameters<typeof buildGatewayTcpHosts>[0];
-
-  const tcpPool = { basePort: 30000, size: 2 };
-
-  it('keeps the hardcoded controller and tool entries', () => {
-    const hosts = buildGatewayTcpHosts(baseZone, 18800, tcpPool);
-    expect(hosts['controller.vm.host:18800']).toBe('127.0.0.1:18800');
-    expect(hosts['tool-0.vm.host:22']).toBe('127.0.0.1:30000');
-  });
-
-  it('adds externalResource entries', () => {
-    const zone = {
-      ...baseZone,
-      externalResources: {
-        'vm-metrics': {
-          name: 'vm-metrics',
-          binding: { host: 'vm-metrics.observability.vm.host', port: 8428 },
-          target: { host: '127.0.0.1', port: 8428 },
-          env: {},
-        },
-      },
-    } as unknown as Parameters<typeof buildGatewayTcpHosts>[0];
-    const hosts = buildGatewayTcpHosts(zone, 18800, tcpPool);
-    expect(hosts['vm-metrics.observability.vm.host:8428']).toBe('127.0.0.1:8428');
-  });
-
-  it('errors on conflicting target for an existing key', () => {
-    const zone = {
-      ...baseZone,
-      externalResources: {
-        'collide': {
-          name: 'collide',
-          binding: { host: 'controller.vm.host', port: 18800 },
-          target: { host: '127.0.0.1', port: 99999 },
-          env: {},
-        },
-      },
-    } as unknown as Parameters<typeof buildGatewayTcpHosts>[0];
-    expect(() => buildGatewayTcpHosts(zone, 18800, tcpPool)).toThrow(/conflict/i);
-  });
-});
-```
-
-- [ ] **Step 3: Run, expect fail**
-
-```bash
-pnpm test --run packages/openclaw-gateway/src/openclaw-lifecycle.test.ts 2>&1 | tail -15
-```
-
-- [ ] **Step 4: Update `buildGatewayTcpHosts`**
-
-In `openclaw-lifecycle.ts` add import:
-
-```typescript
-import { compileResourceOverlay } from '@agent-vm/agent-vm/resources/resource-compiler';
-```
-
-(Use the canonical workspace path; check how other types from agent-vm are imported here.)
-
-Replace the function body:
-
-```typescript
-export function buildGatewayTcpHosts(
-  zone: GatewayZoneConfig,
-  controllerPort: number,
-  tcpPool: { readonly basePort: number; readonly size: number },
-): Record<string, string> {
-  const tcpHosts: Record<string, string> = {
-    [`${controllerVmHost}:18800`]: `127.0.0.1:${controllerPort}`,
-  };
-
-  for (let slot = 0; slot < tcpPool.size; slot += 1) {
-    tcpHosts[`tool-${slot}.vm.host:22`] = `127.0.0.1:${tcpPool.basePort + slot}`;
-  }
-
-  for (const websocketHost of zone.websocketBypass) {
-    tcpHosts[websocketHost] = websocketHost;
-  }
-
-  const overlay = compileResourceOverlay({
-    externalResources: zone.externalResources,
-    repoFinalizations: [],
-  });
-  for (const [key, target] of Object.entries(overlay.tcpHosts)) {
-    if (tcpHosts[key] !== undefined && tcpHosts[key] !== target) {
-      throw new Error(
-        `externalResources entry '${key}' conflicts with existing tcpHosts target ` +
-          `(existing=${tcpHosts[key]}, new=${target})`,
-      );
-    }
-    tcpHosts[key] = target;
-  }
-
-  return tcpHosts;
-}
-```
-
-- [ ] **Step 5: Test passes**
-
-```bash
-pnpm test --run packages/openclaw-gateway/src/openclaw-lifecycle.test.ts 2>&1 | tail -10
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add packages/openclaw-gateway/src/openclaw-lifecycle.ts \
-  packages/openclaw-gateway/src/openclaw-lifecycle.test.ts
-git commit -m "feat(openclaw-gateway): merge zone.externalResources into Gateway VM tcpHosts"
-```
-
----
-
-## Phase C — Manual page registration
-
-### Task 14: Register `docs/manual/observability.md` template
+Tasks:
+
+- [ ] Make plain `agent-vm build` run observability preparation only when
+  `host.observability.enabled` is true and at least one supported zone opts in.
+- [ ] Add `agent-vm build --no-observability` as a one-run escape hatch that
+  does not mutate config.
+- [ ] Honor `host.observability.prepareOnBuild` and
+  `host.observability.waitOnBuild` for the configured default behavior.
+- [ ] Run observability preparation only after the existing build prep succeeds.
+- [ ] Reuse the same lifecycle adapter from Phase 3.
+- [ ] Preserve current build behavior when config does not enable
+  observability.
+- [ ] Add a clear message when observability is enabled but Docker is not
+  available.
+
+Test expectations:
+
+- Existing build tests continue to pass when config does not enable
+  observability.
+- Enabled config calls observability preparation after image preparation.
+- `prepareOnBuild: false` skips observability preparation without requiring a
+  CLI flag.
+- `waitOnBuild: true` waits for readiness; `waitOnBuild: false` starts without
+  a readiness wait.
+- `--no-observability` skips observability preparation even when config enables
+  it.
+- Build failures do not leave partial claims that observability is ready.
 
-**Files:**
-- Modify: `packages/agent-vm/src/cli/manual-templates.ts`
+Suggested targeted command:
 
-- [ ] **Step 1: Inspect the existing registration pattern**
-
 ```bash
-grep -n "buildAgentsTemplate\|buildManualPages\|buildOpenClawTemplate\|GENERATED_MARKER" \
-  ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm/src/cli/manual-templates.ts | head -10
+pnpm exec vitest run --config vitest.config.ts --project integration packages/agent-vm/src/cli/build-command.integration.test.ts
 ```
-Read the file to identify the template registry pattern.
-
-- [ ] **Step 2: Add a `buildObservabilityTemplate()` function**
-
-Append the function below (use the same style as `buildOpenclawTemplate()` / `buildTroubleshootingTemplate()` in this file):
-
-```typescript
-export function buildObservabilityTemplate(): string {
-  return `<!-- ${GENERATED_MARKER} -->
-
-# Observability
-
-This deployment exports OTLP/HTTP signals from openclaw inside the Gateway VM
-to a host-side Victoria stack. Debugging sessions query Victoria directly.
-
-## Endpoints (host loopback)
-
-| Signal  | Host endpoint            | Query API                              |
-| ------- | ------------------------ | -------------------------------------- |
-| Metrics | http://127.0.0.1:8428    | /api/v1/query, /api/v1/query_range     |
-| Logs    | http://127.0.0.1:9428    | /select/logsql/query                   |
-| Traces  | http://127.0.0.1:10428   | /select/jaeger/api/services            |
-
-## Debug switches
-
-\`\`\`bash
-agent-vm controller start --debug                # one-shot
-agent-vm controller start --log-level trace      # max verbosity
-agent-vm controller start --gondolin-debug net   # just network
-\`\`\`
-
-Persistent: set \`host.logging.level\` in \`system.json\`. Env override:
-\`AGENT_VM_LOG_LEVEL=debug\` or \`AGENT_VM_GONDOLIN_DEBUG=net,exec,vfs\`.
 
-## Common queries
+## Phase 5 - Gateway endpoint mapping
 
-\`\`\`bash
-curl -fsS 'http://127.0.0.1:8428/api/v1/label/__name__/values' \\
-  | jq '.data | map(select(startswith("openclaw_")))'
-curl -fsS -X POST 'http://127.0.0.1:9428/select/logsql/query' \\
-  --data-urlencode 'query=service.name:"openclaw-sunfam" AND level:ERROR'
-\`\`\`
+Files likely touched:
 
-## Stack lifecycle
+- `packages/gateway-interface/src/gateway-lifecycle.ts`
+- `packages/openclaw-gateway/src/openclaw-lifecycle.ts`
+- `packages/agent-vm/src/controller/*` or mapper modules that build
+  `GatewayZoneConfig`
 
-\`\`\`bash
-docker compose -f docker-compose.observability.yml up -d
-docker compose -f docker-compose.observability.yml down       # keep data
-docker compose -f docker-compose.observability.yml down -v    # delete data
-\`\`\`
-`;
-}
-```
+Tasks:
 
-- [ ] **Step 3: Register in the manual builder**
+- [ ] Add an observability connection model to `GatewayZoneConfig`.
+- [ ] In collector mode, map:
 
-Find where other pages register (search for `buildOpenclawTemplate` or `buildTroubleshootingTemplate` usage). Add an entry:
-
-```typescript
-{ path: 'docs/manual/observability.md', content: buildObservabilityTemplate() }
+```text
+otel-collector.observability.vm.host:4318 -> 127.0.0.1:<collectorHttp>
+otel-collector.observability.vm.host:4317 -> 127.0.0.1:<collectorGrpc>
 ```
-
-And add a line to the AGENTS.md content builder:
 
-```typescript
-'Use docs/manual/observability.md before debugging crashes, hangs, performance, or when configuring host.logging or zone.externalResources — VictoriaMetrics/Logs/Traces endpoints and the debug flag matrix are documented there.',
-```
+- [ ] Detect conflicts with existing `tcpHosts` keys and fail clearly.
+- [ ] Do not use Worker task `externalResources` for this path.
 
-- [ ] **Step 4: Test**
+Test expectations:
 
-```bash
-pnpm test --run packages/agent-vm/src/cli 2>&1 | tail -10
-```
-Expected: green. If the manual-commands test compares output exactly, update its expectation.
+- Collector mode maps only collector hostnames.
+- Non-collector mode is rejected in config validation.
+- Conflicts with controller/tool/websocket mappings fail.
+- Worker gateway behavior is unchanged.
 
-- [ ] **Step 5: Commit**
+Suggested targeted command:
 
 ```bash
-git add packages/agent-vm/src/cli/manual-templates.ts \
-  packages/agent-vm/src/cli/manual-commands.test.ts 2>/dev/null
-git commit -m "docs(manual): register observability manual page"
+pnpm exec vitest run --config vitest.config.ts --project e2e-host packages/openclaw-gateway/src/openclaw-lifecycle.host.e2e.test.ts
 ```
 
----
+## Phase 6 - Effective OpenClaw diagnostics config
 
-## Phase D — Release + shravan-claw consumption
+Files likely touched:
 
-### Task 15: Version bump and pack
+- `packages/openclaw-gateway/src/openclaw-lifecycle.ts`
+- `packages/openclaw-gateway/src/openclaw-lifecycle.host.e2e.test.ts`
 
-- [ ] **Step 1: Bump version**
+Tasks:
 
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm
-pnpm version patch --no-git-tag-version
-```
-
-Repeat for any related packages whose versions move in lockstep (look in `package.json` for the existing pattern — if `@agent-vm/gateway-interface` and `@agent-vm/openclaw-gateway` also bump on every change, bump them too):
+- [ ] Merge `plugins.allow` to include `diagnostics-otel`.
+- [ ] Merge `plugins.entries["diagnostics-otel"].enabled = true`.
+- [ ] Merge top-level `diagnostics.enabled = true`.
+- [ ] Merge `diagnostics.otel` from zone observability config.
+- [ ] In collector mode, write shared endpoint:
 
-```bash
-cd ../gateway-interface && pnpm version patch --no-git-tag-version
-cd ../openclaw-gateway && pnpm version patch --no-git-tag-version
-cd ../gondolin-adapter && pnpm version patch --no-git-tag-version
-cd ../worker-gateway && pnpm version patch --no-git-tag-version
+```text
+http://otel-collector.observability.vm.host:4318
 ```
 
-- [ ] **Step 2: Build all**
-
-```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-pnpm install
-pnpm -r build 2>&1 | tail -10
-```
+- [ ] Reject direct mode in v1 with a clear validation error.
+- [ ] Set `diagnostics.otel.logs = true` when log export is enabled.
+- [ ] Keep `captureContent.enabled = false` by default.
+- [ ] Reject or override generated configs that would enable OpenClaw content
+  capture for prompts, responses, tool inputs, tool outputs, transcripts, or
+  system prompts.
+- [ ] Reject authored `logging.redactSensitive: "off"` for
+  observability-enabled zones.
+- [ ] Ensure generated telemetry fields are allowlisted operational fields:
+  component, event kind, status, duration, counters, bounded labels, hashed or
+  truncated identifiers, and coarse error categories.
+- [ ] Preserve unrelated authored OpenClaw config.
+- [ ] Make host/zone observability policy own the `diagnostics-otel` plugin entry
+  and `diagnostics.otel` signal/exporter keys for observability-enabled zones.
+  Preserve unrelated authored OpenClaw config.
 
-- [ ] **Step 3: Pack**
+Test expectations:
 
-```bash
-cd packages/agent-vm
-pnpm pack
-ls -t *.tgz | head -1
-```
+- Existing plugin config is preserved and extended.
+- Collector endpoint is correct.
+- Direct mode is rejected before effective config generation.
+- Authored telemetry settings cannot disable required exporter safety,
+  content-capture, or redaction settings.
+- Logs are not silently omitted.
+- Content capture remains off.
+- Redaction is not disabled.
+- Sensitive content fields cannot be enabled through generated config.
+- Auth/token config injection still works.
 
-- [ ] **Step 4: Commit version bump**
+Suggested targeted command:
 
 ```bash
-cd ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy
-git add packages/*/package.json
-git commit -m "chore(release): bump for host.logging + zone.externalResources"
+pnpm exec vitest run --config vitest.config.ts --project e2e-host packages/openclaw-gateway/src/openclaw-lifecycle.host.e2e.test.ts
 ```
-
----
-
-### Task 16: Install the tarball in shravan-claw
 
-**Files:**
-- Modify: `/Users/shravansunder/dev/shravan-claw/package.json`
+## Phase 7 - OpenClaw debug/log policy; controller logging deferred
 
-- [ ] **Step 1: Install**
+Files likely touched:
 
-```bash
-cd /Users/shravansunder/dev/shravan-claw
-TARBALL=$(ls -t ~/Documents/dev/project-dev/agent-vm.feat-observability-host-policy/packages/agent-vm/*.tgz | head -1)
-pnpm add "file:${TARBALL}"
-```
-
-- [ ] **Step 2: Sanity check**
-
-```bash
-pnpm exec agent-vm --version
-pnpm validate 2>&1 | tail -5
-```
-Expected: validation passes against current config (no externalResources yet — schema defaults to `{}`).
+- `packages/agent-vm/src/config/system-config.ts`
+- `packages/openclaw-gateway/src/openclaw-lifecycle.ts`
 
-- [ ] **Step 3: Commit**
+Native controller log-level flags, `host.logging`, and a controller
+OpenTelemetry facade are intentionally deferred. This branch only owns
+OpenClaw diagnostics safety for observability-enabled zones.
 
-```bash
-cd /Users/shravansunder/dev/shravan-claw
-git add package.json pnpm-lock.yaml
-git commit -m "chore: bump @agent-vm/agent-vm to local build with host.logging + externalResources"
-```
+Tasks:
 
----
+- [ ] Support generated OpenClaw diagnostics flags from an explicit safe
+  allowlist only.
+- [ ] Reject wildcard/all diagnostics env forms such as
+  `OPENCLAW_DIAGNOSTICS=*`, `OPENCLAW_DIAGNOSTICS=all`, and
+  `OPENCLAW_DIAGNOSTICS=1` for observability-enabled zones.
+- [ ] Reject payload, body, content, query, transcript, and other
+  sensitive-content-bearing diagnostics flags unless a future content-capture
+  policy explicitly approves them.
+- [ ] Ensure debug/trace modes increase operational detail without expanding
+  secret-bearing payload capture.
 
-### Task 17: Add Victoria docker-compose to shravan-claw
+Test expectations:
 
-**Files:**
-- Create: `/Users/shravansunder/dev/shravan-claw/docker-compose.observability.yml`
+- Content capture remains off.
+- Diagnostics flags do not add prompt, response, token, credential, or tool
+  payload fields.
+- Unsafe `OPENCLAW_DIAGNOSTICS` wildcard/all/payload/query values fail
+  validation for observability-enabled zones.
 
-- [ ] **Step 1: Verify ports free**
+Suggested targeted command:
 
 ```bash
-lsof -i :8428 -i :9428 -i :10428 2>/dev/null
+pnpm exec vitest run --config vitest.config.ts --project unit packages/agent-vm/src/config/system-config.unit.test.ts
 ```
-Expected: empty.
-
-- [ ] **Step 2: Write the file**
-
-Create `/Users/shravansunder/dev/shravan-claw/docker-compose.observability.yml`:
-
-```yaml
-services:
-  victoria-metrics:
-    image: victoriametrics/victoria-metrics:stable
-    container_name: vm-metrics
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8428:8428"
-    volumes:
-      - vm-metrics-data:/victoria-metrics-data
-    command:
-      - "-storageDataPath=/victoria-metrics-data"
-      - "-retentionPeriod=90d"
-      - "-storage.minFreeDiskSpaceBytes=1073741824"
-      - "-httpListenAddr=:8428"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8428/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  victoria-logs:
-    image: victoriametrics/victoria-logs:stable
-    container_name: vm-logs
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:9428:9428"
-    volumes:
-      - vm-logs-data:/vlogs-data
-    command:
-      - "-storageDataPath=/vlogs-data"
-      - "-retentionPeriod=100y"
-      - "-retention.maxDiskSpaceUsageBytes=10GiB"
-      - "-httpListenAddr=:9428"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9428/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  victoria-traces:
-    image: victoriametrics/victoria-traces:latest
-    container_name: vm-traces
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:10428:10428"
-    volumes:
-      - vm-traces-data:/vtraces-data
-    command:
-      - "-storageDataPath=/vtraces-data"
-      - "-retentionPeriod=30d"
-      - "-retention.maxDiskSpaceUsageBytes=5GiB"
-      - "-httpListenAddr=:10428"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:10428/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-volumes:
-  vm-metrics-data:
-  vm-logs-data:
-  vm-traces-data:
-```
 
-- [ ] **Step 3: Bring up + verify**
-
-```bash
-docker compose -f /Users/shravansunder/dev/shravan-claw/docker-compose.observability.yml up -d
-sleep 15
-docker compose -f /Users/shravansunder/dev/shravan-claw/docker-compose.observability.yml ps --format json | jq -r '.Name + ": " + .Health'
-```
-Expected: all three `healthy`.
+## Phase 8 - Controller-owned gateway start guard
 
-- [ ] **Step 4: Commit**
+Files likely touched:
 
-```bash
-cd /Users/shravansunder/dev/shravan-claw
-git add docker-compose.observability.yml
-git commit -m "feat(observability): docker compose for VictoriaMetrics/Logs/Traces"
-```
+- `packages/agent-vm/src/cli/commands/controller-definition.ts`
+- `packages/agent-vm/src/controller/zone-runtimes/openclaw-zone-runtime.ts`
+- `packages/agent-vm/src/controller/zone-runtimes/openclaw-zone-runtime.unit.test.ts`
+- `packages/agent-vm/src/controller/health/gateway-vm-recovery-runner.ts`
+- `packages/agent-vm/src/controller/health/gateway-vm-recovery-runner.unit.test.ts`
+- `packages/agent-vm/src/cli/commands/controller-definition.unit.test.ts`
+- Observability status module/tests
 
----
-
-### Task 18: Declare externalResources + diagnostics.otel in shravan-claw config
-
-**Files:**
-- Modify: `/Users/shravansunder/dev/shravan-claw/config/system.jsonc`
-- Modify: `/Users/shravansunder/dev/shravan-claw/config/gateways/sunfam/openclaw.json`
-
-- [ ] **Step 1: Add `externalResources` to the sunfam zone in `system.jsonc`**
-
-Open `config/system.jsonc`. Inside the zone with `"id": "sunfam"`, alongside `egressHosts`/`websocketBypass`, add:
-
-```jsonc
-"externalResources": {
-  "vm-metrics": {
-    "name": "vm-metrics",
-    "binding": { "host": "vm-metrics.observability.vm.host", "port": 8428 },
-    "target": { "host": "127.0.0.1", "port": 8428 },
-    "env": {}
-  },
-  "vm-logs": {
-    "name": "vm-logs",
-    "binding": { "host": "vm-logs.observability.vm.host", "port": 9428 },
-    "target": { "host": "127.0.0.1", "port": 9428 },
-    "env": {}
-  },
-  "vm-traces": {
-    "name": "vm-traces",
-    "binding": { "host": "vm-traces.observability.vm.host", "port": 10428 },
-    "target": { "host": "127.0.0.1", "port": 10428 },
-    "env": {}
-  }
-}
-```
+Tasks:
 
-Match surrounding indentation and trailing-comma style.
+- [ ] Put the fast observability status check in the shared OpenClaw gateway
+  start preparation path, not only in the CLI command wrapper.
+- [ ] Apply the same policy to controller start, operator restart, cold start,
+  upgrade-triggered restart, and gateway auto-recovery.
+- [ ] Never call Docker Compose `up` from controller-owned gateway start paths.
+- [ ] Never call Docker CLI from controller-owned gateway start paths. Readiness
+  uses only bounded HTTP probes against the collector health endpoint.
+- [ ] For `controllerStartPolicy: degraded`, log status and continue.
+- [ ] For `controllerStartPolicy: require-ready`, fail fast if status is not
+  ready.
+- [ ] Add health/status details for observability readiness in a follow-up API
+  contract change.
 
-- [ ] **Step 2: Validate**
+Test expectations:
 
-```bash
-cd /Users/shravansunder/dev/shravan-claw
-pnpm validate 2>&1 | tail -10
-```
-Expected: passes.
+- A command-level unit test proves `controller start` does not call the Compose
+  adapter or Docker adapter before delegating to runtime startup.
+- Runtime/gateway-start tests prove observability-enabled gateway start paths do
+  not call Compose/Docker from start, restart, cold start, or auto-recovery.
+- A unit test proves startup status checks honor `startupCheckTimeoutMs`.
+- `degraded` continues.
+- `require-ready` fails quickly.
+- `off` does not check readiness.
 
-- [ ] **Step 3: Install `diagnostics-otel` openclaw plugin**
+Suggested targeted command:
 
 ```bash
-cd /Users/shravansunder/dev/shravan-claw
-pnpm exec openclaw plugins install clawhub:@openclaw/diagnostics-otel
+pnpm exec vitest run --config vitest.config.ts --project unit packages/agent-vm/src/cli/commands/controller-definition.unit.test.ts packages/agent-vm/src/controller/zone-runtimes/openclaw-zone-runtime.unit.test.ts packages/agent-vm/src/controller/health/gateway-vm-recovery-runner.unit.test.ts
 ```
 
-- [ ] **Step 4: Add the plugin allow + entry + diagnostics block to `openclaw.json`**
+## Phase 9 - Docs and generated manuals
 
-In `config/gateways/sunfam/openclaw.json`:
+Files likely touched:
 
-a) `plugins.allow` — append `"diagnostics-otel"`.
+- `docs/reference/configuration/system-json.md`
+- `docs/subsystems/controller.md`
+- `docs/architecture/openclaw-gateway.md`
+- `packages/agent-vm/src/cli/manual-templates.ts`
+- `packages/agent-vm/src/cli/manual-templates.unit.test.ts`
 
-b) `plugins.entries` — add:
-```json
-"diagnostics-otel": { "enabled": true }
-```
-
-c) Add top-level (sibling of `plugins`):
-```json
-"diagnostics": {
-  "enabled": true,
-  "otel": {
-    "enabled": true,
-    "protocol": "http/protobuf",
-    "serviceName": "openclaw-sunfam",
-    "metricsEndpoint": "http://vm-metrics.observability.vm.host:8428/opentelemetry/v1/metrics",
-    "logsEndpoint": "http://vm-logs.observability.vm.host:9428/insert/opentelemetry/v1/logs",
-    "tracesEndpoint": "http://vm-traces.observability.vm.host:10428/insert/opentelemetry/v1/traces",
-    "traces": true,
-    "metrics": true,
-    "logs": true,
-    "sampleRate": 1.0,
-    "flushIntervalMs": 30000
-  }
-}
-```
+Tasks:
 
-- [ ] **Step 5: Validate JSON**
-
-```bash
-jq empty /Users/shravansunder/dev/shravan-claw/config/gateways/sunfam/openclaw.json && echo ok
-```
+- [ ] Document `host.observability`.
+- [ ] Document `zones[].observability`.
+- [ ] Document the build-time observability lifecycle and the deferred explicit
+  `agent-vm observability ...` command group.
+- [ ] Document that controller startup never starts Docker.
+- [ ] Document data retention and bind-mounted storage.
+- [ ] Document the secret policy:
+  - never emit secrets or sensitive content in the first place
+  - OpenClaw content capture remains off
+  - generated configs must not disable redaction
+  - collector/VictoriaLogs scrubbers are defense-in-depth only
+  - VictoriaLogs deletion APIs are incident response, not routine lifecycle
+- [ ] Add a generated manual page for deployment agents.
+- [ ] Keep generated manual concise and procedural.
 
-- [ ] **Step 6: Commit**
+Suggested targeted commands:
 
 ```bash
-cd /Users/shravansunder/dev/shravan-claw
-git add config/system.jsonc config/gateways/sunfam/openclaw.json
-git commit -m "feat(observability): declare Victoria externalResources + enable diagnostics-otel"
+pnpm exec vitest run --config vitest.config.ts --project unit packages/agent-vm/src/cli/manual-templates.unit.test.ts
+pnpm build
 ```
 
----
+## Phase 10 - shravan-claw consumer
 
-### Task 19: End-to-end smoke
+Only start this after the `agent-vm` implementation is validated locally.
 
-- [ ] **Step 1: Restart**
+Consumer repo:
 
-```bash
-cd /Users/shravansunder/dev/shravan-claw
-pnpm stop
-pnpm exec agent-vm controller start --config config/system.json --zone sunfam --debug &
-sleep 90
+```text
+/Users/shravansunder/Documents/dev/project-dev/shravan-claw
 ```
-
-- [ ] **Step 2: Trigger an agent event**
 
-Send a Discord message to ember (e.g. `@Hestia ping observability`). Wait ~30s for the metric flush.
-
-- [ ] **Step 3: Verify metric reached VictoriaMetrics**
-
-```bash
-curl -fsS 'http://127.0.0.1:8428/api/v1/label/__name__/values' \
-  | jq '.data | map(select(startswith("openclaw_"))) | .[:20]'
-```
-Expected: a list including names like `openclaw_message_processed`.
+Tasks:
 
-- [ ] **Step 4: Verify log reached VictoriaLogs**
+- [ ] Refresh `shravan-claw` from its current remote state before editing.
+- [ ] Update its `@agent-vm/agent-vm` dependency using the agreed local package
+  or published version path.
+- [ ] Add `host.observability` with explicit `dataDir`, retention, and disk
+  caps.
+- [ ] Add `zones[].observability` for `sunfam`.
+- [ ] Keep authored OpenClaw config small if `agent-vm` generates effective
+  diagnostics config.
+- [ ] Update scripts so build/prep starts the observability stack and waits for
+  readiness.
+- [ ] Keep controller startup fast.
 
-```bash
-curl -fsS -X POST 'http://127.0.0.1:9428/select/logsql/query' \
-  --data-urlencode 'query=service.name:"openclaw-sunfam"' | head -3
-```
-Expected: at least one JSON line.
+Smoke expectations:
 
-- [ ] **Step 5: Verify trace reached VictoriaTraces**
+- `pnpm build` prepares images and observability stack.
+- `pnpm start` does not start Docker and does not wait on slow Compose startup.
+- VictoriaMetrics contains OpenClaw metrics.
+- VictoriaLogs contains OpenClaw logs.
+- VictoriaTraces contains OpenClaw traces.
+- Data directories remain after stopping containers.
+- Smoke data inspection finds operational metadata but no raw prompt text,
+  response text, tool input/output payloads, auth headers, token values, or
+  credentialed URLs.
+- Smoke uses sentinel canaries for fake tokens, headers, prompts, tool payloads,
+  and credentialed URLs, then fails if any sentinel appears in generated
+  artifacts or Victoria storage.
 
-```bash
-curl -fsS 'http://127.0.0.1:10428/select/jaeger/api/services' | jq .
-```
-Expected: includes `openclaw-sunfam`.
+## Verification gates
 
-- [ ] **Step 6: Verify Gondolin debug also fired**
+Targeted iteration:
 
 ```bash
-TODAY=$(date -u +%Y-%m-%d)
-head -3 /Users/shravansunder/.agent-vm/runtime/zones/sunfam/logs/gondolin-${TODAY}.log
+git diff --check
+pnpm exec vitest run --config vitest.config.ts --project <unit|integration|e2e-host> <changed-test-files>
+pnpm typecheck
+pnpm lint
+pnpm fmt:check
+mise run lint
 ```
-Expected: lines like `[gondolin:net] ...`.
-
-- [ ] **Step 7: No commit; smoke verification only.**
 
----
+Full repo gate before claiming done:
 
-### Task 20: Regenerate shravan-claw AGENTS.md + manual
-
-**Files:**
-- Regenerated: `/Users/shravansunder/dev/shravan-claw/AGENTS.md`
-- Regenerated: `/Users/shravansunder/dev/shravan-claw/docs/manual/observability.md`
-
-- [ ] **Step 1: Find the regenerate command**
-
 ```bash
-cd /Users/shravansunder/dev/shravan-claw
-pnpm exec agent-vm --help 2>&1 | grep -iE "manual|docs|update"
-pnpm exec agent-vm manual --help 2>&1 | head
+pnpm check
+pnpm test:unit
+pnpm test:integration
+pnpm test:e2e:host
+pnpm test:e2e:inventory
+mise exec -- pnpm test:e2e:openclaw
 ```
 
-- [ ] **Step 2: Run regeneration**
+`pnpm check` is necessary but not sufficient; it does not run the behavioral
+unit/integration/e2e test layers.
 
-Run whichever command the help indicates (likely `pnpm exec agent-vm manual update`).
+Black-box local smoke:
 
-- [ ] **Step 3: Verify**
-
 ```bash
-grep -n "observability\.md" /Users/shravansunder/dev/shravan-claw/AGENTS.md
-ls -l /Users/shravansunder/dev/shravan-claw/docs/manual/observability.md
+tmpdir="$(mktemp -d)"
+# create or copy a minimal deployment config into "$tmpdir"
+# run the built CLI exactly as a user would
+agent-vm build --config "$tmpdir/config/system.jsonc"
+# inspect host loopback collector and Victoria health/status endpoints
 ```
-Expected: match + file present.
 
-- [ ] **Step 4: Commit**
+Live OpenClaw/Victoria smoke, when environment permits:
 
 ```bash
-cd /Users/shravansunder/dev/shravan-claw
-git add AGENTS.md docs/manual/observability.md
-git commit -m "docs(observability): regenerate AGENTS.md + add observability manual page"
+agent-vm controller start --config <deployment-config> --zone <zone>
+# trigger a small OpenClaw action
+# inject fake canary token/header/prompt/tool-payload/credentialed-URL strings
+# query metrics/logs/traces from host loopback Victoria endpoints
+# fail if any canary appears in generated artifacts or Victoria storage
 ```
-
----
-
-## Done criteria (must all hold)
 
-- [ ] `pnpm test --run` in agent-vm worktree exits green.
-- [ ] `pnpm -r build` in agent-vm worktree exits green.
-- [ ] `agent-vm controller start --debug` produces `[gondolin:net]`, `[gondolin:exec]`, `[gondolin:vfs]` lines in `<runtimeDir>/zones/<zone>/logs/gondolin-*.log`.
-- [ ] With `--debug`, OpenClaw runtime log shows DEBUG-level entries.
-- [ ] Without any flag and `host.logging.level` unset, no Gondolin debug output is produced (default off).
-- [ ] shravan-claw `config/system.jsonc` declares three externalResources; `pnpm validate` passes.
-- [ ] At least one `openclaw_*` metric is queryable in VictoriaMetrics after an agent run.
-- [ ] At least one log line for `service.name: "openclaw-sunfam"` is queryable in VictoriaLogs.
-- [ ] At least one trace span for the service is visible in VictoriaTraces.
-- [ ] `shravan-claw/AGENTS.md` references `docs/manual/observability.md`.
+Report command exit codes and pass/fail counts. If unrelated infrastructure
+fails, stop code edits and report the scoped pass/fail status rather than
+changing tooling.
 
-Do NOT proceed past a failing task — fix it first.
+## Execution notes
 
-## Rollback
+- Keep edits scoped. This is not a general resource-system rewrite.
+- Do not thread Worker task external resources into host observability.
+- Prefer small modules with explicit responsibilities:
+  - config normalization
+  - compose rendering
+  - collector config rendering
+  - lifecycle adapter
+  - status/readiness checker
+  - Gateway tcpHosts mapper
+  - OpenClaw effective diagnostics merger
+- Use structured parsers/renderers for YAML/JSON if the repo already provides
+  them; otherwise keep generated YAML deterministic and tested by snapshots or
+  direct object assertions.
+- No command should delete telemetry data by default.
+- No secret material belongs in generated Compose files, collector config, or
+  Docker image state.
+- No telemetry path may rely on downstream scrubbing as the primary safety
+  control. Scrubbing exists because mistakes happen; source-side non-emission is
+  the invariant.
+- Any field that might contain credentials, auth material, prompts, responses,
+  transcript text, tool payloads, or secret environment values must be dropped,
+  redacted, hashed, or omitted before it reaches Victoria storage.
 
-Phase A alone:
-- Set `host.logging.level: "info"` (default) and remove `--debug` flag; behavior matches prior baseline.
+## Open questions
 
-Phase B alone:
-- Remove `externalResources` from `system.jsonc`; schema defaults back to `{}`. Stop the docker-compose stack.
+Resolve these before implementation:
 
-Full revert:
-- `git revert` the relevant commits in agent-vm and shravan-claw.
-- `pnpm remove @agent-vm/agent-vm && pnpm add @agent-vm/agent-vm@^0.0.69` to drop the tarball in shravan-claw.
-- `docker compose -f docker-compose.observability.yml down -v` to destroy local Victoria data.
+1. First shravan-claw retention/disk budget:
+   - metrics period
+   - logs period and max disk
+  - traces period and one max disk cap, either bytes or percent
+2. Should `host.observability.dataDir` be required forever, or should v1 require
+   it and a later release add a safe default?
+3. Should a future `destroy-data` command exist at all, or should data deletion
+   remain manual outside `agent-vm`?

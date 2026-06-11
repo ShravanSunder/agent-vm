@@ -30,6 +30,7 @@ host
   projectNamespace
   secretsProvider
   githubToken
+  observability
 
 controller
   health
@@ -53,6 +54,7 @@ zones[]
   agents
   gateway
     ingress
+  observability
   resources
   secrets
   runtimeAuthHints
@@ -78,6 +80,7 @@ leaseIdleTtl
 | `projectNamespace` | yes | Lowercase namespace used for runtime labels and cache separation. |
 | `secretsProvider` | when using `source: "1password"` | How the host resolves 1Password-backed secrets. |
 | `githubToken` | no | Host-only token for clone and push. Never enters the VM. |
+| `observability` | no | Host-owned Victoria/OpenTelemetry stack used by opted-in OpenClaw zones. |
 
 `githubToken` uses the same secret source shape as zone secrets:
 `{ "source": "environment", "envVar": "..." }`,
@@ -98,6 +101,88 @@ probe with the resolved service-account token: `op whoami` under an isolated
 `OP_CONFIG_DIR`, `OP_BIOMETRIC_UNLOCK_ENABLED=false`, and `OP_CACHE=false`.
 The probe verifies that the CLI reports `SERVICE_ACCOUNT` without using ambient
 desktop/session auth and does not resolve deployment secret refs.
+
+## host.observability
+
+`host.observability` configures the host-owned observability stack. Omit it or
+set `{ "enabled": false }` to disable the feature. When enabled, each OpenClaw
+zone still needs `zones[].observability.enabled=true` before the build and
+runtime path use the stack.
+
+The controller does not start Docker Compose during controller startup. Docker
+startup belongs to `agent-vm build` when `prepareOnBuild` is true. A one-off
+build can skip stack preparation with `agent-vm build --no-observability`.
+
+Example:
+
+```jsonc
+{
+  "host": {
+    "observability": {
+      "enabled": true,
+      "stack": "victoria",
+      "runner": "docker-compose",
+      "mode": "collector",
+      "dataDir": "../observability-data",
+      "bindAddress": "127.0.0.1",
+      "prepareOnBuild": true,
+      "waitOnBuild": true,
+      "controllerStartPolicy": "degraded",
+      "startupCheckTimeoutMs": 500,
+      "retention": {
+        "metrics": { "period": "30d", "minFreeDiskSpaceBytes": "5GiB" },
+        "logs": { "period": "14d", "maxDiskSpaceUsageBytes": "50GiB" },
+        "traces": {
+          "period": "7d",
+          "maxDiskUsagePercent": 80
+        }
+      }
+    }
+  }
+}
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | required | `true` enables the host stack; `false` disables it. |
+| `stack` | `victoria` | Backend stack. The current implementation supports VictoriaMetrics, VictoriaLogs, and VictoriaTraces. |
+| `runner` | `docker-compose` | Host runner used by `agent-vm build` to start the stack. |
+| `mode` | `collector` | OpenTelemetry Collector receives OTLP and exports to Victoria. |
+| `dataDir` | required when enabled | Durable host directory for Victoria data. Must not overlap cacheDir, runtimeDir, stateDir, or zoneFilesDir. |
+| `projectName` | `agent-vm-observability-<projectNamespace>` | Docker Compose project name. Must use lowercase letters, numbers, hyphens, and underscores, and start with a letter or number. |
+| `bindAddress` | `127.0.0.1` | Host bind address for collector and Victoria ports. Only loopback addresses are accepted. |
+| `prepareOnBuild` | `true` | Lets `agent-vm build` render artifacts and run Docker Compose when an opted-in zone is selected. |
+| `waitOnBuild` | `true` | Makes build wait for collector, metrics, logs, and traces readiness after Compose startup. |
+| `controllerStartPolicy` | `degraded` | `degraded` starts the controller immediately and checks readiness in the background; `require-ready` waits for bounded readiness; `off` skips startup checks. No policy starts Docker. |
+| `startupCheckTimeoutMs` | `500` | Total bounded readiness budget for one startup health-check pass. |
+| `ports.collectorGrpc` | `4317` | Host OTLP gRPC collector port. All observability ports must be unique values from 1 through 65535. |
+| `ports.collectorHttp` | `4318` | Host OTLP HTTP collector port used by OpenClaw diagnostics. |
+| `ports.collectorHealth` | `13133` | Host collector health-check port. |
+| `ports.metrics` | `8428` | Host VictoriaMetrics port. |
+| `ports.logs` | `9428` | Host VictoriaLogs port. |
+| `ports.traces` | `10428` | Host VictoriaTraces port. |
+| `retention.metrics` | required | Metrics retention period plus optional minimum free disk space. Period values use Victoria duration strings such as `30d`; byte values use explicit units such as `5GiB`. |
+| `retention.logs` | required | Logs retention period plus optional max disk usage. |
+| `retention.traces` | required | Traces retention period plus one optional disk cap. Use either `maxDiskSpaceUsageBytes` or `maxDiskUsagePercent`, not both. |
+
+`agent-vm build` writes:
+
+```text
+<runtimeDir>/observability/<projectNamespace>/docker-compose.observability.yml
+<runtimeDir>/observability/<projectNamespace>/otel-collector-config.yaml
+<host.observability.dataDir>/metrics
+<host.observability.dataDir>/logs
+<host.observability.dataDir>/traces
+```
+
+Generated Compose files bind all published ports to loopback, set
+`restart: unless-stopped`, and mount the Victoria data directories from
+`host.observability.dataDir`. The generated
+collector config uses gzip OTLP export to Victoria and drops known sensitive
+attributes before export. This scrubber is defense-in-depth only: application
+and controller code must still avoid logging secrets, prompts, message bodies,
+tool payloads, cookies, authorization headers, token values, private keys, raw
+URLs with query strings, command content, and other sensitive data.
 
 ## controller.health
 
@@ -586,6 +671,56 @@ under the fallback path.
 `agentToolVmProfiles` values must reference entries in top-level `toolVmProfiles`.
 Unmapped agents use the zone fallback `defaultToolVmProfile`.
 
+## zones[].observability
+
+`zones[].observability` opts an OpenClaw zone into the host observability stack.
+It is supported only for OpenClaw gateways in this version and requires
+`host.observability.enabled=true`.
+
+Example:
+
+```jsonc
+{
+  "zones": [
+    {
+      "id": "shravan",
+      "gateway": { "type": "openclaw" },
+      "observability": {
+        "enabled": true,
+        "openclaw": {
+          "serviceName": "agent-vm-openclaw-shravan",
+          "logs": true,
+          "metrics": true,
+          "traces": true,
+          "sampleRate": 1,
+          "flushIntervalMs": 10000,
+          "diagnosticsFlags": ["scheduler.debug"]
+        }
+      }
+    }
+  ]
+}
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | required | `true` opts the zone into host observability. |
+| `openclaw.serviceName` | required | OpenTelemetry service name for OpenClaw signals. |
+| `openclaw.logs` | `true` | Enables OpenClaw log export to the host collector. |
+| `openclaw.metrics` | `true` | Enables OpenClaw metric export to the host collector. |
+| `openclaw.traces` | `true` | Enables OpenClaw trace export to the host collector. |
+| `openclaw.sampleRate` | `1` | Trace sample rate from 0 to 1. |
+| `openclaw.flushIntervalMs` | `10000` | OpenClaw diagnostics flush interval. |
+| `openclaw.captureContent.enabled` | `false` | Must remain false. Content capture is not supported. |
+| `openclaw.diagnosticsFlags` | `[]` | Narrow OpenClaw debug categories to enable. Broad or content-capturing flags are rejected. |
+
+For observability-enabled zones, agent-vm owns the effective OpenClaw
+diagnostics config and points it at the host collector through a synthetic
+Gondolin `tcpHosts` mapping. Do not inject `OPENCLAW_DIAGNOSTICS` through
+`gateway.rawEnvSecrets`. Authored OpenClaw `logging.redactSensitive` must stay
+enabled; disabling forms such as `false`, `off`, `disabled`, and `0` are
+rejected.
+
 `gateway.authProfilesByAgent` writes OpenClaw auth profiles to
 `<stateDir>/agents/<agentId>/agent/auth-profiles.json` before the gateway VM
 boots. There is no shared per-agent fallback; configure each agent that needs an
@@ -862,6 +997,10 @@ The schema rejects:
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
 - OpenClaw zones declaring `runtimeAuthHints`.
+- OpenClaw zone observability without `host.observability.enabled=true`.
+- Worker zone observability.
+- OpenClaw observability with broad/content-capturing diagnostics flags or raw
+  `OPENCLAW_DIAGNOSTICS`.
 - Worker `runtimeAuthHints` referencing missing secrets, non-mediated secrets,
   Tool VM-only secrets, or hosts not listed on the referenced secret.
 - OpenClaw zones without `defaultToolVmProfile`.
