@@ -194,4 +194,4 @@ Plan 12 task 3 remains a user decision:
 2. Keep the legacy fallback and allow the new assertion to fail old
    unconfigured zones until they set `gateway.backupDir` explicitly.
 
-No branch push has been performed yet at the time this report was updated.
+Branch pushed to `origin/improve/plan-12-backup-pipeline-hardening`.
