@@ -607,42 +607,87 @@ const hostObservabilityPortsSchema = z
 		traces: 10_428,
 	});
 
-const hostObservabilitySchema = z.discriminatedUnion('enabled', [
+const managedHostObservabilityStackSchema = z
+	.object({
+		mode: z.literal('managed').default('managed'),
+		scrubbing: z
+			.object({
+				responsibility: z
+					.literal('agent-vm-managed-collector')
+					.default('agent-vm-managed-collector'),
+			})
+			.strict()
+			.default({ responsibility: 'agent-vm-managed-collector' }),
+	})
+	.strict()
+	.default({
+		mode: 'managed',
+		scrubbing: { responsibility: 'agent-vm-managed-collector' },
+	});
+
+const externalHostObservabilityStackSchema = z
+	.object({
+		mode: z.literal('external'),
+		scrubbing: z
+			.object({
+				responsibility: z.literal('external-collector'),
+			})
+			.strict(),
+	})
+	.strict();
+
+const hostObservabilityCommonShape = {
+	enabled: z.literal(true),
+	mode: z.literal('collector').default('collector'),
+	bindAddress: z.enum(['127.0.0.1', '::1']).default('127.0.0.1'),
+	prepareOnBuild: z.boolean().default(true),
+	waitOnBuild: z.boolean().default(true),
+	startupCheckTimeoutMs: z.number().int().positive().default(500),
+	ports: hostObservabilityPortsSchema,
+	controllerStartPolicy: z.enum(['degraded', 'require-ready', 'off']).default('degraded'),
+} as const;
+
+const hostObservabilityRetentionSchema = z
+	.object({
+		metrics: observabilityRetentionBaseSchema,
+		logs: observabilityByteBoundedRetentionPolicySchema,
+		traces: observabilityDiskBoundedRetentionPolicySchema,
+	})
+	.strict();
+
+const managedHostObservabilitySchema = z
+	.object({
+		...hostObservabilityCommonShape,
+		stack: managedHostObservabilityStackSchema,
+		runner: z.literal('docker-compose').default('docker-compose'),
+		dataDir: z.string().min(1),
+		projectName: z
+			.string()
+			.min(1)
+			.regex(
+				/^[a-z0-9][a-z0-9_-]*$/u,
+				'projectName must use lowercase letters, numbers, hyphens, and underscores, and start with a letter or number',
+			)
+			.optional(),
+		retention: hostObservabilityRetentionSchema,
+	})
+	.strict();
+
+const externalHostObservabilitySchema = z
+	.object({
+		...hostObservabilityCommonShape,
+		stack: externalHostObservabilityStackSchema,
+	})
+	.strict();
+
+const hostObservabilitySchema = z.union([
 	z
 		.object({
 			enabled: z.literal(false),
 		})
 		.strict(),
-	z
-		.object({
-			enabled: z.literal(true),
-			stack: z.literal('victoria').default('victoria'),
-			runner: z.literal('docker-compose').default('docker-compose'),
-			mode: z.literal('collector').default('collector'),
-			dataDir: z.string().min(1),
-			projectName: z
-				.string()
-				.min(1)
-				.regex(
-					/^[a-z0-9][a-z0-9_-]*$/u,
-					'projectName must use lowercase letters, numbers, hyphens, and underscores, and start with a letter or number',
-				)
-				.optional(),
-			bindAddress: z.enum(['127.0.0.1', '::1']).default('127.0.0.1'),
-			prepareOnBuild: z.boolean().default(true),
-			waitOnBuild: z.boolean().default(true),
-			startupCheckTimeoutMs: z.number().int().positive().default(500),
-			ports: hostObservabilityPortsSchema,
-			controllerStartPolicy: z.enum(['degraded', 'require-ready', 'off']).default('degraded'),
-			retention: z
-				.object({
-					metrics: observabilityRetentionBaseSchema,
-					logs: observabilityByteBoundedRetentionPolicySchema,
-					traces: observabilityDiskBoundedRetentionPolicySchema,
-				})
-				.strict(),
-		})
-		.strict(),
+	managedHostObservabilitySchema,
+	externalHostObservabilitySchema,
 ]);
 
 const zoneOpenClawObservabilitySchema = z
@@ -1105,6 +1150,11 @@ const systemConfigSchema = z
 	});
 
 type ParsedSystemConfig = z.infer<typeof systemConfigSchema>;
+type HostObservabilityConfig = ParsedSystemConfig['host']['observability'];
+type ManagedHostObservabilityConfig = Extract<
+	NonNullable<HostObservabilityConfig>,
+	{ readonly enabled: true; readonly stack: { readonly mode: 'managed' } }
+>;
 
 export type SystemConfig = Omit<ParsedSystemConfig, 'controller'> & {
 	readonly controller?: ParsedSystemConfig['controller'];
@@ -1116,7 +1166,7 @@ export const systemConfigSchemaId = 'agent-vm:system:1';
 export function createSystemConfigSchemaArtifact(): Record<string, unknown> {
 	return {
 		$id: systemConfigSchemaId,
-		...z.toJSONSchema(systemConfigSchema, { target: 'draft-07' }),
+		...z.toJSONSchema(systemConfigSchema, { io: 'input', target: 'draft-07' }),
 	};
 }
 
@@ -1145,12 +1195,19 @@ function pathsOverlap(firstPath: string, secondPath: string): boolean {
 	);
 }
 
+function isManagedHostObservabilityConfig(
+	observability: HostObservabilityConfig,
+): observability is ManagedHostObservabilityConfig {
+	return observability?.enabled === true && observability.stack.mode === 'managed';
+}
+
 function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigSchema>): void {
 	if (pathsOverlap(config.runtimeDir, config.cacheDir)) {
 		throw new Error('runtimeDir must not overlap cacheDir.');
 	}
-	if (config.host.observability?.enabled === true) {
-		const { dataDir } = config.host.observability;
+	const observability = config.host.observability;
+	if (isManagedHostObservabilityConfig(observability)) {
+		const { dataDir } = observability;
 		if (pathsOverlap(dataDir, config.cacheDir)) {
 			throw new Error('observability dataDir must not overlap cacheDir.');
 		}
@@ -1168,8 +1225,8 @@ function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigS
 		) {
 			throw new Error(`runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
 		}
-		if (config.host.observability?.enabled === true) {
-			const { dataDir } = config.host.observability;
+		if (isManagedHostObservabilityConfig(observability)) {
+			const { dataDir } = observability;
 			if (pathsOverlap(dataDir, zone.gateway.stateDir)) {
 				throw new Error(`observability dataDir must not overlap stateDir for zone '${zone.id}'.`);
 			}
@@ -1231,16 +1288,15 @@ function resolveRelativePaths(
 
 	return {
 		...config,
-		host:
-			config.host.observability?.enabled === true
-				? {
-						...config.host,
-						observability: {
-							...config.host.observability,
-							dataDir: resolvePath(config.host.observability.dataDir),
-						},
-					}
-				: config.host,
+		host: isManagedHostObservabilityConfig(config.host.observability)
+			? {
+					...config.host,
+					observability: {
+						...config.host.observability,
+						dataDir: resolvePath(config.host.observability.dataDir),
+					},
+				}
+			: config.host,
 		cacheDir: resolvePath(config.cacheDir),
 		runtimeDir: resolvePath(config.runtimeDir),
 		imageProfiles: {

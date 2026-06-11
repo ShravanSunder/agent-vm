@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { ObservabilityRuntimeConfig } from '../observability/observability-config.js';
+import type { ManagedObservabilityRuntimeConfig } from '../observability/observability-config.js';
 import { prepareObservabilityStack } from '../observability/observability-lifecycle.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
@@ -65,9 +65,7 @@ async function reserveLoopbackPorts(): Promise<
 	return [collectorGrpc, collectorHttp, collectorHealth, metrics, logs, traces];
 }
 
-async function createRuntimeConfig(): Promise<
-	Extract<ObservabilityRuntimeConfig, { readonly enabled: true }>
-> {
+async function createRuntimeConfig(): Promise<ManagedObservabilityRuntimeConfig> {
 	const temporaryDirectory = await fs.mkdtemp(
 		path.join(os.tmpdir(), 'agent-vm-observability-storage-'),
 	);
@@ -76,6 +74,7 @@ async function createRuntimeConfig(): Promise<
 		await reserveLoopbackPorts();
 	return {
 		enabled: true,
+		stackMode: 'managed',
 		projectName: `agent-vm-observability-storage-${Date.now().toString(36)}`,
 		runtimeDir: path.join(temporaryDirectory, 'runtime'),
 		dataDir: path.join(temporaryDirectory, 'data'),
@@ -112,9 +111,7 @@ async function createRuntimeConfig(): Promise<
 	};
 }
 
-async function dockerComposeDown(
-	config: Extract<ObservabilityRuntimeConfig, { readonly enabled: true }>,
-): Promise<void> {
+async function dockerComposeDown(config: ManagedObservabilityRuntimeConfig): Promise<void> {
 	const composePath = path.join(config.runtimeDir, 'docker-compose.observability.yml');
 	await execa(
 		'docker',

@@ -54,6 +54,10 @@ interface ObservabilityHealthPorts {
 	readonly traces: number;
 }
 
+interface CreateSmokeDeploymentOptions extends ObservabilityHealthPorts {
+	readonly stackMode?: 'external' | 'managed';
+}
+
 async function createHealthServer(): Promise<HealthServer> {
 	const server = http.createServer((_request, response) => {
 		response.writeHead(200, { 'content-type': 'text/plain' });
@@ -138,7 +142,7 @@ async function createFakeDocker(temporaryDirectory: string): Promise<{
 }
 
 async function createSmokeDeployment(
-	healthPorts: ObservabilityHealthPorts,
+	options: CreateSmokeDeploymentOptions,
 ): Promise<SmokeDeployment> {
 	const temporaryDirectory = await fs.mkdtemp(
 		path.join(os.tmpdir(), 'agent-vm-observability-cli-'),
@@ -161,6 +165,7 @@ async function createSmokeDeployment(
 	const toolBuildConfigPath = path.join(vmImagesDirectory, 'tool-build-config.json');
 	const configPath = path.join(configDirectory, 'system.jsonc');
 	const fakeDocker = await createFakeDocker(temporaryDirectory);
+	const stackMode = options.stackMode ?? 'managed';
 	const buildConfig = {
 		arch: 'aarch64',
 		distro: 'alpine',
@@ -192,25 +197,35 @@ async function createSmokeDeployment(
 			projectNamespace: 'observability-cli-smoke',
 			observability: {
 				enabled: true,
-				stack: 'victoria',
-				runner: 'docker-compose',
+				stack:
+					stackMode === 'managed'
+						? { mode: 'managed' }
+						: {
+								mode: 'external',
+								scrubbing: { responsibility: 'external-collector' },
+							},
 				mode: 'collector',
-				dataDir,
-				projectName: 'agent-vm-observability-cli-smoke',
 				waitOnBuild: true,
 				ports: {
 					collectorGrpc: 24_317,
 					collectorHttp: 24_318,
-					collectorHealth: healthPorts.collectorHealth,
-					metrics: healthPorts.metrics,
-					logs: healthPorts.logs,
-					traces: healthPorts.traces,
+					collectorHealth: options.collectorHealth,
+					metrics: options.metrics,
+					logs: options.logs,
+					traces: options.traces,
 				},
-				retention: {
-					metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
-					logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
-					traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-				},
+				...(stackMode === 'managed'
+					? {
+							runner: 'docker-compose',
+							dataDir,
+							projectName: 'agent-vm-observability-cli-smoke',
+							retention: {
+								metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+								logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+								traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+							},
+						}
+					: {}),
 			},
 		},
 		imageProfiles: {
@@ -394,6 +409,44 @@ describe('smoke: agent-vm build observability CLI', () => {
 			expect(output).toContain('observability preparation skipped');
 			expect(output).toContain('--no-observability');
 			expect(await readOptionalText(deployment.dockerCallLogPath)).toBe('');
+		} finally {
+			await closeHealthServers(healthServers);
+		}
+	});
+
+	it('reports external observability without rendering or starting Compose', async () => {
+		const healthServers = await createHealthServers(4);
+		const [collectorHealth, metrics, logs, traces] = healthServers;
+		if (!collectorHealth || !metrics || !logs || !traces) {
+			throw new Error('Expected four observability health servers.');
+		}
+		try {
+			const deployment = await createSmokeDeployment({
+				collectorHealth: collectorHealth.port,
+				logs: logs.port,
+				metrics: metrics.port,
+				traces: traces.port,
+				stackMode: 'external',
+			});
+
+			const output = await runBuiltAgentVmBuild(deployment);
+
+			expect(output).toContain('external observability stack');
+			expect(output).toContain('Docker Compose is not managed by this deployment');
+			expect(await readOptionalText(deployment.dockerCallLogPath)).toBe('');
+			const observabilityRuntimeDir = path.join(
+				deployment.runtimeDir,
+				'observability',
+				'observability-cli-smoke',
+			);
+			expect(
+				await readOptionalText(
+					path.join(observabilityRuntimeDir, 'docker-compose.observability.yml'),
+				),
+			).toBe('');
+			expect(
+				await readOptionalText(path.join(observabilityRuntimeDir, 'otel-collector-config.yaml')),
+			).toBe('');
 		} finally {
 			await closeHealthServers(healthServers);
 		}

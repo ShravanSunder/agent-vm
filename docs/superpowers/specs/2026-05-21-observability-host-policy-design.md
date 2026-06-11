@@ -10,12 +10,14 @@ Validated base: `origin/master` at `c40e3a7b`
 `agent-vm` should make local OpenClaw debugging observable without making
 controller startup depend on Docker.
 
-The controller should own the contract for a local Victoria-backed
-observability stack and should connect OpenClaw to that stack when it is ready.
-Slow Docker work belongs in the configured build/prepare lifecycle. During
-`controller start`, the controller may do fast readiness checks, generate the
-effective OpenClaw telemetry config, and map host endpoints into the Gateway VM,
-but it must not pull images, start Compose, or wait on slow container startup.
+The controller should own the contract for connecting OpenClaw to a host
+OpenTelemetry Collector, while `host.observability.stack.mode` decides whether
+this deployment manages the Victoria-backed local stack or connects to an
+external/shared stack. Slow Docker work belongs only to the managed
+build/prepare lifecycle. During `controller start`, the controller may do fast
+readiness checks, generate the effective OpenClaw telemetry config, and map host
+endpoints into the Gateway VM, but it must not pull images, start Compose, or
+wait on slow container startup.
 The same rule applies to every controller-owned OpenClaw gateway start path:
 initial controller start, operator restart, cold start, upgrade-triggered
 restart, and auto-recovery.
@@ -40,9 +42,10 @@ restart, and auto-recovery.
 
 ## Controller telemetry boundary
 
-This branch wires OpenClaw Gateway logs, metrics, and traces to a host-owned
-OpenTelemetry Collector and Victoria backends. Native `agent-vm` controller
-instrumentation is intentionally not hidden inside this change.
+This branch wires OpenClaw Gateway logs, metrics, and traces to a host
+OpenTelemetry Collector and Victoria backends. The stack may be managed by this
+deployment or external/shared. Native `agent-vm` controller instrumentation is
+intentionally not hidden inside this change.
 
 When controller logs/metrics/traces are added, they should use a small
 controller telemetry facade. Controller application logs should go through
@@ -270,14 +273,18 @@ VictoriaLogs should receive known-field protections too:
 
 ## Configuration model
 
-Add a host-owned service plane:
+Add a host observability plane. `enabled` opts the deployment into telemetry,
+and `stack.mode` decides stack ownership:
 
 ```jsonc
 {
   "host": {
     "observability": {
       "enabled": true,
-      "stack": "victoria",
+      "stack": {
+        "mode": "managed",
+        "scrubbing": { "responsibility": "agent-vm-managed-collector" }
+      },
       "runner": "docker-compose",
       "mode": "collector",
       "prepareOnBuild": true,
@@ -314,21 +321,32 @@ Add a host-owned service plane:
 }
 ```
 
-`dataDir` should be required when observability is enabled. It must not default
-to `cacheDir`. A future implementation may add a safe convenience default, but
-v1 should force the operator to choose a durable, inspectable disk location.
-Validation should run after normal config path resolution and reject `dataDir`
-when it is inside `cacheDir`, `runtimeDir`, any zone `stateDir`, any OpenClaw
-`zoneFilesDir`, or other known cleanup/destructive-command roots.
+`stack.mode: "managed"` means this deployment owns a local Victoria +
+OpenTelemetry Collector Compose stack. `dataDir` and `retention` are required in
+managed mode. `dataDir` must not default to `cacheDir`; v1 should force the
+operator to choose a durable, inspectable disk location. Validation should run
+after normal config path resolution and reject `dataDir` when it is inside
+`cacheDir`, `runtimeDir`, any zone `stateDir`, any OpenClaw `zoneFilesDir`, or
+other known cleanup/destructive-command roots.
+
+`stack.mode: "external"` means a shared collector and downstream storage stack
+are owned outside this deployment. In external mode, agent-vm does not render
+Compose, does not start Docker, and does not accept managed-only fields such as
+`dataDir`, `projectName`, `runner`, or `retention`. It still generates OpenClaw
+telemetry config and maps the collector endpoint into the Gateway VM. External
+mode must carry `stack.scrubbing.responsibility: "external-collector"` so the
+operator explicitly owns equivalent collector-side sanitization before storage
+or forwarding. Source-side no-secret logging remains mandatory in both modes.
 
 `bindAddress` is loopback-only in v1. Accept `127.0.0.1` and, if IPv6 loopback
 is implemented, `::1`; reject `0.0.0.0`, `::`, and host LAN addresses. The
 Gateway VM reaches the stack through explicit `tcpHosts`, so the host services
 do not need LAN exposure.
 
-`stack` is `victoria` in v1. `runner` is `docker-compose` in v1. `mode` is
-`collector` in v1. The schema may reserve these fields so the config shape can
-later grow, but v1 should reject unsupported values clearly.
+`stack.mode` supports `managed` and `external` in v1. `runner` is
+`docker-compose` for managed stacks only. `mode` is `collector` in v1. The
+schema may reserve these fields so the config shape can later grow, but v1
+should reject unsupported values and managed/external field mixing clearly.
 
 `prepareOnBuild` defaults to true when `host.observability.enabled` is true.
 `waitOnBuild` defaults to true for the local developer deployment path so a
@@ -387,9 +405,11 @@ If a zone gateway type is not `openclaw`, v1 should reject
 
 ## Generated host artifacts
 
-The controller package should generate these files under a deterministic
-observability work directory. Generated config files may live under cache/runtime,
-but telemetry data must live under `host.observability.dataDir`.
+For managed stacks, the controller package should generate these files under a
+deterministic observability work directory. Generated config files may live
+under cache/runtime, but telemetry data must live under
+`host.observability.dataDir`. External stacks do not get generated Compose files
+or local Victoria data directories from this deployment.
 
 ```text
 <runtimeDir>/observability/<projectNamespace>/
@@ -418,10 +438,15 @@ command equivalent to `docker compose down -v`.
 
 ## Build lifecycle
 
-`agent-vm build` runs the observability preparation path after the existing image
-preparation succeeds when `host.observability.enabled` is true and at least one
-supported zone opts into observability. This gives the deployment a single "make
-everything expensive ready" command without putting Docker in `controller start`.
+`agent-vm build` runs the managed observability preparation path after the
+existing image preparation succeeds when `host.observability.enabled` is true,
+`stack.mode` is `managed`, and at least one supported zone opts into
+observability. This gives the deployment a single "make everything expensive
+ready" command without putting Docker in `controller start`.
+
+When `stack.mode` is `external`, `agent-vm build` reports that the stack is
+externally managed, does not render observability Compose artifacts, and does
+not call Docker Compose.
 
 `agent-vm build --no-observability` skips only observability preparation for
 that run and does not mutate config. There should be no

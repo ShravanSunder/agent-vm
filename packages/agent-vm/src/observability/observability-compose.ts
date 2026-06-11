@@ -4,7 +4,7 @@ import type {
 	ObservabilityBaseRetentionPolicy,
 	ObservabilityByteBoundedRetentionPolicy,
 	ObservabilityDiskBoundedRetentionPolicy,
-	ObservabilityRuntimeConfig,
+	ManagedObservabilityRuntimeConfig,
 } from './observability-config.js';
 
 const VICTORIA_METRICS_IMAGE = 'victoriametrics/victoria-metrics:v1.144.0';
@@ -25,14 +25,6 @@ export interface ObservabilityComposeService {
 export interface ObservabilityComposeModel {
 	readonly name: string;
 	readonly services: Record<string, ObservabilityComposeService>;
-}
-
-function assertEnabledConfig(
-	config: ObservabilityRuntimeConfig,
-): asserts config is Extract<ObservabilityRuntimeConfig, { readonly enabled: true }> {
-	if (!config.enabled) {
-		throw new Error('Cannot render observability compose for a disabled config.');
-	}
 }
 
 function renderLoopbackPort(bindAddress: string, hostPort: number, containerPort: number): string {
@@ -75,10 +67,8 @@ function renderDiskBoundedRetentionFlags(
 }
 
 export function createObservabilityComposeModel(
-	config: ObservabilityRuntimeConfig,
+	config: ManagedObservabilityRuntimeConfig,
 ): ObservabilityComposeModel {
-	assertEnabledConfig(config);
-
 	return {
 		name: config.projectName,
 		services: {

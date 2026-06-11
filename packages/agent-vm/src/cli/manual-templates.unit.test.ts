@@ -87,7 +87,15 @@ describe('manual templates', () => {
 			file.relativePath.endsWith('observability.md'),
 		)?.content;
 		expect(observabilityManual).toContain('agent-vm build --no-observability');
+		expect(observabilityManual).toContain('host.observability.stack.mode=managed');
+		expect(observabilityManual).toContain('host.observability.stack.mode=external');
+		expect(observabilityManual).toContain(
+			'host.observability.stack.scrubbing.responsibility=external-collector',
+		);
 		expect(observabilityManual).toContain('Controller startup does not start Docker Compose');
+		expect(observabilityManual).toContain(
+			'External mode checks only the configured OpenTelemetry collector',
+		);
 		expect(observabilityManual).toContain('controllerStartPolicy=degraded');
 		expect(observabilityManual).toContain('host.observability.dataDir');
 		expect(observabilityManual).toContain('zones[].observability.openclaw.diagnosticsFlags');

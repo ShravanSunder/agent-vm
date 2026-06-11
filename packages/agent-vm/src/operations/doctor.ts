@@ -90,9 +90,13 @@ function buildZigVersionCheck(
 function hasDockerBackedImageProfiles(systemConfig: SystemConfig): boolean {
 	const gatewayProfiles = Object.values(systemConfig.imageProfiles.gateways);
 	const toolVmProfiles = Object.values(systemConfig.imageProfiles.toolVms);
-	return [...gatewayProfiles, ...toolVmProfiles].some(
+	const hasDockerBackedImageProfile = [...gatewayProfiles, ...toolVmProfiles].some(
 		(profile) => profile.dockerfile !== undefined || profile.source !== undefined,
 	);
+	const hasManagedObservabilityStack =
+		systemConfig.host.observability?.enabled === true &&
+		systemConfig.host.observability.stack.mode === 'managed';
+	return hasDockerBackedImageProfile || hasManagedObservabilityStack;
 }
 
 function buildDockerChecks(
@@ -150,6 +154,22 @@ function buildOpenClawCliCheck(
 					}),
 		},
 	];
+}
+
+function buildObservabilityEnabledCheck(systemConfig: SystemConfig): DoctorCheck {
+	const observability = systemConfig.host.observability;
+	if (observability?.enabled === true) {
+		return {
+			name: 'observability-enabled',
+			ok: true,
+			hint: observability.stack.mode,
+		};
+	}
+	return {
+		name: 'observability-enabled',
+		ok: true,
+		hint: 'Recommended: enable host.observability with stack.mode managed for a local Victoria stack, or stack.mode external plus stack.scrubbing.responsibility external-collector for a shared collector.',
+	};
 }
 
 function isSameOrDescendantPath(childPath: string, parentPath: string): boolean {
@@ -511,6 +531,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 					} satisfies DoctorCheck,
 				]
 			: []),
+		buildObservabilityEnabledCheck(options.systemConfig),
 		checkAnyBinary(
 			'qemu',
 			['qemu-system-aarch64', 'qemu-system-x86_64'],

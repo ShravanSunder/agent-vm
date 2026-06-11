@@ -1104,6 +1104,17 @@ export async function runBuildCommand(
 		return;
 	}
 
+	if (runtimeObservabilityConfig.stackMode === 'external') {
+		await runTaskStep('Observability stack', async (taskContext) => {
+			taskContext?.setStatus('external observability stack');
+			taskContext?.setOutput({
+				message:
+					'Host observability uses an external observability stack; Docker Compose is not managed by this deployment.',
+			});
+		});
+		return;
+	}
+
 	if (runtimeObservabilityConfig.zones.length === 0) {
 		await runTaskStep('Observability stack', async (taskContext) => {
 			taskContext?.setStatus('observability stack skipped');

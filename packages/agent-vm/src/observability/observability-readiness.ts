@@ -1,4 +1,4 @@
-import type { ObservabilityRuntimeConfig } from './observability-config.js';
+import type { EnabledObservabilityRuntimeConfig } from './observability-config.js';
 
 export type ObservabilityReadinessResult =
 	| {
@@ -12,7 +12,7 @@ export type ObservabilityReadinessResult =
 	  };
 
 export interface CheckObservabilityStackReadinessOptions {
-	readonly config: Extract<ObservabilityRuntimeConfig, { readonly enabled: true }>;
+	readonly config: EnabledObservabilityRuntimeConfig;
 	readonly fetchImpl?: typeof fetch;
 	readonly retryDelayMs?: number;
 }
@@ -27,14 +27,18 @@ interface ObservabilityHealthEndpoint {
 }
 
 function createHealthEndpoints(
-	config: Extract<ObservabilityRuntimeConfig, { readonly enabled: true }>,
+	config: EnabledObservabilityRuntimeConfig,
 ): readonly ObservabilityHealthEndpoint[] {
 	const host = formatHttpHost(config.bindAddress);
+	const collectorEndpoint = {
+		name: 'collector',
+		url: `http://${host}:${String(config.ports.collectorHealth)}/`,
+	} as const;
+	if (config.stackMode === 'external') {
+		return [collectorEndpoint];
+	}
 	return [
-		{
-			name: 'collector',
-			url: `http://${host}:${String(config.ports.collectorHealth)}/`,
-		},
+		collectorEndpoint,
 		{
 			name: 'victoria-metrics',
 			url: `http://${host}:${String(config.ports.metrics)}/health`,

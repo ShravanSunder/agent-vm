@@ -7,7 +7,10 @@ import {
 	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
 	startGatewayZone,
 } from '../gateway/gateway-zone-orchestrator.js';
-import { createObservabilityRuntimeConfig } from '../observability/observability-config.js';
+import {
+	createObservabilityRuntimeConfig,
+	type EnabledObservabilityRuntimeConfig,
+} from '../observability/observability-config.js';
 import { checkObservabilityStackReadiness as checkObservabilityStackReadinessDefault } from '../observability/observability-readiness.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
@@ -119,7 +122,7 @@ function buildOpenClawRuntimePluginConfig(options: {
 function selectConfiguredObservabilityStartupCheck(options: {
 	readonly systemConfig: StartControllerRuntimeOptions['systemConfig'];
 	readonly zoneIds?: readonly string[];
-}): Extract<ReturnType<typeof createObservabilityRuntimeConfig>, { enabled: true }> | undefined {
+}): EnabledObservabilityRuntimeConfig | undefined {
 	const observabilityConfig = createObservabilityRuntimeConfig(options.systemConfig);
 	if (!observabilityConfig.enabled || observabilityConfig.controllerStartPolicy === 'off') {
 		return undefined;
@@ -143,7 +146,7 @@ async function assertObservabilityStackReady(options: {
 	readonly checkObservabilityStackReadiness: NonNullable<
 		ControllerRuntimeDependencies['checkObservabilityStackReadiness']
 	>;
-	readonly config: Extract<ReturnType<typeof createObservabilityRuntimeConfig>, { enabled: true }>;
+	readonly config: EnabledObservabilityRuntimeConfig;
 }): Promise<void> {
 	const result = await options.checkObservabilityStackReadiness({ config: options.config });
 	if (!result.ok) {

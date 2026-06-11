@@ -104,10 +104,24 @@ desktop/session auth and does not resolve deployment secret refs.
 
 ## host.observability
 
-`host.observability` configures the host-owned observability stack. Omit it or
-set `{ "enabled": false }` to disable the feature. When enabled, each OpenClaw
-zone still needs `zones[].observability.enabled=true` before the build and
-runtime path use the stack.
+`host.observability` configures host participation in OpenTelemetry collection.
+Omit it or set `{ "enabled": false }` to keep the old no-observability runtime
+behavior. `agent-vm doctor` reports that state and recommends enabling
+observability with a managed local stack unless the deployment intentionally
+uses an external shared collector.
+
+When enabled, `stack.mode` decides stack ownership:
+
+- `managed`: this deployment owns a local VictoriaMetrics, VictoriaLogs,
+  VictoriaTraces, and OpenTelemetry Collector stack prepared by `agent-vm build`.
+- `external`: this deployment connects to an already-managed/shared
+  OpenTelemetry Collector and never renders or starts Docker Compose. External
+  stacks must explicitly state that the shared collector owns equivalent
+  telemetry scrubbing with
+  `stack.scrubbing.responsibility: "external-collector"`.
+
+Each OpenClaw zone still needs `zones[].observability.enabled=true` before the
+build and runtime path use the collector.
 
 The controller does not start Docker Compose during controller startup. Docker
 startup belongs to `agent-vm build` when `prepareOnBuild` is true. A one-off
@@ -120,7 +134,10 @@ Example:
   "host": {
     "observability": {
       "enabled": true,
-      "stack": "victoria",
+      "stack": {
+        "mode": "managed",
+        "scrubbing": { "responsibility": "agent-vm-managed-collector" }
+      },
       "runner": "docker-compose",
       "mode": "collector",
       "dataDir": "../observability-data",
@@ -144,16 +161,17 @@ Example:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | required | `true` enables the host stack; `false` disables it. |
-| `stack` | `victoria` | Backend stack. The current implementation supports VictoriaMetrics, VictoriaLogs, and VictoriaTraces. |
-| `runner` | `docker-compose` | Host runner used by `agent-vm build` to start the stack. |
+| `enabled` | required | `true` enables host observability participation; `false` disables it. |
+| `stack.mode` | `managed` | `managed` owns the local Victoria + Collector Compose stack; `external` connects to a shared collector and never starts Compose. |
+| `stack.scrubbing.responsibility` | `agent-vm-managed-collector` for managed; required `external-collector` for external | Declares which collector owns defense-in-depth sensitive-field dropping. Source code must still avoid emitting secrets in the first place. |
+| `runner` | `docker-compose` | Managed-stack host runner used by `agent-vm build` to start the stack. Managed only. |
 | `mode` | `collector` | OpenTelemetry Collector receives OTLP and exports to Victoria. |
-| `dataDir` | required when enabled | Durable host directory for Victoria data. Must not overlap cacheDir, runtimeDir, stateDir, or zoneFilesDir. |
-| `projectName` | `agent-vm-observability-<projectNamespace>` | Docker Compose project name. Must use lowercase letters, numbers, hyphens, and underscores, and start with a letter or number. |
+| `dataDir` | required for `managed` | Durable host directory for Victoria data. Must not overlap cacheDir, runtimeDir, stateDir, or zoneFilesDir. Omit for `external`. |
+| `projectName` | `agent-vm-observability-<projectNamespace>` | Managed-stack Docker Compose project name. Must use lowercase letters, numbers, hyphens, and underscores, and start with a letter or number. Managed only. |
 | `bindAddress` | `127.0.0.1` | Host bind address for collector and Victoria ports. Only loopback addresses are accepted. |
-| `prepareOnBuild` | `true` | Lets `agent-vm build` render artifacts and run Docker Compose when an opted-in zone is selected. |
-| `waitOnBuild` | `true` | Makes build wait for collector, metrics, logs, and traces readiness after Compose startup. |
-| `controllerStartPolicy` | `degraded` | `degraded` starts the controller immediately and checks readiness in the background; `require-ready` waits for bounded readiness; `off` skips startup checks. No policy starts Docker. |
+| `prepareOnBuild` | `true` | Lets `agent-vm build` render artifacts and run Docker Compose for `managed` when an opted-in zone is selected. `external` reports that the stack is externally managed. |
+| `waitOnBuild` | `true` | Makes managed build wait for collector, metrics, logs, and traces readiness after Compose startup. |
+| `controllerStartPolicy` | `degraded` | `degraded` starts the controller when readiness is unavailable; `require-ready` fails after the bounded readiness budget; `off` skips startup checks. No policy starts Docker. |
 | `startupCheckTimeoutMs` | `500` | Total bounded readiness budget for one startup health-check pass. |
 | `ports.collectorGrpc` | `4317` | Host OTLP gRPC collector port. All observability ports must be unique values from 1 through 65535. |
 | `ports.collectorHttp` | `4318` | Host OTLP HTTP collector port used by OpenClaw diagnostics. |
@@ -161,11 +179,36 @@ Example:
 | `ports.metrics` | `8428` | Host VictoriaMetrics port. |
 | `ports.logs` | `9428` | Host VictoriaLogs port. |
 | `ports.traces` | `10428` | Host VictoriaTraces port. |
-| `retention.metrics` | required | Metrics retention period plus optional minimum free disk space. Period values use Victoria duration strings such as `30d`; byte values use explicit units such as `5GiB`. |
-| `retention.logs` | required | Logs retention period plus optional max disk usage. |
-| `retention.traces` | required | Traces retention period plus one optional disk cap. Use either `maxDiskSpaceUsageBytes` or `maxDiskUsagePercent`, not both. |
+| `retention.metrics` | required for `managed` | Metrics retention period plus optional minimum free disk space. Period values use Victoria duration strings such as `30d`; byte values use explicit units such as `5GiB`. |
+| `retention.logs` | required for `managed` | Logs retention period plus optional max disk usage. |
+| `retention.traces` | required for `managed` | Traces retention period plus one optional disk cap. Use either `maxDiskSpaceUsageBytes` or `maxDiskUsagePercent`, not both. |
 
-`agent-vm build` writes:
+External shared collector example:
+
+```jsonc
+{
+  "host": {
+    "observability": {
+      "enabled": true,
+      "stack": {
+        "mode": "external",
+        "scrubbing": { "responsibility": "external-collector" }
+      },
+      "mode": "collector",
+      "bindAddress": "127.0.0.1",
+      "controllerStartPolicy": "degraded",
+      "startupCheckTimeoutMs": 500
+    }
+  }
+}
+```
+
+For `external`, make the shared collector available on the configured loopback
+collector ports and configure that collector to drop or hash the same sensitive
+telemetry attributes before storage/export. `agent-vm build` does not render
+Compose or create Victoria storage directories for external stacks.
+
+For `managed`, `agent-vm build` writes:
 
 ```text
 <runtimeDir>/observability/<projectNamespace>/docker-compose.observability.yml
@@ -179,10 +222,12 @@ Generated Compose files bind all published ports to loopback, set
 `restart: unless-stopped`, and mount the Victoria data directories from
 `host.observability.dataDir`. The generated
 collector config uses gzip OTLP export to Victoria and drops known sensitive
-attributes before export. This scrubber is defense-in-depth only: application
-and controller code must still avoid logging secrets, prompts, message bodies,
-tool payloads, cookies, authorization headers, token values, private keys, raw
-URLs with query strings, command content, and other sensitive data.
+attributes before export. This managed scrubber is defense-in-depth only:
+application and controller code must still avoid logging secrets, prompts,
+message bodies, tool payloads, cookies, authorization headers, token values,
+private keys, raw URLs with query strings, command content, and other sensitive
+data. External collectors must provide equivalent sanitization before storing
+or forwarding agent-vm telemetry.
 
 ## controller.health
 
@@ -673,8 +718,8 @@ Unmapped agents use the zone fallback `defaultToolVmProfile`.
 
 ## zones[].observability
 
-`zones[].observability` opts an OpenClaw zone into the host observability stack.
-It is supported only for OpenClaw gateways in this version and requires
+`zones[].observability` opts an OpenClaw zone into host observability. It is
+supported only for OpenClaw gateways in this version and requires
 `host.observability.enabled=true`.
 
 Example:

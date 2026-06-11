@@ -310,7 +310,10 @@ function createObservabilitySystemConfig(
 				...baseConfig.host,
 				observability: {
 					enabled: true,
-					stack: 'victoria',
+					stack: {
+						mode: 'managed',
+						scrubbing: { responsibility: 'agent-vm-managed-collector' },
+					},
 					runner: 'docker-compose',
 					mode: 'collector',
 					dataDir: path.join(path.dirname(systemConfig.cacheDir), 'observability-data'),

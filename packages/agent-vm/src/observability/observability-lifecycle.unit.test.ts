@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
-import type { ObservabilityRuntimeConfig } from './observability-config.js';
+import type { ManagedObservabilityRuntimeConfig } from './observability-config.js';
 import { prepareObservabilityStack } from './observability-lifecycle.js';
 
 const createdDirectories: string[] = [];
@@ -17,13 +17,12 @@ afterEach(async () => {
 	);
 });
 
-async function createRuntimeConfig(): Promise<
-	Extract<ObservabilityRuntimeConfig, { readonly enabled: true }>
-> {
+async function createRuntimeConfig(): Promise<ManagedObservabilityRuntimeConfig> {
 	const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-observability-'));
 	createdDirectories.push(tempDirectory);
 	return {
 		enabled: true,
+		stackMode: 'managed',
 		projectName: 'agent-vm-observability-sunfam',
 		runtimeDir: path.join(tempDirectory, 'runtime', 'observability', 'sunfam'),
 		dataDir: path.join(tempDirectory, 'observability', 'sunfam'),

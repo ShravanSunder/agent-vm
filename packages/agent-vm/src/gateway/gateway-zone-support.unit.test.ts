@@ -67,7 +67,10 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 		const lifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone, {
 			hostObservability: {
 				enabled: true,
-				stack: 'victoria',
+				stack: {
+					mode: 'managed',
+					scrubbing: { responsibility: 'agent-vm-managed-collector' },
+				},
 				runner: 'docker-compose',
 				mode: 'collector',
 				dataDir: '/host/observability',

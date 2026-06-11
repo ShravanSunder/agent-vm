@@ -9,7 +9,7 @@ import {
 } from './observability-compose.js';
 import {
 	createObservabilityRuntimeConfig,
-	type ObservabilityRuntimeConfig,
+	type ManagedObservabilityRuntimeConfig,
 } from './observability-config.js';
 import { checkObservabilityStackReadiness } from './observability-readiness.js';
 import {
@@ -18,7 +18,7 @@ import {
 } from './otel-collector-config.js';
 
 export interface PrepareObservabilityStackOptions {
-	readonly config: Extract<ObservabilityRuntimeConfig, { readonly enabled: true }>;
+	readonly config: ManagedObservabilityRuntimeConfig;
 	readonly checkReadiness?: typeof checkObservabilityStackReadiness;
 	readonly runCompose?: typeof runDockerCompose;
 	readonly wait: boolean;
@@ -45,7 +45,7 @@ function createObservabilityComposeStartupError(error: unknown): Error {
 }
 
 export async function writeObservabilityArtifacts(
-	config: Extract<ObservabilityRuntimeConfig, { readonly enabled: true }>,
+	config: ManagedObservabilityRuntimeConfig,
 ): Promise<{
 	readonly composePath: string;
 	readonly collectorConfigPath: string;
@@ -142,9 +142,12 @@ export async function prepareObservabilityStack(
 
 export function resolveBuildObservabilityConfig(
 	systemConfig: LoadedSystemConfig,
-): Extract<ObservabilityRuntimeConfig, { readonly enabled: true }> | undefined {
+): ManagedObservabilityRuntimeConfig | undefined {
 	const observabilityConfig = createObservabilityRuntimeConfig(systemConfig);
 	if (!observabilityConfig.enabled) {
+		return undefined;
+	}
+	if (observabilityConfig.stackMode !== 'managed') {
 		return undefined;
 	}
 	if (!observabilityConfig.prepareOnBuild || observabilityConfig.zones.length === 0) {

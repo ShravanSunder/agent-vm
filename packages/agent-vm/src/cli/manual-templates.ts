@@ -65,7 +65,7 @@ Read in this order:
 4. openclaw.md explains OpenClaw gateway configuration.
 5. gateway-ingress.md explains host-facing gateway ports, OpenClaw web serving, SSE, WebSockets, and the boundary between single-route OpenClaw ingress and additional guest webservers.
 6. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
-7. observability.md explains host-owned Victoria and OpenTelemetry setup, build-time Docker Compose startup, controller startup behavior, and telemetry safety rules.
+7. observability.md explains managed or external host observability setup, build-time Docker Compose startup for managed stacks, controller startup behavior, and telemetry safety rules.
 8. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
 9. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
 10. channels.md explains how deployments add Discord or other channels.
@@ -232,13 +232,15 @@ Multi-zone controller work makes one controller process manage multiple typed zo
 			content: generatedPage(
 				'Host Observability',
 				`
-Host observability is deployment-owned. Enable host.observability in ${options.systemConfigPath}, then opt in each OpenClaw zone with zones[].observability.
+Host observability is deployment-configured. Enable host.observability in ${options.systemConfigPath}, then opt in each OpenClaw zone with zones[].observability.
 
-agent-vm build prepares the host stack when host.observability.prepareOnBuild is true and at least one selected OpenClaw zone opts in. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under runtimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
+Use host.observability.stack.mode=managed when this deployment should own the local Victoria + OpenTelemetry Collector stack. In managed mode, host.observability.stack.scrubbing.responsibility defaults to agent-vm-managed-collector. Agent-vm build prepares the host stack when host.observability.prepareOnBuild is true and at least one selected OpenClaw zone opts in. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under runtimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
 
-Controller startup does not start Docker Compose. With controllerStartPolicy=degraded, the controller binds and starts while it checks the configured OpenTelemetry collector and Victoria endpoints in the background. With controllerStartPolicy=require-ready, startup waits only for the configured total bounded readiness budget and fails if the already-prepared stack is unavailable. With controllerStartPolicy=off, startup does not check host observability.
+Use host.observability.stack.mode=external when a shared collector is already managed outside this deployment. External mode never renders or starts Docker Compose and does not require host.observability.dataDir or retention. Set host.observability.stack.scrubbing.responsibility=external-collector to make the external collector sanitization responsibility explicit, and keep that collector available on the configured loopback collector ports.
 
-Use a durable host.observability.dataDir outside cacheDir, runtimeDir, stateDir, and zoneFilesDir. Victoria data is intentionally not stored in rebuildable cache or disposable runtime folders. Retention is configured separately for metrics, logs, and traces with period plus optional disk bounds.
+Controller startup does not start Docker Compose. With controllerStartPolicy=degraded, the controller binds and starts while it checks host observability readiness in the background. Managed mode checks the OpenTelemetry collector plus Victoria metrics, logs, and traces endpoints. External mode checks only the configured OpenTelemetry collector health endpoint. With controllerStartPolicy=require-ready, startup waits only for the configured total bounded readiness budget and fails if the configured collector or already-prepared managed stack is unavailable. With controllerStartPolicy=off, startup does not check host observability.
+
+For managed mode, use a durable host.observability.dataDir outside cacheDir, runtimeDir, stateDir, and zoneFilesDir. Victoria data is intentionally not stored in rebuildable cache or disposable runtime folders. Retention is configured separately for metrics, logs, and traces with period plus optional disk bounds.
 
 Published ports bind to loopback only. Do not publish collector or Victoria ports on broad host interfaces unless a separate, authenticated access layer owns that exposure.
 
@@ -246,7 +248,7 @@ OpenClaw observability is collector mode. Agent-vm owns the effective OpenClaw d
 
 Do not inject OPENCLAW_DIAGNOSTICS through rawEnvSecrets for observability-enabled zones. Use zones[].observability.openclaw.diagnosticsFlags for narrow debug categories. Broad or content-capturing flags are rejected. Authored OpenClaw logging.redactSensitive must stay enabled.
 
-Never log secrets, prompts, message bodies, tool payloads, cookies, authorization headers, token values, raw URLs with query strings, private keys, or command content. The OpenTelemetry collector drops known sensitive attributes before export and Victoria Logs ignores known sensitive fields, but that is defense-in-depth. Source logging still owns the first safety boundary.
+Never log secrets, prompts, message bodies, tool payloads, cookies, authorization headers, token values, raw URLs with query strings, private keys, or command content. The managed OpenTelemetry collector drops known sensitive attributes before export and Victoria Logs ignores known sensitive fields, but that is defense-in-depth. External collectors must provide equivalent sanitization before storing or forwarding agent-vm telemetry. Source logging still owns the first safety boundary.
 `,
 			),
 		},

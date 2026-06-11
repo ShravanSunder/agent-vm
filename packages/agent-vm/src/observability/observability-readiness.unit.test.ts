@@ -1,11 +1,15 @@
 import { describe, expect, test } from 'vitest';
 
-import type { ObservabilityRuntimeConfig } from './observability-config.js';
+import type {
+	ExternalObservabilityRuntimeConfig,
+	ManagedObservabilityRuntimeConfig,
+} from './observability-config.js';
 import { checkObservabilityStackReadiness } from './observability-readiness.js';
 
-function createRuntimeConfig(): Extract<ObservabilityRuntimeConfig, { readonly enabled: true }> {
+function createRuntimeConfig(): ManagedObservabilityRuntimeConfig {
 	return {
 		enabled: true,
+		stackMode: 'managed',
 		projectName: 'agent-vm-observability-sunfam',
 		runtimeDir: '/tmp/runtime/observability/sunfam',
 		dataDir: '/tmp/observability/sunfam',
@@ -42,6 +46,19 @@ function createRuntimeConfig(): Extract<ObservabilityRuntimeConfig, { readonly e
 	};
 }
 
+function createExternalRuntimeConfig(): ExternalObservabilityRuntimeConfig {
+	const {
+		dataDir: _dataDir,
+		projectName: _projectName,
+		retention: _retention,
+		...baseConfig
+	} = createRuntimeConfig();
+	return {
+		...baseConfig,
+		stackMode: 'external',
+	};
+}
+
 describe('checkObservabilityStackReadiness', () => {
 	test('checks the configured loopback collector and Victoria health endpoints', async () => {
 		const requestedUrls: string[] = [];
@@ -60,6 +77,20 @@ describe('checkObservabilityStackReadiness', () => {
 			'http://127.0.0.1:9428/health',
 			'http://127.0.0.1:10428/health',
 		]);
+	});
+
+	test('checks only the collector health endpoint for external observability', async () => {
+		const requestedUrls: string[] = [];
+		const result = await checkObservabilityStackReadiness({
+			config: createExternalRuntimeConfig(),
+			fetchImpl: async (url) => {
+				requestedUrls.push(typeof url === 'string' ? url : url instanceof URL ? url.href : url.url);
+				return new Response(null, { status: 200 });
+			},
+		});
+
+		expect(result).toEqual({ ok: true, status: 'ready' });
+		expect(requestedUrls).toEqual(['http://127.0.0.1:13133/']);
 	});
 
 	test('reports an unavailable backend without throwing', async () => {

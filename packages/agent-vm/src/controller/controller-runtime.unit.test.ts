@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import type { CheckObservabilityStackReadinessOptions } from '../observability/observability-readiness.js';
 import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -231,6 +232,7 @@ const systemConfig = {
 
 function createObservabilitySystemConfig(
 	controllerStartPolicy: 'degraded' | 'require-ready' | 'off',
+	stackMode: 'external' | 'managed' = 'managed',
 ): LoadedSystemConfig {
 	const zone = systemConfig.zones[0];
 	if (!zone) {
@@ -252,35 +254,62 @@ function createObservabilitySystemConfig(
 			},
 		},
 	} satisfies LoadedSystemConfig['zones'][number];
+	const hostObservability =
+		stackMode === 'managed'
+			? {
+					enabled: true as const,
+					stack: {
+						mode: 'managed' as const,
+						scrubbing: { responsibility: 'agent-vm-managed-collector' as const },
+					},
+					mode: 'collector' as const,
+					bindAddress: '127.0.0.1' as const,
+					prepareOnBuild: true,
+					waitOnBuild: true,
+					startupCheckTimeoutMs: 500,
+					controllerStartPolicy,
+					ports: {
+						collectorGrpc: 4317,
+						collectorHttp: 4318,
+						collectorHealth: 13_133,
+						metrics: 8428,
+						logs: 9428,
+						traces: 10_428,
+					},
+					runner: 'docker-compose' as const,
+					dataDir: path.join(controllerRuntimeTestRoot, 'observability'),
+					retention: {
+						metrics: { period: '30d' },
+						logs: { period: '14d' },
+						traces: { period: '7d' },
+					},
+				}
+			: {
+					enabled: true as const,
+					stack: {
+						mode: 'external' as const,
+						scrubbing: { responsibility: 'external-collector' as const },
+					},
+					mode: 'collector' as const,
+					bindAddress: '127.0.0.1' as const,
+					prepareOnBuild: true,
+					waitOnBuild: true,
+					startupCheckTimeoutMs: 500,
+					controllerStartPolicy,
+					ports: {
+						collectorGrpc: 4317,
+						collectorHttp: 4318,
+						collectorHealth: 13_133,
+						metrics: 8428,
+						logs: 9428,
+						traces: 10_428,
+					},
+				};
 	return {
 		...systemConfig,
 		host: {
 			...systemConfig.host,
-			observability: {
-				enabled: true,
-				stack: 'victoria',
-				runner: 'docker-compose',
-				mode: 'collector',
-				dataDir: path.join(controllerRuntimeTestRoot, 'observability'),
-				bindAddress: '127.0.0.1',
-				prepareOnBuild: true,
-				waitOnBuild: true,
-				startupCheckTimeoutMs: 500,
-				controllerStartPolicy,
-				ports: {
-					collectorGrpc: 4317,
-					collectorHttp: 4318,
-					collectorHealth: 13_133,
-					metrics: 8428,
-					logs: 9428,
-					traces: 10_428,
-				},
-				retention: {
-					metrics: { period: '30d' },
-					logs: { period: '14d' },
-					traces: { period: '7d' },
-				},
-			},
+			observability: hostObservability,
 		},
 		zones: [
 			observabilityZone,
@@ -1017,6 +1046,86 @@ describe('startControllerRuntime', () => {
 		expect(checkObservabilityStackReadiness).toHaveBeenCalledOnce();
 		expect(startGatewayZone).toHaveBeenCalledOnce();
 		expect(startupEvents).toEqual(['observability-check', 'gateway-start']);
+		await expect(runtime.close()).resolves.toBeUndefined();
+	});
+
+	it('checks external host observability readiness without managed stack fields', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const observabilitySystemConfig = createObservabilitySystemConfig('degraded', 'external');
+		const observabilityZone = observabilitySystemConfig.zones[0];
+		if (!observabilityZone) {
+			throw new Error('Expected observability test zone.');
+		}
+		const startGatewayZone = vi.fn(async () => ({
+			image: {
+				built: true,
+				fingerprint: 'gateway-image',
+				imagePath: '/tmp/gateway-image',
+			},
+			ingress: {
+				host: '127.0.0.1',
+				port: 18791,
+			},
+			processSpec: openClawProcessSpec,
+			vm: {
+				close: vi.fn(async () => {}),
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh ...',
+					host: '127.0.0.1',
+					identityFile: '/tmp/key',
+					port: 19000,
+					user: 'sandbox',
+				})),
+				exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
+				fs: createManagedVmFsStub(),
+				getHostPid: vi.fn(() => 48_282),
+				id: 'gateway-vm-1',
+				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
+			},
+			zone: observabilityZone,
+		}));
+		const checkObservabilityStackReadiness = vi.fn(
+			async (_options: CheckObservabilityStackReadinessOptions) =>
+				({ ok: true, status: 'ready' }) as const,
+		);
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: observabilitySystemConfig,
+				zoneIds: ['shravan'],
+			},
+			{
+				checkObservabilityStackReadiness,
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				isProcessAlive: () => true,
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
+				}),
+				startGatewayZone,
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {},
+				})),
+			},
+		);
+
+		expect(checkObservabilityStackReadiness).toHaveBeenCalledOnce();
+		const readinessCall = checkObservabilityStackReadiness.mock.calls[0];
+		if (!readinessCall) {
+			throw new Error('Expected host observability readiness check.');
+		}
+		const runtimeConfig = readinessCall[0].config;
+		expect(runtimeConfig.stackMode).toBe('external');
+		expect('dataDir' in runtimeConfig).toBe(false);
+		expect('retention' in runtimeConfig).toBe(false);
+		expect('projectName' in runtimeConfig).toBe(false);
+		expect(startGatewayZone).toHaveBeenCalledOnce();
 		await expect(runtime.close()).resolves.toBeUndefined();
 	});
 

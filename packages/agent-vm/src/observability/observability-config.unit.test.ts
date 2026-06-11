@@ -10,7 +10,10 @@ function createConfig(): SystemConfigInput {
 			projectNamespace: 'observability-test',
 			observability: {
 				enabled: true,
-				stack: 'victoria',
+				stack: {
+					mode: 'managed',
+					scrubbing: { responsibility: 'agent-vm-managed-collector' },
+				},
 				runner: 'docker-compose',
 				mode: 'collector',
 				dataDir: '/tmp/agent-vm-observability',
@@ -114,6 +117,7 @@ describe('createObservabilityRuntimeConfig', () => {
 
 		expect(createObservabilityRuntimeConfig(loadedConfig)).toEqual({
 			enabled: true,
+			stackMode: 'managed',
 			projectName: 'agent-vm-observability-observability-test',
 			runtimeDir: '/tmp/agent-vm-runtime/observability/observability-test',
 			dataDir: '/tmp/agent-vm-observability',
@@ -148,5 +152,55 @@ describe('createObservabilityRuntimeConfig', () => {
 				},
 			],
 		});
+	});
+
+	test('normalizes external observability without managed stack storage', () => {
+		const configInput = createConfig();
+		configInput.host.observability = {
+			enabled: true,
+			stack: {
+				mode: 'external',
+				scrubbing: { responsibility: 'external-collector' },
+			},
+			mode: 'collector',
+		};
+		const loadedConfig = createLoadedSystemConfig(configInput, {
+			systemConfigPath: '/tmp/config/system.json',
+		});
+
+		const runtimeConfig = createObservabilityRuntimeConfig(loadedConfig);
+
+		expect(runtimeConfig).toEqual({
+			enabled: true,
+			stackMode: 'external',
+			runtimeDir: '/tmp/agent-vm-runtime/observability/observability-test',
+			bindAddress: '127.0.0.1',
+			ports: {
+				collectorGrpc: 4317,
+				collectorHttp: 4318,
+				collectorHealth: 13_133,
+				metrics: 8428,
+				logs: 9428,
+				traces: 10_428,
+			},
+			prepareOnBuild: true,
+			waitOnBuild: true,
+			controllerStartPolicy: 'degraded',
+			startupCheckTimeoutMs: 500,
+			zones: [
+				{
+					zoneId: 'sunfam',
+					serviceName: 'agent-vm-openclaw-sunfam',
+					traces: true,
+					metrics: true,
+					logs: true,
+					sampleRate: 1,
+					flushIntervalMs: 10_000,
+					diagnosticsFlags: [],
+				},
+			],
+		});
+		expect('dataDir' in runtimeConfig).toBe(false);
+		expect('retention' in runtimeConfig).toBe(false);
 	});
 });

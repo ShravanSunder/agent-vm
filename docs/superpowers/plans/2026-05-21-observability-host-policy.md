@@ -13,15 +13,22 @@ observability implementation plus the refreshed plan/spec docs. Do not resurrect
 stale code from the old branch.
 
 The old plan is intentionally superseded. It modeled operator-managed Compose
-and zone-level `externalResources`; the revised design models a host-owned
-observability service plane prepared before controller startup.
+and zone-level `externalResources`; the revised design models a host
+observability plane where `stack.mode: "managed"` owns local Compose during
+build and `stack.mode: "external"` connects to a shared collector without
+Docker work. External mode now requires
+`stack.scrubbing.responsibility: "external-collector"` so the shared collector
+sanitization contract is explicit instead of implicit.
 
 ## Current implementation evidence
 
-- Host observability config, retention, storage isolation, loopback bind, and
-  OpenClaw-only zone opt-in live in `system.json`.
+- Host observability config, stack ownership, retention, storage isolation,
+  loopback bind, and OpenClaw-only zone opt-in live in `system.json`.
 - `agent-vm build` prepares a generated Victoria + OpenTelemetry Collector
-  Compose stack when config enables it.
+  Compose stack for `stack.mode: "managed"` when config enables it.
+- `stack.mode: "external"` connects OpenClaw to a shared collector and never
+  calls Docker Compose from this deployment. It rejects managed-only storage and
+  Compose fields.
 - `agent-vm build --no-observability` skips the stack for a single run.
 - Controller startup does not call Docker or Compose. It only performs bounded
   readiness checks according to `controllerStartPolicy`.
@@ -29,8 +36,10 @@ observability service plane prepared before controller startup.
   logs/metrics/traces, and `tcpHosts` for the synthetic collector host.
 - Generated collector exporters use protobuf OTLP with gzip compression for
   metrics, logs, and traces.
-- Collector and VictoriaLogs scrub known sensitive fields; source config rejects
-  broad diagnostics flags, raw `OPENCLAW_DIAGNOSTICS`, and content capture.
+- Managed collector and VictoriaLogs scrub known sensitive fields; external mode
+  requires an explicit external collector scrubber responsibility. Source config
+  rejects broad diagnostics flags, raw `OPENCLAW_DIAGNOSTICS`, and content
+  capture.
 - A live host e2e canary sends OTLP protobuf logs, metrics, and traces through
   the collector and verifies storage in VictoriaLogs, VictoriaMetrics, and
   VictoriaTraces.
@@ -44,9 +53,10 @@ without slowing controller startup.
 
 The implementation must:
 
-1. Add a host-owned observability config surface.
+1. Add a host observability config surface with managed and external stack
+   ownership modes.
 2. Generate and manage a local Docker Compose Victoria + OpenTelemetry Collector
-   stack from the configured build/prepare path.
+   stack only for managed mode from the configured build/prepare path.
 3. Prepare that stack during plain `agent-vm build` when config enables it.
 4. Keep `agent-vm controller start` free of slow Docker work.
 5. Map ready host observability endpoints into the OpenClaw Gateway VM.
@@ -65,7 +75,7 @@ unless explicitly instructed.
 ## Design summary
 
 ```text
-slow path:
+managed slow path:
 
   agent-vm build
         |
@@ -77,6 +87,16 @@ slow path:
         |
         v
   durable bind-mounted dataDir
+
+external build path:
+
+  agent-vm build
+        |
+        v
+  report external/shared stack
+        |
+        v
+  no Docker/Compose call
 
 fast path:
 
@@ -127,32 +147,36 @@ Files likely touched:
 
 Tasks:
 
-- [ ] Add `host.observability` schema.
-- [ ] Require `host.observability.dataDir` when enabled.
-- [ ] Resolve `dataDir` through the same config path-resolution path as other
+- [x] Add `host.observability` schema with `stack.mode` managed/external.
+- [x] Require `host.observability.dataDir` only when `stack.mode` is managed.
+- [x] Require `stack.scrubbing.responsibility: "external-collector"` for
+  external collectors.
+- [x] Generate the author-facing JSON Schema from Zod input mode so defaults and
+  managed/external variants match deployer-authored config.
+- [x] Resolve `dataDir` through the same config path-resolution path as other
   config directories before overlap checks.
-- [ ] Validate `dataDir` is outside `cacheDir`, `runtimeDir`, every zone
+- [x] Validate `dataDir` is outside `cacheDir`, `runtimeDir`, every zone
   `stateDir`, every OpenClaw `zoneFilesDir`, and any other known
   cleanup/destructive-command root.
-- [ ] Constrain v1 `host.observability.bindAddress` to loopback only. Accept
+- [x] Constrain v1 `host.observability.bindAddress` to loopback only. Accept
   `127.0.0.1` and, if implemented, `::1`; reject `0.0.0.0`, `::`, and LAN
   addresses.
-- [ ] Add `controllerStartPolicy` enum:
+- [x] Add `controllerStartPolicy` enum:
   - `degraded`
   - `require-ready`
   - `off`
-- [ ] Add retention schemas for metrics, logs, and traces. Metrics accept
+- [x] Add retention schemas for metrics, logs, and traces. Metrics accept
   period plus optional minimum free disk; logs accept period plus optional max
   bytes; traces accept period plus one disk cap, either max bytes or max
   percent.
-- [ ] Validate retention period and byte-size strings before Compose renders
+- [x] Validate retention period and byte-size strings before Compose renders
   Victoria flags.
-- [ ] Validate `projectName` against Docker Compose project-name-safe grammar.
-- [ ] Validate observability ports are in range and unique.
-- [ ] Add `mode` with only `collector` accepted in v1. Reject other values
+- [x] Validate `projectName` against Docker Compose project-name-safe grammar.
+- [x] Validate observability ports are in range and unique.
+- [x] Add `mode` with only `collector` accepted in v1. Reject other values
   clearly even if the field is shaped to allow future expansion.
-- [ ] Add `prepareOnBuild`, default true when host observability is enabled.
-- [ ] Add `waitOnBuild`, default true for local developer deployments.
+- [x] Add `prepareOnBuild`, default true when host observability is enabled.
+- [x] Add `waitOnBuild`, default true for local developer deployments.
 - [ ] Add `startupCheckTimeoutMs`, default 500.
 - [ ] Add `zones[].observability` OpenClaw opt-in schema.
 - [ ] Reject zone observability when host observability is disabled.
@@ -165,7 +189,9 @@ Test expectations:
 
 - Defaults are stable and explicit.
 - Invalid retention/disk-cap combinations fail with clear paths.
-- `host.observability.enabled: true` without `dataDir` fails.
+- `host.observability.enabled: true` with managed `stack.mode` and no `dataDir`
+  fails.
+- External `stack.mode` loads without managed Compose storage fields.
 - Relative and tilde `dataDir` inputs are validated after resolution.
 - `dataDir` under cache/runtime/state/zone-files cleanup roots fails.
 - Non-loopback `bindAddress` values fail.
@@ -251,7 +277,8 @@ Tasks:
 - [ ] Shell out to Docker Compose through a narrow adapter so tests can stub it.
 - [ ] Render Compose and collector config into
   `<runtimeDir>/observability/<projectNamespace>/`.
-- [ ] Create durable Victoria data subdirectories under `host.observability.dataDir`.
+- [ ] Create durable Victoria data subdirectories under
+  `host.observability.dataDir` for managed stacks.
 - [ ] Implement build-time `waitOnBuild` readiness through the collector health
   endpoint after Compose returns.
 - [ ] Do not add `down -v` or data deletion behavior in v1. Data deletion remains
@@ -282,7 +309,10 @@ Files likely touched:
 Tasks:
 
 - [ ] Make plain `agent-vm build` run observability preparation only when
-  `host.observability.enabled` is true and at least one supported zone opts in.
+  `host.observability.enabled` is true, `stack.mode` is managed, and at least
+  one supported zone opts in.
+- [ ] Make external `stack.mode` report the shared stack and skip Docker
+  Compose.
 - [ ] Add `agent-vm build --no-observability` as a one-run escape hatch that
   does not mutate config.
 - [ ] Honor `host.observability.prepareOnBuild` and
@@ -641,7 +671,5 @@ Resolve these before implementation:
    - metrics period
    - logs period and max disk
   - traces period and one max disk cap, either bytes or percent
-2. Should `host.observability.dataDir` be required forever, or should v1 require
-   it and a later release add a safe default?
-3. Should a future `destroy-data` command exist at all, or should data deletion
+2. Should a future `destroy-data` command exist at all, or should data deletion
    remain manual outside `agent-vm`?

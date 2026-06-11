@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'vitest';
 
-import type { ObservabilityRuntimeConfig } from './observability-config.js';
+import type { ManagedObservabilityRuntimeConfig } from './observability-config.js';
 import {
 	createOtelCollectorConfigModel,
 	renderOtelCollectorConfigYaml,
 } from './otel-collector-config.js';
 
-function createRuntimeConfig(): Extract<ObservabilityRuntimeConfig, { readonly enabled: true }> {
+function createRuntimeConfig(): ManagedObservabilityRuntimeConfig {
 	return {
 		enabled: true,
+		stackMode: 'managed',
 		projectName: 'agent-vm-observability-sunfam',
 		runtimeDir: '/tmp/runtime/observability/sunfam',
 		dataDir: '/tmp/observability/sunfam',

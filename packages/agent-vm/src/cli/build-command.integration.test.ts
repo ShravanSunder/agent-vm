@@ -207,20 +207,22 @@ function createTestSystemConfig(): LoadedSystemConfig {
 function createObservabilitySystemConfig(
 	options: {
 		readonly prepareOnBuild?: boolean;
+		readonly stackMode?: 'external' | 'managed';
 	} = {},
 ): LoadedSystemConfig {
 	const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
-	return createLoadedSystemConfig(
-		{
-			...baseConfig,
-			host: {
-				...baseConfig.host,
-				observability: {
-					enabled: true,
-					stack: 'victoria',
-					runner: 'docker-compose',
-					mode: 'collector',
+	const stackMode = options.stackMode ?? 'managed';
+	const hostObservability =
+		stackMode === 'managed'
+			? {
+					enabled: true as const,
+					stack: {
+						mode: 'managed' as const,
+						scrubbing: { responsibility: 'agent-vm-managed-collector' as const },
+					},
+					mode: 'collector' as const,
 					dataDir: '/observability',
+					runner: 'docker-compose' as const,
 					...(options.prepareOnBuild === undefined
 						? {}
 						: { prepareOnBuild: options.prepareOnBuild }),
@@ -229,7 +231,24 @@ function createObservabilitySystemConfig(
 						logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
 						traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
 					},
-				},
+				}
+			: {
+					enabled: true as const,
+					stack: {
+						mode: 'external' as const,
+						scrubbing: { responsibility: 'external-collector' as const },
+					},
+					mode: 'collector' as const,
+					...(options.prepareOnBuild === undefined
+						? {}
+						: { prepareOnBuild: options.prepareOnBuild }),
+				};
+	return createLoadedSystemConfig(
+		{
+			...baseConfig,
+			host: {
+				...baseConfig.host,
+				observability: hostObservability,
 			},
 			zones: baseConfig.zones.map((zone) => ({
 				...zone,
@@ -449,6 +468,35 @@ describe('runBuildCommand', () => {
 
 		expect(prepareObservabilityStack).not.toHaveBeenCalled();
 		expect(outputLines.join('\n')).toContain('observability disabled');
+	});
+
+	it('reports external build-time observability without calling Docker Compose', async () => {
+		const prepareObservabilityStack =
+			vi.fn<NonNullable<BuildCommandDependencies['prepareObservabilityStack']>>();
+		const outputLines: string[] = [];
+		const dependencies: BuildCommandDependencies = {
+			runTask: createRecordingRunTask(outputLines),
+			buildDockerImage: async () => {},
+			buildGondolinImage: async () => ({
+				built: true,
+				fingerprint: 'abc123',
+				imagePath: '/cache/abc123',
+			}),
+			prepareObservabilityStack,
+			resolveProjectRootFromDockerfile: async () => '/project',
+			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+			syncBundledOpenClawPlugin: noOpPluginSync,
+			findPrunableImageDirectories: async () => [],
+		};
+
+		await runBuildCommand(
+			{ systemConfig: createObservabilitySystemConfig({ stackMode: 'external' }) },
+			dependencies,
+		);
+
+		expect(prepareObservabilityStack).not.toHaveBeenCalled();
+		expect(outputLines.join('\n')).toContain('external observability stack');
+		expect(outputLines.join('\n')).toContain('not managed by this deployment');
 	});
 
 	it('builds Docker image from a managed base profile', async () => {

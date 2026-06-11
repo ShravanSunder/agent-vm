@@ -4,11 +4,12 @@ import {
 	createObservabilityComposeModel,
 	renderObservabilityComposeYaml,
 } from './observability-compose.js';
-import type { ObservabilityRuntimeConfig } from './observability-config.js';
+import type { ManagedObservabilityRuntimeConfig } from './observability-config.js';
 
-function createRuntimeConfig(): Extract<ObservabilityRuntimeConfig, { readonly enabled: true }> {
+function createRuntimeConfig(): ManagedObservabilityRuntimeConfig {
 	return {
 		enabled: true,
+		stackMode: 'managed',
 		projectName: 'agent-vm-observability-sunfam',
 		runtimeDir: '/tmp/runtime/observability/sunfam',
 		dataDir: '/tmp/observability/sunfam',

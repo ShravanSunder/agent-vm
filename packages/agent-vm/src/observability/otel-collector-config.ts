@@ -1,4 +1,4 @@
-import type { ObservabilityRuntimeConfig } from './observability-config.js';
+import type { ManagedObservabilityRuntimeConfig } from './observability-config.js';
 
 const SENSITIVE_FIELD_NAMES = [
 	'Authorization',
@@ -94,18 +94,9 @@ export interface OtelCollectorPipeline {
 	readonly exporters: readonly string[];
 }
 
-function assertEnabledConfig(
-	config: ObservabilityRuntimeConfig,
-): asserts config is Extract<ObservabilityRuntimeConfig, { readonly enabled: true }> {
-	if (!config.enabled) {
-		throw new Error('Cannot render OTEL collector config for a disabled config.');
-	}
-}
-
 export function createOtelCollectorConfigModel(
-	config: ObservabilityRuntimeConfig,
+	_config: ManagedObservabilityRuntimeConfig,
 ): OtelCollectorConfigModel {
-	assertEnabledConfig(config);
 	const sensitiveFieldHeader = SENSITIVE_FIELD_NAMES.join(',');
 
 	return {

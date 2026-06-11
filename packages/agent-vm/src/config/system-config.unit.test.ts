@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 
 import {
 	createLoadedSystemConfig,
+	createSystemConfigSchemaArtifact,
 	loadSystemConfig,
 	resolveControllerHealthConfig,
 	type LoadedSystemConfig,
@@ -2514,7 +2515,6 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
-			stack: 'victoria',
 			runner: 'docker-compose',
 			mode: 'collector',
 			dataDir: '../observability',
@@ -2537,7 +2537,12 @@ describe('loadSystemConfig', () => {
 
 		const loadedConfig = await loadSystemConfig(configPath);
 
-		if (loadedConfig.host.observability?.enabled !== true) {
+		const loadedHostObservability = loadedConfig.host.observability;
+		if (
+			loadedHostObservability?.enabled !== true ||
+			loadedHostObservability.stack.mode !== 'managed' ||
+			!('dataDir' in loadedHostObservability)
+		) {
 			throw new Error('Expected host observability to be enabled.');
 		}
 		const loadedZone = loadedConfig.zones[0];
@@ -2546,7 +2551,7 @@ describe('loadSystemConfig', () => {
 		}
 		expect(loadedConfig.host.observability).toMatchObject({
 			enabled: true,
-			stack: 'victoria',
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 			runner: 'docker-compose',
 			mode: 'collector',
 			bindAddress: '127.0.0.1',
@@ -2554,7 +2559,7 @@ describe('loadSystemConfig', () => {
 			waitOnBuild: true,
 			startupCheckTimeoutMs: 500,
 		});
-		expect(loadedConfig.host.observability.dataDir).toBe(
+		expect(loadedHostObservability.dataDir).toBe(
 			path.join(path.dirname(configPath), '..', 'observability'),
 		);
 		expect(loadedZone.observability).toMatchObject({
@@ -2572,11 +2577,119 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
+	test('parses external host observability without managed Compose storage fields', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: {
+				mode: 'external',
+				scrubbing: { responsibility: 'external-collector' },
+			},
+			mode: 'collector',
+		};
+		config.zones[0].observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-observability-external-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		if (loadedConfig.host.observability?.enabled !== true) {
+			throw new Error('Expected host observability to be enabled.');
+		}
+		expect(loadedConfig.host.observability).toMatchObject({
+			enabled: true,
+			stack: {
+				mode: 'external',
+				scrubbing: { responsibility: 'external-collector' },
+			},
+			mode: 'collector',
+			bindAddress: '127.0.0.1',
+			controllerStartPolicy: 'degraded',
+		});
+		expect('dataDir' in loadedConfig.host.observability).toBe(false);
+		expect('retention' in loadedConfig.host.observability).toBe(false);
+	});
+
+	test('rejects external host observability without an explicit scrubber contract', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: { mode: 'external' },
+			mode: 'collector',
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-observability-external-missing-scrubbing-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/scrubbing/u);
+	});
+
+	test('emits author-facing JSON Schema for managed and external observability variants', () => {
+		const artifact = createSystemConfigSchemaArtifact();
+		const hostSchema = isRecord(artifact.properties) ? artifact.properties.host : undefined;
+		if (!isRecord(hostSchema) || !isRecord(hostSchema.properties)) {
+			throw new Error('Expected host schema properties.');
+		}
+		const observabilitySchema = hostSchema.properties.observability;
+		if (!isRecord(observabilitySchema) || !Array.isArray(observabilitySchema.anyOf)) {
+			throw new Error('Expected host observability schema variants.');
+		}
+		const variantSchemas = observabilitySchema.anyOf.filter(isRecord);
+		const managedVariant = variantSchemas.find(
+			(variant) =>
+				isRecord(variant.properties) &&
+				isRecord(variant.properties.stack) &&
+				JSON.stringify(variant.properties.stack).includes('agent-vm-managed-collector'),
+		);
+		const externalVariant = variantSchemas.find(
+			(variant) =>
+				isRecord(variant.properties) &&
+				isRecord(variant.properties.stack) &&
+				JSON.stringify(variant.properties.stack).includes('external-collector'),
+		);
+
+		if (!isRecord(managedVariant) || !isRecord(managedVariant.properties)) {
+			throw new Error('Expected managed observability schema variant.');
+		}
+		if (!isRecord(externalVariant) || !isRecord(externalVariant.properties)) {
+			throw new Error('Expected external observability schema variant.');
+		}
+		expect(managedVariant.required).toEqual(['enabled', 'dataDir', 'retention']);
+		expect(managedVariant.properties.stack).toMatchObject({
+			default: {
+				mode: 'managed',
+				scrubbing: { responsibility: 'agent-vm-managed-collector' },
+			},
+		});
+		expect(externalVariant.required).toEqual(['enabled', 'stack']);
+		expect(externalVariant.properties).not.toHaveProperty('dataDir');
+		expect(externalVariant.properties).not.toHaveProperty('retention');
+		expect(externalVariant.properties.stack).toMatchObject({
+			properties: {
+				scrubbing: {
+					properties: {
+						responsibility: { const: 'external-collector' },
+					},
+					required: ['responsibility'],
+				},
+			},
+			required: ['mode', 'scrubbing'],
+		});
+	});
+
 	test('rejects enabled host observability without dataDir', async () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
-			stack: 'victoria',
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 			runner: 'docker-compose',
 			mode: 'collector',
 			retention: {
@@ -2599,7 +2712,7 @@ describe('loadSystemConfig', () => {
 			const config = createValidSystemConfigInput();
 			config.host.observability = {
 				enabled: true,
-				stack: 'victoria',
+				stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 				runner: 'docker-compose',
 				mode: 'collector',
 				dataDir: '../observability',
@@ -2626,7 +2739,7 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
-			stack: 'victoria',
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 			runner: 'docker-compose',
 			mode: 'collector',
 			dataDir: '../observability',
@@ -2659,7 +2772,7 @@ describe('loadSystemConfig', () => {
 			const config = createValidSystemConfigInput();
 			config.host.observability = {
 				enabled: true,
-				stack: 'victoria',
+				stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 				runner: 'docker-compose',
 				mode: 'collector',
 				dataDir: '../observability',
@@ -2702,7 +2815,7 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
-			stack: 'victoria',
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 			runner: 'docker-compose',
 			mode: 'collector',
 			dataDir: '../observability',
@@ -2735,7 +2848,7 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
-			stack: 'victoria',
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 			runner: 'docker-compose',
 			mode: 'collector',
 			dataDir: '../observability',
@@ -2798,7 +2911,7 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
-			stack: 'victoria',
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 			runner: 'docker-compose',
 			mode: 'collector',
 			dataDir: '../observability',
@@ -2829,7 +2942,7 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
-			stack: 'victoria',
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 			runner: 'docker-compose',
 			mode: 'collector',
 			dataDir: '../observability',
@@ -2876,7 +2989,7 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
-			stack: 'victoria',
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 			runner: 'docker-compose',
 			mode: 'collector',
 			dataDir: '../observability',
@@ -2925,7 +3038,7 @@ describe('loadSystemConfig', () => {
 			const config = createValidSystemConfigInput();
 			config.host.observability = {
 				enabled: true,
-				stack: 'victoria',
+				stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 				runner: 'docker-compose',
 				mode: 'collector',
 				dataDir: '../observability',
@@ -2966,7 +3079,7 @@ describe('loadSystemConfig', () => {
 			const config = createValidSystemConfigInput();
 			config.host.observability = {
 				enabled: true,
-				stack: 'victoria',
+				stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
 				runner: 'docker-compose',
 				mode: 'collector',
 				dataDir,

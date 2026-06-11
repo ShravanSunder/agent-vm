@@ -146,6 +146,73 @@ function createWorkerOnlySystemConfig(): SystemConfig {
 	};
 }
 
+function createExternalObservabilitySystemConfig(): SystemConfig {
+	return {
+		...systemConfig,
+		host: {
+			...systemConfig.host,
+			observability: {
+				enabled: true,
+				stack: {
+					mode: 'external',
+					scrubbing: { responsibility: 'external-collector' },
+				},
+				mode: 'collector',
+				bindAddress: '127.0.0.1',
+				prepareOnBuild: true,
+				waitOnBuild: true,
+				startupCheckTimeoutMs: 500,
+				ports: {
+					collectorGrpc: 4317,
+					collectorHttp: 4318,
+					collectorHealth: 13_133,
+					metrics: 8428,
+					logs: 9428,
+					traces: 10_428,
+				},
+				controllerStartPolicy: 'degraded',
+			},
+		},
+	};
+}
+
+function createManagedObservabilitySystemConfig(): SystemConfig {
+	return {
+		...systemConfig,
+		host: {
+			...systemConfig.host,
+			observability: {
+				enabled: true,
+				stack: {
+					mode: 'managed',
+					scrubbing: { responsibility: 'agent-vm-managed-collector' },
+				},
+				runner: 'docker-compose',
+				mode: 'collector',
+				dataDir: './observability',
+				bindAddress: '127.0.0.1',
+				prepareOnBuild: true,
+				waitOnBuild: true,
+				startupCheckTimeoutMs: 500,
+				ports: {
+					collectorGrpc: 4317,
+					collectorHttp: 4318,
+					collectorHealth: 13_133,
+					metrics: 8428,
+					logs: 9428,
+					traces: 10_428,
+				},
+				controllerStartPolicy: 'degraded',
+				retention: {
+					metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+					logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+					traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+				},
+			},
+		},
+	};
+}
+
 describe('runControllerDoctor', () => {
 	it('reports all checks passing when environment is complete', () => {
 		const result = runControllerDoctor({
@@ -157,7 +224,7 @@ describe('runControllerDoctor', () => {
 			requiredZigVersion: '0.15.2',
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
 			zigVersion: '0.15.2',
-			systemConfig,
+			systemConfig: createExternalObservabilitySystemConfig(),
 		});
 
 		expect(result.ok).toBe(true);
@@ -192,6 +259,69 @@ describe('runControllerDoctor', () => {
 		});
 		expect(result.checks.find((check) => check.name === 'age')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
+		expect(result.checks.find((check) => check.name === 'observability-enabled')).toMatchObject({
+			ok: true,
+			hint: 'external',
+		});
+		expect(result.checks.find((check) => check.name === 'docker-cli')).toBeUndefined();
+	});
+
+	it('recommends managed observability when host observability is omitted', () => {
+		const result = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'observability-enabled')).toMatchObject({
+			ok: true,
+			hint: expect.stringContaining('host.observability'),
+		});
+		expect(result.checks.find((check) => check.name === 'observability-enabled')?.hint).toContain(
+			'managed',
+		);
+	});
+
+	it('requires Docker only for managed observability stacks', () => {
+		const missingDockerResult = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
+			systemConfig: createManagedObservabilitySystemConfig(),
+		});
+		const readyDockerResult = runControllerDoctor({
+			availableBinaries: new Set([...allBinaries, 'docker']),
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			dockerDaemonReady: true,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
+			systemConfig: createManagedObservabilitySystemConfig(),
+		});
+
+		expect(missingDockerResult.ok).toBe(false);
+		expect(missingDockerResult.checks.find((check) => check.name === 'docker-cli')).toMatchObject({
+			ok: false,
+		});
+		expect(readyDockerResult.checks.find((check) => check.name === 'docker-cli')).toMatchObject({
+			ok: true,
+			hint: 'docker',
+		});
 	});
 
 	it('checks Docker CLI and daemon when Docker-backed images are configured', () => {
@@ -378,7 +508,7 @@ describe('runControllerDoctor', () => {
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			systemConfig,
+			systemConfig: createExternalObservabilitySystemConfig(),
 		});
 
 		expect(result.ok).toBe(true);
