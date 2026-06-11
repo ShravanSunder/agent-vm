@@ -132,8 +132,53 @@ const unknownGatewayServiceHealthTarget = {
 	port: 0,
 } as const;
 
+const maxRecoveredChannelProviderEventKeys = 10_000;
+
 function channelProviderEventKey(event: AgentChannelProviderHealthEvent): string {
 	return `${event.zoneId}\0${event.channelProviderId}\0${String(event.observedAtMs)}`;
+}
+
+function recoveredChannelProviderEventKeysForZone(
+	recoveredChannelProviderEventKeysByZoneId: Map<string, Set<string>>,
+	zoneId: string,
+): Set<string> {
+	const existingEventKeys = recoveredChannelProviderEventKeysByZoneId.get(zoneId);
+	if (existingEventKeys !== undefined) {
+		return existingEventKeys;
+	}
+	const eventKeys = new Set<string>();
+	recoveredChannelProviderEventKeysByZoneId.set(zoneId, eventKeys);
+	return eventKeys;
+}
+
+function hasRecoveredChannelProviderEventKey(
+	recoveredChannelProviderEventKeysByZoneId: Map<string, Set<string>>,
+	zoneId: string,
+	eventKey: string,
+): boolean {
+	return recoveredChannelProviderEventKeysByZoneId.get(zoneId)?.has(eventKey) === true;
+}
+
+function rememberRecoveredChannelProviderEventKey(
+	recoveredChannelProviderEventKeysByZoneId: Map<string, Set<string>>,
+	zoneId: string,
+	eventKey: string,
+): void {
+	const recoveredChannelProviderEventKeys = recoveredChannelProviderEventKeysForZone(
+		recoveredChannelProviderEventKeysByZoneId,
+		zoneId,
+	);
+	if (recoveredChannelProviderEventKeys.has(eventKey)) {
+		return;
+	}
+	recoveredChannelProviderEventKeys.add(eventKey);
+	while (recoveredChannelProviderEventKeys.size > maxRecoveredChannelProviderEventKeys) {
+		const oldestEventKey = recoveredChannelProviderEventKeys.values().next().value;
+		if (oldestEventKey === undefined) {
+			return;
+		}
+		recoveredChannelProviderEventKeys.delete(oldestEventKey);
+	}
 }
 
 function recoveryActionForBudgetClass(
@@ -168,8 +213,8 @@ export function createGatewayServiceHealthMonitor(
 		recoveryPolicy.channelProviderHealth ?? defaultGatewayVmChannelProviderRecoveryPolicy;
 	const recoveryTracker = createGatewayVmRecoveryTracker({ policy: recoveryPolicy });
 	let timer: NodeJS.Timeout | undefined;
-	let runningTick: Promise<void> | undefined;
-	const recoveredChannelProviderEventKeys = new Set<string>();
+	const runningTicksByZoneId = new Map<string, Promise<void>>();
+	const recoveredChannelProviderEventKeysByZoneId = new Map<string, Set<string>>();
 	let stopped = false;
 
 	const classifyRecoveryBudgetClass = (
@@ -475,7 +520,13 @@ export function createGatewayServiceHealthMonitor(
 			| undefined;
 		for (const latestEvent of latestEvents) {
 			const eventKey = channelProviderEventKey(latestEvent);
-			if (recoveredChannelProviderEventKeys.has(eventKey)) {
+			if (
+				hasRecoveredChannelProviderEventKey(
+					recoveredChannelProviderEventKeysByZoneId,
+					latestEvent.zoneId,
+					eventKey,
+				)
+			) {
 				continue;
 			}
 			const recoveryObservation = deriveChannelProviderRecoveryObservation({
@@ -558,74 +609,92 @@ export function createGatewayServiceHealthMonitor(
 			zoneId: decision.zoneId,
 		});
 		if (recoveryResult.result === 'ok') {
-			recoveredChannelProviderEventKeys.add(selectedDecision.eventKey);
+			rememberRecoveredChannelProviderEventKey(
+				recoveredChannelProviderEventKeysByZoneId,
+				decision.zoneId,
+				selectedDecision.eventKey,
+			);
 		}
 	};
 
-	const tick = async (): Promise<void> => {
-		if (runningTick) {
-			return await runningTick;
-		}
-		runningTick = (async () => {
-			await Promise.all(
-				options.zoneIds.map(async (zoneId) => {
-					try {
-						const result = await options.probeZoneHealth(zoneId);
-						const observedAtMs = options.now();
-						const serviceProbeResult = result.ok ? 'ok' : 'failed';
-						options.healthEventStore.record({
-							kind: 'gateway-service-health',
-							observedAtMs,
-							path: result.path,
-							port: result.port,
-							result: serviceProbeResult,
-							...(result.statusCode === undefined ? {} : { statusCode: result.statusCode }),
-							zoneId: result.zoneId,
-						});
-						await maybeRecoverGatewayVm({
-							observedAtMs,
-							reason: 'gateway-service-unhealthy',
-							serviceProbeResult,
-							zoneId: result.zoneId,
-						});
-						if (serviceProbeResult === 'ok') {
-							await maybeRecoverGatewayVm({
-								observedAtMs,
-								reason: 'gateway-control-link-unhealthy',
-								serviceProbeResult,
-								zoneId: result.zoneId,
-							});
-							await maybeRecoverAgentChannelProvider({
-								observedAtMs,
-								zoneId: result.zoneId,
-							});
-						}
-					} catch (error) {
-						writeGatewayServiceHealthMonitorLog(
-							`probe failed for zone '${zoneId}': ${error instanceof Error ? error.message : String(error)}`,
-						);
-						const observedAtMs = options.now();
-						options.healthEventStore.record({
-							kind: 'gateway-service-health',
-							observedAtMs,
-							path: unknownGatewayServiceHealthTarget.path,
-							port: unknownGatewayServiceHealthTarget.port,
-							result: 'failed',
-							zoneId,
-						});
-						await maybeRecoverGatewayVm({
-							observedAtMs,
-							reason: 'gateway-service-unhealthy',
-							serviceProbeResult: 'failed',
-							zoneId,
-						});
-					}
-				}),
+	const runZoneTick = async (zoneId: string): Promise<void> => {
+		try {
+			const result = await options.probeZoneHealth(zoneId);
+			const observedAtMs = options.now();
+			const serviceProbeResult = result.ok ? 'ok' : 'failed';
+			options.healthEventStore.record({
+				kind: 'gateway-service-health',
+				observedAtMs,
+				path: result.path,
+				port: result.port,
+				result: serviceProbeResult,
+				...(result.statusCode === undefined ? {} : { statusCode: result.statusCode }),
+				zoneId: result.zoneId,
+			});
+			await maybeRecoverGatewayVm({
+				observedAtMs,
+				reason: 'gateway-service-unhealthy',
+				serviceProbeResult,
+				zoneId: result.zoneId,
+			});
+			if (serviceProbeResult === 'ok') {
+				await maybeRecoverGatewayVm({
+					observedAtMs,
+					reason: 'gateway-control-link-unhealthy',
+					serviceProbeResult,
+					zoneId: result.zoneId,
+				});
+				await maybeRecoverAgentChannelProvider({
+					observedAtMs,
+					zoneId: result.zoneId,
+				});
+			}
+		} catch (error) {
+			writeGatewayServiceHealthMonitorLog(
+				`probe failed for zone '${zoneId}': ${error instanceof Error ? error.message : String(error)}`,
 			);
-		})().finally(() => {
-			runningTick = undefined;
+			const observedAtMs = options.now();
+			options.healthEventStore.record({
+				kind: 'gateway-service-health',
+				observedAtMs,
+				path: unknownGatewayServiceHealthTarget.path,
+				port: unknownGatewayServiceHealthTarget.port,
+				result: 'failed',
+				zoneId,
+			});
+			await maybeRecoverGatewayVm({
+				observedAtMs,
+				reason: 'gateway-service-unhealthy',
+				serviceProbeResult: 'failed',
+				zoneId,
+			});
+		}
+	};
+
+	const startZoneTickIfIdle = (zoneId: string): Promise<void> | undefined => {
+		if (stopped) {
+			return undefined;
+		}
+		if (runningTicksByZoneId.has(zoneId)) {
+			return undefined;
+		}
+		const zoneTickPromise = runZoneTick(zoneId).finally(() => {
+			if (runningTicksByZoneId.get(zoneId) === zoneTickPromise) {
+				runningTicksByZoneId.delete(zoneId);
+			}
 		});
-		return await runningTick;
+		runningTicksByZoneId.set(zoneId, zoneTickPromise);
+		return zoneTickPromise;
+	};
+
+	const tick = async (): Promise<void> => {
+		if (stopped) {
+			return;
+		}
+		const startedZoneTicks = options.zoneIds
+			.map((zoneId) => runningTicksByZoneId.get(zoneId) ?? startZoneTickIfIdle(zoneId))
+			.filter((zoneTick): zoneTick is Promise<void> => zoneTick !== undefined);
+		await Promise.all(startedZoneTicks);
 	};
 
 	return {
@@ -651,9 +720,7 @@ export function createGatewayServiceHealthMonitor(
 				clearIntervalImpl(timer);
 				timer = undefined;
 			}
-			if (runningTick) {
-				await runningTick;
-			}
+			await Promise.all(runningTicksByZoneId.values());
 		},
 		tick,
 	};

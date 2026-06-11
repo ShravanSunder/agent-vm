@@ -123,6 +123,107 @@ describe('HealthEventStore', () => {
 		});
 	});
 
+	it('logs durable write failures with rate limiting while keeping health recording available', async () => {
+		let nowMs = 1_000;
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const storeOptions = {
+			durableEventLog: {
+				append: vi.fn(async () => {
+					throw new Error('disk full');
+				}),
+			},
+			eventHistoryLimit: 10,
+			now: () => nowMs,
+			staleAfterMs: 30_000,
+		} satisfies ConstructorParameters<typeof HealthEventStore>[0] & {
+			readonly now: () => number;
+		};
+		const store = new HealthEventStore(storeOptions);
+
+		try {
+			store.record(gatewayControlLinkEvent({ observedAtMs: 5_000, result: 'failed' }));
+			store.record(gatewayControlLinkEvent({ observedAtMs: 5_001, result: 'failed' }));
+			await store.flushDurableWrites();
+
+			expect(
+				stderrWrite.mock.calls.filter(([message]) =>
+					String(message).includes('durable health event log append failed'),
+				),
+			).toHaveLength(1);
+			expect(stderrWrite.mock.calls.join('\n')).toContain('disk full');
+
+			nowMs += 59_000;
+			store.record(gatewayControlLinkEvent({ observedAtMs: 5_002, result: 'failed' }));
+			await store.flushDurableWrites();
+			expect(
+				stderrWrite.mock.calls.filter(([message]) =>
+					String(message).includes('durable health event log append failed'),
+				),
+			).toHaveLength(1);
+
+			nowMs += 1_000;
+			store.record(gatewayControlLinkEvent({ observedAtMs: 5_003, result: 'failed' }));
+			await store.flushDurableWrites();
+			expect(
+				stderrWrite.mock.calls.filter(([message]) =>
+					String(message).includes('durable health event log append failed'),
+				),
+			).toHaveLength(2);
+
+			expect(store.deriveSnapshot({ nowMs: 5_500, zoneId: 'beta' })).toMatchObject({
+				kind: 'failed',
+			});
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('logs a new durable write failure streak after a successful append', async () => {
+		let nowMs = 1_000;
+		let appendShouldFail = true;
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const store = new HealthEventStore({
+			durableEventLog: {
+				append: vi.fn(async () => {
+					if (appendShouldFail) {
+						throw new Error('disk full');
+					}
+				}),
+			},
+			eventHistoryLimit: 10,
+			now: () => nowMs,
+			staleAfterMs: 30_000,
+		});
+
+		try {
+			store.record(gatewayControlLinkEvent({ observedAtMs: 5_000, result: 'failed' }));
+			await store.flushDurableWrites();
+			expect(
+				stderrWrite.mock.calls.filter(([message]) =>
+					String(message).includes('durable health event log append failed'),
+				),
+			).toHaveLength(1);
+
+			appendShouldFail = false;
+			nowMs += 1_000;
+			store.record(gatewayControlLinkEvent({ observedAtMs: 5_001, result: 'ok' }));
+			await store.flushDurableWrites();
+
+			appendShouldFail = true;
+			nowMs += 1_000;
+			store.record(gatewayControlLinkEvent({ observedAtMs: 5_002, result: 'failed' }));
+			await store.flushDurableWrites();
+
+			expect(
+				stderrWrite.mock.calls.filter(([message]) =>
+					String(message).includes('durable health event log append failed'),
+				),
+			).toHaveLength(2);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
 	it('persists recovery action and failure class through the durable log boundary', async () => {
 		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
 		const store = new HealthEventStore({
