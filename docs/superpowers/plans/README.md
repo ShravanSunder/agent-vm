@@ -35,6 +35,13 @@ supporting context.
 
 ## Current Executable Plans
 
+- `2026-06-10-repo-improvements/` — repo-wide improvement audit batch
+  (14 prioritized plans: leases, controller↔worker communication, gateway
+  recovery, 1Password hardening, Codex SDK upgrade, executor
+  genericization, extensibility, CI gates, docs drift, backup, build
+  security, MCP portal). See its `README.md` for ordering, backlog, and
+  rejected candidates.
+
 - `2026-05-22-gondolin-adapter-tool-vm-ssh-cleanup.md`
   - Current prerequisite plan for exposing Gondolin native `vm.exec` / `vm.fs`
     through `@agent-vm/gondolin-adapter`.
