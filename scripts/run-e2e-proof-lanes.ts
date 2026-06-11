@@ -3,7 +3,26 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export type E2eProofLaneId = 'e2e-host' | 'e2e-vm' | 'e2e-vm-mediation';
+export type E2eProofLaneId =
+	| 'e2e-host'
+	| 'e2e-vm'
+	| 'e2e-vm-mediation'
+	| 'e2e-openclaw'
+	| 'e2e-worker'
+	| 'e2e-secrets';
+
+type E2eProofLaneEnvironmentName =
+	| 'AGENT_VM_E2E_SKIP_WORKSPACE_BUILD'
+	| 'AGENT_VM_1PASSWORD_E2E'
+	| 'AGENT_VM_OPENCLAW_E2E'
+	| 'AGENT_VM_WORKER_E2E';
+
+type E2eProofLaneEnvironment = Partial<Record<E2eProofLaneEnvironmentName, string>>;
+
+interface E2eProofLaneRequiredEnv {
+	readonly name: Exclude<E2eProofLaneEnvironmentName, 'AGENT_VM_E2E_SKIP_WORKSPACE_BUILD'>;
+	readonly value: '1';
+}
 
 export interface E2eProofLane {
 	readonly args: readonly string[];
@@ -11,6 +30,7 @@ export interface E2eProofLane {
 	readonly env: Readonly<Record<string, string>>;
 	readonly id: E2eProofLaneId;
 	readonly label: string;
+	readonly requiredEnv?: E2eProofLaneRequiredEnv;
 }
 
 export interface E2eProofLaneResult {
@@ -18,8 +38,9 @@ export interface E2eProofLaneResult {
 	readonly errorMessage?: string;
 	readonly exitCode: number | null;
 	readonly lane: E2eProofLane;
+	readonly skipReason?: string;
 	readonly signal: string | null;
-	readonly status: 'passed' | 'failed';
+	readonly status: 'passed' | 'failed' | 'skipped';
 }
 
 export interface E2eProofLaneSummary {
@@ -27,6 +48,7 @@ export interface E2eProofLaneSummary {
 	readonly lines: readonly string[];
 	readonly ok: boolean;
 	readonly passedCount: number;
+	readonly skippedCount: number;
 	readonly totalDurationMs: number;
 }
 
@@ -34,6 +56,7 @@ export type E2eProofLaneRunner = (lane: E2eProofLane) => Promise<E2eProofLaneRes
 
 interface RunE2eProofLanesOptions {
 	readonly laneRunner?: E2eProofLaneRunner;
+	readonly env?: E2eProofLaneEnvironment;
 	readonly now?: () => number;
 	readonly runWorkspaceBuild?: () => Promise<void> | void;
 	readonly skipWorkspaceBuild?: boolean;
@@ -65,6 +88,30 @@ export function createE2eProofLanes(): readonly E2eProofLane[] {
 			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
 			id: 'e2e-vm-mediation',
 			label: 'HTTP mediation e2e',
+		},
+		{
+			args: ['run', 'test:e2e:openclaw'],
+			command: 'pnpm',
+			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			id: 'e2e-openclaw',
+			label: 'OpenClaw gateway e2e',
+			requiredEnv: { name: 'AGENT_VM_OPENCLAW_E2E', value: '1' },
+		},
+		{
+			args: ['run', 'test:e2e:worker'],
+			command: 'pnpm',
+			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			id: 'e2e-worker',
+			label: 'Worker runtime e2e',
+			requiredEnv: { name: 'AGENT_VM_WORKER_E2E', value: '1' },
+		},
+		{
+			args: ['run', 'test:e2e:secrets'],
+			command: 'pnpm',
+			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			id: 'e2e-secrets',
+			label: '1Password e2e',
+			requiredEnv: { name: 'AGENT_VM_1PASSWORD_E2E', value: '1' },
 		},
 	];
 }
@@ -134,15 +181,46 @@ export async function runE2eProofLane(
 	});
 }
 
+function resolveE2eProofLaneSkipReason(
+	lane: E2eProofLane,
+	env: E2eProofLaneEnvironment,
+): string | undefined {
+	if (lane.requiredEnv === undefined) {
+		return undefined;
+	}
+	if (env[lane.requiredEnv.name] === lane.requiredEnv.value) {
+		return undefined;
+	}
+	return `${lane.label} skipped: gate ${lane.requiredEnv.name}=${lane.requiredEnv.value} absent`;
+}
+
+function createSkippedE2eProofLaneResult(
+	lane: E2eProofLane,
+	skipReason: string,
+): E2eProofLaneResult {
+	return {
+		durationMs: 0,
+		exitCode: null,
+		lane,
+		signal: null,
+		skipReason,
+		status: 'skipped',
+	};
+}
+
 export function summarizeE2eProofLaneResults(
 	results: readonly E2eProofLaneResult[],
 	totalDurationMs: number,
 ): E2eProofLaneSummary {
 	const failedResults = results.filter((result) => result.status === 'failed');
-	const passedCount = results.length - failedResults.length;
+	const skippedResults = results.filter((result) => result.status === 'skipped');
+	const passedCount = results.length - failedResults.length - skippedResults.length;
 	const lines = [
-		`e2e proof lanes: ${String(passedCount)} passed, ${String(failedResults.length)} failed in ${formatDuration(totalDurationMs)}`,
+		`e2e proof lanes: ${String(passedCount)} passed, ${String(skippedResults.length)} skipped, ${String(failedResults.length)} failed in ${formatDuration(totalDurationMs)}`,
 		...results.map((result) => {
+			if (result.status === 'skipped') {
+				return `SKIP ${result.lane.id}: ${result.skipReason ?? `${result.lane.label} skipped`}`;
+			}
 			const marker = result.status === 'passed' ? 'PASS' : 'FAIL';
 			const suffix =
 				result.status === 'passed'
@@ -158,6 +236,7 @@ export function summarizeE2eProofLaneResults(
 		lines,
 		ok: failedResults.length === 0,
 		passedCount,
+		skippedCount: skippedResults.length,
 		totalDurationMs,
 	};
 }
@@ -170,10 +249,11 @@ export async function runE2eProofLanes(
 	const laneRunner = options.laneRunner ?? ((lane) => runE2eProofLane(lane));
 	const stdout = options.stdout ?? process.stdout;
 	const stderr = options.stderr ?? process.stderr;
+	const env = options.env ?? process.env;
 	const startTimeMs = now();
 
 	const skipWorkspaceBuild =
-		options.skipWorkspaceBuild ?? process.env.AGENT_VM_E2E_SKIP_WORKSPACE_BUILD === '1';
+		options.skipWorkspaceBuild ?? env.AGENT_VM_E2E_SKIP_WORKSPACE_BUILD === '1';
 	if (!skipWorkspaceBuild) {
 		if (options.runWorkspaceBuild === undefined) {
 			await runWorkspaceBuildOnceAsync();
@@ -182,7 +262,15 @@ export async function runE2eProofLanes(
 		}
 	}
 
-	const results = await Promise.all(lanes.map(async (lane) => await laneRunner(lane)));
+	const results = await Promise.all(
+		lanes.map(async (lane) => {
+			const skipReason = resolveE2eProofLaneSkipReason(lane, env);
+			if (skipReason !== undefined) {
+				return createSkippedE2eProofLaneResult(lane, skipReason);
+			}
+			return await laneRunner(lane);
+		}),
+	);
 	const summary = summarizeE2eProofLaneResults(results, now() - startTimeMs);
 	const summaryStream = summary.ok ? stdout : stderr;
 	summaryStream.write('\n');

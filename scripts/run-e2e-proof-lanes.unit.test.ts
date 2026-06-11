@@ -31,10 +31,30 @@ describe('e2e proof lane plan', () => {
 	it('runs independent host and live VM proof lanes after the shared build', () => {
 		const lanes = createE2eProofLanes();
 
-		expect(lanes.map((lane) => lane.id)).toEqual(['e2e-host', 'e2e-vm', 'e2e-vm-mediation']);
-		expect(lanes[0]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
-		expect(lanes[1]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
-		expect(lanes[2]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
+		expect(lanes.map((lane) => lane.id)).toEqual([
+			'e2e-host',
+			'e2e-vm',
+			'e2e-vm-mediation',
+			'e2e-openclaw',
+			'e2e-worker',
+			'e2e-secrets',
+		]);
+		expect(lanes.map((lane) => lane.env)).toEqual([
+			{ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			{ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			{ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			{ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			{ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			{ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+		]);
+		expect(lanes.map((lane) => lane.requiredEnv)).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			{ name: 'AGENT_VM_OPENCLAW_E2E', value: '1' },
+			{ name: 'AGENT_VM_WORKER_E2E', value: '1' },
+			{ name: 'AGENT_VM_1PASSWORD_E2E', value: '1' },
+		]);
 	});
 });
 
@@ -43,6 +63,7 @@ describe('e2e proof lane runner', () => {
 		const events: string[] = [];
 
 		const summary = await runE2eProofLanes(createE2eProofLanes(), {
+			env: {},
 			laneRunner: async (lane) => {
 				events.push(`start:${lane.id}`);
 				return passedResult(lane, 10);
@@ -67,6 +88,7 @@ describe('e2e proof lane runner', () => {
 		});
 
 		const summaryPromise = runE2eProofLanes(createE2eProofLanes(), {
+			env: {},
 			laneRunner: async (lane) => {
 				events.push(`start:${lane.id}`);
 				return passedResult(lane, 10);
@@ -100,6 +122,7 @@ describe('e2e proof lane runner', () => {
 		const events: string[] = [];
 
 		const summary = await runE2eProofLanes(createE2eProofLanes(), {
+			env: {},
 			laneRunner: async (lane) => {
 				events.push(`start:${lane.id}`);
 				return passedResult(lane, 10);
@@ -115,5 +138,67 @@ describe('e2e proof lane runner', () => {
 
 		expect(summary.ok).toBe(true);
 		expect(events).toEqual(['start:e2e-host', 'start:e2e-vm', 'start:e2e-vm-mediation']);
+	});
+
+	it('skips gated lanes with explicit reasons when gate env vars are absent', async () => {
+		const events: string[] = [];
+
+		const summary = await runE2eProofLanes(createE2eProofLanes(), {
+			env: {},
+			laneRunner: async (lane) => {
+				events.push(`start:${lane.id}`);
+				return passedResult(lane, 10);
+			},
+			now: () => 100,
+			skipWorkspaceBuild: true,
+			stderr: createSilentWritable(),
+			stdout: createSilentWritable(),
+		});
+
+		expect(summary.ok).toBe(true);
+		expect(summary.passedCount).toBe(3);
+		expect(summary.skippedCount).toBe(3);
+		expect(events).toEqual(['start:e2e-host', 'start:e2e-vm', 'start:e2e-vm-mediation']);
+		expect(summary.lines).toContain(
+			'SKIP e2e-openclaw: OpenClaw gateway e2e skipped: gate AGENT_VM_OPENCLAW_E2E=1 absent',
+		);
+		expect(summary.lines).toContain(
+			'SKIP e2e-worker: Worker runtime e2e skipped: gate AGENT_VM_WORKER_E2E=1 absent',
+		);
+		expect(summary.lines).toContain(
+			'SKIP e2e-secrets: 1Password e2e skipped: gate AGENT_VM_1PASSWORD_E2E=1 absent',
+		);
+	});
+
+	it('runs gated lanes when their gate env vars are present', async () => {
+		const events: string[] = [];
+
+		const summary = await runE2eProofLanes(createE2eProofLanes(), {
+			env: {
+				AGENT_VM_1PASSWORD_E2E: '1',
+				AGENT_VM_OPENCLAW_E2E: '1',
+				AGENT_VM_WORKER_E2E: '1',
+			},
+			laneRunner: async (lane) => {
+				events.push(`start:${lane.id}`);
+				return passedResult(lane, 10);
+			},
+			now: () => 100,
+			skipWorkspaceBuild: true,
+			stderr: createSilentWritable(),
+			stdout: createSilentWritable(),
+		});
+
+		expect(summary.ok).toBe(true);
+		expect(summary.passedCount).toBe(6);
+		expect(summary.skippedCount).toBe(0);
+		expect(events).toEqual([
+			'start:e2e-host',
+			'start:e2e-vm',
+			'start:e2e-vm-mediation',
+			'start:e2e-openclaw',
+			'start:e2e-worker',
+			'start:e2e-secrets',
+		]);
 	});
 });

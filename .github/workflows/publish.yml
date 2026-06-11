@@ -149,14 +149,29 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Test taxonomy audit
+        run: pnpm test:taxonomy
+
       - name: Lint
         run: pnpm lint
+
+      - name: Type-aware lint
+        run: pnpm lint:types
 
       - name: Format check
         run: pnpm fmt:check
 
+      - name: Typecheck
+        run: pnpm typecheck
+
       - name: Unit tests
         run: pnpm test:unit
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: E2E inventory
+        run: pnpm test:e2e:inventory
 
       - name: Non-secret E2E proofs
         run: AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e
