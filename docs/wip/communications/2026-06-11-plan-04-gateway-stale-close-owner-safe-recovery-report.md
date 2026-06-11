@@ -139,5 +139,6 @@ mise trust mise.toml && mise run lint
 
 ## Branch State
 
-- Local changes are verified.
-- Push state: pending.
+- Implementation/report commit: `2b4a1dd` (`fix: keep stale gateway close recovery owner-safe`).
+- Signing note: normal signed commit failed with `1Password: failed to fill whole buffer`; the commit was created with `--no-gpg-sign`.
+- Push state: branch pushed to `origin/improve/plan-04-gateway-stale-close-owner-safe-recovery`; this report-only state correction will be pushed as a follow-up commit.
