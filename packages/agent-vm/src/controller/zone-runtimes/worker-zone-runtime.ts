@@ -29,6 +29,7 @@ import {
 import type { ControllerZoneConfig, WorkerZoneRuntime } from './zone-runtime-types.js';
 
 const MAX_ACTIVE_TASKS_PER_RUNTIME = 1;
+const WORKER_TASK_CLOSE_TIMEOUT_MS = 10_000;
 
 type WorkerZoneConfig = ControllerZoneConfig & {
 	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'worker' }>;
@@ -88,10 +89,12 @@ async function closeActiveWorkerTask(activeTask: ActiveWorkerTask): Promise<void
 			`Task '${activeTask.taskId}' in zone '${activeTask.zoneId}' is still preparing and cannot be destroyed safely yet.`,
 		);
 	}
+	const abort = new AbortController();
+	const timeoutHandle = setTimeout(() => abort.abort(), WORKER_TASK_CLOSE_TIMEOUT_MS);
 	try {
 		const response = await fetch(
 			`http://${activeTask.workerIngress.host}:${String(activeTask.workerIngress.port)}/tasks/${activeTask.taskId}/close`,
-			{ method: 'POST' },
+			{ method: 'POST', signal: abort.signal },
 		);
 		if (!response.ok) {
 			throw new ControllerZoneWorkerCloseError({
@@ -105,12 +108,19 @@ async function closeActiveWorkerTask(activeTask: ActiveWorkerTask): Promise<void
 		if (error instanceof ControllerZoneWorkerCloseError) {
 			throw error;
 		}
+		const body = abort.signal.aborted
+			? `POST worker close request timed out after ${String(WORKER_TASK_CLOSE_TIMEOUT_MS)}ms.`
+			: error instanceof Error
+				? error.message
+				: String(error);
 		throw new ControllerZoneWorkerCloseError({
-			body: error instanceof Error ? error.message : String(error),
+			body,
 			httpStatus: 0,
 			taskId: activeTask.taskId,
 			zoneId: activeTask.zoneId,
 		});
+	} finally {
+		clearTimeout(timeoutHandle);
 	}
 }
 

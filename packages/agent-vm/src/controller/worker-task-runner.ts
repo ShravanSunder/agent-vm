@@ -109,6 +109,8 @@ const taskStatusResponseSchema = z
 	.passthrough();
 const GIT_CLONE_TIMEOUT_MS = 120_000;
 const GIT_METADATA_TIMEOUT_MS = 30_000;
+const WORKER_TASK_SUBMIT_TIMEOUT_MS = 30_000;
+const WORKER_TASK_POLL_TIMEOUT_MS = 10_000;
 
 async function loadJsonObjectFile(
 	filePath: string,
@@ -687,15 +689,31 @@ async function cleanupTaskRootAfterPreparationFailure(options: {
 	throw aggregateError;
 }
 
-async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
-	const response = await fetch(url, init);
-	if (!response.ok) {
-		const responseBody = await response.text();
-		throw new Error(
-			`${init?.method ?? 'GET'} ${url} failed with ${String(response.status)}: ${responseBody}`,
-		);
+async function fetchJson(
+	url: string,
+	init: RequestInit | undefined,
+	timeoutMs: number,
+): Promise<unknown> {
+	const method = init?.method ?? 'GET';
+	const abort = new AbortController();
+	const timeoutHandle = setTimeout(() => abort.abort(), timeoutMs);
+	try {
+		const response = await fetch(url, { ...init, signal: abort.signal });
+		if (!response.ok) {
+			const responseBody = await response.text();
+			throw new Error(`${method} ${url} failed with ${String(response.status)}: ${responseBody}`);
+		}
+		return await response.json();
+	} catch (error) {
+		if (abort.signal.aborted) {
+			throw new Error(`${method} ${url} timed out after ${String(timeoutMs)}ms.`, {
+				cause: error,
+			});
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeoutHandle);
 	}
-	return await response.json();
 }
 
 export interface PreparedWorkerTask {
@@ -849,21 +867,25 @@ export async function executeWorkerTask(
 		await options.onWorkerTaskIngress?.(prepared.zoneId, prepared.taskId, gateway.ingress);
 
 		const baseUrl = `http://${gateway.ingress.host}:${gateway.ingress.port}`;
-		await fetchJson(`${baseUrl}/tasks`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				taskId: prepared.taskId,
-				prompt: prepared.input.prompt,
-				repos: prepared.preStartResult.repos.map((repo) => ({
-					repoUrl: repo.repoUrl,
-					baseBranch: repo.baseBranch,
-					gitDirPath: repo.gitDirPath,
-					workPath: repo.workPath,
-				})),
-				context: prepared.input.context,
-			}),
-		});
+		await fetchJson(
+			`${baseUrl}/tasks`,
+			{
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					taskId: prepared.taskId,
+					prompt: prepared.input.prompt,
+					repos: prepared.preStartResult.repos.map((repo) => ({
+						repoUrl: repo.repoUrl,
+						baseBranch: repo.baseBranch,
+						gitDirPath: repo.gitDirPath,
+						workPath: repo.workPath,
+					})),
+					context: prepared.input.context,
+				}),
+			},
+			WORKER_TASK_SUBMIT_TIMEOUT_MS,
+		);
 
 		const timeoutMs =
 			options.timeoutMs ?? computeTotalTaskTimeoutMs(prepared.preStartResult.effectiveConfig);
@@ -880,7 +902,11 @@ export async function executeWorkerTask(
 			try {
 				// Polling task state is intentionally sequential because each request depends on prior status.
 				// oxlint-disable-next-line eslint/no-await-in-loop
-				const response = await fetchJson(`${baseUrl}/tasks/${prepared.taskId}`);
+				const response = await fetchJson(
+					`${baseUrl}/tasks/${prepared.taskId}`,
+					undefined,
+					WORKER_TASK_POLL_TIMEOUT_MS,
+				);
 				state = taskStatusResponseSchema.parse(response);
 				consecutivePollFailures = 0;
 			} catch (error) {

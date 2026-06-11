@@ -1329,9 +1329,11 @@ describe('createWorkerZoneRuntime', () => {
 				purged: true,
 				zoneId: 'worker-zone',
 			});
-			expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18888/tasks/task-1/close', {
-				method: 'POST',
-			});
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+			expect(fetchMock.mock.calls[0]).toEqual([
+				'http://127.0.0.1:18888/tasks/task-1/close',
+				{ method: 'POST', signal: expect.any(AbortSignal) },
+			]);
 			expect(clear).toHaveBeenCalledWith('worker-zone', 'task-1');
 			await expect(access(stateDir)).rejects.toMatchObject({ code: 'ENOENT' });
 			await expect(access(workerRuntimeDir)).rejects.toMatchObject({ code: 'ENOENT' });
