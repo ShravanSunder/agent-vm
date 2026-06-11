@@ -357,6 +357,200 @@ describe('managed image release', () => {
 		});
 	});
 
+	it('rejects overlay copy destinations that inject Dockerfile directives', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-copy-destination-injection-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(path.join(temporaryDirectory, 'safe.txt'), 'safe', 'utf8');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "copy": [',
+				'    {',
+				'      "from": "safe.txt",',
+				'      "to": "/tmp/safe.txt\\nRUN echo pwned"',
+				'    }',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'tool-vm',
+				imageTargetFamily: 'toolVm',
+				imageTargetName: 'default',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+			}),
+		).rejects.toThrow(/copy\.to.*single Dockerfile COPY destination/u);
+	});
+
+	it('rejects unsafe overlay fields before clearing the output directory', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-overlay-parse-guard-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		const sentinelPath = path.join(outputDirectory, 'sentinel.txt');
+		await fs.mkdir(outputDirectory, { recursive: true });
+		await fs.writeFile(path.join(temporaryDirectory, 'safe.txt'), 'safe', 'utf8');
+		await fs.writeFile(sentinelPath, 'keep', 'utf8');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "copy": [',
+				'    {',
+				'      "from": "safe.txt",',
+				'      "to": "/tmp/safe.txt\\nRUN echo pwned"',
+				'    }',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const generation = generateManagedDockerfile({
+			base: 'tool-vm',
+			imageTargetFamily: 'toolVm',
+			imageTargetName: 'default',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+		});
+
+		await expect(generation).rejects.toThrow(/copy\[0\]\.to: copy\.to.*single Dockerfile COPY destination/u);
+		await expect(fs.readFile(sentinelPath, 'utf8')).resolves.toBe('keep');
+	});
+
+	it('rejects overlay copy sources that inject Dockerfile directives', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-copy-source-injection-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		const injectedSourcePath = 'safe.txt\nRUN echo pwned';
+		await fs.writeFile(path.join(temporaryDirectory, injectedSourcePath), 'safe', 'utf8');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "copy": [',
+				'    {',
+				`      "from": ${JSON.stringify(injectedSourcePath)},`,
+				'      "to": "/tmp/ignored"',
+				'    }',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'tool-vm',
+				imageTargetFamily: 'toolVm',
+				imageTargetName: 'default',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+			}),
+		).rejects.toThrow(/copy\.from.*single Dockerfile COPY source/u);
+	});
+
+	it.each([
+		{
+			destinationPath: 'tmp/safe.txt',
+			expectedError: /copy\.to.*absolute in-image destination path/u,
+		},
+		{
+			destinationPath: '--from=other-stage',
+			expectedError: /copy\.to.*option marker/u,
+		},
+		{
+			destinationPath: '/tmp/safe file.txt',
+			expectedError: /copy\.to.*single Dockerfile COPY destination/u,
+		},
+	])('rejects unsafe overlay copy destination $destinationPath', async ({ destinationPath, expectedError }) => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-copy-destination-shape-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(path.join(temporaryDirectory, 'safe.txt'), 'safe', 'utf8');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "copy": [',
+				'    {',
+				'      "from": "safe.txt",',
+				`      "to": ${JSON.stringify(destinationPath)}`,
+				'    }',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'tool-vm',
+				imageTargetFamily: 'toolVm',
+				imageTargetName: 'default',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+			}),
+		).rejects.toThrow(expectedError);
+	});
+
+	it('rejects runAfterBase commands that inject Dockerfile directives', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-run-after-base-injection-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "runAfterBase": [',
+				'    "echo safe\\nRUN echo pwned"',
+				'  ]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'tool-vm',
+				imageTargetFamily: 'toolVm',
+				imageTargetName: 'default',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+			}),
+		).rejects.toThrow(/runAfterBase.*single Dockerfile RUN directive/u);
+	});
+
 	it('uses local overlay packages for Tool VM MCP Portal during beta tarball sync builds', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-tool-vm-local-'));
 		const overlayDirectory = path.join(temporaryDirectory, 'overlay-source');

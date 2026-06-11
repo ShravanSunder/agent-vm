@@ -24,6 +24,8 @@ const managedOpenClawMcpPortalPluginExtensionPath = '/home/openclaw/.openclaw/ex
 const managedPnpmHomePath = '/pnpm';
 const managedPnpmGlobalDirectory = '/pnpm/global';
 const exactPackageVersionPattern = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u;
+const dockerfileLineBreakPattern = /[\n\r]/u;
+const dockerfileWhitespacePattern = /\s/u;
 
 export interface ManagedImageSource {
 	readonly kind: 'managedBase';
@@ -98,8 +100,26 @@ export interface ManagedImageRelease {
 
 const overlayCopySchema = z
 	.object({
-		from: z.string().min(1),
-		to: z.string().min(1),
+		from: z
+			.string()
+			.min(1)
+			.refine((value) => !dockerfileWhitespacePattern.test(value), {
+				message:
+					'copy.from must be a single Dockerfile COPY source path without whitespace or line breaks.',
+			}),
+		to: z
+			.string()
+			.min(1)
+			.refine((value) => !dockerfileWhitespacePattern.test(value), {
+				message:
+					'copy.to must be a single Dockerfile COPY destination without whitespace or line breaks.',
+			})
+			.refine((value) => !value.startsWith('-'), {
+				message: 'copy.to must not start with a Dockerfile COPY option marker.',
+			})
+			.refine((value) => value.startsWith('/'), {
+				message: 'copy.to must be an absolute in-image destination path.',
+			}),
 	})
 	.strict();
 
@@ -109,7 +129,14 @@ const managedImageOverlaySchema = z
 		extraAptPackages: z.array(z.string().min(1)).default([]),
 		openClawPackageOverrides: z.array(z.string().min(1)).default([]),
 		copy: z.array(overlayCopySchema).default([]),
-		runAfterBase: z.array(z.string().min(1)).default([]),
+		runAfterBase: z
+			.array(
+				z.string().min(1).refine((value) => !dockerfileLineBreakPattern.test(value), {
+					message:
+						'runAfterBase entries must be a single Dockerfile RUN directive and must not contain line breaks.',
+				}),
+			)
+			.default([]),
 	})
 	.strict();
 
@@ -429,9 +456,40 @@ function collectOpenClawPackagePlanWarnings(
 }
 
 function assertOverlayCopySourceIsSafe(sourcePath: string): void {
+	if (dockerfileWhitespacePattern.test(sourcePath)) {
+		throw new Error(
+			`Managed image overlay copy.from '${sourcePath}' must be a single Dockerfile COPY source path without whitespace or line breaks.`,
+		);
+	}
 	if (path.isAbsolute(sourcePath) || sourcePath.split(/[\\/]+/u).includes('..')) {
 		throw new Error(
 			`Managed image overlay copy source '${sourcePath}' must be relative and must not contain parent traversal.`,
+		);
+	}
+}
+
+function assertOverlayCopyDestinationIsSafe(destinationPath: string): void {
+	if (dockerfileWhitespacePattern.test(destinationPath)) {
+		throw new Error(
+			`Managed image overlay copy.to '${destinationPath}' must be a single Dockerfile COPY destination without whitespace or line breaks.`,
+		);
+	}
+	if (destinationPath.startsWith('-')) {
+		throw new Error(
+			`Managed image overlay copy.to '${destinationPath}' must not start with a Dockerfile COPY option marker.`,
+		);
+	}
+	if (!destinationPath.startsWith('/')) {
+		throw new Error(
+			`Managed image overlay copy.to '${destinationPath}' must be an absolute in-image destination path.`,
+		);
+	}
+}
+
+function assertRunAfterBaseCommandIsSafe(command: string): void {
+	if (dockerfileLineBreakPattern.test(command)) {
+		throw new Error(
+			'Managed image overlay runAfterBase entries must be a single Dockerfile RUN directive and must not contain line breaks.',
 		);
 	}
 }
@@ -504,6 +562,7 @@ export async function generateManagedDockerfile(
 	const overlayDirectory = options.overlayPath ? path.dirname(options.overlayPath) : undefined;
 	for (const copy of overlay.copy) {
 		assertOverlayCopySourceIsSafe(copy.from);
+		assertOverlayCopyDestinationIsSafe(copy.to);
 		if (!overlayDirectory) {
 			throw new Error(`Managed image profile '${options.imageTargetName}' has copy entries without an overlay path.`);
 		}
@@ -511,6 +570,9 @@ export async function generateManagedDockerfile(
 		const targetPath = path.join(options.outputDirectory, 'overlay', copy.from);
 		await fs.mkdir(path.dirname(targetPath), { recursive: true });
 		await fs.copyFile(sourcePath, targetPath);
+	}
+	for (const command of overlay.runAfterBase) {
+		assertRunAfterBaseCommandIsSafe(command);
 	}
 	const dockerfilePath = path.join(options.outputDirectory, 'Dockerfile');
 	await fs.writeFile(
