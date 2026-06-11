@@ -39,6 +39,9 @@ Priority: 10 (proof integrity — shipped artifacts get weaker gates than PRs)
 - Do not make secret-dependent lanes (`e2e-secrets`, `e2e-llm`,
   credentialed `e2e-worker`) hard-required in CI; they stay env-gated with
   explicit skip reporting.
+- `e2e-llm` is deliberately NOT added as a proof lane in this plan
+  (LLM-cost lane, run manually); if that exclusion is wrong, it is a
+  one-line follow-up using the same gate mechanism.
 - Do not restructure the vitest project taxonomy.
 
 ## Scope
@@ -49,10 +52,19 @@ Write surfaces:
   `pnpm test:taxonomy`, `pnpm lint:types`, `pnpm typecheck`,
   `pnpm test:integration`, `pnpm test:e2e:inventory`.
 - `scripts/run-e2e-proof-lanes.ts`: add lane definitions for
-  `e2e-openclaw` and `e2e-worker` (and `e2e-secrets` as a gated lane),
-  each with the appropriate env gate (mirroring how `e2e-vm` gates on its
-  env var) so the runner reports "skipped: gate X absent" instead of
-  silently not existing. Extend `E2eProofLaneId`.
+  `e2e-openclaw` and `e2e-worker` (and `e2e-secrets` as a gated lane).
+  IMPORTANT (review-verified 2026-06-11): there is NO existing per-lane env
+  gate pattern to mirror — none of the current three lanes gates on a
+  lane-specific env var (the only env var used is the global
+  `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD`). Define the gating mechanism fresh:
+  per-lane gate env vars (e.g. `AGENT_VM_E2E_OPENCLAW_ENABLED`,
+  `AGENT_VM_WORKER_E2E`, `AGENT_VM_1PASSWORD_E2E` — reuse the env names the
+  test projects/scripts already key on where they exist) plus skip-reason
+  logic in `createE2eProofLanes`/`runE2eProofLanes` so the runner reports
+  "skipped: gate X absent". Extend `E2eProofLaneId`. Also update the
+  existing assertion at `scripts/run-e2e-proof-lanes.unit.test.ts:34`,
+  which pins the exact 3-lane list and will fail otherwise; add cases for
+  gate-absent skip behavior.
 - `docs/` wherever the e2e lane taxonomy is documented (check
   `scripts/run-e2e-proof-lanes.ts` header comments and any taxonomy doc
   added by the recent test-taxonomy commits) — keep lane lists in sync.
@@ -73,7 +85,12 @@ Read-only context:
    `run-e2e-proof-lanes` test).
 2. Verify locally: `mise exec -- pnpm test:e2e` shows the new lanes either
    running or skipping with stated reasons; capture the output as evidence.
-3. Update publish.yml with the five missing steps.
+3. Update publish.yml with the five missing steps, inserted to mirror
+   ci.yml's order relative to existing steps (i.e. AFTER Build:
+   test:taxonomy; alongside lint: lint:types; after fmt:check: typecheck;
+   after test:unit: test:integration, test:e2e:inventory). Verified: Zig
+   setup precedes Build in both workflows and tarball-evidence steps come
+   after the e2e proof step, so no conflicts; single publish job.
 4. Validate workflow syntax (`gh workflow view` after push, or actionlint
    if available locally); confirm no step ordering breaks the existing
    tarball-evidence steps in the publish job.
@@ -89,9 +106,9 @@ Read-only context:
 
 ## Stop Conditions
 
-- Stop if `e2e-openclaw`/`e2e-worker` projects have zero test files matching
-  their globs (then the right fix is removing the dead projects or writing
-  the missing tests — different plan; report which).
+- (Pre-verified 2026-06-11: the stop condition does not fire — glob check
+  found 4 `*.openclaw.e2e.test.ts`, 2 `*.worker.e2e.test.ts`, and 1
+  `*.secrets.e2e.test.ts` files.)
 - Stop if publish.yml's added steps materially conflict with its existing
   release-evidence steps (e.g. duplicate builds with different flags) —
   reconcile rather than stacking.

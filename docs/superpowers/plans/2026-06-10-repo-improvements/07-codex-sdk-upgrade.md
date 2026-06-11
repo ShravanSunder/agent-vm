@@ -20,14 +20,16 @@ registry checked 2026-06-10) shows:
   `resumeThread`, `thread.run`, `thread.id`, `result.finalResponse`,
   `result.usage.output_tokens`) is stable across 0.130 → 0.139; no breaking
   changes were found at these call sites.
-- New capability worth adopting: `thread.runStreamed()` (async generator of
-  thread events). Today the worker buffers a whole turn via `thread.run()`;
-  long work-phase turns (tens of minutes) produce no intermediate progress
-  events for the task event log.
-- Research flagged (needs verification at execution time): OpenAI sunset of
-  older models with a 2026-06-30 cutoff; the repo's `MODEL_ALIASES.codex`
-  currently maps to `gpt-5.4` / `gpt-5.4-mini`, which look safe, but verify
-  alias targets against the live deprecation list during execution.
+- Capability to adopt: `thread.runStreamed()` (async generator of thread
+  events — existence in latest confirmed via SDK docs; whether 0.130.0
+  already shipped it is unverified, so do not frame it as "new" — check the
+  installed 0.130 d.ts at execution time). Today the worker buffers a whole
+  turn via `thread.run()`; long work-phase turns (tens of minutes) produce
+  no intermediate progress events for the task event log.
+- Model aliases: review research (2026-06-11) found NO source for a specific
+  sunset date affecting `gpt-5.4` / `gpt-5.4-mini`. Treat any sunset claim
+  as unverified; the task below simply checks the live deprecation list and
+  acts only on what it documents.
 
 ## Current Evidence
 
@@ -73,9 +75,16 @@ Read-only context:
 
 ## Task Sequence
 
+0. Re-confirm package landscape (cheap, read-only):
+   `npm view @openai/codex-sdk version` (verified 0.139.0 on 2026-06-10,
+   0.140.0-alpha.7 bleeding edge) and confirm no successor package exists
+   (`npm search` for codex-sdk variants). The "v2 = protocol, not package"
+   claim is medium-confidence inference — if a successor package surfaces,
+   stop and reconverge.
 1. Bump the dependency, `pnpm install`, `pnpm build`, `pnpm typecheck`.
    Inspect the installed d.ts for the six call-site option names; fix any
-   renames (none expected).
+   renames (none expected — but if typecheck fails, stop and bring the diff
+   back rather than patching around renames).
 2. Run worker unit + integration suites.
 3. Check `MODEL_ALIASES.codex` targets against OpenAI's current model
    deprecation list; update aliases only if a target is scheduled for
@@ -90,8 +99,8 @@ Read-only context:
 
 ## Proof Gates
 
-- Focused validation: `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm-worker/src`
-- Integration: `pnpm vitest run --root . --config vitest.config.ts --project integration packages/agent-vm-worker/src`
+- Focused validation: `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src`
+- Integration: `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm-worker/src`
 - Full validation: `pnpm check && pnpm test:unit`
 - E2E (gated): worker E2E lane as above, or explicit skip reason.
 

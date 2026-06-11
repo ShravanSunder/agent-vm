@@ -61,8 +61,12 @@ Write surfaces:
      helpers (gitdirs/work dir removal, resource-provider stop) with
      tolerate-and-warn semantics.
 - `packages/agent-vm/src/controller/controller-runtime.ts`: invoke the sweep
-  during startup, after zone config load, before the HTTP server accepts
-  worker-task requests.
+  inside `startControllerRuntime` after zone config is parsed and before
+  `runtimeReadiness.set('ready')` (line ~757). A safe insertion point is
+  directly before `await reapToolVmLeases()` at line ~764. (The sweep needs
+  only `systemConfig.zones[n].gateway.stateDir` — no running zone. The race
+  with new submissions is benign either way: fresh task UUIDs cannot appear
+  in the orphan scan — but the insertion point should still be explicit.)
 - Unit tests adjacent to the new module.
 
 Read-only context:
@@ -81,10 +85,18 @@ Read-only context:
 
 1. Implement log scanning + non-terminal detection as a pure function
    (`classifyTaskLogForRecovery(events) -> 'terminal' | 'needs-failure-event'
-   | 'unreadable'`) with unit tests.
-2. Implement the sweep: append `task-failed` (reuse the controller-side
-   event append used at `worker-task-runner.ts:783-792`), tolerate per-task
-   failures with warnings, return a summary `{ recoveredCount, warnings }`.
+   | 'unreadable'`) with unit tests. The classifier must wrap the log parse
+   in try/catch and map ANY thrown error to `'unreadable'` —
+   `loadTaskStateFromLog` can throw (e.g. `task-state-reader.ts:118`,
+   "log is empty or does not begin with task-accepted"), and a single
+   corrupt log must not abort the whole sweep.
+2. Implement the sweep: append `task-failed` by calling
+   `appendEvent(eventLogPath, event)` imported from
+   `@agent-vm/agent-vm-worker` — the same exported helper
+   `worker-task-runner.ts:7` imports (the `recordEvent` at
+   `worker-task-runner.ts:780-781` is a non-exported closure over it).
+   Tolerate per-task failures with warnings, return a summary
+   `{ recoveredCount, warnings }`.
 3. Resource cleanup pass per recovered task: best-effort, warn-don't-throw.
    If killing orphaned worker-VM QEMU processes requires runtime records the
    worker path doesn't write today, scope this step down to
@@ -100,8 +112,12 @@ Read-only context:
 
 - Red/green proof: integration test above fails before (returns in-progress
   state), passes after.
-- Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm/src/controller`
+- Focused validation (unit):
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/controller`
+- Focused validation (integration — the step-5 test lives in the
+  `integration` project, not `unit`):
+  `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/controller`
+- Taxonomy: run `pnpm test:taxonomy` after adding test files.
 - Full validation: `pnpm check && pnpm test:unit && pnpm test:integration`
 
 ## Stop Conditions

@@ -64,16 +64,33 @@ Write surfaces:
   `resolveAllSecretsWithOpInject`; retry only on transient classes (network
   errors, 429/5xx); error messages include attempt count.
 - `packages/secret-management/src/composite-secret-resolver.ts`: accumulate
-  successfully resolved values during a resolution batch into a transient
+  successfully resolved values during a `resolveAll` batch into a transient
   `Set<string>` and redact them (and the service-account token) from any
-  error message formatted in that batch.
+  error message formatted in that batch. Explicitly out of scope: the
+  single-ref `resolve()` path — nothing has been resolved before its only
+  resolution fails, so there is no value set to redact there
+  (review-confirmed).
 - `packages/secret-management/src/index.ts` /
-  `packages/agent-vm/src/controller/controller-runtime.ts` (wiring): pass
-  the real package version as `integrationVersion` (read from the built
-  package.json once at startup, injected as a dependency so it stays
-  testable).
+  `packages/agent-vm/src/controller/controller-runtime.ts` +
+  `controller-runtime-support.ts` (wiring): pass the real package version as
+  `integrationVersion`. This is a signature change (review-verified): the
+  `createSecretResolverImpl` callback in
+  `createSecretResolverFromSystemConfig`
+  (`controller-runtime-support.ts:9-27`) currently accepts only
+  `{ serviceAccountToken }` and discards `CreateSecretResolverDependencies`
+  entirely — extend it to
+  `{ serviceAccountToken, integrationVersion }` and update the
+  `controller-runtime.ts:345-349` injection in the same pass. For reading
+  the version, add a `readAgentVmPackageVersion()` helper following the
+  existing `resolveAgentVmPackageRoot()` pattern
+  (`managed-image-dockerfile.ts:636-667`), or extract that function to a
+  shared module.
 - `packages/agent-vm/src/controller/controller-runtime-support.ts`: warn-log
-  when the ambient `GITHUB_TOKEN` fallback activates.
+  when the ambient `GITHUB_TOKEN` fallback activates. Chosen mechanism: add
+  an optional `writeWarning?: (message: string) => void` parameter to
+  `resolveControllerGithubToken` defaulting to `process.stderr.write` (the
+  house pattern) so existing callers compile unchanged and tests can assert
+  the warning.
 - Unit tests adjacent to each file.
 
 Read-only context:
@@ -85,8 +102,22 @@ Read-only context:
 
 ## Task Sequence
 
+0. RESEARCH GATE (must pass before any retry code is written): inspect what
+   `@1password/sdk` (^0.4.x — see `packages/secret-management/package.json`)
+   actually throws. Known from code review: only `ResolveAllResponse` and
+   `ResolveReferenceError` types are imported
+   (`onepassword-secret-resolver.ts:3`); `ResolveReferenceError.type` codes
+   exist for per-item batch failures, but single `client.secrets.resolve()`
+   errors are untyped thrown exceptions. Probe the installed SDK
+   (node_modules d.ts + a spike against a bad token vs. unreachable network)
+   and record the observed error shapes. If transient-vs-auth cannot be
+   distinguished by type/code (only by message text), STOP and reconverge on
+   an explicit allowlist of retryable `ResolveReferenceError.type` codes for
+   the batch path and a conservative no-retry default for the single-resolve
+   path. Do not string-match SDK messages.
 1. Implement and unit-test the retry helper (fail twice transient → succeed
-   third; non-transient → no retry; attempt count in final error).
+   third; non-transient → no retry; attempt count in final error), using the
+   classification contract produced by step 0.
 2. Wire retry into both the SDK resolve path and the op-inject batch path.
 3. Implement resolved-value redaction in the composite resolver; unit test:
    resolver resolves secret A, then throws an error containing A's value →
@@ -102,10 +133,10 @@ Read-only context:
 
 - Red/green proof: tests in steps 1, 3, 4, 5 fail before, pass after.
 - Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/secret-management/src packages/agent-vm/src/controller`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/secret-management/src packages/agent-vm/src/controller`
 - Full validation: `pnpm check && pnpm test:unit && pnpm test:integration`
 - Optional secrets E2E (gated):
-  `pnpm vitest run --root . --config vitest.config.ts --project e2e-secrets packages/secret-management/src` — report as skipped with reason if the op
+  `pnpm vitest run --config vitest.config.ts --project e2e-secrets packages/secret-management/src` — report as skipped with reason if the op
   service-account env gate is absent.
 
 ## Stop Conditions

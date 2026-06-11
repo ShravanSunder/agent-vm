@@ -8,6 +8,11 @@ verification of every accepted finding against source. Each plan is
 self-contained and independently executable; recommended order is the
 priority order below.
 
+Reviewed 2026-06-11 by a six-lane plan-review-swarm (adversarial, read-only,
+grounded against live code + external docs); accepted blocker/important
+findings were folded back into every plan. Review report:
+`tmp/plan-workflows/2026-06-11-repo-improvements-plan-review.md`.
+
 ## Plans
 
 | # | Plan | Theme | Primary risk addressed |
@@ -46,6 +51,14 @@ priority order below.
   that file.
 - Backup filename `__` delimiter is ambiguous for zone IDs containing `__`
   (parse-only issue).
+- `agentScopeGenerations` maps grow unboundedly
+  (`upstream-mcp-client-runtime.ts` ~:469, `portal-session.ts` ~:134).
+  WARNING from plan review: do NOT fix by deleting entries on close —
+  `generationForAgentScope` defaults to 0 for missing entries and the
+  stale-connection guard (`upstream-mcp-client-runtime.ts:598-615`) depends
+  on the post-close incremented value; delete-on-close lets a stale
+  in-flight client be promoted. Safe fixes: size-capped structure, or prove
+  scope IDs are never reused and document that invariant.
 
 ## Unknowns (investigate before planning)
 

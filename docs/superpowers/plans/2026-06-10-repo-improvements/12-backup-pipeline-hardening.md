@@ -67,11 +67,27 @@ Write surfaces:
     unconditional `fs.rm(tarPath, { force: true })`;
   - extend `assertRuntimeDirOutsideBackupInputs` (rename accordingly) to
     assert `backupDir` does not overlap `stateDir`/`zoneFilesDir`.
-- `packages/agent-vm/src/cli/backup-commands.ts`: change the default
-  `backupDir` to a sibling outside `stateDir` (coordinate with
-  `storage-model.md` vocabulary) or keep the default but rely on the new
-  assertion to force explicit configuration — decide with the user at
-  execution; the assertion makes the current default fail loudly.
+- `packages/agent-vm/src/cli/backup-commands.ts` AND
+  `packages/agent-vm/src/cli/commands/paths-definition.ts:99` (review
+  finding: the same legacy fallback
+  `zone.gateway.backupDir ?? \`${stateDir}/backups\`` exists in BOTH files —
+  change them together or the `paths` command will display a location the
+  backup command rejects): change the fallback default to a sibling outside
+  `stateDir`, or keep it and rely on the new assertion to force explicit
+  configuration — decide with the user at execution. Context for that
+  decision (review-verified): `docs/architecture/storage-model.md:308`
+  already documents backups at `~/.agent-vm-backups/<zone>/` (outside
+  stateDir) and `init-command.ts:418` scaffolds an explicit external
+  `backupDir` via `pathProfile.gatewayBackupDir(zoneId)` — the in-stateDir
+  fallback is legacy and only hits unconfigured zones.
+- Restore live-zone guard (review finding — confirmed ABSENT today:
+  `backup-commands.ts:82-96` calls `restoreBackup()` with no zone-running
+  check): add a precondition in the restore CLI path that refuses to
+  restore while the zone's gateway process is alive (read the on-disk
+  gateway runtime record and check the PID via the existing
+  identity-verified liveness helpers), with a clear operator message. If no
+  reliable liveness signal exists for a zone type, refuse unless an explicit
+  `--force` acknowledgement is passed.
 - `packages/agent-vm/src/backup/backup-restore-operation.ts`:
   - decrypt into a `mkdtemp` tmpdir, cleanup in finally including the
     decrypt-failure path;
@@ -79,7 +95,20 @@ Write surfaces:
     (rename current → `stateDir.pre-restore-<ts>`, rename incoming →
     `stateDir`), with the pre-restore directory retained for manual
     recovery and a clear log line.
-- Unit tests adjacent to all three files.
+- Tests — taxonomy-resolved strategy (review blocker: ALL existing backup
+  tests are `*.host.e2e.test.ts`; zero unit tests exist in
+  `packages/agent-vm/src/backup/`, and `audit-test-taxonomy.ts` forbids
+  unit tests importing `node:child_process`/`execa`, while both operations
+  use a module-level non-injectable `execFileAsync`):
+  1. add an injectable `execFileAsync` dependency (optional param
+     defaulting to the real `promisify(execFile)`) to
+     `backup-create-operation.ts` and `backup-restore-operation.ts` —
+     mirroring the established DI pattern in
+     `secret-management/redacted-exec-file.ts` — so the residue/cleanup
+     logic gets true unit tests (`encryption` is already an injected
+     object);
+  2. keep the staged-swap end-to-end behavior proof in a new
+     `*.host.e2e.test.ts` alongside the existing backup e2e files.
 - `docs/architecture/storage-model.md`: one paragraph documenting backup
   dir placement rules if the default changes.
 
@@ -87,36 +116,48 @@ Read-only context:
 - `packages/agent-vm/src/backup/backup-encryption.ts`,
   `backup-archive-layout.ts`, `backup-manager.ts` — path construction and
   encryption contract.
-- `packages/agent-vm/src/backup/backup-commands.ts` callers — where
-  stateDir/zoneFilesDir come from, to know what the swap may collide with
-  (running zone? assert the zone is stopped before restore if not already
-  enforced — verify and encode).
+- `packages/agent-vm/src/cli/backup-commands.ts` callers — where
+  stateDir/zoneFilesDir come from. (Live-zone collision already resolved:
+  no precondition exists today; adding the guard is task 5.)
 
 ## Task Sequence
 
-1. Tar-residue fix + test (mock `encryption.encrypt` to throw → assert no
-   plaintext tar remains anywhere).
-2. Decrypt-to-tmpdir fix + test (assert decrypted path under tmpdir; assert
-   cleanup when decrypt itself fails midway).
-3. `backupDir` overlap assertion + test (backupDir inside stateDir →
+0. Add the injectable `execFileAsync` seam to both backup operations (pure
+   refactor — existing `*.host.e2e.test.ts` suite stays green; this unlocks
+   the unit tests in steps 1-5).
+1. Tar-residue fix + unit test (mock `encryption.encrypt` to throw → assert
+   no plaintext tar remains anywhere).
+2. Decrypt-to-tmpdir fix + unit test (assert decrypted path under tmpdir;
+   assert cleanup when decrypt itself fails midway).
+3. `backupDir` overlap assertion + unit test (backupDir inside stateDir →
    throws with actionable message); decide and implement the default-dir
-   change with a doc update.
-4. Staged-swap restore + tests (failure injected mid-copy → stateDir is
-   either fully old or fully new; pre-restore dir exists).
-5. Run backup unit suites + `pnpm check`.
+   change in BOTH fallback sites with a doc update.
+4. Staged-swap restore + tests (unit: failure injected mid-copy → stateDir
+   is either fully old or fully new, pre-restore dir exists; host e2e: real
+   swap behavior alongside the existing backup e2e files).
+5. Live-zone restore guard + unit test (gateway runtime record shows a live
+   PID → restore refuses with an actionable message; `--force` overrides
+   only where no reliable liveness signal exists).
+6. Run backup unit + e2e-host suites + `pnpm check`.
 
 ## Proof Gates
 
-- Red/green proof: tests in steps 1-4 fail before, pass after.
-- Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm/src/backup`
+- Red/green proof: tests in steps 1-5 fail before, pass after.
+- Focused validation (new unit tests, enabled by the DI seam):
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/backup`
+- Focused validation (existing + new host e2e — the pre-existing backup
+  suite lives here, NOT in the unit project):
+  `pnpm vitest run --config vitest.config.ts --project e2e-host packages/agent-vm/src/backup`
+- Taxonomy: run `pnpm test:taxonomy` after adding test files.
 - Full validation: `pnpm check && pnpm test:unit && pnpm test:integration`
 
 ## Stop Conditions
 
-- Stop if restore can run against a *live* zone (swap under a running
-  gateway would be destructive); verify the CLI's preconditions first and
-  add the guard before the swap if absent.
+- (Pre-verified 2026-06-11: restore CAN run against a live zone today — no
+  precondition exists in `backup-commands.ts:82-96`. The guard is therefore
+  IN SCOPE as task 5, not a stop condition. Stop only if step 5 finds no
+  reliable liveness signal AND the `--force` escape hatch is judged
+  insufficient — that needs a user decision.)
 - Stop at the default-backupDir decision if changing it breaks documented
   operator workflows — surface the tradeoff (loud assertion vs. new
   default) instead of choosing silently.

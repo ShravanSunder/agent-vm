@@ -84,7 +84,7 @@ Read-only context:
 - Red/green proof: injection-case tests fail before (Dockerfile contains
   the injected `RUN`), pass after (throws at parse/generation).
 - Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm/src/build`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/build`
 - Full validation: `pnpm check && pnpm test:unit`
 
 ## Stop Conditions

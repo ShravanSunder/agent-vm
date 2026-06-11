@@ -20,12 +20,20 @@ for agents, and several load-bearing pieces are stale:
    accurate — overview.md is the stale layer.
 3. **`docs/architecture/agent-worker-gateway.md` documents event names that
    don't exist**: `plan-created`, `work-started`, `review-result`,
-   `verification-result`, `fix-applied` (actual union:
-   `plan-finalized`, `phase-started`, `plan-reviewer-turn`/
-   `work-reviewer-turn`, etc., 21 variants including the
-   `controller-git-push/pull-*` family); the status names in its state
-   diagram don't match `taskStatusValues`. Anyone building an event-log
-   consumer from this doc writes broken code.
+   `verification-result`, `fix-applied`. The actual union
+   (`task-event-types.ts:60-182`, review-verified 2026-06-11) has exactly
+   23 variants — regenerate the doc table from this authoritative list:
+   `task-accepted`, `context-gather-failed`, `phase-started`,
+   `phase-completed`, `plan-agent-turn`, `plan-reviewer-turn`,
+   `plan-finalized`, `work-agent-turn`, `work-reviewer-turn`,
+   `wrapup-turn`, `wrapup-result`, `controller-git-push-started`,
+   `controller-git-push-retry`, `controller-git-push-fetch-retry`,
+   `controller-git-push-succeeded`, `controller-git-push-failed`,
+   `controller-git-pull-started`, `controller-git-pull-retry`,
+   `controller-git-pull-succeeded`, `controller-git-pull-failed`,
+   `task-completed`, `task-failed`, `task-closed`. The status names in the
+   doc's state diagram don't match `taskStatusValues`. Anyone building an
+   event-log consumer from this doc writes broken code.
 4. **`docs/README.md` omits `docs/subsystems/mcp-portal.md`** from the docs
    map, making it unreachable via the documented entry path.
 5. **CLAUDE.md calls `pnpm check` the "full quality gate"** but
@@ -81,12 +89,23 @@ Write surfaces:
   example JSONL lines.
 - `docs/README.md`: add `mcp-portal.md` to the subsystems list.
 - `docs/subsystems/worker-task-pipeline.md` or `controller.md`: document
-  the CALLER_URL heartbeat contract (endpoint shape, cadence, terminal
-  statuses) — or, if the decision is removal, note it and stop (see gate).
+  the CALLER_URL heartbeat contract — verified details (heartbeat-sender.ts,
+  review 2026-06-11): `POST ${CALLER_URL}/tasks/{requestTaskId}/heartbeat`
+  with the task id URL-encoded; cadence 10s
+  (`HEARTBEAT_CADENCE_MS_DEFAULT`); per-request timeout 5s; terminal
+  status codes 404 AND 410 stop the heartbeat permanently; other failures
+  retry with warnings at 1st, 3rd-consecutive, then every 10th. Or, if the
+  decision is removal, note it and stop (see gate).
 - Optional guard (small, high leverage): a unit test that cross-checks the
   event names listed in `agent-worker-gateway.md`'s table against the Zod
   union keys in `task-event-types.ts`, so this class of drift fails CI
-  instead of recurring.
+  instead of recurring. Placement (review-resolved): no doc-reading test
+  precedent exists in the repo, but the taxonomy permits it — put it at
+  `packages/agent-vm-worker/src/state/event-doc-drift.unit.test.ts` and
+  resolve the doc path from the test file via
+  `new URL('../../../../../docs/architecture/agent-worker-gateway.md',
+  import.meta.url)` (or `fileURLToPath` + `path.resolve`) rather than
+  `process.cwd()`, so the test is invocation-directory-independent.
 
 Read-only context:
 - `packages/agent-vm-worker/src/state/task-event-types.ts`,
@@ -109,7 +128,7 @@ Read-only context:
 ## Proof Gates
 
 - Cross-check test (if added):
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm-worker/src/state`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src/state`
 - Full validation: `pnpm check` (fmt over edited markdown included) and
   `pnpm test:unit` if the guard test was added.
 - Manual gate: diff review — every changed doc line traceable to a source

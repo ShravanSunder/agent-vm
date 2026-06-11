@@ -54,9 +54,11 @@ timeouts. These two surfaces are the gap.
 ## Scope
 
 Write surfaces:
-- `packages/agent-vm/src/controller/worker-task-runner.ts`: add
-  `AbortSignal.timeout(...)` (or AbortController + setTimeout for testability
-  via injected clock) to `fetchJson`; named constants, e.g.
+- `packages/agent-vm/src/controller/worker-task-runner.ts`: add an
+  `AbortController + setTimeout` timeout to `fetchJson` (NOT
+  `AbortSignal.timeout` — `vi.useFakeTimers()` mocks `setTimeout` but not
+  the native `AbortSignal.timeout`, and the test taxonomy forbids wall-clock
+  waits); named constants, e.g.
   `WORKER_TASK_SUBMIT_TIMEOUT_MS = 30_000`,
   `WORKER_TASK_POLL_TIMEOUT_MS = 10_000`.
 - `packages/agent-vm/src/controller/zone-runtimes/worker-zone-runtime.ts`:
@@ -65,11 +67,16 @@ Write surfaces:
 - Unit tests adjacent to both files.
 
 Read-only context:
-- `packages/agent-vm/src/controller/heartbeat-sender.ts`: copy its
-  timeout/abort idiom for consistency.
+- `packages/agent-vm/src/controller/heartbeat-sender.ts`: precedent — note
+  its abort timer at line 89 is a REAL `setTimeout` (not injectable); the
+  injectable piece is `fetchImpl`. Mirror the `fetchImpl` injection for
+  testing the abort path (never-resolving mock fetch + fake timers), not a
+  custom abort-clock seam.
 - `packages/agent-vm/src/controller/worker-task-runner.integration.test.ts`:
-  ensure existing integration coverage still passes (fake servers must
-  respond within the new bounds — verify the test fixtures).
+  fixtures verified (review 2026-06-11): the `globalThis.fetch` mock at
+  lines ~233-250 resolves synchronously, so 30s/10s bounds cannot fire
+  against existing fixtures. Same for
+  `worker-zone-runtime.unit.test.ts:68-161` (close path).
 
 ## Task Sequence
 
@@ -80,10 +87,13 @@ Read-only context:
 2. Add the close timeout in `worker-zone-runtime.ts`; wrap abort into
    `ControllerZoneWorkerCloseError` with `httpStatus: 0` and a clear
    "timed out after Nms" body so destroy-path callers see why.
-3. Unit tests: (a) submission fetch never resolves → `executeWorkerTask`
-   rejects within the deadline and runs its cleanup path (`vm.close`,
-   `postStopGateway`); (b) poll fetch hangs → counted as consecutive poll
-   failure, task fails after 3; (c) close fetch hangs →
+3. Unit tests using `vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync()`
+   (no wall-clock sleeps — taxonomy-enforced): (a) submission fetch never
+   resolves → `executeWorkerTask` rejects within the deadline and runs its
+   cleanup path (`vm.close`, `postStopGateway`); (b) poll fetch hangs →
+   abort counted as consecutive poll failure (AbortError is not a ZodError,
+   so the strict-schema guard at `worker-task-runner.ts:887` does not
+   intercept it — verified), task fails after 3; (c) close fetch hangs →
    `ControllerZoneWorkerCloseError` within deadline.
 4. Re-run the worker-task-runner integration suite; adjust fixture servers
    only if they legitimately respond slower than the new bounds (do not
@@ -94,7 +104,9 @@ Read-only context:
 - Red/green proof: the three unit tests above fail on current code (hang →
   vitest timeout) and pass after.
 - Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm/src/controller`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/controller`
+- Taxonomy: run `pnpm test:taxonomy` after adding test files (focused vitest
+  runs skip it).
 - Full validation: `pnpm check && pnpm test:unit && pnpm test:integration`
 
 ## Stop Conditions
@@ -111,8 +123,6 @@ Read-only context:
   up before submission (gateway start waits for readiness), so 30s is
   generous; verify against `startGatewayZone` readiness semantics during
   execution.
-- AbortSignal.timeout uses real timers; prefer the injectable pattern already
-  used by `heartbeat-sender.ts` to keep unit tests deterministic.
 
 ## Handoff Prompt
 

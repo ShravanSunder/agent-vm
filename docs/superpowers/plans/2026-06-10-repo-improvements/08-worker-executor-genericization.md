@@ -74,17 +74,31 @@ Write surfaces (sequenced; each step leaves the repo green):
   `fix` = continue current conversation, `resumeOrRebuild(sessionRef)` =
   best-effort resume of a provider session else rebuild from context,
   `getThreadId` → keep name or rename to `getSessionRef` (hard cutover
-  through task events if renamed; weigh churn vs. clarity and decide at
-  execution with the reviewer).
+  through task events if renamed; the decision is made at task step 3,
+  informed by the step-1 research — not deferred past it).
 - New `capability-setup` seam: extract `ensureCapabilitiesConfigured` into a
   provider-owned setup module (`codex-capability-setup.ts`), typed as
   `(capabilities, workingDirectory) → ProviderRuntimeHandle`.
-- New `claude-code-executor.ts` implementing `WorkExecutor` over the Claude
-  Code CLI/SDK: MCP via generated `--mcp-config` JSON; auth via
-  `ANTHROPIC_API_KEY`; `fix` continues the session (`--resume`/`--continue`
-  semantics), `resumeOrRebuild` rebuilds from context when resume is
-  unavailable. Research the current Claude Agent SDK / CLI flags at
-  execution time (deepwiki/docs) before writing this file.
+- New `claude-code-executor.ts` implementing `WorkExecutor`. Facts already
+  verified by review research (2026-06-11, official docs + npm):
+  `@anthropic-ai/claude-code` exists on npm and ships the `claude` CLI
+  binary; `--mcp-config <json>` exists; `--resume <id>` / `--continue`
+  exist; headless mode is `-p/--print`; headless auth via
+  `ANTHROPIC_API_KEY` is supported and takes precedence over subscription
+  credentials in `-p` mode; the permission bypass is
+  `--dangerously-skip-permissions` (equivalent to
+  `--permission-mode bypassPermissions`), which refuses to run as root and
+  still prompts on explicit ask rules — document both caveats in code
+  comments. Facts that MUST still be resolved by the step-1 research gate
+  before this file is written: (a) does `--resume` preserve the full
+  CONVERSATION history (required for `fix()` = continue-same-conversation),
+  or only workspace state? (b) does `--mcp-config` work in `-p` headless
+  mode? (c) is the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`,
+  in-process sessions + MCP config + permission modes) a better fit than
+  CLI shelling — pick ONE with cited evidence; (d) is there any
+  reasoning-effort/thinking-budget parameter (none found in review
+  research — if none, the silent-ignore mapping for `reasoningEffort` is
+  the documented intent, not an accident).
 - `executor-factory.ts`: real `'claude'` case.
 - `coordinator-helpers.ts`: add `ANTHROPIC_API_KEY` + generic
   `[A-Z_]*_API_KEY=` scrub patterns (independent, do first).
@@ -107,20 +121,41 @@ Read-only context:
 
 ## Task Sequence
 
-1. Land the independent hygiene fixes: scrub patterns, provider-parameterized
+(Order revised after review: research gates the interface decision, so it
+runs BEFORE interface docs — a session-resume surprise must not invalidate
+freshly written contracts.)
+
+0. Land the independent hygiene fixes: scrub patterns, provider-parameterized
    E2E gates (unit-tested, no behavior change for codex).
+1. RESEARCH GATE: resolve the four open questions listed in Scope ((a)
+   conversation-history preservation under `--resume`, (b) `--mcp-config`
+   in `-p` mode, (c) Agent SDK vs CLI decision, (d) reasoning parameter),
+   each with a citation or a worked `execa` probe. STOP and reconverge if
+   (a) shows resume does not preserve conversation history — that breaks
+   the `fix()` semantic and becomes a design conversation (context-replay
+   fallback or interface change), not an implementation detail.
 2. Extract `codex-capability-setup.ts`; `codex-executor.ts` consumes it;
-   all existing unit tests stay green (pure refactor).
-3. Write the interface-semantics doc comments (+ optional rename decision).
-4. Research current Claude Code CLI/SDK invocation surface (MCP config
-   flag, resume semantics, auth env) with citations in the PR description;
-   then implement `claude-code-executor.ts` + factory case with unit tests
-   (execa mocked) mirroring `codex-executor.unit.test.ts` coverage.
-5. Wire a gated claude worker E2E lane analogous to the codex one; run it if
+   all existing unit tests stay green (pure refactor). (Independent of
+   step 1; may run in parallel.)
+3. Write the interface-semantics doc comments, informed by step 1. DECIDE
+   here (not later): keep `getThreadId()` or hard-cutover rename to
+   `getSessionRef()` — if renamed, update executor-interface,
+   codex-executor, persistent-thread, task-event consumers, and tests in
+   the same pass; no compat alias.
+4. Implement `claude-code-executor.ts` + factory case with unit tests
+   (execa or SDK mocked per the step-1 decision) mirroring
+   `codex-executor.unit.test.ts` coverage.
+5. Image-bake decision (explicit, not assumed): check whether the worker
+   managed image installs the claude CLI (`managed-image-dockerfile.ts`
+   bakes only `@openai/codex` today — `managedOpenAiCodexCliPackageName`,
+   line 15). Choose: (a) add `@anthropic-ai/claude-code` to the worker
+   image package list in this plan (small, additive), or (b) keep the
+   claude E2E lane gated on binary presence and file the image bake as the
+   explicit next plan. Do NOT let the executor silently assume the binary
+   exists — the factory should fail with an actionable error when the
+   provider is selected but the binary/SDK is absent.
+6. Wire a gated claude worker E2E lane analogous to the codex one; run it if
    credentials + binary exist, else report the explicit gate reason.
-6. Assess managed-image availability of the claude CLI; if missing, document
-   the image-bake follow-up in the plan-completion report (do not silently
-   expand into the build pipeline).
 
 ## Proof Gates
 
@@ -128,17 +163,17 @@ Read-only context:
   current throw; capability-setup extraction proven by unchanged
   codex-executor unit suite.
 - Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm-worker/src`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src`
 - Full validation: `pnpm check && pnpm test:unit && pnpm test:integration`
 - E2E: codex worker lane must stay green (gated); claude lane runs or
   reports its gate.
 
 ## Stop Conditions
 
-- Stop after step 3 and reconverge if the Claude CLI/SDK research shows the
-  session-resume model cannot satisfy `fix()` semantics (phases assume
-  same-conversation continuation for review feedback — that would be a
-  design conversation, not an implementation detail).
+- Stop after step 1 (research gate) and reconverge if the session-resume
+  model cannot satisfy `fix()` semantics (phases assume same-conversation
+  continuation for review feedback — that would be a design conversation,
+  not an implementation detail).
 - Stop if the rename (`getThreadId` → `getSessionRef`) forces task-event
   schema changes that external consumers read; surface before cutting over.
 
@@ -158,7 +193,8 @@ Use implementation-execute-plan on this plan.
 Repo: /Users/shravansunder/Documents/dev/project-dev/agent-vm.improve-v1
 Plan: docs/superpowers/plans/2026-06-10-repo-improvements/08-worker-executor-genericization.md
 Start by validating the plan against current git state before editing files.
-Steps 1-3 are safe refactors; step 4 requires fresh research on the Claude
-Code CLI/SDK surface before writing code. Use bounded subagents only for
-independent slices. Parent owns integration and final proof.
+Steps 0 and 2 are safe refactors; step 1 is a hard research gate that must
+pass before steps 3-6 (interface docs, claude executor, image-bake decision,
+E2E lane). Use bounded subagents only for independent slices. Parent owns
+integration and final proof.
 ```

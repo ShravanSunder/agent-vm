@@ -62,11 +62,20 @@ Write surfaces:
     zones' probes (keep per-zone serialization).
 - `packages/agent-vm/src/controller/health/health-event-store.ts`: replace
   the empty catch with a rate-limited stderr warning (e.g. once per minute),
-  preserving the in-memory-is-serving-path behavior.
+  preserving the in-memory-is-serving-path behavior. This REQUIRES adding a
+  clock seam: extend `HealthEventStoreOptions` with `now?: () => number`
+  (default `Date.now`) — the options type currently has no time injection
+  (review-verified), and the rate-limit test needs controlled time.
 - `packages/agent-vm/src/controller/zone-runtimes/openclaw-zone-runtime.ts`:
-  emit a structured log line when `runAfterPrevious` actually has to wait on
-  a prior background operation (queued-behind-mutex visibility), including
-  zone id and how long it waited once it acquires.
+  emit a log line via the existing `writeOpenClawZoneRuntimeLog` helper
+  (not raw stderr) when `runAfterPrevious` ACTUALLY waits on a prior
+  background operation — detect "actually waited" by checking whether
+  `lifecycleOperation` is already settled before awaiting (e.g. a settled
+  flag updated by the chain), so an idle mutex does not log on every
+  operation. Include zone id (`options.zone.id` is in closure scope) and
+  the wait duration on acquisition. Note: the PRIOR operation's name is not
+  available at this point — log "waiting for previous lifecycle operation"
+  without naming it.
 - Unit tests adjacent to each file.
 
 Read-only context:
@@ -78,9 +87,17 @@ Read-only context:
 
 1. Set bound + eviction with unit test (50k simulated recoveries → size
    stays at cap).
-2. Per-zone tick isolation with unit test (zone A recovery mocked slow; zone
-   B receives its probe within 2× interval). Verify `stopped` shutdown still
-   awaits all in-flight zone work.
+2. Per-zone tick isolation. First re-confirm zone independence in code (no
+   changes): `recoveryTracker` state is per-zone via `stateByZoneId`
+   (`gateway-vm-recovery-policy.ts:227`), `recoveryInFlight` is a per-zone
+   field, `recoveredChannelProviderEventKeys` keys are zone-namespaced, and
+   `stopped` is global-but-benign (review-verified 2026-06-11). Then replace
+   the single `runningTick` with a `Map<string, Promise<void>>` of per-zone
+   in-flight guards, and in `stop()` replace `await runningTick` with
+   `await Promise.all([...perZoneTicks.values()])`. Unit tests: (a) zone A
+   recovery mocked slow → zone B receives its probe within 2× interval;
+   (b) `stop()` awaits in-flight zone-A recovery even after zone-B's tick
+   completed.
 3. Rate-limited durable-write warning with unit test (append throws → one
    warning, not N).
 4. Mutex-queue logging with unit test (timeout fires; next operation logs a
@@ -91,15 +108,15 @@ Read-only context:
 
 - Red/green proof: tests 1-4 each fail before, pass after.
 - Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm/src/controller/health packages/agent-vm/src/controller/zone-runtimes`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/controller/health packages/agent-vm/src/controller/zone-runtimes`
 - Full validation: `pnpm check && pnpm test:unit`
 
 ## Stop Conditions
 
-- Stop if per-zone tick isolation conflicts with shared state inside
-  `tick()` (e.g. budget classification reads cross-zone aggregates) — verify
-  the tick body is zone-independent before splitting the barrier; if it
-  isn't, reconverge.
+- (Pre-verified 2026-06-11: tick body is zone-independent — recovery
+  tracker state keyed by zoneId, budget classification per-request, no
+  cross-zone aggregates found. Stop only if re-verification at execution
+  time contradicts this.)
 
 ## Risks
 

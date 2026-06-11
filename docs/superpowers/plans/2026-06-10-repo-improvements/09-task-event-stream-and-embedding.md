@@ -55,18 +55,32 @@ Write surfaces:
   `GET /zones/:zoneId/tasks/:taskId/events` — SSE stream that (a) replays
   existing log lines from an optional `Last-Event-ID`/`?after=` cursor
   (line index), (b) tails the JSONL file for appends (fs.watch with polling
-  fallback, bounded by the same auth/validation as the snapshot route), and
-  (c) closes after emitting a terminal event (`task-completed`/`task-failed`
-  /`task-closed`) or when the sentinel fallback reports failure.
+  fallback), and (c) closes after emitting a terminal event
+  (`task-completed`/`task-failed`/`task-closed`) or when the sentinel
+  fallback reports failure. Auth/readiness posture (review-verified
+  2026-06-11): the existing snapshot route
+  (`controller-zone-operation-routes.ts:561-577`) applies NO per-request
+  auth and NO `rejectIfRuntimeNotReady` gate — if the SSE route mirrors it,
+  that is a conscious choice; state it in the route comment. Because this
+  endpoint is long-lived, it additionally MUST (d) check
+  `options.runtimeReadiness?.()` on every heartbeat tick and terminate the
+  stream when the state is `stopping` — `runtimeReadiness.set('stopping')`
+  (`controller-runtime.ts:759/805`) has no push/abort signal today, so the
+  heartbeat-tick poll is the shutdown observation mechanism (no new wiring
+  needed).
 - New module
   `packages/agent-vm/src/controller/task-event-stream.ts` (tail + cursor
   logic, separated from the route for unit testing; corrupt-final-line
   tolerance mirrors `replayEvents`).
-- `packages/agent-vm/src/index.ts`: export the runtime entrypoint
-  (`startControllerRuntime` or its current equivalent in
-  `controller-runtime.ts`) with an embedding-contract doc comment; export
-  the lifecycle hook types so embedders can pass
-  `onWorkerTaskFinished`-style callbacks through the documented options.
+- `packages/agent-vm/src/index.ts`: export `startControllerRuntime`
+  (confirmed symbol — `controller-runtime.ts:328`, signature
+  `(options: StartControllerRuntimeOptions, dependencies:
+  ControllerRuntimeDependencies) => Promise<ControllerRuntime>`) with an
+  embedding-contract doc comment. Also export BOTH parameter types:
+  `StartControllerRuntimeOptions` and `ControllerRuntimeDependencies` —
+  the lifecycle hooks (`onWorkerTaskPrepared`/`onWorkerTaskIngress`/
+  `onWorkerTaskFinished`) live on the DEPENDENCIES parameter
+  (`controller-runtime-types.ts:63-70`), not on options.
 - `docs/subsystems/controller.md` + `CLAUDE.md` Controller API list: add the
   events route.
 
@@ -101,7 +115,7 @@ Read-only context:
 - Red/green proof: integration test in step 3 fails before the route
   exists, passes after.
 - Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm/src/controller`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/controller`
 - Full validation: `pnpm check && pnpm test:unit && pnpm test:integration`
 
 ## Stop Conditions

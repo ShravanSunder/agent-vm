@@ -37,9 +37,25 @@ was never implemented.
   startup recovery already has the PID-liveness + process-identity machinery
   (`killOrphanedToolVmProcess`, runtime record scope fencing) that a
   quarantine reaper needs.
-- Runtime records for quarantined slots are intentionally preserved on disk
-  (`lease-manager.ts:756-757` comment), so the QEMU PID for each quarantined
-  slot is recoverable in-process.
+- Runtime records for quarantined slots from the release/evict paths are
+  intentionally preserved on disk (`lease-manager.ts:756-757` comment).
+  `tool-vm-runtime-record.ts:16-20` confirms the record schema carries
+  `qemuPid` and `processIdentity: { command, lstart }` — sufficient for safe
+  dead-PID proof (review-verified 2026-06-11).
+- Third quarantine path (review finding): `lease-manager.ts:537-544` — the
+  `createLease` outer catch quarantines the slot when the VM was created but
+  `vm.close()` failed during partial-failure cleanup. On this path no runtime
+  record is reachable afterwards (either never written, or already deleted
+  before the rethrow), so there is no PID to prove dead.
+- Reaper wiring target: `controller-runtime.ts:441-446` — the
+  `reapToolVmLeases` closure already calls `reapDeadIdleLeases` and
+  `reapExpiredActiveUses`; `reaperTimer` at line 447 drives it. There is no
+  separate per-method timer.
+- Identity helpers (exact exported symbols in
+  `packages/agent-vm/src/shared/managed-vm-process.ts`): `isProcessAlive`
+  (line 6), `readProcessIdentity` (line 48), `processIdentityMatches`
+  (line 118). `killOrphanedToolVmProcess` in `tool-vm-recovery.ts` is
+  private — use it as a pattern only, not an import.
 
 ## Non-Goals
 
@@ -74,19 +90,27 @@ Read-only context:
 
 ## Task Sequence
 
-1. At quarantine time (both `releaseLease` failure path and `evictLease`
-   failure path), record `{ tcpSlot, zoneId, runtimeRecordId }` in an
-   in-memory `quarantinedSlotRecords` map inside the lease manager.
+1. At quarantine time, record `{ tcpSlot, zoneId, runtimeRecordId }` in an
+   in-memory `quarantinedSlotRecords` map inside the lease manager — ONLY
+   for the two paths with a committed runtime record: the `releaseLease`
+   failure path (`lease-manager.ts:758`) and the `evictLease` failure path
+   (`lease-manager.ts:438`). Do NOT track the `createLease` outer-catch
+   quarantine (`lease-manager.ts:537-544`): no record or PID is reachable
+   there, so those (rare) slots intentionally stay quarantined for the
+   process lifetime. State this in a code comment at that quarantine site.
 2. Implement `reapQuarantinedTcpSlots()`: for each entry, load the runtime
-   record, verify the recorded QEMU process is dead using the existing
-   process-identity comparison (alive-with-same-identity → skip; dead or
-   identity-mismatch → proceed). On confirmed-dead: delete the runtime record
-   (tolerate failure with a warning, matching existing patterns), call
-   `tcpPool.releaseQuarantined(slot)`, remove the map entry, and emit a
-   warning-level log noting the recovery.
-3. Wire the reap into the existing reaper timer in `controller-runtime.ts`
-   (the same cadence as `reapDeadIdleLeases` is acceptable; quarantine
-   recovery is not latency-sensitive).
+   record and verify the recorded QEMU process is dead using
+   `isProcessAlive(pid)`; if alive, compare `readProcessIdentity(pid)`
+   against `record.processIdentity` via `processIdentityMatches` —
+   alive-with-matching-identity → skip; dead or identity-mismatch (PID
+   reused) → proceed. On confirmed-dead: delete the runtime record (tolerate
+   failure with a warning — port safety is proven by PID death, not record
+   deletion), call `tcpPool.releaseQuarantined(slot)`, remove the map entry,
+   and emit a warning-level log noting the recovery.
+3. Wire the reap as a fourth call inside the existing `reapToolVmLeases`
+   closure at `controller-runtime.ts:441-446` (driven by `reaperTimer` at
+   line 447 — same cadence as `reapDeadIdleLeases`; quarantine recovery is
+   not latency-sensitive). Do not add a separate timer.
 4. Unit tests: (a) quarantine → PID dead → slot becomes allocatable again;
    (b) quarantine → PID alive with matching identity → slot stays
    quarantined; (c) PID reused by a different process identity → treated as
@@ -102,17 +126,18 @@ Read-only context:
   `packages/agent-vm/src/controller/leases/` fail before the reaper exists,
   pass after.
 - Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm/src/controller/leases`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/controller/leases`
+- Taxonomy: run `pnpm test:taxonomy` after adding test files (focused vitest
+  runs skip it; `pnpm test:unit` runs it first and will fail late otherwise).
 - Full validation: `pnpm check && pnpm test:unit`
 - Integration check: `pnpm test:integration` (idle-reaper integration suite
   must stay green).
 
 ## Stop Conditions
 
-- Stop if runtime records do not actually contain enough process identity to
-  prove PID death safely (re-read `tool-vm-runtime-record.ts`; if identity is
-  missing, the plan needs a record-schema addition and that is a scope
-  change).
+- (Pre-verified 2026-06-11: `tool-vm-runtime-record.ts:16-20` carries
+  `qemuPid` + `processIdentity { command, lstart }` — the identity stop
+  condition does not fire. Re-confirm only if the schema changed since.)
 - Stop if wiring the reaper requires changing the public `LeaseManager`
   interface consumed by other packages in a breaking way.
 

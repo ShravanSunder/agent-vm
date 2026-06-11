@@ -60,12 +60,31 @@ orphan-cleanup path.
 Write surfaces:
 - `packages/agent-vm/src/controller/zone-runtimes/openclaw-zone-runtime.ts`:
   - In `closeStaleGatewayBeforeColdStart`'s catch: check whether the stale
-    gateway's recorded host PID is alive (reusing the identity-verified
-    liveness helper). If provably dead: emit a warning, record the
-    lifecycle operation as a degraded-close (not `operation-failed` with
+    gateway's host PID is alive using the ALREADY-INJECTED `isProcessAlive`
+    closure (the runtime imports it from `managed-vm-process.ts` at line
+    ~23 and injects it at ~218; the handle exposes
+    `staleGateway.vm.getHostPid(): number | null` — confirmed on
+    `Pick<ManagedVm, ...>` in `zone-runtime-types.ts:32`). NOTE (review
+    2026-06-11): this is a bare PID-existence check, NOT identity-verified —
+    the in-memory handle carries no recorded `ProcessIdentity`; identity
+    verification would require reading the on-disk gateway runtime record
+    and is explicitly out of scope. Bare `isProcessAlive` is sufficient
+    here: a `null`/missing PID or dead PID means there is no process to be
+    unsafe about. If provably dead: emit a warning, record the lifecycle
+    operation as a degraded-close (not `operation-failed` with
     `owner-unsafe`), leave `staleGatewayPendingClose` cleared, and proceed
     with the cold start. If alive or indeterminate: keep current
-    `owner-unsafe` behavior.
+    `owner-unsafe` behavior byte-for-byte.
+  - Entry-path note: when `staleGatewayPendingClose` was set via
+    `markGatewayHostPidMissing` (`:368-388`), the PID was already proven
+    dead/missing, so the re-check passes trivially. When set via the new
+    `stopNow` catch path (below), the process may be alive — the re-check
+    is the primary gate there. Do not skip it.
+  - Interaction note: when the dead-PID path skips the close and proceeds,
+    `cleanupOrphanedGatewayIfPresent` inside `startGatewayZone` will read
+    the on-disk runtime record, confirm the PID dead via its own check, and
+    delete the record — no double-signal risk (verified). Do not make
+    `closeStaleGatewayBeforeColdStart` touch the on-disk record itself.
   - In `stopNow`'s catch: set `gateway = undefined` and, when an active
     gateway handle existed, set `staleGatewayPendingClose = activeGateway`
     (mirroring `markGatewayHostPidMissing`) so the next cold start retries
@@ -73,9 +92,11 @@ Write surfaces:
 - Unit tests in the adjacent zone-runtime test files.
 
 Read-only context:
-- `packages/agent-vm/src/shared/managed-vm-process.ts` — liveness/identity
-  helper to reuse; confirm how the zone runtime can access the gateway's
-  host PID (`getHostPid` already exists per `getLifecycleState` usage).
+- `packages/agent-vm/src/shared/managed-vm-process.ts` — `isProcessAlive`
+  (line 6) is the helper; PID access confirmed via
+  `staleGateway.vm.getHostPid()` (`zone-runtime-types.ts:32`,
+  `vm-adapter.ts:134`). No new dependency direction: the zone runtime
+  already imports from this module.
 - `packages/agent-vm/src/controller/health/gateway-vm-recovery-runner.ts`
   and `gateway-vm-recovery-policy.ts` — confirm the recovery loop's
   interpretation of the lifecycle codes you emit.
@@ -86,8 +107,10 @@ Read-only context:
 
 ## Task Sequence
 
-1. Extract/confirm a `isGatewayHostProcessAlive(staleGateway)` helper that
-   uses identity-verified liveness (not bare PID existence).
+1. Add a small local helper `isStaleGatewayProcessAlive(staleGateway)` that
+   reads `staleGateway.vm.getHostPid()` and returns the injected
+   `isProcessAlive(pid)` result (`false` for `null`/missing PID). Bare PID
+   check by design — see Scope note.
 2. Implement the dead-PID branch in `closeStaleGatewayBeforeColdStart` as
    scoped above; keep the alive/indeterminate branch byte-for-byte
    behaviorally identical.
@@ -105,14 +128,18 @@ Read-only context:
 - Red/green proof: test (a) fails on current code (permanent owner-unsafe),
   passes after.
 - Focused validation:
-  `pnpm vitest run --root . --config vitest.config.ts --project unit packages/agent-vm/src/controller/zone-runtimes packages/agent-vm/src/controller/health`
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/controller/zone-runtimes packages/agent-vm/src/controller/health`
 - Full validation: `pnpm check && pnpm test:unit && pnpm test:integration`
 
 ## Stop Conditions
 
-- Stop if the stale gateway handle does not expose a host PID at the point
-  of `closeStaleGatewayBeforeColdStart` (would require threading identity
-  through the handle — scope change worth a quick reconverge).
+- (Pre-verified 2026-06-11: `getHostPid` is available on the handle —
+  `zone-runtime-types.ts:32` picks it from `ManagedVm`; the PID-availability
+  stop condition does not fire. Existing test
+  `openclaw-zone-runtime.unit.test.ts:1186` pins `owner-unsafe` only for
+  the alive-PID `stop()` path with `isProcessAlive: () => true` — it stays
+  valid; no existing test pins owner-unsafe for the cold-start dead-PID
+  path, so the new tests fill a gap rather than rewriting assertions.)
 - Stop if recovery-policy tests encode `owner-unsafe` for the dead-PID case
   as intended behavior with documented rationale — that means the prior
   design made this tradeoff deliberately; bring evidence back before
