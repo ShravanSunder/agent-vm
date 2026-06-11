@@ -2,8 +2,9 @@
 
 Date: 2026-06-11
 Base branch: `improve-v1`
-Base head: `32c0e1c`
-Base remote: `origin/improve-v1` pushed at `32c0e1c`
+Plan batch base head before checkpoint docs: `32c0e1c`
+Base remote: `origin/improve-v1`; this checkpoint file is committed on the
+same branch after the plan batch base.
 
 ## Scope
 
