@@ -387,6 +387,21 @@ export function createOpenClawZoneRuntime(
 		return lifecycleState;
 	};
 
+	const isStaleGatewayProcessAlive = (staleGateway: GatewayZoneRuntimeHandle): boolean => {
+		const hostPid = staleGateway.vm.getHostPid();
+		if (hostPid === undefined || hostPid === null) {
+			return false;
+		}
+		try {
+			return isProcessAlive(hostPid);
+		} catch (error) {
+			writeOpenClawZoneRuntimeLog(
+				`stale gateway process liveness check failed for zone '${options.zone.id}' pid ${String(hostPid)}: ${formatUnknownError(error)}`,
+			);
+			return true;
+		}
+	};
+
 	const closeStaleGatewayBeforeColdStart = async (
 		operationContext: GatewayLifecycleOperationContext,
 	): Promise<void> => {
@@ -410,6 +425,21 @@ export function createOpenClawZoneRuntime(
 				previousGateway: gatewayIdentityFor(staleGateway),
 			});
 		} catch (error) {
+			if (!isStaleGatewayProcessAlive(staleGateway)) {
+				const degradedCloseMessage = `degraded-close: stale gateway close failed after its host pid was proven dead or missing: ${formatUnknownError(error)}`;
+				const staleGatewayIdentity = gatewayIdentityFor(staleGateway);
+				writeOpenClawZoneRuntimeLog(
+					`${degradedCloseMessage} for stale gateway vm '${staleGatewayIdentity?.vmId ?? staleGateway.vm.id}' host pid '${String(staleGatewayIdentity?.hostPid ?? 'missing')}'; continuing cold start for zone '${options.zone.id}'.`,
+				);
+				await recordLifecycleOperation({
+					errorMessage: degradedCloseMessage,
+					kind: 'vm-close-finished',
+					operationId: operationContext.operationId,
+					operationTrigger: operationContext.operationTrigger,
+					previousGateway: gatewayIdentityFor(staleGateway),
+				});
+				return;
+			}
 			staleGatewayPendingClose = staleGateway;
 			lastError = formatUnknownError(error);
 			lifecycleState = {
@@ -621,9 +651,10 @@ export function createOpenClawZoneRuntime(
 		operationContext?: GatewayLifecycleOperationContext,
 	): Promise<void> => {
 		const activeGateway = gateway;
+		const gatewayToClose = activeGateway ?? staleGatewayPendingClose;
 		const operationId = operationContext?.operationId ?? createOperationId('stop');
 		const operationTrigger = operationContext?.operationTrigger ?? 'operator-stop';
-		const previousGateway = operationContext?.previousGateway ?? activeGateway;
+		const previousGateway = operationContext?.previousGateway ?? gatewayToClose;
 		lifecycleState = {
 			kind: 'stopping',
 			next,
@@ -637,14 +668,17 @@ export function createOpenClawZoneRuntime(
 				operationTrigger,
 				previousGateway: gatewayIdentityFor(previousGateway),
 			});
-			if (activeGateway) {
+			if (gatewayToClose) {
+				if (gatewayToClose === staleGatewayPendingClose) {
+					staleGatewayPendingClose = undefined;
+				}
 				await recordLifecycleOperation({
 					kind: 'vm-close-started',
 					operationId,
 					operationTrigger,
 					previousGateway: gatewayIdentityFor(previousGateway),
 				});
-				await closeGatewayWithDeadline(activeGateway);
+				await closeGatewayWithDeadline(gatewayToClose);
 				await recordLifecycleOperation({
 					kind: 'vm-close-finished',
 					operationId,
@@ -663,9 +697,15 @@ export function createOpenClawZoneRuntime(
 			});
 			gateway = undefined;
 			bootedAt = undefined;
+			staleGatewayPendingClose = undefined;
 			lastError = undefined;
 			lifecycleState = { kind: 'stopped' };
 		} catch (error) {
+			if (gatewayToClose !== undefined) {
+				gateway = undefined;
+				bootedAt = undefined;
+				staleGatewayPendingClose = gatewayToClose;
+			}
 			lastError = formatUnknownError(error);
 			lifecycleState = {
 				coldStartEligible: false,
@@ -699,6 +739,13 @@ export function createOpenClawZoneRuntime(
 			operationId,
 			startedAtMs: options.now(),
 		};
+		if (staleGatewayPendingClose !== undefined) {
+			await closeStaleGatewayBeforeColdStart({
+				operationId,
+				operationTrigger,
+				previousGateway: staleGatewayPendingClose,
+			});
+		}
 		try {
 			await recordLifecycleOperation({
 				kind: 'start-requested',

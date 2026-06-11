@@ -650,6 +650,15 @@ describe('createOpenClawZoneRuntime', () => {
 		let gatewayStartCount = 0;
 		const closeTimeoutCallbacks: (() => void)[] = [];
 		const clearTimeoutImpl = vi.fn();
+		const closeGateway = vi
+			.fn<() => Promise<void>>()
+			.mockImplementationOnce(
+				async () =>
+					await new Promise<never>(() => {
+						// Close intentionally hangs; the runtime must release its lifecycle queue.
+					}),
+			)
+			.mockResolvedValueOnce(undefined);
 		const runtime = createOpenClawZoneRuntime({
 			clearTimeoutImpl,
 			closeGatewayTimeoutMs: 5_000,
@@ -670,15 +679,7 @@ describe('createOpenClawZoneRuntime', () => {
 						startCommand: 'start',
 					},
 					vm: {
-						close:
-							gatewayStartCount === 1
-								? vi.fn(
-										async () =>
-											await new Promise<never>(() => {
-												// Close intentionally hangs; the runtime must release its lifecycle queue.
-											}),
-									)
-								: vi.fn(async () => {}),
+						close: gatewayStartCount === 1 ? closeGateway : vi.fn(async () => {}),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
 							command: 'ssh root@127.0.0.1',
@@ -718,7 +719,8 @@ describe('createOpenClawZoneRuntime', () => {
 		await runtime.start();
 
 		expect(gatewayStartCount).toBe(2);
-		expect(clearTimeoutImpl).toHaveBeenCalledOnce();
+		expect(clearTimeoutImpl).toHaveBeenCalledTimes(2);
+		expect(closeGateway).toHaveBeenCalledTimes(2);
 		expect(runtime.getSnapshot()).toMatchObject({
 			gateway: { vm: { id: 'gateway-vm-2' } },
 			lifecycleState: 'running',

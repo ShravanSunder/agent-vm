@@ -1239,6 +1239,429 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		});
 	});
 
+	it('cold-starts after a stale gateway close failure when the stale host pid is dead', async () => {
+		const liveHostPids = new Set([48_284]);
+		const staleGatewayClose = vi.fn(async () => {
+			throw new Error('stale gateway close timed out');
+		});
+		const operationRecords: GatewayLifecycleOperationRecord[] = [];
+		let gatewayStartCount = 0;
+		const runtime = createOpenClawZoneRuntime({
+			appendGatewayLifecycleOperationRecord: vi.fn(async (record) => {
+				operationRecords.push(record);
+			}),
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: (pid) => liveHostPids.has(pid),
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (): Promise<GatewayZoneStartResult> => {
+				gatewayStartCount += 1;
+				const gatewayHostPid = gatewayStartCount === 1 ? 48_284 : 48_285;
+				liveHostPids.add(gatewayHostPid);
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: gatewayStartCount === 1 ? staleGatewayClose : vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => gatewayHostPid,
+						getVmInstance: vi.fn(),
+						id: gatewayStartCount === 1 ? 'gateway-vm-stale' : 'gateway-vm-replacement',
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		liveHostPids.delete(48_284);
+		expect(runtime.getSnapshot()).toMatchObject({
+			lastError: "vm-process-missing: Gateway VM host pid 48284 is not alive for zone 'shravan'.",
+			lifecycleState: 'failed',
+		});
+
+		await expect(runtime.restart()).resolves.toMatchObject({ leaseReleaseFailureCount: 0 });
+
+		expect(staleGatewayClose).toHaveBeenCalledOnce();
+		expect(gatewayStartCount).toBe(2);
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { id: 'gateway-vm-replacement' } },
+			lifecycleState: 'running',
+		});
+		expect(operationRecords).toContainEqual(
+			expect.objectContaining({
+				errorMessage: expect.stringContaining('degraded-close'),
+				kind: 'vm-close-finished',
+				previousGateway: expect.objectContaining({
+					hostPid: 48_284,
+					vmId: 'gateway-vm-stale',
+				}),
+			}),
+		);
+		expect(operationRecords).not.toContainEqual(
+			expect.objectContaining({
+				errorCode: 'owner-unsafe',
+			}),
+		);
+	});
+
+	it('preserves owner-unsafe recovery when stale gateway close fails and the stale pid is alive', async () => {
+		const closeGateway = vi.fn(async () => {
+			throw new Error('gateway close timed out');
+		});
+		let gatewayStartCount = 0;
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (): Promise<GatewayZoneStartResult> => {
+				gatewayStartCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.stop()).rejects.toThrow('gateway close timed out');
+		await expect(runtime.restart()).rejects.toThrow('gateway close timed out');
+
+		expect(closeGateway).toHaveBeenCalledTimes(2);
+		expect(gatewayStartCount).toBe(1);
+		expect(runtime.getLifecycleState()).toEqual({
+			coldStartEligible: false,
+			error: {
+				code: 'owner-unsafe',
+				message: 'gateway close timed out',
+			},
+			kind: 'failed',
+		});
+	});
+
+	it('preserves owner-unsafe recovery when stale gateway liveness is indeterminate', async () => {
+		const closeGateway = vi.fn(async () => {
+			throw new Error('gateway close timed out');
+		});
+		const isProcessAlive = vi.fn((): boolean => {
+			throw new Error('pid probe failed');
+		});
+		let gatewayStartCount = 0;
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (): Promise<GatewayZoneStartResult> => {
+				gatewayStartCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.stop()).rejects.toThrow('gateway close timed out');
+		await expect(runtime.restart()).rejects.toThrow('gateway close timed out');
+
+		expect(isProcessAlive).toHaveBeenCalledWith(48_284);
+		expect(closeGateway).toHaveBeenCalledTimes(2);
+		expect(gatewayStartCount).toBe(1);
+		expect(runtime.getLifecycleState()).toEqual({
+			coldStartEligible: false,
+			error: {
+				code: 'owner-unsafe',
+				message: 'gateway close timed out',
+			},
+			kind: 'failed',
+		});
+	});
+
+	it('retries a failed stop close through the stale gateway path on the next cold start', async () => {
+		const closeGateway = vi
+			.fn<() => Promise<void>>()
+			.mockRejectedValueOnce(new Error('gateway close timed out'))
+			.mockResolvedValueOnce(undefined);
+		let gatewayStartCount = 0;
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (): Promise<GatewayZoneStartResult> => {
+				gatewayStartCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.stop()).rejects.toThrow('gateway close timed out');
+		await expect(runtime.restart()).resolves.toMatchObject({ leaseReleaseFailureCount: 0 });
+
+		expect(closeGateway).toHaveBeenCalledTimes(2);
+		expect(gatewayStartCount).toBe(2);
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { id: 'gateway-vm-2' } },
+			lifecycleState: 'running',
+		});
+	});
+
+	it('keeps a failed stop owner-unsafe when a second stop cannot close the stale gateway', async () => {
+		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
+		const closeGateway = vi.fn(async () => {
+			throw new Error('gateway close timed out');
+		});
+		let gatewayStartCount = 0;
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord,
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (): Promise<GatewayZoneStartResult> => {
+				gatewayStartCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.stop()).rejects.toThrow('gateway close timed out');
+		await expect(runtime.stop()).rejects.toThrow('gateway close timed out');
+
+		expect(closeGateway).toHaveBeenCalledTimes(2);
+		expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
+		expect(gatewayStartCount).toBe(1);
+		expect(runtime.getLifecycleState()).toEqual({
+			coldStartEligible: false,
+			error: {
+				code: 'owner-unsafe',
+				message: 'gateway close timed out',
+			},
+			kind: 'failed',
+		});
+	});
+
+	it('does not purge during destroy when a failed stop leaves a live stale gateway', async () => {
+		const closeGateway = vi.fn(async () => {
+			throw new Error('gateway close timed out');
+		});
+		let destroyReachedPurge = false;
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (): Promise<GatewayZoneStartResult> => ({
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					startCommand: 'start',
+				},
+				vm: {
+					close: closeGateway,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 48_284,
+					getVmInstance: vi.fn(),
+					id: 'gateway-vm-stale-destroy',
+					setIngressRoutes: vi.fn(),
+				},
+				zone: getOpenClawZone(),
+			}),
+			runControllerDestroy: async (destroyOptions, dependencies) => {
+				await dependencies.stopGatewayZone(destroyOptions.zoneId);
+				destroyReachedPurge = destroyOptions.purge;
+				return {
+					ok: true,
+					purged: destroyOptions.purge,
+					zoneId: destroyOptions.zoneId,
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.stop()).rejects.toThrow('gateway close timed out');
+		await expect(runtime.destroy(true)).rejects.toThrow('gateway close timed out');
+
+		expect(closeGateway).toHaveBeenCalledTimes(2);
+		expect(destroyReachedPurge).toBe(false);
+	});
+
+	it('routes direct start through stale-close owner safety after a failed stop', async () => {
+		const closeGateway = vi.fn(async () => {
+			throw new Error('gateway close timed out');
+		});
+		let gatewayStartCount = 0;
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (): Promise<GatewayZoneStartResult> => {
+				gatewayStartCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.stop()).rejects.toThrow('gateway close timed out');
+		await expect(runtime.start()).rejects.toThrow('gateway close timed out');
+
+		expect(closeGateway).toHaveBeenCalledTimes(2);
+		expect(gatewayStartCount).toBe(1);
+		expect(runtime.getLifecycleState()).toEqual({
+			coldStartEligible: false,
+			error: {
+				code: 'owner-unsafe',
+				message: 'gateway close timed out',
+			},
+			kind: 'failed',
+		});
+	});
+
 	it('rejects normal gateway access while restart is closing the old gateway', async () => {
 		let gatewayStartCount = 0;
 		const oldGatewayCloseDeferred = createDeferredPromise<void>();

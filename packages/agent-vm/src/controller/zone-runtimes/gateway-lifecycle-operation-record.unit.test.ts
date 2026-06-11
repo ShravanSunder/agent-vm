@@ -74,6 +74,31 @@ describe('gateway lifecycle operation records', () => {
 		).resolves.toEqual(secondRecord);
 	});
 
+	it('round-trips a degraded vm-close-finished record with diagnostic error text', async () => {
+		await using tempDir = await createTemporaryDirectory();
+		const record = createOperationRecord({
+			errorMessage:
+				'degraded-close: stale gateway close failed after its host pid was proven dead or missing: close timed out',
+			kind: 'vm-close-finished',
+			operationId: 'op-restart',
+			operationTrigger: 'auto-recovery',
+			observedAtMs: 300,
+		});
+
+		await appendGatewayLifecycleOperationRecord({
+			record,
+			runtimeDir: tempDir.path,
+			zoneId: 'sunfam',
+		});
+
+		await expect(
+			readGatewayLifecycleOperationRecords({ runtimeDir: tempDir.path, zoneId: 'sunfam' }),
+		).resolves.toEqual([record]);
+		await expect(
+			readLatestGatewayLifecycleOperationRecord({ runtimeDir: tempDir.path, zoneId: 'sunfam' }),
+		).resolves.toEqual(record);
+	});
+
 	it('ignores a corrupt latest line while preserving the previous valid latest record', async () => {
 		await using tempDir = await createTemporaryDirectory();
 		const validRecord = createOperationRecord({
