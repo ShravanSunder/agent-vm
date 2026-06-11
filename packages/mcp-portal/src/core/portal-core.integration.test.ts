@@ -2,7 +2,7 @@ import type { ResolvedMcpPortalProfile } from '@agent-vm/config-contracts';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import { hashCallArguments } from '../portal-auth/hmac-token.js';
+import { hashCallArguments, signApprovalToken } from '../portal-auth/hmac-token.js';
 import { UpstreamMcpError } from '../upstream-mcp-errors.js';
 import { createPortalPolicyApprovalEvaluator } from './portal-approval-evaluator.js';
 import {
@@ -424,6 +424,85 @@ describe('portal core event stream', () => {
 			'[object Object]',
 		);
 		expect(callUpstreamTool).not.toHaveBeenCalled();
+
+		await core.close();
+	});
+
+	it('keeps approval-free siblings executable when a gated sibling fails input validation', async () => {
+		const callUpstreamTool = vi.fn(async () => ({ content: [{ text: 'listed', type: 'text' }] }));
+		const approval = createPortalPolicyApprovalEvaluator({
+			missingApprovalTokenDecision: { kind: 'approval_required', level: 'standard' },
+			resolveRecord: () => ({ hmacKey: Buffer.alloc(32, 1), profile: approvalProfile }),
+		});
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool,
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(
+					async () =>
+						[
+							{
+								inputSchema: { properties: {}, type: 'object' },
+								name: 'list_issues',
+							},
+							{
+								inputSchema: {
+									properties: { title: { type: 'string' } },
+									required: ['title'],
+									type: 'object',
+								},
+								name: 'create_issue',
+							},
+						] satisfies readonly Tool[],
+				),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'openclaw-trusted',
+		});
+
+		const result = await collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{ arguments: {}, id: 'list', namespace: 'linear', toolName: 'list_issues' },
+						{
+							arguments: {},
+							id: 'invalid-create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ requestId: 'list', status: 'success' }),
+				expect.objectContaining({
+					error: expect.objectContaining({ code: 'input_validation' }),
+					requestId: 'invalid-create',
+					status: 'failed',
+				}),
+			]),
+		);
+		expect(callUpstreamTool).toHaveBeenCalledTimes(1);
+		expect(callUpstreamTool).toHaveBeenCalledWith(
+			expect.objectContaining({ requestId: 'list', toolName: 'list_issues' }),
+		);
 
 		await core.close();
 	});
@@ -861,6 +940,92 @@ describe('portal core event stream', () => {
 				toolName: 'create_issue_with_default',
 			},
 		});
+
+		await core.close();
+	});
+
+	it('accepts approval tokens prepared from coerced validated arguments', async () => {
+		const issuedAtMs = 1_800_000_000_000;
+		const hmacKey = Buffer.alloc(32, 1);
+		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
+		const approval = createPortalPolicyApprovalEvaluator({
+			missingApprovalTokenDecision: { kind: 'approval_required', level: 'standard' },
+			nowMs: () => issuedAtMs + 1_000,
+			resolveRecord: () => ({ hmacKey, profile: approvalProfile }),
+		});
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool,
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(
+					async () =>
+						[
+							{
+								inputSchema: {
+									properties: { estimate: { type: 'integer' } },
+									required: ['estimate'],
+									type: 'object',
+								},
+								name: 'create_issue',
+							},
+						] satisfies readonly Tool[],
+				),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'openclaw-trusted',
+		});
+		const callInput = {
+			calls: [
+				{
+					arguments: { estimate: '42' },
+					id: 'coerced',
+					namespace: 'linear',
+					toolName: 'create_issue',
+				},
+			],
+		};
+
+		const callDigests = await core.approval.prepareCallDigests({ input: callInput, scope });
+		const coercedCallDigest = callDigests?.coerced;
+		if (coercedCallDigest === undefined) {
+			throw new Error('core did not prepare coerced approval call digest');
+		}
+		expect(coercedCallDigest.argumentsHash).toBe(hashCallArguments({ estimate: 42 }));
+		expect(coercedCallDigest.argumentsHash).not.toBe(hashCallArguments({ estimate: '42' }));
+		const token = signApprovalToken({
+			agentId: 'agent-a',
+			calls: [coercedCallDigest],
+			expiresAtMs: issuedAtMs + 60_000,
+			issuedAtMs,
+			jti: 'approval-token-coercion-regression',
+			key: hmacKey,
+		});
+
+		const result = await core.collectPortalCoreResult(
+			core.callStream({
+				input: { ...callInput, portalApprovalToken: token },
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual([
+			expect.objectContaining({ requestId: 'coerced', status: 'success' }),
+		]);
+		expect(callUpstreamTool).toHaveBeenCalledWith(
+			expect.objectContaining({ arguments: { estimate: 42 } }),
+		);
 
 		await core.close();
 	});

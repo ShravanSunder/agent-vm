@@ -151,6 +151,8 @@ interface PendingClient {
 }
 
 const defaultConnectionTimeoutMs = 30_000;
+const maxListToolsPages = 100;
+const maxListToolsCount = 10_000;
 const defaultMaxResponseBytes = 4 * 1_024 * 1_024;
 const inheritedStdioRuntimeEnvNames = [
 	'NODE_EXTRA_CA_CERTS',
@@ -398,18 +400,37 @@ async function listAllTools(
 	},
 	timeoutMs: number,
 ): Promise<readonly Tool[]> {
-	const result = await withTimeout(
-		client.listTools(cursor ? { cursor } : undefined, { signal: timeoutAbort.signal }),
-		{
-			onTimeout: timeoutAbort.abortTimeout,
-			operation: 'MCP listTools',
-			timeoutMs,
-		},
-	);
-	const nextTools = [...collectedTools, ...result.tools];
-	return result.nextCursor
-		? listAllTools(client, result.nextCursor, nextTools, timeoutAbort, timeoutMs)
-		: nextTools;
+	const tools: Tool[] = [...collectedTools];
+	let nextCursor = cursor;
+	for (let pageCount = 1; pageCount <= maxListToolsPages; pageCount += 1) {
+		// oxlint-disable-next-line eslint/no-await-in-loop -- MCP pagination is cursor-ordered.
+		const result = await withTimeout(
+			client.listTools(nextCursor ? { cursor: nextCursor } : undefined, {
+				signal: timeoutAbort.signal,
+			}),
+			{
+				onTimeout: timeoutAbort.abortTimeout,
+				operation: 'MCP listTools',
+				timeoutMs,
+			},
+		);
+		if (tools.length + result.tools.length > maxListToolsCount) {
+			throw new Error(
+				`exceeded MCP listTools tool cap of ${String(maxListToolsCount)} while discovering upstream tools`,
+			);
+		}
+		tools.push(...result.tools);
+		if (!result.nextCursor) {
+			return tools;
+		}
+		if (pageCount === maxListToolsPages) {
+			throw new Error(
+				`exceeded MCP listTools page cap of ${String(maxListToolsPages)} while discovering upstream tools`,
+			);
+		}
+		nextCursor = result.nextCursor;
+	}
+	throw new Error('unreachable MCP listTools pagination state');
 }
 
 async function closeClientAfterFailure(client: UpstreamMcpClientLike | null): Promise<void> {

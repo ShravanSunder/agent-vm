@@ -221,7 +221,8 @@ describe('portal sessions', () => {
 		expect(session.catalog.tools.map((tool) => tool.toolName)).toEqual(['create_issue']);
 	});
 
-	it('keeps healthy namespaces available but does not cache degraded discovery results', async () => {
+	it('caches degraded discovery results for a short TTL to avoid hammering healthy upstreams', async () => {
+		let now = 0;
 		let readwiseUnavailable = true;
 		const listTools = vi.fn(
 			async ({ namespace }: { readonly namespace: string }): Promise<readonly Tool[]> => {
@@ -243,6 +244,7 @@ describe('portal sessions', () => {
 				hiddenToolsByAgent: {},
 			},
 			catalogTtlMs: 60_000,
+			now: () => now,
 			runtime: {
 				closeAgentScope: vi.fn(),
 				listTools,
@@ -256,7 +258,15 @@ describe('portal sessions', () => {
 				agentScopeId: 'agent-scope-a',
 			}),
 		);
+		now = 5_000;
+		const cachedDegradedSession = await manager.getSession(
+			createPortalAgentIdentity({
+				agentId: 'agent-a',
+				agentScopeId: 'agent-scope-a',
+			}),
+		);
 		readwiseUnavailable = false;
+		now = 10_001;
 		const recoveredSession = await manager.getSession(
 			createPortalAgentIdentity({
 				agentId: 'agent-a',
@@ -274,13 +284,159 @@ describe('portal sessions', () => {
 		expect(
 			degradedSession.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`),
 		).toEqual(['linear.create_issue']);
+		expect(cachedDegradedSession.catalog.sourceHash).toBe(degradedSession.catalog.sourceHash);
+		expect(cachedDegradedSession.catalog.discoveryFailures).toEqual(
+			degradedSession.catalog.discoveryFailures,
+		);
 		expect(
 			recoveredSession.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`),
 		).toEqual(['linear.create_issue', 'readwise.search_highlights']);
 		expect(listTools).toHaveBeenCalledTimes(4);
 	});
 
-	it('includes configured discovery diagnostics in the catalog snapshot', async () => {
+	it('starts degraded cache TTL after slow discovery finishes', async () => {
+		let now = 0;
+		const listTools = vi.fn(
+			async ({ namespace }: { readonly namespace: string }): Promise<readonly Tool[]> => {
+				if (namespace === 'readwise') {
+					now = 30_000;
+					throw new Error('readwise timeout');
+				}
+				return [{ inputSchema: { type: 'object' }, name: 'create_issue' } satisfies Tool];
+			},
+		);
+		const manager = createPortalSessionManager({
+			accessPolicy: {
+				enabledNamespaces: ['linear', 'readwise'],
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			catalogTtlMs: 60_000,
+			now: () => now,
+			runtime: { closeAgentScope: vi.fn(), listTools },
+			upstreamNamespaces: ['linear', 'readwise'],
+		});
+		const identity = createPortalAgentIdentity({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+		});
+
+		const degradedSession = await manager.getSession(identity);
+		const cachedDegradedSession = await manager.getSession(identity);
+
+		expect(cachedDegradedSession.catalog.sourceHash).toBe(degradedSession.catalog.sourceHash);
+		expect(cachedDegradedSession.catalog.discoveryFailures).toEqual(
+			degradedSession.catalog.discoveryFailures,
+		);
+		expect(listTools).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not cache sessions when every allowed namespace fails discovery', async () => {
+		let upstreamUnavailable = true;
+		const listTools = vi.fn(
+			async ({ namespace }: { readonly namespace: string }): Promise<readonly Tool[]> => {
+				if (upstreamUnavailable) {
+					throw new Error(`${namespace} unavailable`);
+				}
+				return [
+					{
+						inputSchema: { type: 'object' },
+						name: namespace === 'readwise' ? 'search_highlights' : 'create_issue',
+					},
+				];
+			},
+		);
+		const manager = createPortalSessionManager({
+			accessPolicy: {
+				enabledNamespaces: ['linear', 'readwise'],
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			catalogTtlMs: 60_000,
+			runtime: { closeAgentScope: vi.fn(), listTools },
+			upstreamNamespaces: ['linear', 'readwise'],
+		});
+		const identity = createPortalAgentIdentity({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+		});
+
+		const failedSession = await manager.getSession(identity);
+		upstreamUnavailable = false;
+		const recoveredSession = await manager.getSession(identity);
+
+		expect(failedSession.catalog.tools).toEqual([]);
+		expect(failedSession.catalog.discoveryFailures).toHaveLength(2);
+		expect(
+			recoveredSession.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`),
+		).toEqual(['linear.create_issue', 'readwise.search_highlights']);
+		expect(listTools).toHaveBeenCalledTimes(4);
+	});
+
+	it('does not cache a degraded session that finishes after agent scope invalidation', async () => {
+		const firstListTools = createDeferred<readonly Tool[]>();
+		const closeAgentScope = vi.fn();
+		let readwiseUnavailable = true;
+		let linearCallCount = 0;
+		const listTools = vi.fn(
+			async ({ namespace }: { readonly namespace: string }): Promise<readonly Tool[]> => {
+				if (namespace === 'linear') {
+					linearCallCount += 1;
+					if (linearCallCount === 1) {
+						return await firstListTools.promise;
+					}
+					return [{ inputSchema: { type: 'object' }, name: 'fresh_tool' } satisfies Tool];
+				}
+				if (readwiseUnavailable) {
+					throw new Error('readwise unavailable');
+				}
+				return [{ inputSchema: { type: 'object' }, name: 'search_highlights' } satisfies Tool];
+			},
+		);
+		const manager = createPortalSessionManager({
+			accessPolicy: {
+				enabledNamespaces: ['linear', 'readwise'],
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			catalogTtlMs: 60_000,
+			runtime: { closeAgentScope, listTools },
+			upstreamNamespaces: ['linear', 'readwise'],
+		});
+		const identity = createPortalAgentIdentity({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+		});
+
+		const staleSessionPromise = manager.getSession(identity);
+		await vi.waitFor(() => expect(listTools).toHaveBeenCalledTimes(2));
+		await manager.invalidateAgentScope('agent-scope-a');
+		firstListTools.resolve([{ inputSchema: { type: 'object' }, name: 'stale_tool' }]);
+		await expect(staleSessionPromise).resolves.toMatchObject({
+			catalog: { tools: [expect.objectContaining({ toolName: 'stale_tool' })] },
+		});
+
+		readwiseUnavailable = false;
+		await expect(manager.getSession(identity)).resolves.toMatchObject({
+			catalog: {
+				discoveryFailures: [],
+				tools: [
+					expect.objectContaining({ toolName: 'fresh_tool' }),
+					expect.objectContaining({ toolName: 'search_highlights' }),
+				],
+			},
+		});
+		expect(closeAgentScope).toHaveBeenCalledWith('agent-scope-a');
+		expect(listTools).toHaveBeenCalledTimes(4);
+	});
+
+	it('includes configured discovery diagnostics without shortening healthy catalog TTL', async () => {
+		let now = 0;
+		const listTools = vi.fn(
+			async (): Promise<readonly Tool[]> => [
+				{ inputSchema: { type: 'object' }, name: 'create_issue' },
+			],
+		);
 		const manager = createPortalSessionManager({
 			accessPolicy: {
 				enabledNamespaces: ['linear'],
@@ -295,13 +451,10 @@ describe('portal sessions', () => {
 					namespace: 'github',
 				},
 			],
+			now: () => now,
 			runtime: {
 				closeAgentScope: vi.fn(),
-				listTools: vi.fn(
-					async (): Promise<readonly Tool[]> => [
-						{ inputSchema: { type: 'object' }, name: 'create_issue' },
-					],
-				),
+				listTools,
 			},
 			upstreamNamespaces: ['linear'],
 		});
@@ -320,6 +473,12 @@ describe('portal sessions', () => {
 		expect(session.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`)).toEqual([
 			'linear.create_issue',
 		]);
+
+		now = 10_001;
+		await manager.getSession(
+			createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
+		);
+		expect(listTools).toHaveBeenCalledTimes(1);
 	});
 
 	it('preserves structured upstream discovery diagnostics', async () => {

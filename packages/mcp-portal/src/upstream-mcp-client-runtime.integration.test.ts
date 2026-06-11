@@ -84,6 +84,75 @@ describe('upstream MCP client runtime', () => {
 		expect(client.listTools).toHaveBeenNthCalledWith(2, { cursor: 'next' }, expect.any(Object));
 	});
 
+	it('wraps endless listTools pagination as structured discovery failure', async () => {
+		let pageCount = 0;
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => {
+				pageCount += 1;
+				return {
+					nextCursor: `cursor-${String(pageCount)}`,
+					tools: [{ inputSchema: { type: 'object' }, name: 'looped' } satisfies Tool],
+				};
+			}),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: vi.fn(() => ({})),
+			servers: [createServer()],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toMatchObject({
+			details: {
+				causeMessage: expect.stringContaining('exceeded MCP listTools page cap'),
+				kind: 'upstream_mcp_failed',
+				namespace: 'linear',
+				phase: 'list_tools',
+				transport: { kind: 'streamable-http', url: 'https://mcp.example.test' },
+			},
+		});
+		expect(client.listTools).toHaveBeenCalledTimes(100);
+	});
+
+	it('wraps oversized single-page listTools catalogs as structured discovery failure', async () => {
+		const oversizedToolPage = Array.from(
+			{ length: 200_000 },
+			() =>
+				({
+					inputSchema: { type: 'object' },
+					name: 'tool',
+				}) satisfies Tool,
+		);
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({
+				tools: oversizedToolPage,
+			})),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: vi.fn(() => ({})),
+			servers: [createServer()],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toMatchObject({
+			details: {
+				causeMessage: expect.stringContaining('exceeded MCP listTools tool cap'),
+				kind: 'upstream_mcp_failed',
+				namespace: 'linear',
+				phase: 'list_tools',
+			},
+		});
+	});
+
 	it('preserves gateway Node runtime env for stdio MCP servers', async () => {
 		vi.stubEnv('NODE_EXTRA_CA_CERTS', '/run/gondolin/ca-certificates.crt');
 		vi.stubEnv('NODE_OPTIONS', '--dns-result-order=ipv4first');

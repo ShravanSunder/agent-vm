@@ -425,7 +425,7 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 		'before_tool_call',
 		createBeforeToolCallHandler({
 			logger,
-			resolveApprovalTokenCallDigests: async ({ agentId, approvalCalls, context, params }) => {
+			resolveApprovalTokenCallDigests: async ({ agentId, context, params }) => {
 				const core = await getCore();
 				const scope = core.createAgentScope({
 					agentId,
@@ -436,17 +436,9 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 				});
 				const digestsByCallId = await core.approval.prepareCallDigests({ input: params, scope });
 				if (digestsByCallId === null) {
-					throw new Error('MCP Portal core could not prepare approval token digests.');
+					return null;
 				}
-				return approvalCalls.map((call) => {
-					const digest = digestsByCallId[call.id];
-					if (digest === undefined) {
-						throw new Error(
-							`MCP Portal core did not prepare an approval token digest for call '${call.id}'.`,
-						);
-					}
-					return digest;
-				});
+				return digestsByCallId;
 			},
 			runtimeState,
 		}),
