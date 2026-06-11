@@ -4,8 +4,8 @@ Date: 2026-06-11
 Branch: `improve/plan-14-mcp-portal-approval-discovery`
 Base branch: `improve-v1`
 Implementation commit: `6c72c0b fix: harden mcp portal approvals and discovery`
-Push state: not pushed yet
-PR URL: pending push
+Push state: pushed to `origin/improve/plan-14-mcp-portal-approval-discovery`
+PR URL: https://github.com/ShravanSunder/agent-vm/pull/new/improve/plan-14-mcp-portal-approval-discovery
 
 ## Scope
 
