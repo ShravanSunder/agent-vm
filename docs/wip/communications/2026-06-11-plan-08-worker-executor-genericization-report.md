@@ -157,4 +157,4 @@ Plan 08 task 3 remains a user decision:
 2. Hard-cutover to `getSessionRef()`, updating all call sites and event/task
    consumers in the same pass with no compatibility alias.
 
-No branch push has been performed yet at the time this report was written.
+Branch pushed to `origin/improve/plan-08-worker-executor-genericization`.
