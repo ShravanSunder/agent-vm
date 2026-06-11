@@ -182,6 +182,48 @@ describe('createZoneBackupManager', () => {
 		expect(fs.readFileSync(path.join(zoneFilesDir, 'file.txt'), 'utf8')).toBe('content');
 	});
 
+	it('restores through a staged swap and retains pre-restore state', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-staged-restore-'));
+		const sourceStateDir = path.join(tmpDir, 'source-state');
+		const restoreStateDir = path.join(tmpDir, 'restore', 'state');
+		const backupDir = path.join(tmpDir, 'backups');
+		const cacheDir = path.join(tmpDir, 'cache');
+		const runtimeDir = path.join(tmpDir, 'runtime');
+		fs.mkdirSync(sourceStateDir, { recursive: true });
+		fs.mkdirSync(restoreStateDir, { recursive: true });
+		fs.writeFileSync(path.join(sourceStateDir, 'data.json'), '{"key":"new"}');
+		fs.writeFileSync(path.join(restoreStateDir, 'data.json'), '{"key":"old"}');
+
+		const manager = createZoneBackupManager(noopEncryption);
+		const backup = await manager.createBackup({
+			zoneId: 'shravan',
+			cacheDir,
+			stateDir: sourceStateDir,
+			backupDir,
+			runtimeDir,
+		});
+
+		const restoreResult = await manager.restoreBackup({
+			backupPath: backup.backupPath,
+			stateDir: restoreStateDir,
+		});
+
+		expect(restoreResult.zoneId).toBe('shravan');
+		expect(fs.readFileSync(path.join(restoreStateDir, 'data.json'), 'utf8')).toBe('{"key":"new"}');
+
+		const restoreParent = path.dirname(restoreStateDir);
+		const preRestoreDirectories = fs
+			.readdirSync(restoreParent)
+			.filter((entryName) => entryName.startsWith('state.pre-restore-'));
+		expect(preRestoreDirectories).toHaveLength(1);
+		expect(
+			fs.readFileSync(
+				path.join(restoreParent, preRestoreDirectories[0] ?? '', 'data.json'),
+				'utf8',
+			),
+		).toBe('{"key":"old"}');
+	});
+
 	it('restores state and zone-files to different parent directories', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-cross-parent-'));
 
@@ -231,9 +273,16 @@ describe('createZoneBackupManager', () => {
 			'zone-files-data',
 		);
 
-		// Nothing leaked into sibling directories
-		expect(fs.readdirSync(path.join(tmpDir, 'restore-x'))).toEqual(['my-state']);
-		expect(fs.readdirSync(path.join(tmpDir, 'restore-y'))).toEqual(['my-zone-files']);
+		// Only the restored directory and its intentional pre-restore recovery copy
+		// land in the selected parents.
+		expect(fs.readdirSync(path.join(tmpDir, 'restore-x')).toSorted()).toEqual([
+			'my-state',
+			expect.stringMatching(/^my-state\.pre-restore-/u),
+		]);
+		expect(fs.readdirSync(path.join(tmpDir, 'restore-y')).toSorted()).toEqual([
+			'my-zone-files',
+			expect.stringMatching(/^my-zone-files\.pre-restore-/u),
+		]);
 	});
 
 	it('lists backups filtered by zone using double-underscore delimiter', () => {
@@ -321,8 +370,9 @@ describe('createZoneBackupManager', () => {
 		const backupPath = path.join(tmpDir, 'shravan__2026-04-06T10-00-00.tar.age');
 		fs.mkdirSync(path.join(extractRoot, 'state'), { recursive: true });
 		fs.mkdirSync(stateDir, { recursive: true });
+		fs.writeFileSync(path.join(stateDir, 'data.json'), '{"key":"old"}');
 		fs.writeFileSync(path.join(extractRoot, 'manifest.json'), '{"zoneId":""}');
-		fs.writeFileSync(path.join(extractRoot, 'state', 'data.json'), '{}');
+		fs.writeFileSync(path.join(extractRoot, 'state', 'data.json'), '{"key":"new"}');
 		execFileSync('tar', ['cf', backupPath, '-C', extractRoot, '.']);
 
 		const manager = createZoneBackupManager(noopEncryption);
@@ -333,6 +383,7 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 			}),
 		).rejects.toThrow(/manifest.*zoneId/u);
+		expect(fs.readFileSync(path.join(stateDir, 'data.json'), 'utf8')).toBe('{"key":"old"}');
 	});
 
 	it('returns empty list for non-existent backup directory', () => {

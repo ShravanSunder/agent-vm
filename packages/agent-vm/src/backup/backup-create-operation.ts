@@ -11,7 +11,19 @@ import {
 import { buildBackupPaths } from './backup-archive-layout.js';
 import type { BackupEncryption, BackupResult } from './backup-manager.js';
 
-const execFileAsync = promisify(execFile);
+export type BackupOperationExecFileAsync = (
+	command: string,
+	args: readonly string[],
+) => Promise<void>;
+
+const realExecFileAsync = promisify(execFile);
+
+const defaultExecFileAsync: BackupOperationExecFileAsync = async (
+	command: string,
+	args: readonly string[],
+): Promise<void> => {
+	await realExecFileAsync(command, [...args]);
+};
 
 export async function createEncryptedBackup(options: {
 	readonly backupDir: string;
@@ -22,8 +34,10 @@ export async function createEncryptedBackup(options: {
 	readonly zoneFilesDir?: string;
 	readonly zoneGit?: ZoneGitReadConfig;
 	readonly zoneId: string;
+	readonly execFileAsync?: BackupOperationExecFileAsync;
 }): Promise<BackupResult> {
-	assertRuntimeDirOutsideBackupInputs({
+	const execFileAsync = options.execFileAsync ?? defaultExecFileAsync;
+	assertBackupPathBoundaries({
 		cacheDir: options.cacheDir,
 		runtimeDir: options.runtimeDir,
 		stateDir: options.stateDir,
@@ -42,6 +56,9 @@ export async function createEncryptedBackup(options: {
 	await fs.mkdir(options.backupDir, { recursive: true });
 
 	const stagingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-stage-'));
+	const archiveDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-archive-'));
+	const plaintextTarPath = path.join(archiveDirectory, path.basename(backupPaths.tarPath));
+	let encryptedStagingDirectory: string | null = null;
 	try {
 		await execFileAsync('cp', ['-a', options.stateDir, path.join(stagingDirectory, 'state')]);
 		if (options.zoneFilesDir !== undefined) {
@@ -65,13 +82,21 @@ export async function createEncryptedBackup(options: {
 			options.zoneFilesDir !== undefined
 				? ['state', 'zone-files', 'manifest.json']
 				: ['state', 'manifest.json'];
-		await execFileAsync('tar', ['cf', backupPaths.tarPath, '-C', stagingDirectory, ...tarEntries]);
+		await execFileAsync('tar', ['cf', plaintextTarPath, '-C', stagingDirectory, ...tarEntries]);
+		encryptedStagingDirectory = await fs.mkdtemp(path.join(options.backupDir, '.backup-encrypt-'));
+		const temporaryEncryptedPath = path.join(
+			encryptedStagingDirectory,
+			path.basename(backupPaths.encryptedPath),
+		);
+		await options.encryption.encrypt(plaintextTarPath, temporaryEncryptedPath);
+		await fs.rename(temporaryEncryptedPath, backupPaths.encryptedPath);
 	} finally {
 		await fs.rm(stagingDirectory, { recursive: true, force: true });
+		await fs.rm(archiveDirectory, { recursive: true, force: true });
+		if (encryptedStagingDirectory !== null) {
+			await fs.rm(encryptedStagingDirectory, { recursive: true, force: true });
+		}
 	}
-
-	await options.encryption.encrypt(backupPaths.tarPath, backupPaths.encryptedPath);
-	await fs.unlink(backupPaths.tarPath);
 
 	return {
 		backupPath: backupPaths.encryptedPath,
@@ -129,7 +154,7 @@ function assertNoPathOverlap(options: {
 	}
 }
 
-function assertRuntimeDirOutsideBackupInputs(options: {
+function assertBackupPathBoundaries(options: {
 	readonly cacheDir: string;
 	readonly runtimeDir: string;
 	readonly stateDir: string;

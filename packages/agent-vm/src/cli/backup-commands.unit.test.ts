@@ -2,8 +2,10 @@ import type { SecretRef } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import type { GatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
+import type { ProcessIdentity } from '../shared/managed-vm-process.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
-import { runBackupCommand } from './backup-commands.js';
+import { assertRestoreTargetNotLive, runBackupCommand } from './backup-commands.js';
 
 function createBackupSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
@@ -84,6 +86,34 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 		},
 		{ systemConfigPath: './config/system.json' },
 	);
+}
+
+const managedProcessIdentity = {
+	command: 'qemu-system-aarch64 -m 2G',
+	lstart: 'Thu Jun 11 10:00:00 2026',
+} satisfies ProcessIdentity;
+
+const nonManagedProcessIdentity = {
+	command: '/usr/bin/ssh-agent',
+	lstart: 'Thu Jun 11 10:00:00 2026',
+} satisfies ProcessIdentity;
+
+function createRuntimeRecord(processIdentity: ProcessIdentity): GatewayRuntimeRecord {
+	return {
+		configPath: '/project/config/system.json',
+		controllerPort: 18800,
+		createdAt: '2026-06-11T10:00:00.000Z',
+		gatewayType: 'openclaw',
+		guestListenPort: 3000,
+		ingressPort: 18791,
+		processIdentity,
+		projectNamespace: 'claw-tests-a1b2c3d4',
+		qemuPid: 12345,
+		schemaVersion: 1,
+		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+		vmId: 'gateway-vm-123',
+		zoneId: 'shravan',
+	};
 }
 
 describe('runBackupCommand', () => {
@@ -293,7 +323,7 @@ describe('runBackupCommand', () => {
 				restArguments: ['restore', '--zone', 'shravan'],
 				systemConfig,
 			}),
-		).rejects.toThrow('Usage: agent-vm backup restore <path> [--zone <id>]');
+		).rejects.toThrow('Usage: agent-vm backup restore <path> [--zone <id>] [--force]');
 	});
 
 	it('restores a backup into the target zone files and state directories', async () => {
@@ -357,7 +387,7 @@ describe('runBackupCommand', () => {
 					},
 				},
 			},
-			restArguments: ['restore', '/tmp/backup.tar.age', '--zone', 'shravan'],
+			restArguments: ['restore', '/tmp/backup.tar.age', '--force', '--zone', 'shravan'],
 			systemConfig,
 		});
 
@@ -452,5 +482,152 @@ describe('runBackupCommand', () => {
 			backupDir: '/var/agent-vm-backups/shravan',
 			zoneId: 'shravan',
 		});
+	});
+
+	it('refuses restore when the gateway runtime record still identifies a live VM process', async () => {
+		const runtimeRecord = createRuntimeRecord(managedProcessIdentity);
+
+		await expect(
+			assertRestoreTargetNotLive({
+				force: false,
+				loadGatewayRuntimeRecordResult: async () => ({
+					kind: 'loaded',
+					path: '/state/shravan/gateway-runtime.json',
+					record: runtimeRecord,
+				}),
+				readProcessIdentity: async () => managedProcessIdentity,
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			/Refusing to restore zone 'shravan' while gateway pid 12345 is still running/u,
+		);
+	});
+
+	it('requires --force when the gateway runtime record is missing', async () => {
+		await expect(
+			assertRestoreTargetNotLive({
+				force: false,
+				loadGatewayRuntimeRecordResult: async () => ({
+					kind: 'missing',
+					path: '/state/shravan/gateway-runtime.json',
+				}),
+				readProcessIdentity: async () => null,
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			/Cannot prove zone 'shravan' is stopped before restore because gateway runtime record '\/state\/shravan\/gateway-runtime\.json' is missing/u,
+		);
+
+		await expect(
+			assertRestoreTargetNotLive({
+				force: true,
+				loadGatewayRuntimeRecordResult: async () => ({
+					kind: 'missing',
+					path: '/state/shravan/gateway-runtime.json',
+				}),
+				readProcessIdentity: async () => null,
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	it('requires --force when the gateway runtime record is malformed', async () => {
+		await expect(
+			assertRestoreTargetNotLive({
+				force: false,
+				loadGatewayRuntimeRecordResult: async () => ({
+					error: new Error('invalid runtime record'),
+					kind: 'parse-error',
+					path: '/state/shravan/gateway-runtime.json',
+				}),
+				readProcessIdentity: async () => null,
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			/gateway runtime record '\/state\/shravan\/gateway-runtime\.json' is malformed/u,
+		);
+
+		await expect(
+			assertRestoreTargetNotLive({
+				force: true,
+				loadGatewayRuntimeRecordResult: async () => ({
+					error: new Error('invalid runtime record'),
+					kind: 'parse-error',
+					path: '/state/shravan/gateway-runtime.json',
+				}),
+				readProcessIdentity: async () => null,
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	it('requires --force when a matching runtime record points to a non-managed process', async () => {
+		const runtimeRecord = createRuntimeRecord(nonManagedProcessIdentity);
+
+		await expect(
+			assertRestoreTargetNotLive({
+				force: false,
+				loadGatewayRuntimeRecordResult: async () => ({
+					kind: 'loaded',
+					path: '/state/shravan/gateway-runtime.json',
+					record: runtimeRecord,
+				}),
+				readProcessIdentity: async () => nonManagedProcessIdentity,
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(/the command is not a managed VM process/u);
+
+		await expect(
+			assertRestoreTargetNotLive({
+				force: true,
+				loadGatewayRuntimeRecordResult: async () => ({
+					kind: 'loaded',
+					path: '/state/shravan/gateway-runtime.json',
+					record: runtimeRecord,
+				}),
+				readProcessIdentity: async () => nonManagedProcessIdentity,
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	it('allows restore when the recorded pid is gone or has a different identity', async () => {
+		await expect(
+			assertRestoreTargetNotLive({
+				force: false,
+				loadGatewayRuntimeRecordResult: async () => ({
+					kind: 'loaded',
+					path: '/state/shravan/gateway-runtime.json',
+					record: createRuntimeRecord(managedProcessIdentity),
+				}),
+				readProcessIdentity: async () => null,
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).resolves.toBeUndefined();
+
+		await expect(
+			assertRestoreTargetNotLive({
+				force: false,
+				loadGatewayRuntimeRecordResult: async () => ({
+					kind: 'loaded',
+					path: '/state/shravan/gateway-runtime.json',
+					record: createRuntimeRecord(managedProcessIdentity),
+				}),
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-aarch64 -m 2G',
+					lstart: 'Thu Jun 11 10:01:00 2026',
+				}),
+				stateDir: '/state/shravan',
+				zoneId: 'shravan',
+			}),
+		).resolves.toBeUndefined();
 	});
 });

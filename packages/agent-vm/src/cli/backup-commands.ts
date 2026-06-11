@@ -3,6 +3,16 @@ import { resolveControllerGithubToken } from '../controller/controller-runtime-s
 import type { ZoneGitReadConfig } from '../controller/zone-git/zone-git-operations.js';
 import { isOpenClawZoneGitConfigured } from '../controller/zone-git/zone-git-paths.js';
 import {
+	loadGatewayRuntimeRecordResult,
+	type GatewayRuntimeRecordLoadResult,
+} from '../gateway/gateway-runtime-record.js';
+import {
+	isManagedVmProcess,
+	processIdentityMatches,
+	readProcessIdentity,
+	type ProcessIdentity,
+} from '../shared/managed-vm-process.js';
+import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
 	type CliIo,
@@ -16,6 +26,64 @@ interface RunBackupCommandOptions {
 	readonly io: CliIo;
 	readonly restArguments: readonly string[];
 	readonly systemConfig: SystemConfig;
+}
+
+interface AssertRestoreTargetNotLiveOptions {
+	readonly force: boolean;
+	readonly loadGatewayRuntimeRecordResult?: (
+		stateDirectory: string,
+	) => Promise<GatewayRuntimeRecordLoadResult>;
+	readonly readProcessIdentity?: (pid: number) => Promise<ProcessIdentity | null>;
+	readonly stateDir: string;
+	readonly zoneId: string;
+}
+
+export async function assertRestoreTargetNotLive(
+	options: AssertRestoreTargetNotLiveOptions,
+): Promise<void> {
+	const runtimeRecordResult = await (
+		options.loadGatewayRuntimeRecordResult ?? loadGatewayRuntimeRecordResult
+	)(options.stateDir);
+	if (runtimeRecordResult.kind === 'missing') {
+		if (options.force) {
+			return;
+		}
+		throw new Error(
+			`Cannot prove zone '${options.zoneId}' is stopped before restore because gateway runtime record '${runtimeRecordResult.path}' is missing. Stop the gateway and rerun with --force if you have independently verified it is not running.`,
+		);
+	}
+	if (runtimeRecordResult.kind === 'parse-error') {
+		if (options.force) {
+			return;
+		}
+		throw new Error(
+			`Cannot prove zone '${options.zoneId}' is stopped before restore because gateway runtime record '${runtimeRecordResult.path}' is malformed. Stop the gateway and rerun with --force if you have independently verified it is not running.`,
+		);
+	}
+
+	const runtimeRecord = runtimeRecordResult.record;
+	const currentIdentity = await (options.readProcessIdentity ?? readProcessIdentity)(
+		runtimeRecord.qemuPid,
+	);
+	if (currentIdentity === null) {
+		return;
+	}
+	if (
+		processIdentityMatches(runtimeRecord.processIdentity, currentIdentity) &&
+		isManagedVmProcess(currentIdentity.command)
+	) {
+		throw new Error(
+			`Refusing to restore zone '${options.zoneId}' while gateway pid ${String(runtimeRecord.qemuPid)} is still running. Stop the gateway before restore so live state cannot be mixed with restored state.`,
+		);
+	}
+	if (processIdentityMatches(runtimeRecord.processIdentity, currentIdentity)) {
+		if (options.force) {
+			return;
+		}
+		throw new Error(
+			`Cannot prove zone '${options.zoneId}' is safe to restore: gateway runtime record '${runtimeRecordResult.path}' still matches pid ${String(runtimeRecord.qemuPid)}, but the command is not a managed VM process. Rerun with --force only after independently verifying the zone is stopped.`,
+		);
+	}
 }
 
 export async function runBackupCommand(options: RunBackupCommandOptions): Promise<void> {
@@ -82,8 +150,13 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 	if (backupSubcommand === 'restore') {
 		const backupPath = options.restArguments[1];
 		if (!backupPath || backupPath.startsWith('--')) {
-			throw new Error('Usage: agent-vm backup restore <path> [--zone <id>]');
+			throw new Error('Usage: agent-vm backup restore <path> [--zone <id>] [--force]');
 		}
+		await assertRestoreTargetNotLive({
+			force: options.restArguments.includes('--force'),
+			stateDir: zone.gateway.stateDir,
+			zoneId,
+		});
 		writeJson(
 			options.io,
 			await backupManager.restoreBackup({
