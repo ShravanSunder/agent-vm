@@ -413,6 +413,9 @@ export async function startControllerRuntime(
 				zoneId: leaseOptions.zoneId,
 				secretResolver,
 			}),
+		...(dependencies.isProcessAlive !== undefined
+			? { isProcessAlive: dependencies.isProcessAlive }
+			: {}),
 		now,
 		projectNamespace: options.systemConfig.host.projectNamespace,
 		...(dependencies.readProcessIdentity !== undefined
@@ -442,7 +445,16 @@ export async function startControllerRuntime(
 		leaseManager.reapExpiredActiveUses();
 		// Prefer dead-VM eviction logs over idle-expiry logs when both are true.
 		await leaseManager.reapDeadIdleLeases();
-		await idleReaper.reapExpiredLeases();
+		let idleReaperError: unknown;
+		try {
+			await idleReaper.reapExpiredLeases();
+		} catch (error) {
+			idleReaperError = error;
+		}
+		await leaseManager.reapQuarantinedTcpSlots();
+		if (idleReaperError !== undefined) {
+			throw idleReaperError;
+		}
 	};
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
 		() =>

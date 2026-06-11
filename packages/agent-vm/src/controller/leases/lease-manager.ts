@@ -13,7 +13,11 @@ import {
 } from '@agent-vm/gateway-interface';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
-import type { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
+import {
+	isProcessAlive as defaultIsProcessAlive,
+	processIdentityMatches,
+	readProcessIdentity as defaultReadProcessIdentity,
+} from '../../shared/managed-vm-process.js';
 import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
 import { defaultToolVmLeaseIdleTtlMs } from './lease-idle-policy.js';
 import type { TcpPool } from './tcp-pool.js';
@@ -26,6 +30,7 @@ import {
 import {
 	buildToolVmRuntimeRecord,
 	deleteToolVmRuntimeRecord,
+	loadToolVmRuntimeRecord,
 	writeToolVmRuntimeRecord,
 } from './tool-vm-runtime-record.js';
 
@@ -155,6 +160,17 @@ interface EndedToolVmActiveUseTombstone {
 	readonly expiresAt: number;
 	readonly leaseId: string;
 	readonly useId: string;
+}
+
+interface QuarantinedTcpSlotRecord {
+	readonly leaseId: string;
+	readonly runtimeRecordId: string;
+	readonly tcpSlot: number;
+	readonly zoneId: string;
+}
+
+interface LeaseManagerImplementation extends LeaseManager {
+	reapQuarantinedTcpSlots(): Promise<void>;
 }
 
 const defaultToolVmUsePolicy = {
@@ -301,6 +317,8 @@ export function createLeaseManager(options: {
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
 	readonly deleteToolVmRuntimeRecord?: typeof deleteToolVmRuntimeRecord;
+	readonly isProcessAlive?: (pid: number) => boolean;
+	readonly loadToolVmRuntimeRecord?: typeof loadToolVmRuntimeRecord;
 	readonly now: () => number;
 	readonly projectNamespace: string;
 	// Injected for tests so we don't shell out to `ps` against a fake pid.
@@ -311,13 +329,14 @@ export function createLeaseManager(options: {
 	readonly tcpPool: TcpPool;
 	readonly toolVmUsePolicy?: ToolVmUsePolicy;
 	readonly writeToolVmRuntimeRecord?: typeof writeToolVmRuntimeRecord;
-}): LeaseManager {
+}): LeaseManagerImplementation {
 	const leases = new Map<string, Lease>();
 	const activeUses = new Map<string, ToolVmActiveUse>();
 	const endedUseTombstones = new Map<string, EndedToolVmActiveUseTombstone>();
 	const leaseIdsByAgent = new Map<string, string>();
 	const releasingLeaseIds = new Set<string>();
 	const agentLeaseLocks = new Map<string, Promise<void>>();
+	const quarantinedSlotRecords = new Map<number, QuarantinedTcpSlotRecord>();
 	const toolVmUsePolicy = options.toolVmUsePolicy ?? defaultToolVmUsePolicy;
 	assertValidToolVmUsePolicy(toolVmUsePolicy);
 
@@ -406,8 +425,72 @@ export function createLeaseManager(options: {
 
 	const writeRuntimeRecord = options.writeToolVmRuntimeRecord ?? writeToolVmRuntimeRecord;
 	const deleteRuntimeRecord = options.deleteToolVmRuntimeRecord ?? deleteToolVmRuntimeRecord;
+	const loadRuntimeRecord = options.loadToolVmRuntimeRecord ?? loadToolVmRuntimeRecord;
+	const processIsAlive = options.isProcessAlive ?? defaultIsProcessAlive;
+	const processIdentityReader = options.readProcessIdentity ?? defaultReadProcessIdentity;
 	const createLeaseId = options.createLeaseId ?? createToolVmLeaseId;
 	const createRuntimeRecordId = options.createRuntimeRecordId ?? randomUUID;
+
+	function trackQuarantinedTcpSlot(lease: Lease): void {
+		quarantinedSlotRecords.set(lease.tcpSlot, {
+			leaseId: lease.id,
+			runtimeRecordId: lease.runtimeRecordId,
+			tcpSlot: lease.tcpSlot,
+			zoneId: lease.zoneId,
+		});
+	}
+
+	async function canRecoverQuarantinedTcpSlot(
+		quarantinedRecord: QuarantinedTcpSlotRecord,
+	): Promise<boolean> {
+		const runtimeRecord = await loadRuntimeRecord(
+			options.stateDirFor(quarantinedRecord.zoneId),
+			quarantinedRecord.runtimeRecordId,
+		);
+		if (runtimeRecord === null) {
+			writeLeaseManagerWarning(
+				`cannot recover quarantined tcp slot ${String(quarantinedRecord.tcpSlot)} for lease '${quarantinedRecord.leaseId}' in zone '${quarantinedRecord.zoneId}': runtime record '${quarantinedRecord.runtimeRecordId}' is missing.`,
+			);
+			return false;
+		}
+		if (
+			runtimeRecord.tcpSlot !== quarantinedRecord.tcpSlot ||
+			runtimeRecord.zoneId !== quarantinedRecord.zoneId
+		) {
+			writeLeaseManagerWarning(
+				`cannot recover quarantined tcp slot ${String(quarantinedRecord.tcpSlot)} for lease '${quarantinedRecord.leaseId}' in zone '${quarantinedRecord.zoneId}': runtime record '${quarantinedRecord.runtimeRecordId}' belongs to zone '${runtimeRecord.zoneId}' slot ${String(runtimeRecord.tcpSlot)}.`,
+			);
+			return false;
+		}
+		if (!processIsAlive(runtimeRecord.qemuPid)) {
+			return true;
+		}
+		const currentIdentity = await processIdentityReader(runtimeRecord.qemuPid);
+		if (currentIdentity === null) {
+			return true;
+		}
+		return !processIdentityMatches(runtimeRecord.processIdentity, currentIdentity);
+	}
+
+	async function recoverQuarantinedTcpSlot(
+		quarantinedRecord: QuarantinedTcpSlotRecord,
+	): Promise<void> {
+		try {
+			await deleteRuntimeRecord(
+				options.stateDirFor(quarantinedRecord.zoneId),
+				quarantinedRecord.runtimeRecordId,
+			);
+		} catch (deleteError) {
+			writeLeaseManagerWarning(
+				`failed to delete recovered tool VM runtime record '${quarantinedRecord.runtimeRecordId}' for lease '${quarantinedRecord.leaseId}' in zone '${quarantinedRecord.zoneId}': ${formatLeaseManagerError(deleteError)}`,
+			);
+		}
+		options.tcpPool.releaseQuarantined(quarantinedRecord.tcpSlot);
+		quarantinedSlotRecords.delete(quarantinedRecord.tcpSlot);
+		writeLeaseManagerWarning(
+			`recovered quarantined tcp slot ${String(quarantinedRecord.tcpSlot)} for lease '${quarantinedRecord.leaseId}' in zone '${quarantinedRecord.zoneId}' after proving the recorded Tool VM process is gone.`,
+		);
+	}
 
 	async function evictLease(lease: Lease): Promise<void> {
 		deleteLease(lease);
@@ -436,6 +519,7 @@ export function createLeaseManager(options: {
 			}
 		} else {
 			options.tcpPool.quarantine(lease.tcpSlot);
+			trackQuarantinedTcpSlot(lease);
 		}
 	}
 
@@ -537,6 +621,9 @@ export function createLeaseManager(options: {
 				} catch (error) {
 					if (vmCreatedButNotClosed) {
 						// VM may still hold the host port — see comment above.
+						// This partial-create path has no committed runtime record
+						// to prove PID death later, so the slot intentionally stays
+						// quarantined for this controller process lifetime.
 						options.tcpPool.quarantine(tcpSlot);
 					} else {
 						options.tcpPool.release(tcpSlot);
@@ -695,6 +782,15 @@ export function createLeaseManager(options: {
 				}
 			}
 		},
+		async reapQuarantinedTcpSlots(): Promise<void> {
+			for (const quarantinedRecord of quarantinedSlotRecords.values()) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- each slot recovery depends on per-record PID proof.
+				if (await canRecoverQuarantinedTcpSlot(quarantinedRecord)) {
+					// oxlint-disable-next-line eslint/no-await-in-loop -- recoveries mutate the shared tcp pool map.
+					await recoverQuarantinedTcpSlot(quarantinedRecord);
+				}
+			}
+		},
 		async releaseLease(
 			leaseId: string,
 			releaseOptions?: { readonly force?: boolean; readonly ifLastUsedAtBeforeOrAt?: number },
@@ -756,6 +852,7 @@ export function createLeaseManager(options: {
 					// onto the same port, and preserve the runtime record so the
 					// next controller's Phase A cleanup can scope-fence + signal.
 					options.tcpPool.quarantine(currentLease.tcpSlot);
+					trackQuarantinedTcpSlot(currentLease);
 					writeLeaseManagerWarning(
 						`failed to close released lease '${currentLease.id}' in zone '${currentLease.zoneId}': ${formatLeaseManagerError(releaseError)}. Quarantining tcp slot ${currentLease.tcpSlot} and preserving runtime record for next-startup cleanup.`,
 					);

@@ -1584,4 +1584,253 @@ describe('createLeaseManager — runtime record disk integration', () => {
 		// Phase A cleanup can scope-fence + signal the orphan QEMU.
 		expect(fs.existsSync(recordPath)).toBe(true);
 	});
+
+	it('recovers a quarantined tcp slot when the preserved runtime record pid is dead', async () => {
+		const stateDir = createTempStateDir();
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const vm = makeIntegrationManagedVm();
+		vm.closeMock.mockRejectedValueOnce(new Error('close hung'));
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000003',
+			deleteToolVmRuntimeRecord,
+			isProcessAlive: () => false,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool,
+		});
+		const lease = await leaseManager.createLease(integrationLeaseRequest);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);
+		expect(() => tcpPool.allocate()).toThrow('No TCP slots available');
+
+		await leaseManager.reapQuarantinedTcpSlots();
+
+		expect(fs.existsSync(recordPath)).toBe(false);
+		expect(tcpPool.allocate()).toBe(0);
+	});
+
+	it('keeps a quarantined tcp slot when the recorded pid is alive with matching identity', async () => {
+		const stateDir = createTempStateDir();
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const vm = makeIntegrationManagedVm();
+		vm.closeMock.mockRejectedValueOnce(new Error('close hung'));
+		const matchingIdentity = {
+			command: 'qemu-system-x86_64 -m 1G',
+			lstart: 'Fri May 22 10:00:00 2026',
+		};
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000004',
+			deleteToolVmRuntimeRecord,
+			isProcessAlive: () => true,
+			readProcessIdentity: async () => matchingIdentity,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool,
+		});
+		const lease = await leaseManager.createLease(integrationLeaseRequest);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);
+		await leaseManager.reapQuarantinedTcpSlots();
+
+		expect(fs.existsSync(recordPath)).toBe(true);
+		expect(tcpPool.isQuarantined(0)).toBe(true);
+		expect(() => tcpPool.allocate()).toThrow('No TCP slots available');
+	});
+
+	it('recovers a quarantined tcp slot when the recorded pid was reused by a different process', async () => {
+		const stateDir = createTempStateDir();
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const vm = makeIntegrationManagedVm();
+		vm.closeMock.mockRejectedValueOnce(new Error('close hung'));
+		let currentIdentity = {
+			command: 'qemu-system-x86_64 -m 1G',
+			lstart: 'Fri May 22 10:00:00 2026',
+		};
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000005',
+			deleteToolVmRuntimeRecord,
+			isProcessAlive: () => true,
+			readProcessIdentity: async () => currentIdentity,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool,
+		});
+		const lease = await leaseManager.createLease(integrationLeaseRequest);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
+		currentIdentity = {
+			command: '/usr/bin/python3 unrelated.py',
+			lstart: 'Fri May 22 10:00:01 2026',
+		};
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);
+		await leaseManager.reapQuarantinedTcpSlots();
+
+		expect(fs.existsSync(recordPath)).toBe(false);
+		expect(tcpPool.allocate()).toBe(0);
+	});
+
+	it('recovers a quarantined tcp slot when the recorded pid is alive but identity is unreadable', async () => {
+		const stateDir = createTempStateDir();
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const vm = makeIntegrationManagedVm();
+		vm.closeMock.mockRejectedValueOnce(new Error('close hung'));
+		const matchingIdentity = {
+			command: 'qemu-system-x86_64 -m 1G',
+			lstart: 'Fri May 22 10:00:00 2026',
+		};
+		let currentIdentity: typeof matchingIdentity | null = matchingIdentity;
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000006',
+			deleteToolVmRuntimeRecord,
+			isProcessAlive: () => true,
+			readProcessIdentity: async () => currentIdentity,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool,
+		});
+		const lease = await leaseManager.createLease(integrationLeaseRequest);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
+		currentIdentity = null;
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);
+		await leaseManager.reapQuarantinedTcpSlots();
+
+		expect(fs.existsSync(recordPath)).toBe(false);
+		expect(tcpPool.allocate()).toBe(0);
+	});
+
+	it('recovers a quarantined tcp slot even when runtime record deletion fails', async () => {
+		const stateDir = createTempStateDir();
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const vm = makeIntegrationManagedVm();
+		vm.closeMock.mockRejectedValueOnce(new Error('close hung'));
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000007',
+			deleteToolVmRuntimeRecord: vi.fn(async () => {
+				throw new Error('record delete failed');
+			}),
+			isProcessAlive: () => false,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool,
+		});
+		const lease = await leaseManager.createLease(integrationLeaseRequest);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
+
+		try {
+			await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);
+			await leaseManager.reapQuarantinedTcpSlots();
+
+			expect(fs.existsSync(recordPath)).toBe(true);
+			expect(tcpPool.allocate()).toBe(0);
+			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
+			expect(
+				loggedMessages.some((message) =>
+					message.includes('failed to delete recovered tool VM runtime record'),
+				),
+			).toBe(true);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('self-heals a fully exhausted tcp pool after quarantined process death is proven', async () => {
+		const stateDir = createTempStateDir();
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const vm = makeIntegrationManagedVm();
+		vm.closeMock.mockRejectedValueOnce(new Error('close hung'));
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000008',
+			deleteToolVmRuntimeRecord,
+			isProcessAlive: () => false,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool,
+		});
+		const lease = await leaseManager.createLease(integrationLeaseRequest);
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);
+		await expect(leaseManager.createLease(integrationLeaseRequest)).rejects.toThrow(
+			'No TCP slots available',
+		);
+		await leaseManager.reapQuarantinedTcpSlots();
+
+		const recoveredLease = await leaseManager.createLease(integrationLeaseRequest);
+		expect(recoveredLease.tcpSlot).toBe(0);
+	});
+
+	it('recovers a quarantined tcp slot from an evicted stale lease close failure', async () => {
+		const stateDir = createTempStateDir();
+		const tcpPool = createTcpPool({ basePort: 19000, size: 2 });
+		const staleVm = makeIntegrationManagedVm();
+		staleVm.closeMock.mockRejectedValueOnce(new Error('stale close hung'));
+		staleVm.exec = vi.fn(() => {
+			throw new Error('stale vm is gone');
+		});
+		const freshVm = makeIntegrationManagedVm();
+		const recoveredVm = makeIntegrationManagedVm();
+		const createManagedVm = vi
+			.fn<() => Promise<ManagedVm>>()
+			.mockResolvedValueOnce(staleVm)
+			.mockResolvedValueOnce(freshVm)
+			.mockResolvedValueOnce(recoveredVm);
+		const runtimeRecordIds = [
+			'01890f00-0000-7000-8000-000000000009',
+			'01890f00-0000-7000-8000-000000000010',
+			'01890f00-0000-7000-8000-000000000011',
+		];
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm,
+			createRuntimeRecordId: () => {
+				const recordId = runtimeRecordIds.shift();
+				if (!recordId) {
+					throw new Error('Unexpected runtime record allocation.');
+				}
+				return recordId;
+			},
+			deleteToolVmRuntimeRecord,
+			isProcessAlive: () => false,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool,
+		});
+		const firstLease = await leaseManager.createLease(integrationLeaseRequest);
+
+		const replacementLease = await leaseManager.createLease(integrationLeaseRequest);
+
+		expect(replacementLease.id).not.toBe(firstLease.id);
+		expect(replacementLease.tcpSlot).toBe(1);
+		expect(tcpPool.isQuarantined(0)).toBe(true);
+
+		await leaseManager.reapQuarantinedTcpSlots();
+		const recoveredLease = await leaseManager.createLease({
+			...integrationLeaseRequest,
+			agentId: 'other',
+		});
+
+		expect(recoveredLease.tcpSlot).toBe(0);
+	});
 });
