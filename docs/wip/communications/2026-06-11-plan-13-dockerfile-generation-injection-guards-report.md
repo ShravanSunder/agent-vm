@@ -2,7 +2,7 @@
 
 Status: complete
 Branch: improve/plan-13-dockerfile-generation-injection-guards
-Pushed: no
+Pushed: yes, origin/improve/plan-13-dockerfile-generation-injection-guards
 Date: 2026-06-11
 
 ## Scope
