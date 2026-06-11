@@ -14,7 +14,7 @@ export function sanitizeErrorMessage(message: string): string {
 		.replace(/ghp_[A-Za-z0-9_]{20,}/g, 'ghp_***')
 		.replace(/ghs_[A-Za-z0-9_]{20,}/g, 'ghs_***')
 		.replace(/Bearer [A-Za-z0-9._-]+/giu, 'Bearer ***')
-		.replace(/OPENAI_API_KEY=[^\s]+/gu, 'OPENAI_API_KEY=***');
+		.replace(/\b([A-Z][A-Z0-9_]*_API_KEY)=[^\s]+/gu, '$1=***');
 }
 
 function formatNonErrorDetail(error: unknown): string {

@@ -23,6 +23,7 @@ function hasCommand(command: string): boolean {
 const runWorkerOnlySmoke = shouldRunWorkerRuntimeE2e({
 	commandExists: hasCommand,
 	env: process.env,
+	provider: 'codex',
 });
 
 const describeWorkerOnlySmoke = runWorkerOnlySmoke ? describe : describe.skip;

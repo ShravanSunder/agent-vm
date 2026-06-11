@@ -29,4 +29,17 @@ describe('coordinator helpers', () => {
 			'task failed\nCaused by: repo resources failed\nCaused by: repo setup failed\nCaused by: cleanup failed\nCaused by: docker compose down failed\nCaused by: primary failure',
 		);
 	});
+
+	it('redacts Anthropic and generic API key environment assignments', () => {
+		const error = new Error(
+			'provider failed with ANTHROPIC_API_KEY=anthropic-secret and INTERNAL_API_KEY=internal-secret',
+			{
+				cause: new Error('OPENAI_API_KEY=openai-secret'),
+			},
+		);
+
+		expect(formatTaskFailureReason(error)).toBe(
+			'provider failed with ANTHROPIC_API_KEY=*** and INTERNAL_API_KEY=***\nCaused by: OPENAI_API_KEY=***',
+		);
+	});
 });
