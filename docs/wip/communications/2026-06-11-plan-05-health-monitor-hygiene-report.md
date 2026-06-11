@@ -138,5 +138,6 @@ pnpm test:integration
 
 ## Branch State
 
-- Local changes are verified.
-- Push state: pending.
+- Implementation/report commit: `a6e45f8` (`fix: harden gateway health monitor hygiene`).
+- Signing note: commit was created with `--no-gpg-sign` because this session repeatedly hit the local 1Password signing failure `failed to fill whole buffer` on earlier plan commits.
+- Push state: branch pushed to `origin/improve/plan-05-health-monitor-hygiene`; this report-only state correction will be pushed as a follow-up commit.
