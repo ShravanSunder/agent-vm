@@ -100,5 +100,6 @@ Plan 11 docs architecture drift:
 - Before integration, substantial pushed branches still need their review
   status checked against the handoff requirement. Plan 12 has completed a
   review/fix loop. Plan 08 pre-gate review was dispatched after the branch was
-  pushed and should be reduced before integration.
-
+  pushed, but the three reviewer lanes were later closed while still reporting
+  `previous_status: running`; no candidate findings were returned. Plan 08
+  therefore still needs a successful review/reduction pass before integration.
