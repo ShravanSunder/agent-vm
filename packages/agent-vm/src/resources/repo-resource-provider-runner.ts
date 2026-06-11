@@ -182,7 +182,10 @@ function getSingleContainerIp(options: {
 	return networkIps[0] ?? null;
 }
 
-function buildComposeProjectName(taskId: string, repoId: string): string {
+export function buildRepoResourceProviderComposeProjectName(
+	taskId: string,
+	repoId: string,
+): string {
 	// Architecture note: this currently uses the worker task id only as a
 	// temporary per-run namespace. Resource task segregation is not a complete
 	// first-class model yet; when resources get their own lifecycle, replace
@@ -249,7 +252,7 @@ function groupReposByComposeProject(options: {
 		}
 		groupsByRepoId.set(repo.repoId, {
 			composeFilePath: path.join(repo.repoDir, '.agent-vm', 'docker-compose.yml'),
-			composeProjectName: buildComposeProjectName(options.taskId, repo.repoId),
+			composeProjectName: buildRepoResourceProviderComposeProjectName(options.taskId, repo.repoId),
 			outputDir: repo.outputDir,
 			providers: [],
 			repoDir: repo.repoDir,

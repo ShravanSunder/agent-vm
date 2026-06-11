@@ -682,6 +682,7 @@ describe('startControllerRuntime', () => {
 		expect(taskTitles).toEqual([
 			'Resolving 1Password secrets',
 			'Controller API on :18800',
+			'Recovering orphaned worker tasks',
 			'Starting selected gateway zones',
 		]);
 		expect(startHttpServer).toHaveBeenCalledWith(
@@ -2379,6 +2380,7 @@ describe('startControllerRuntime', () => {
 		const startHttpServer = vi.fn(async () => ({
 			close: async () => {},
 		}));
+		const taskTitles: string[] = [];
 
 		const runtime = await startControllerRuntime(
 			{
@@ -2416,6 +2418,10 @@ describe('startControllerRuntime', () => {
 					throw new Error('gateway boot failed');
 				}),
 				startHttpServer,
+				runTask: async (title, fn) => {
+					taskTitles.push(title);
+					await fn();
+				},
 			},
 		);
 
@@ -2426,6 +2432,9 @@ describe('startControllerRuntime', () => {
 				zoneId: 'shravan',
 			},
 		]);
+		expect(taskTitles.indexOf('Recovering orphaned worker tasks')).toBeLessThan(
+			taskTitles.indexOf('Starting selected gateway zones'),
+		);
 		expect(startHttpServer).toHaveBeenCalledTimes(1);
 		await runtime.close();
 	});

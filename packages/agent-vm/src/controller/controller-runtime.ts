@@ -43,6 +43,7 @@ import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from './worker-task-runner.js';
+import { recoverOrphanedWorkerTasksAtStartup } from './worker-task-startup-recovery.js';
 import { ZoneGitCapabilityStore } from './zone-git/zone-git-capability-store.js';
 import { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
 import {
@@ -751,6 +752,19 @@ export async function startControllerRuntime(
 		});
 	});
 	try {
+		await runTaskStep('Recovering orphaned worker tasks', async () => {
+			const recoveryResult = await recoverOrphanedWorkerTasksAtStartup({
+				systemConfig: options.systemConfig,
+			});
+			if (recoveryResult.recoveredCount > 0) {
+				writeControllerRuntimeLog(
+					`Recovered ${recoveryResult.recoveredCount} orphaned worker task(s) after controller restart.`,
+				);
+			}
+			for (const warning of recoveryResult.warnings) {
+				writeControllerRuntimeLog(`Worker task startup recovery warning: ${warning}`);
+			}
+		});
 		await runTaskStep('Starting selected gateway zones', async () => {
 			await registry.startSelectedZones();
 		});
