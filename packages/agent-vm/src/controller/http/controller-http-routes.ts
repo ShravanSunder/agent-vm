@@ -41,6 +41,7 @@ import {
 	OpenClawRuntimeStatusStore,
 	OpenClawRuntimeStatusUnavailableError,
 } from '../openclaw-runtime-status.js';
+import { createTaskEventStreamForTask } from '../task-event-stream.js';
 import { registerControllerHealthEventRoutes } from './controller-health-event-routes.js';
 import {
 	type ControllerLeaseManager,
@@ -894,7 +895,16 @@ export function createControllerService(options: {
 			),
 		),
 		openClawRuntimeStatusStore,
-		...(options.operations ? { operations: options.operations } : {}),
+		operations: {
+			streamTaskEvents: (zoneId, taskId, streamOptions) =>
+				createTaskEventStreamForTask({
+					...streamOptions,
+					systemConfig: options.systemConfig,
+					taskId,
+					zoneId,
+				}),
+			...options.operations,
+		},
 		validateToolVmLeaseRequirements: async (zoneId) => {
 			const zone = zonesById.get(zoneId);
 			if (!zone || zone.gateway.type !== 'openclaw') {

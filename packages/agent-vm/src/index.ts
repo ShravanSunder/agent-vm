@@ -15,3 +15,15 @@ export * from './config/system-config.js';
 export * from './config/resource-contracts/index.js';
 export * from './controller/leases/tcp-pool.js';
 export * from './operations/upgrade-zone.js';
+
+/**
+ * Embedding entrypoint for hosts that need the same runtime composition as the
+ * CLI without reaching through package internals. The dependency parameter is
+ * intentionally exported because worker lifecycle hooks live there.
+ */
+export { startControllerRuntime } from './controller/controller-runtime.js';
+export type {
+	ControllerRuntime,
+	ControllerRuntimeDependencies,
+	StartControllerRuntimeOptions,
+} from './controller/controller-runtime-types.js';

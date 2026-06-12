@@ -1,4 +1,5 @@
 import { type Context, type Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import type { z } from 'zod';
 
 import { scrubGithubTokenFromOutput } from '../git-auth-support.js';
@@ -6,6 +7,7 @@ import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { PushBranchesValidationError } from '../git-push-operations.js';
 import type { HealthEventStore } from '../health/health-event-store.js';
 import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
+import { isTerminalTaskEventRecord } from '../task-event-stream.js';
 import { writeTaskFailureSentinel } from '../task-state-reader.js';
 import { ZONE_GIT_CAPABILITY_HEADER } from '../zone-git/zone-git-capability-store.js';
 import { ZoneGitConflictError } from '../zone-git/zone-git-operations.js';
@@ -44,6 +46,9 @@ class JsonBodyParseError extends Error {
 		this.name = 'JsonBodyParseError';
 	}
 }
+
+const maxTaskEventStreamsPerTask = 4;
+const taskEventStreamHeartbeatMs = 15_000;
 
 async function parseJsonBody(context: Context): Promise<unknown> {
 	try {
@@ -163,6 +168,54 @@ function buildErrorResponseBody(
 		error: errorMessage(error, fallbackError),
 		...(details ? { details } : {}),
 	};
+}
+
+function parseTaskEventStreamCursor(
+	context: Context,
+):
+	| { readonly afterLineIndex?: number; readonly ok: true }
+	| { readonly ok: false; readonly response: Response } {
+	const cursorValue = context.req.query('after') ?? context.req.header('Last-Event-ID');
+	if (cursorValue === undefined || cursorValue.length === 0) {
+		return { ok: true };
+	}
+	if (!/^\d+$/.test(cursorValue)) {
+		return {
+			ok: false,
+			response: context.json(
+				{
+					error: 'invalid-task-event-cursor',
+					message: 'Task event cursor must be a zero-based non-negative line index.',
+				},
+				400,
+			),
+		};
+	}
+	return { ok: true, afterLineIndex: Number.parseInt(cursorValue, 10) };
+}
+
+function incrementActiveTaskEventStream(
+	activeStreamsByTask: Map<string, number>,
+	streamKey: string,
+): boolean {
+	const activeCount = activeStreamsByTask.get(streamKey) ?? 0;
+	if (activeCount >= maxTaskEventStreamsPerTask) {
+		return false;
+	}
+	activeStreamsByTask.set(streamKey, activeCount + 1);
+	return true;
+}
+
+function decrementActiveTaskEventStream(
+	activeStreamsByTask: Map<string, number>,
+	streamKey: string,
+): void {
+	const activeCount = activeStreamsByTask.get(streamKey) ?? 0;
+	if (activeCount <= 1) {
+		activeStreamsByTask.delete(streamKey);
+		return;
+	}
+	activeStreamsByTask.set(streamKey, activeCount - 1);
 }
 
 function scrubErrorResponseBody(responseBody: {
@@ -307,6 +360,7 @@ export function registerControllerZoneOperationRoutes(
 		readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
 	} = {},
 ): void {
+	const activeTaskEventStreamsByTask = new Map<string, number>();
 	const rejectIfRuntimeNotReady = (context: Context): Response | null => {
 		const readiness = options.runtimeReadiness?.() ?? { ready: true, state: 'ready' as const };
 		return readiness.ready
@@ -574,6 +628,76 @@ export function registerControllerZoneOperationRoutes(
 				}
 				return context.json(buildErrorResponseBody(error, 'get-task-state-failed'), 500);
 			}
+		});
+	}
+
+	if (operations.streamTaskEvents) {
+		const streamTaskEvents = operations.streamTaskEvents;
+		app.get('/zones/:zoneId/tasks/:taskId/events', (context) => {
+			const cursor = parseTaskEventStreamCursor(context);
+			if (!cursor.ok) {
+				return cursor.response;
+			}
+			const zoneId = context.req.param('zoneId');
+			const taskId = context.req.param('taskId');
+			const streamKey = `${zoneId}\0${taskId}`;
+			if (!incrementActiveTaskEventStream(activeTaskEventStreamsByTask, streamKey)) {
+				return context.json(
+					{
+						error: 'task-event-stream-limit',
+						message: `Too many open task event streams for task '${taskId}'.`,
+					},
+					429,
+				);
+			}
+			const abortController = new AbortController();
+			return streamSSE(context, async (stream) => {
+				stream.onAbort(() => {
+					abortController.abort();
+				});
+				const heartbeatTimer = setInterval(() => {
+					const readiness = options.runtimeReadiness?.() ?? {
+						ready: true,
+						state: 'ready' as const,
+					};
+					if (readiness.state === 'stopping') {
+						abortController.abort();
+						void stream.close();
+						return;
+					}
+					void stream.write(': heartbeat\n\n').catch((error: unknown) => {
+						writeControllerRouteLog(
+							`task event stream heartbeat failed for zone '${zoneId}' task '${taskId}': ${error instanceof Error ? error.message : String(error)}`,
+						);
+					});
+				}, taskEventStreamHeartbeatMs);
+				try {
+					// Mirrors the task snapshot route intentionally: no per-request auth and
+					// no initial readiness gate. Long-lived streams still observe controller
+					// shutdown through the heartbeat readiness check above.
+					for await (const record of streamTaskEvents(zoneId, taskId, {
+						...(cursor.afterLineIndex === undefined
+							? {}
+							: { afterLineIndex: cursor.afterLineIndex }),
+						signal: abortController.signal,
+					})) {
+						if (abortController.signal.aborted) {
+							break;
+						}
+						await stream.writeSSE({
+							data: JSON.stringify(record.event),
+							event: record.event.data.event,
+							id: String(record.id),
+						});
+						if (isTerminalTaskEventRecord(record)) {
+							break;
+						}
+					}
+				} finally {
+					clearInterval(heartbeatTimer);
+					decrementActiveTaskEventStream(activeTaskEventStreamsByTask, streamKey);
+				}
+			});
 		});
 	}
 

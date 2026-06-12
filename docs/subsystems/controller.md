@@ -116,12 +116,41 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside gateway VM; requires zone admin token when adminAccess is configured | OpenClaw |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
+| `GET` | `/zones/:zoneId/tasks/:taskId/events` | Stream worker task JSONL events as server-sent events | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push task branches from the host | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/pull-default` | Refresh a repo's default branch from the host | Worker |
 | `POST` | `/stop-controller` | Graceful shutdown | Both |
 
 Request bodies are validated with Zod schemas (`controller-request-schemas.ts`). Invalid payloads return 400 with structured `error` and `issues` fields.
+
+The worker task event stream uses `GET /zones/:zoneId/tasks/:taskId/events`.
+It replays task JSONL events after the optional zero-based line cursor from
+`Last-Event-ID` or `?after=`, then tails appended events until
+`task-completed`, `task-failed`, `task-closed`, or a controller-written failure
+sentinel ends the stream. SSE `id` values are the JSONL line indexes, and SSE
+`event` names match the worker task event `event` field. Like the task snapshot
+route, this route does not apply per-request auth; long-lived streams also close
+when controller readiness flips to `stopping`.
+
+Embedding hosts can use the same runtime composition as the CLI through the
+package entrypoint:
+
+```ts
+import {
+	startControllerRuntime,
+	type ControllerRuntimeDependencies,
+	type StartControllerRuntimeOptions,
+} from '@agent-vm/agent-vm';
+
+const runtime = await startControllerRuntime(options, {
+	onWorkerTaskPrepared: async (task) => {
+		// Observe task registration or bridge it into an embedding host.
+	},
+} satisfies ControllerRuntimeDependencies);
+
+await runtime.close();
+```
 
 `agent-vm controller ssh` intentionally exposes only an interactive SSH session.
 It must reject `-- <remote command>` and `--print` so the CLI does not become an
