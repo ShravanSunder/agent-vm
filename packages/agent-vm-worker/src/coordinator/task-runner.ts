@@ -237,7 +237,7 @@ export async function runTask(
 				await eventRecorder.emit(taskId, {
 					event: 'plan-agent-turn',
 					cycle,
-					threadId: result.threadId,
+					sessionRef: result.sessionRef,
 					tokenCount: result.tokenCount,
 				});
 				throwIfClosed(taskId, eventRecorder);
@@ -246,7 +246,7 @@ export async function runTask(
 				await eventRecorder.emit(taskId, {
 					event: 'plan-reviewer-turn',
 					cycle,
-					threadId: result.threadId,
+					sessionRef: result.sessionRef,
 					tokenCount: result.tokenCount,
 					review,
 				});
@@ -326,7 +326,7 @@ export async function runTask(
 				await eventRecorder.emit(taskId, {
 					event: 'work-agent-turn',
 					cycle,
-					threadId: result.threadId,
+					sessionRef: result.sessionRef,
 					tokenCount: result.tokenCount,
 				});
 				throwIfClosed(taskId, eventRecorder);
@@ -335,7 +335,7 @@ export async function runTask(
 				await eventRecorder.emit(taskId, {
 					event: 'work-reviewer-turn',
 					cycle,
-					threadId: result.threadId,
+					sessionRef: result.sessionRef,
 					tokenCount: result.tokenCount,
 					review,
 					validationResults: [...validationResults],
@@ -355,7 +355,7 @@ export async function runTask(
 		await eventRecorder.emit(taskId, {
 			event: 'work-agent-turn',
 			cycle: config.phases.work.cycle.cycleCount + 1,
-			threadId: workSummaryResult.threadId,
+			sessionRef: workSummaryResult.sessionRef,
 			tokenCount: workSummaryResult.tokenCount,
 		});
 		await eventRecorder.emit(taskId, { event: 'phase-completed', phase: 'work' });
@@ -393,7 +393,7 @@ export async function runTask(
 			onWrapupTurn: async (result) => {
 				await eventRecorder.emit(taskId, {
 					event: 'wrapup-turn',
-					threadId: result.threadId,
+					sessionRef: result.sessionRef,
 					tokenCount: result.tokenCount,
 				});
 				throwIfClosed(taskId, eventRecorder);

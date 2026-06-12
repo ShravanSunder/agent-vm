@@ -7,14 +7,18 @@ export type StructuredInput =
 export interface ExecutorResult {
 	readonly response: string;
 	readonly tokenCount: number;
-	readonly threadId: string;
+	readonly sessionRef: string;
 }
 
 export interface WorkExecutor {
+	/** Starts a fresh provider conversation for the first phase turn. */
 	execute(input: readonly StructuredInput[]): Promise<ExecutorResult>;
+	/** Continues the current provider conversation for review/fix turns. */
 	fix(input: readonly StructuredInput[]): Promise<ExecutorResult>;
-	resumeOrRebuild(threadId: string | null, context: readonly StructuredInput[]): Promise<void>;
-	getThreadId(): string | null;
+	/** Best-effort resume of a provider session, or rebuilds from context if resume is impossible. */
+	resumeOrRebuild(sessionRef: string | null, context: readonly StructuredInput[]): Promise<void>;
+	/** Provider-owned handle used to resume the current conversation later. */
+	getSessionRef(): string | null;
 }
 
 export interface ToolDefinition {

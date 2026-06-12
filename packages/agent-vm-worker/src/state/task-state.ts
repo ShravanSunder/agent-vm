@@ -46,11 +46,11 @@ export interface TaskState {
 	readonly failureReason: string | null;
 	readonly plan: string | null;
 	readonly lastContextError: string | null;
-	readonly planAgentThreadId: string | null;
-	readonly planReviewerThreadId: string | null;
-	readonly workAgentThreadId: string | null;
-	readonly workReviewerThreadId: string | null;
-	readonly wrapupThreadId: string | null;
+	readonly planAgentSessionRef: string | null;
+	readonly planReviewerSessionRef: string | null;
+	readonly workAgentSessionRef: string | null;
+	readonly workReviewerSessionRef: string | null;
+	readonly wrapupSessionRef: string | null;
 	readonly planReviewCycle: number;
 	readonly workReviewCycle: number;
 	readonly currentCycle: number;
@@ -89,11 +89,11 @@ export function createInitialState(taskId: string, config: TaskConfig): TaskStat
 		failureReason: null,
 		plan: null,
 		lastContextError: null,
-		planAgentThreadId: null,
-		planReviewerThreadId: null,
-		workAgentThreadId: null,
-		workReviewerThreadId: null,
-		wrapupThreadId: null,
+		planAgentSessionRef: null,
+		planReviewerSessionRef: null,
+		workAgentSessionRef: null,
+		workReviewerSessionRef: null,
+		wrapupSessionRef: null,
 		planReviewCycle: 0,
 		workReviewCycle: 0,
 		currentCycle: 0,
@@ -176,7 +176,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 			return {
 				...state,
 				status: 'plan-agent',
-				planAgentThreadId: event.threadId,
+				planAgentSessionRef: event.sessionRef,
 				currentCycle: event.cycle,
 				updatedAt,
 			};
@@ -184,7 +184,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 			return {
 				...state,
 				status: 'plan-reviewer',
-				planReviewerThreadId: event.threadId,
+				planReviewerSessionRef: event.sessionRef,
 				planReviewCycle: event.cycle,
 				currentCycle: event.cycle,
 				lastPlanReview: event.review,
@@ -196,7 +196,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 			return {
 				...state,
 				status: 'work-agent',
-				workAgentThreadId: event.threadId,
+				workAgentSessionRef: event.sessionRef,
 				currentCycle: event.cycle,
 				updatedAt,
 			};
@@ -204,7 +204,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 			return {
 				...state,
 				status: 'work-reviewer',
-				workReviewerThreadId: event.threadId,
+				workReviewerSessionRef: event.sessionRef,
 				workReviewCycle: event.cycle,
 				currentCycle: event.cycle,
 				lastWorkReview: event.review,
@@ -215,7 +215,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 			return {
 				...state,
 				status: 'wrapup',
-				wrapupThreadId: event.threadId,
+				wrapupSessionRef: event.sessionRef,
 				updatedAt,
 			};
 		case 'wrapup-result':

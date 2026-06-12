@@ -71,20 +71,20 @@ function createMockExecutor(
 	options?: { readonly neverResolve?: boolean },
 ): WorkExecutor {
 	let index = 0;
-	let threadId: string | null = null;
+	let sessionRef: string | null = null;
 	async function nextResponse(): Promise<{
 		readonly response: string;
 		readonly tokenCount: number;
-		readonly threadId: string;
+		readonly sessionRef: string;
 	}> {
 		if (options?.neverResolve) {
 			return await new Promise(() => {});
 		}
-		threadId = threadId ?? `thread-${Math.random().toString(16).slice(2)}`;
+		sessionRef = sessionRef ?? `thread-${Math.random().toString(16).slice(2)}`;
 		return {
 			response: responses[index++] ?? '',
 			tokenCount: 10,
-			threadId,
+			sessionRef,
 		};
 	}
 
@@ -92,7 +92,7 @@ function createMockExecutor(
 		execute: nextResponse,
 		fix: nextResponse,
 		async resumeOrRebuild() {},
-		getThreadId: () => threadId,
+		getSessionRef: () => sessionRef,
 	};
 }
 

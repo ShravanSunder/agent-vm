@@ -1,6 +1,6 @@
 # Plan 08 Worker Executor Genericization Report
 
-Status: stopped-at-gate
+Status: resumed task 3 complete; Claude executor tasks not yet implemented
 Branch: improve/plan-08-worker-executor-genericization
 Base: stacked on improve/plan-07-codex-sdk-upgrade at 115f9fc
 
@@ -19,16 +19,77 @@ Implemented and verified the safe pre-gate parts of Plan 08:
 - Normalized the extracted Codex runtime env to `Record<string, string>` so it
   matches the Codex SDK contract without casts.
 
-The plan remains stopped at task 3's explicit user decision:
+The previous report stopped at task 3's explicit user decision:
 
 - Keep provider-neutral contract method name `getThreadId()`, or
 - hard-cutover the worker executor contract to `getSessionRef()` across
   executor interface, Codex executor, persistent-thread, task event consumers,
   and tests.
 
-No Claude executor file, factory case, image bake decision, or interface doc
-cutover was written because those steps are after the user-gated task 3
-decision.
+The resumed decision was to hard-cutover to `getSessionRef()`. No Claude
+executor file, factory case, or image bake decision has been written yet; those
+remain the next Plan 08 implementation tasks.
+
+## 2026-06-12 Resumed Update
+
+Implemented the task 3 hard cutover:
+
+- Renamed `WorkExecutor.getThreadId()` to `getSessionRef()`.
+- Renamed `ExecutorResult.threadId` and persistent-thread responses to
+  `sessionRef`.
+- Renamed task event and task state persisted fields from thread-specific names
+  to session-specific names:
+  `planAgentSessionRef`, `planReviewerSessionRef`, `workAgentSessionRef`,
+  `workReviewerSessionRef`, and `wrapupSessionRef`.
+- Kept Codex SDK internal `Thread` naming only at the Codex boundary while the
+  worker-owned contract exposes provider-neutral session references.
+- Added concise interface docs for `execute`, `fix`, `resumeOrRebuild`, and
+  `getSessionRef`.
+
+Additional files touched by the resumed cutover:
+
+- `packages/agent-vm-worker/src/coordinator/coordinator.integration.test.ts`
+- `packages/agent-vm-worker/src/coordinator/task-runner.ts`
+- `packages/agent-vm-worker/src/plan-phase/plan-cycle.unit.test.ts`
+- `packages/agent-vm-worker/src/server.unit.test.ts`
+- `packages/agent-vm-worker/src/state/task-event-types.ts`
+- `packages/agent-vm-worker/src/state/task-state.ts`
+- `packages/agent-vm-worker/src/state/task-state.unit.test.ts`
+- `packages/agent-vm-worker/src/work-executor/codex-executor.ts`
+- `packages/agent-vm-worker/src/work-executor/codex-executor.unit.test.ts`
+- `packages/agent-vm-worker/src/work-executor/executor-interface.ts`
+- `packages/agent-vm-worker/src/work-executor/persistent-thread.ts`
+- `packages/agent-vm-worker/src/work-executor/persistent-thread.unit.test.ts`
+- `packages/agent-vm-worker/src/work-phase/work-cycle.unit.test.ts`
+- `packages/agent-vm-worker/src/worker-runtime.integration.test.ts`
+- `packages/agent-vm-worker/src/wrapup-phase/wrapup-runner.unit.test.ts`
+- `packages/agent-vm/src/integration-tests/worker-task-runner.host.e2e.test.ts`
+
+Resumed proof:
+
+- `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src/work-executor/persistent-thread.unit.test.ts packages/agent-vm-worker/src/work-executor/codex-executor.unit.test.ts packages/agent-vm-worker/src/state/task-state.unit.test.ts packages/agent-vm-worker/src/plan-phase/plan-cycle.unit.test.ts packages/agent-vm-worker/src/work-phase/work-cycle.unit.test.ts packages/agent-vm-worker/src/wrapup-phase/wrapup-runner.unit.test.ts packages/agent-vm-worker/src/server.unit.test.ts`
+  - exit 0
+  - 7 files passed
+  - 64 tests passed
+- `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm-worker/src/worker-runtime.integration.test.ts packages/agent-vm-worker/src/coordinator/coordinator.integration.test.ts`
+  - exit 0
+  - 2 files passed
+  - 9 tests passed
+- `rg -n "threadId|getThreadId|ThreadId|planAgentThreadId|planReviewerThreadId|workAgentThreadId|workReviewerThreadId|wrapupThreadId" packages/agent-vm-worker packages/agent-vm/src/integration-tests/worker-task-runner.host.e2e.test.ts`
+  - exit 1
+  - no old worker executor API or persisted state names found in the checked
+    surfaces
+- `pnpm typecheck`
+  - exit 0
+- `pnpm fmt:check`
+  - exit 0
+- `mise run lint`
+  - exit 0
+  - 0 warnings
+  - 0 errors
+- `pnpm check`
+  - exit 0
+  - check gate: 6 passed, 0 failed in 22.57s
 
 ## Research Gate
 
@@ -129,17 +190,15 @@ Green focused tests:
   - first run: exit 1 on `coordinator-helpers.ts` and `codex-executor.ts`.
   - after `pnpm fmt`: exit 0; all matched files use correct format.
 
-Broad gates not yet run for this stopped-at-gate branch:
+Broad resumed gates now run for the task 3 cutover:
 
 - `pnpm check`
-- `pnpm test:unit`
-- `pnpm test:integration`
-- worker E2E lane
+  - exit 0
+  - 6 passed / 0 failed
 
-Reason: Plan 08 is intentionally stopped before task 3's user decision and
-before the Claude executor implementation. The focused proof covers the safe
-pre-gate changes; broad gates should run after the interface decision and the
-actual Claude executor slice lands.
+Full `pnpm test:unit`, full `pnpm test:integration`, and worker E2E are still
+deferred until the remaining Claude executor implementation lands. The current
+branch proof covers the pre-gate work and the task 3 provider-neutral cutover.
 
 Worker E2E gate status:
 
@@ -148,13 +207,18 @@ Worker E2E gate status:
   Claude executor exists and credentials/binary prerequisites are intentionally
   selected.
 
-## Open Gate
+## Resolved Gate
 
-Plan 08 task 3 remains a user decision:
+Plan 08 task 3 user decision was resolved:
 
-1. Keep `getThreadId()`, accepting the Codex-shaped historical method name as
-   the provider-neutral session reference accessor for now.
-2. Hard-cutover to `getSessionRef()`, updating all call sites and event/task
-   consumers in the same pass with no compatibility alias.
+- Hard-cutover to `getSessionRef()`, updating call sites, event consumers,
+  persisted task state names, and tests in the same pass with no compatibility
+  alias.
+
+Remaining Plan 08 work:
+
+- Claude executor implementation.
+- Worker executor factory/image packaging decision.
+- Claude-specific proof gates once the executor exists.
 
 Branch pushed to `origin/improve/plan-08-worker-executor-genericization`.

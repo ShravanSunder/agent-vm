@@ -58,7 +58,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 	const workingDirectory = config.workingDirectory ?? process.cwd();
 	let codex: Codex | null = null;
 	let currentThread: Thread | null = null;
-	let currentThreadId: string | null = null;
+	let currentSessionRef: string | null = null;
 
 	async function ensureCapabilitiesConfigured(): Promise<void> {
 		if (codex !== null) {
@@ -104,12 +104,12 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 		input: readonly StructuredInput[],
 	): Promise<ExecutorResult> {
 		const result = await thread.run(mapToCodexInput(input));
-		const threadId = thread.id ?? currentThreadId ?? '';
+		const sessionRef = thread.id ?? currentSessionRef ?? '';
 
 		return {
 			response: result.finalResponse ?? '',
 			tokenCount: result.usage?.output_tokens ?? 0,
-			threadId,
+			sessionRef,
 		};
 	}
 
@@ -118,7 +118,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			await ensureCapabilitiesConfigured();
 			currentThread = startNewThread();
 			const result = await runInThread(currentThread, input);
-			currentThreadId = result.threadId || null;
+			currentSessionRef = result.sessionRef || null;
 			return result;
 		},
 
@@ -129,21 +129,21 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			}
 
 			const result = await runInThread(currentThread, input);
-			currentThreadId = result.threadId || currentThreadId;
+			currentSessionRef = result.sessionRef || currentSessionRef;
 			return result;
 		},
 
 		async resumeOrRebuild(
-			threadId: string | null,
+			sessionRef: string | null,
 			context: readonly StructuredInput[],
 		): Promise<void> {
 			await ensureCapabilitiesConfigured();
-			if (threadId !== null) {
+			if (sessionRef !== null) {
 				try {
 					if (codex === null) {
 						throw new Error('Codex executor has not been configured.');
 					}
-					currentThread = codex.resumeThread(threadId, {
+					currentThread = codex.resumeThread(sessionRef, {
 						model: config.model,
 						approvalPolicy: 'never',
 						sandboxMode: 'danger-full-access',
@@ -151,7 +151,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 						skipGitRepoCheck: true,
 						networkAccessEnabled: true,
 					});
-					currentThreadId = threadId;
+					currentSessionRef = sessionRef;
 					return;
 				} catch (error) {
 					if (!isRecoverableResumeError(error)) {
@@ -160,20 +160,20 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 
 					const message = error instanceof Error ? error.message : String(error);
 					writeStderr(
-						`[codex-executor] Failed to resume thread ${threadId}; rebuilding thread instead: ${message}`,
+						`[codex-executor] Failed to resume thread ${sessionRef}; rebuilding thread instead: ${message}`,
 					);
 					currentThread = null;
-					currentThreadId = null;
+					currentSessionRef = null;
 				}
 			}
 
 			currentThread = startNewThread();
 			await runInThread(currentThread, context);
-			currentThreadId = currentThread.id ?? null;
+			currentSessionRef = currentThread.id ?? null;
 		},
 
-		getThreadId(): string | null {
-			return currentThreadId;
+		getSessionRef(): string | null {
+			return currentSessionRef;
 		},
 	};
 }

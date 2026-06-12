@@ -3,12 +3,12 @@ import type { StructuredInput, WorkExecutor } from './executor-interface.js';
 export interface PersistentThreadResponse {
 	readonly response: string;
 	readonly tokenCount: number;
-	readonly threadId: string;
+	readonly sessionRef: string;
 }
 
 export interface PersistentThread {
 	readonly send: (input: string) => Promise<PersistentThreadResponse>;
-	readonly threadId: () => string | null;
+	readonly sessionRef: () => string | null;
 }
 
 export interface CreatePersistentThreadProps {
@@ -59,11 +59,11 @@ export function createPersistentThread(props: CreatePersistentThreadProps): Pers
 			return {
 				response: result.response,
 				tokenCount: result.tokenCount,
-				threadId: result.threadId,
+				sessionRef: result.sessionRef,
 			};
 		},
-		threadId(): string | null {
-			return props.executor.getThreadId();
+		sessionRef(): string | null {
+			return props.executor.getSessionRef();
 		},
 	};
 }
