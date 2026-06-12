@@ -1,6 +1,7 @@
 # Repo Improvement Batch Checkpoint
 
 Date: 2026-06-11
+Resumed checkpoint update: 2026-06-12
 Base branch: `improve-v1`
 Plan batch base head before checkpoint docs: `32c0e1c`
 Base remote: `origin/improve-v1`; this checkpoint file is committed on the
@@ -21,11 +22,11 @@ or resolve user-decision gates.
 | 03 orphaned task startup sweep | `origin/improve/plan-03-orphaned-task-startup-sweep` | `5335b28` | complete branch pushed |
 | 04 gateway stale-close owner-safe recovery | `origin/improve/plan-04-gateway-stale-close-owner-safe-recovery` | `731d4b5` | complete branch pushed |
 | 05 health monitor hygiene | `origin/improve/plan-05-health-monitor-hygiene` | `9df56f5` | complete branch pushed |
-| 06 secret resolution hardening | `origin/improve/plan-06-secret-resolution-hardening` | `f8fe583` | stopped at research/user gate |
+| 06 secret resolution hardening | `origin/improve/plan-06-secret-resolution-hardening` | `1ab0983` | resumed complete branch pushed |
 | 07 Codex SDK upgrade | `origin/improve/plan-07-codex-sdk-upgrade` | `115f9fc` | complete branch pushed |
-| 08 worker executor genericization | `origin/improve/plan-08-worker-executor-genericization` | `00cc20c` | stopped at user gate; pre-gate branch pushed |
+| 08 worker executor genericization | `origin/improve/plan-08-worker-executor-genericization` | `ddc93cb` | task 3 `getSessionRef()` cutover branch pushed; Claude executor tasks remain |
 | 10 CI publish gate parity | `origin/improve/plan-10-ci-publish-gate-parity` | `a834de3` | complete branch pushed |
-| 12 backup pipeline hardening | `origin/improve/plan-12-backup-pipeline-hardening` | `02c0218` | stopped at user gate; safe hardening branch pushed |
+| 12 backup pipeline hardening | `origin/improve/plan-12-backup-pipeline-hardening` | `6472d19` | resumed complete branch pushed |
 | 13 Dockerfile generation injection guards | `origin/improve/plan-13-dockerfile-generation-injection-guards` | `d08dfc5` | complete branch pushed |
 | 14 MCP Portal approval/discovery hardening | `origin/improve/plan-14-mcp-portal-approval-discovery` | `fc1a952` | complete branch pushed |
 
@@ -38,6 +39,8 @@ branches during the checkpoint pass:
 
 - Plans 01, 02, 03, 04, 05, 06, 07, 08, 10, 12, 13, and 14.
 - Base `improve-v1` was clean before this checkpoint file was added.
+- After the 2026-06-12 resume, Plans 06, 08, and 12 again reported clean and
+  tracking their matching origin branches after push.
 
 ## Reports
 
@@ -57,27 +60,39 @@ integration:
 - Plan 13: `docs/wip/communications/2026-06-11-plan-13-dockerfile-generation-injection-guards-report.md`
 - Plan 14: `docs/wip/communications/2026-06-11-plan-14-mcp-portal-approval-discovery-report.md`
 
-## Open Gates
+## Gates And Remaining Work
 
 Plan 06 secret resolution hardening:
 
-- Approve the evidence-backed narrower retry contract:
-  retry only typed `RateLimitExceededError` from the 1Password SDK.
-- Do not retry generic SDK `Error` values, per-reference `ResolveReferenceError`
-  responses from `resolveAll`, or op-inject fallback failures unless a new
-  typed classification surface is added.
+- Resolved on 2026-06-12.
+- Implemented typed retry/backoff only for 1Password SDK
+  `RateLimitExceededError` on SDK client creation, `resolve`, and thrown
+  `resolveAll` failures.
+- Kept generic SDK `Error`, per-reference `ResolveReferenceError`, and
+  op-inject fallback failures non-retryable because no stable transient
+  classifier exists in the installed APIs.
+- Branch pushed at `1ab0983`.
 
 Plan 08 worker executor genericization:
 
-- Choose whether to keep `getThreadId()` as the provider-neutral session
-  accessor or hard-cutover to `getSessionRef()` across interface, Codex
-  executor, persistent-thread, task-event consumers, and tests.
+- Interface-name gate resolved on 2026-06-12.
+- Hard-cutover to `getSessionRef()` completed across interface, Codex executor,
+  persistent-thread, task-event consumers, persisted task state fields, and
+  tests.
+- Branch pushed at `ddc93cb`.
+- Remaining Plan 08 work: Claude executor implementation, worker executor
+  factory/image packaging decision, Claude-specific proof gates once the
+  executor exists.
 
 Plan 12 backup pipeline hardening:
 
-- Choose whether to change both legacy fallback sites to an external default,
-  or keep the legacy `stateDir/backups` fallback and add a loud overlap
-  assertion that forces explicit `gateway.backupDir` for unconfigured zones.
+- Resolved on 2026-06-12.
+- Legacy fallback sites now default omitted `gateway.backupDir` to
+  `~/.agent-vm-backups/<zone>`, matching the storage model and user-dir init
+  profile.
+- Create-time backup path assertions now reject overlap between `backupDir` and
+  `stateDir` / `zoneFilesDir`.
+- Branch pushed at `6472d19`.
 
 Plan 11 docs architecture drift:
 
@@ -86,11 +101,11 @@ Plan 11 docs architecture drift:
 
 ## Dependency Boundaries
 
-- Plan 09 waits on Plan 03 and Plan 06; Plan 03 is pushed, Plan 06 is
-  stopped at the retry-classification decision.
+- Plan 09 waits on Plan 03 and Plan 06; both dependencies are now pushed after
+  the 2026-06-12 Plan 06 resume.
 - Plan 11 waits on Plan 09 and also has its own heartbeat decision gate.
-- Plan 08 is stacked on Plan 07 and remains stopped before the task 3
-  interface-name decision.
+- Plan 08 is stacked on Plan 07. Its task 3 interface-name decision is resolved;
+  remaining Plan 08 work starts with the Claude executor slice.
 
 ## Integration Guardrails
 
@@ -100,7 +115,10 @@ Plan 11 docs architecture drift:
   history/integration git writes.
 - Before integration, substantial pushed branches still need their review
   status checked against the handoff requirement. Plan 12 has completed a
-  review/fix loop. Plan 08 pre-gate review was dispatched after the branch was
-  pushed, but the three reviewer lanes were later closed while still reporting
-  `previous_status: running`; no candidate findings were returned. Plan 08
-  therefore still needs a successful review/reduction pass before integration.
+  review/fix loop before the resumed fallback decision; Plan 08 pre-gate review
+  was dispatched after the branch was pushed, but the three reviewer lanes were
+  later closed while still reporting `previous_status: running`; no candidate
+  findings were returned. Plan 08 therefore still needs a successful
+  review/reduction pass before integration.
+- 2026-06-12 commits were created with `--no-gpg-sign` after the first Plan 06
+  signed commit attempt failed with `1Password: failed to fill whole buffer`.
