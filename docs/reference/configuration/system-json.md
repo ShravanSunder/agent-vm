@@ -145,7 +145,7 @@ Example:
       "prepareOnBuild": true,
       "waitOnBuild": true,
       "controllerStartPolicy": "degraded",
-      "startupCheckTimeoutMs": 500,
+      "startupCheckTimeoutMs": 30000,
       "retention": {
         "metrics": { "period": "30d", "minFreeDiskSpaceBytes": "5GiB" },
         "logs": { "period": "14d", "maxDiskSpaceUsageBytes": "50GiB" },
@@ -172,7 +172,7 @@ Example:
 | `prepareOnBuild` | `true` | Lets `agent-vm build` render artifacts and run Docker Compose for `managed` when an opted-in zone is selected. `external` reports that the stack is externally managed. |
 | `waitOnBuild` | `true` | Makes managed build wait for collector, metrics, logs, and traces readiness after Compose startup. |
 | `controllerStartPolicy` | `degraded` | `degraded` starts the controller when readiness is unavailable; `require-ready` fails after the bounded readiness budget; `off` skips startup checks. No policy starts Docker. |
-| `startupCheckTimeoutMs` | `500` | Total bounded readiness budget for one startup health-check pass. |
+| `startupCheckTimeoutMs` | `30000` | Total bounded readiness budget for one startup health-check pass. |
 | `ports.collectorGrpc` | `4317` | Host OTLP gRPC collector port. All observability ports must be unique values from 1 through 65535. |
 | `ports.collectorHttp` | `4318` | Host OTLP HTTP collector port used by OpenClaw diagnostics. |
 | `ports.collectorHealth` | `13133` | Host collector health-check port. |
@@ -197,7 +197,7 @@ External shared collector example:
       "mode": "collector",
       "bindAddress": "127.0.0.1",
       "controllerStartPolicy": "degraded",
-      "startupCheckTimeoutMs": 500
+      "startupCheckTimeoutMs": 30000
     }
   }
 }

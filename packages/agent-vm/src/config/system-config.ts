@@ -642,7 +642,7 @@ const hostObservabilityCommonShape = {
 	bindAddress: z.enum(['127.0.0.1', '::1']).default('127.0.0.1'),
 	prepareOnBuild: z.boolean().default(true),
 	waitOnBuild: z.boolean().default(true),
-	startupCheckTimeoutMs: z.number().int().positive().default(500),
+	startupCheckTimeoutMs: z.number().int().positive().default(30_000),
 	ports: hostObservabilityPortsSchema,
 	controllerStartPolicy: z.enum(['degraded', 'require-ready', 'off']).default('degraded'),
 } as const;

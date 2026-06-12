@@ -30,7 +30,7 @@ function createRuntimeConfig(): ManagedObservabilityRuntimeConfig {
 		prepareOnBuild: true,
 		waitOnBuild: true,
 		controllerStartPolicy: 'degraded',
-		startupCheckTimeoutMs: 500,
+		startupCheckTimeoutMs: 30_000,
 		zones: [],
 	};
 }
@@ -59,6 +59,14 @@ describe('createObservabilityComposeModel', () => {
 		expect(victoriaLogs.restart).toBe('unless-stopped');
 		expect(victoriaTraces.restart).toBe('unless-stopped');
 		expect(otelCollector.restart).toBe('unless-stopped');
+		const hostUserSpec =
+			typeof process.getuid === 'function' && typeof process.getgid === 'function'
+				? `${String(process.getuid())}:${String(process.getgid())}`
+				: undefined;
+		expect(victoriaMetrics.user).toBe(hostUserSpec);
+		expect(victoriaLogs.user).toBe(hostUserSpec);
+		expect(victoriaTraces.user).toBe(hostUserSpec);
+		expect(otelCollector.user).toBeUndefined();
 		expect(otelCollector.ports).toEqual([
 			'127.0.0.1:4317:4317',
 			'127.0.0.1:4318:4318',
@@ -94,6 +102,9 @@ describe('createObservabilityComposeModel', () => {
 		expect(yaml).toContain('-retention.maxDiskSpaceUsageBytes=50GiB');
 		expect(yaml).toContain('-retention.maxDiskUsagePercent=80');
 		expect(yaml).toContain('-storageDataPath=/victoria-metrics-data');
+		if (typeof process.getuid === 'function' && typeof process.getgid === 'function') {
+			expect(yaml).toContain(`user: "${String(process.getuid())}:${String(process.getgid())}"`);
+		}
 		expect(yaml).not.toContain('down -v');
 		expect(yaml).not.toMatch(/token|password|secret|authorization|cookie/iu);
 	});

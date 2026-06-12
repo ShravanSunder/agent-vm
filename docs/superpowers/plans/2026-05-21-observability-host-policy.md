@@ -177,7 +177,7 @@ Tasks:
   clearly even if the field is shaped to allow future expansion.
 - [x] Add `prepareOnBuild`, default true when host observability is enabled.
 - [x] Add `waitOnBuild`, default true for local developer deployments.
-- [ ] Add `startupCheckTimeoutMs`, default 500.
+- [x] Add `startupCheckTimeoutMs`, default 30000.
 - [ ] Add `zones[].observability` OpenClaw opt-in schema.
 - [ ] Reject zone observability when host observability is disabled.
 - [ ] Reject zone observability for non-OpenClaw gateways in v1.

@@ -292,7 +292,7 @@ and `stack.mode` decides stack ownership:
       "dataDir": "/Users/shravansunder/.agent-vm/observability/sunfam",
       "projectName": "agent-vm-observability-sunfam",
       "bindAddress": "127.0.0.1",
-      "startupCheckTimeoutMs": 500,
+      "startupCheckTimeoutMs": 30000,
       "ports": {
         "collectorGrpc": 4317,
         "collectorHttp": 4318,
@@ -368,7 +368,7 @@ started.
 Controller-owned gateway start checks must be bounded HTTP probes against the
 collector health endpoint. They must not shell out to `docker`,
 `docker compose`, or any container runtime CLI. The default timeout budget is
-500 ms.
+30 seconds.
 
 Add a zone-owned opt-in plane only for Gateway telemetry policy:
 

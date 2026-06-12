@@ -18,6 +18,7 @@ export interface ObservabilityComposeService {
 	readonly environment?: readonly string[];
 	readonly ports: readonly string[];
 	readonly restart: 'unless-stopped';
+	readonly user?: string;
 	readonly volumes: readonly string[];
 	readonly depends_on?: readonly string[];
 }
@@ -66,9 +67,19 @@ function renderDiskBoundedRetentionFlags(
 	];
 }
 
+function resolveHostUserSpec(): string | undefined {
+	const getuid = process.getuid;
+	const getgid = process.getgid;
+	if (typeof getuid !== 'function' || typeof getgid !== 'function') {
+		return undefined;
+	}
+	return `${String(getuid())}:${String(getgid())}`;
+}
+
 export function createObservabilityComposeModel(
 	config: ManagedObservabilityRuntimeConfig,
 ): ObservabilityComposeModel {
+	const hostUserSpec = resolveHostUserSpec();
 	return {
 		name: config.projectName,
 		services: {
@@ -80,6 +91,7 @@ export function createObservabilityComposeModel(
 				],
 				ports: [renderLoopbackPort(config.bindAddress, config.ports.metrics, 8428)],
 				restart: 'unless-stopped',
+				...(hostUserSpec === undefined ? {} : { user: hostUserSpec }),
 				volumes: [path.join(config.dataDir, 'metrics') + ':/victoria-metrics-data'],
 			},
 			'victoria-logs': {
@@ -90,6 +102,7 @@ export function createObservabilityComposeModel(
 				],
 				ports: [renderLoopbackPort(config.bindAddress, config.ports.logs, 9428)],
 				restart: 'unless-stopped',
+				...(hostUserSpec === undefined ? {} : { user: hostUserSpec }),
 				volumes: [path.join(config.dataDir, 'logs') + ':/victoria-logs-data'],
 			},
 			'victoria-traces': {
@@ -100,6 +113,7 @@ export function createObservabilityComposeModel(
 				],
 				ports: [renderLoopbackPort(config.bindAddress, config.ports.traces, 10_428)],
 				restart: 'unless-stopped',
+				...(hostUserSpec === undefined ? {} : { user: hostUserSpec }),
 				volumes: [path.join(config.dataDir, 'traces') + ':/victoria-traces-data'],
 			},
 			'otel-collector': {
@@ -144,6 +158,9 @@ export function renderObservabilityComposeYaml(model: ObservabilityComposeModel)
 			lines.push('    environment:', ...renderYamlArray('      ', service.environment));
 		}
 		lines.push(`    restart: ${service.restart}`);
+		if (service.user !== undefined) {
+			lines.push(`    user: ${JSON.stringify(service.user)}`);
+		}
 		lines.push('    ports:', ...renderYamlArray('      ', service.ports));
 		lines.push('    volumes:', ...renderYamlArray('      ', service.volumes));
 	}

@@ -138,7 +138,7 @@ describe('createObservabilityRuntimeConfig', () => {
 			prepareOnBuild: true,
 			waitOnBuild: true,
 			controllerStartPolicy: 'degraded',
-			startupCheckTimeoutMs: 500,
+			startupCheckTimeoutMs: 30_000,
 			zones: [
 				{
 					zoneId: 'sunfam',
@@ -186,7 +186,7 @@ describe('createObservabilityRuntimeConfig', () => {
 			prepareOnBuild: true,
 			waitOnBuild: true,
 			controllerStartPolicy: 'degraded',
-			startupCheckTimeoutMs: 500,
+			startupCheckTimeoutMs: 30_000,
 			zones: [
 				{
 					zoneId: 'sunfam',

@@ -2557,7 +2557,7 @@ describe('loadSystemConfig', () => {
 			bindAddress: '127.0.0.1',
 			prepareOnBuild: true,
 			waitOnBuild: true,
-			startupCheckTimeoutMs: 500,
+			startupCheckTimeoutMs: 30_000,
 		});
 		expect(loadedHostObservability.dataDir).toBe(
 			path.join(path.dirname(configPath), '..', 'observability'),

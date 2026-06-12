@@ -95,7 +95,7 @@ async function createRuntimeConfig(): Promise<ManagedObservabilityRuntimeConfig>
 		prepareOnBuild: true,
 		waitOnBuild: true,
 		controllerStartPolicy: 'degraded',
-		startupCheckTimeoutMs: 3_000,
+		startupCheckTimeoutMs: 30_000,
 		zones: [
 			{
 				zoneId: 'sunfam',
