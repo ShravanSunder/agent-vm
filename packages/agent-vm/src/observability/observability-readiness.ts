@@ -71,11 +71,20 @@ function formatReadinessError(error: unknown): string {
 	return causeCode === undefined ? error.message : `${error.message} (${causeCode})`;
 }
 
+type CollectorOtlpHttpProbeResult =
+	| {
+			readonly ok: true;
+	  }
+	| {
+			readonly ok: false;
+			readonly reason: string;
+	  };
+
 async function probeCollectorOtlpHttpReceiver(options: {
 	readonly config: EnabledObservabilityRuntimeConfig;
 	readonly fetchImpl: typeof fetch;
 	readonly timeoutMs: number;
-}): Promise<boolean> {
+}): Promise<CollectorOtlpHttpProbeResult> {
 	const host = formatHttpHost(options.config.bindAddress);
 	try {
 		const response = await options.fetchImpl(
@@ -87,9 +96,18 @@ async function probeCollectorOtlpHttpReceiver(options: {
 				signal: AbortSignal.timeout(options.timeoutMs),
 			},
 		);
-		return response.ok;
-	} catch {
-		return false;
+		if (response.ok) {
+			return { ok: true };
+		}
+		return {
+			ok: false,
+			reason: `returned HTTP ${String(response.status)}`,
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			reason: formatReadinessError(error),
+		};
 	}
 }
 
@@ -121,17 +139,18 @@ export async function checkObservabilityStackReadiness(
 				} catch (error) {
 					ready = false;
 					lastErrorReason = `${endpoint.name} health check failed: ${formatReadinessError(error)}`;
-					if (
-						endpoint.name === 'collector' &&
+					if (endpoint.name === 'collector') {
 						// oxlint-disable-next-line no-await-in-loop -- collector fallback must preserve the failed health-check attribution before continuing.
-						(await probeCollectorOtlpHttpReceiver({
+						const collectorOtlpProbeResult = await probeCollectorOtlpHttpReceiver({
 							config: options.config,
 							fetchImpl,
 							timeoutMs: Math.max(1, deadlineMs - Date.now()),
-						}))
-					) {
-						ready = true;
-						continue;
+						});
+						if (collectorOtlpProbeResult.ok) {
+							ready = true;
+							continue;
+						}
+						lastErrorReason = `${lastErrorReason}; OTLP HTTP fallback failed: ${collectorOtlpProbeResult.reason}`;
 					}
 					break;
 				}

@@ -123,7 +123,8 @@ describe('checkObservabilityStackReadiness', () => {
 
 		expect(result).toEqual({
 			ok: false,
-			reason: 'collector health check failed: fetch failed (ECONNREFUSED)',
+			reason:
+				'collector health check failed: fetch failed (ECONNREFUSED); OTLP HTTP fallback failed: fetch failed (ECONNREFUSED)',
 			status: 'unavailable',
 		});
 	});

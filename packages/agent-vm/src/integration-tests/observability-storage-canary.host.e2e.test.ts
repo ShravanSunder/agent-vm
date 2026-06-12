@@ -11,6 +11,7 @@ import { prepareObservabilityStack } from '../observability/observability-lifecy
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const temporaryDirectories: string[] = [];
+const storageCanaryStartupCheckTimeoutMs = process.env.GITHUB_ACTIONS === 'true' ? 90_000 : 30_000;
 
 afterEach(async () => {
 	await Promise.all(
@@ -73,7 +74,7 @@ async function selectLoopbackPorts(): Promise<
 	}
 	const workerId = Number.parseInt(process.env.VITEST_WORKER_ID ?? '0', 10);
 	const workerOffset = Number.isFinite(workerId) && workerId >= 0 ? workerId * 20 : 0;
-	const basePort = 36_000 + workerOffset;
+	const basePort = 61_000 + workerOffset;
 	return [basePort + 1, basePort + 2, basePort + 3, basePort + 4, basePort + 5, basePort + 6];
 }
 
@@ -107,7 +108,7 @@ async function createRuntimeConfig(): Promise<ManagedObservabilityRuntimeConfig>
 		prepareOnBuild: true,
 		waitOnBuild: true,
 		controllerStartPolicy: 'degraded',
-		startupCheckTimeoutMs: 30_000,
+		startupCheckTimeoutMs: storageCanaryStartupCheckTimeoutMs,
 		zones: [
 			{
 				zoneId: 'sunfam',
