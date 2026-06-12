@@ -25,12 +25,13 @@ or resolve user-decision gates.
 | 06 secret resolution hardening | `origin/improve/plan-06-secret-resolution-hardening` | `1ab0983` | resumed complete branch pushed |
 | 07 Codex SDK upgrade | `origin/improve/plan-07-codex-sdk-upgrade` | `115f9fc` | complete branch pushed |
 | 08 worker executor genericization | `origin/improve/plan-08-worker-executor-genericization` | `65ece9f` | resumed Claude executor branch pushed; live worker E2E gated by missing credentials |
+| 09 task event stream and embedding | `origin/improve/plan-09-task-event-stream-and-embedding` | `3953657` | complete branch pushed |
 | 10 CI publish gate parity | `origin/improve/plan-10-ci-publish-gate-parity` | `a834de3` | complete branch pushed |
 | 12 backup pipeline hardening | `origin/improve/plan-12-backup-pipeline-hardening` | `6472d19` | resumed complete branch pushed |
 | 13 Dockerfile generation injection guards | `origin/improve/plan-13-dockerfile-generation-injection-guards` | `d08dfc5` | complete branch pushed |
 | 14 MCP Portal approval/discovery hardening | `origin/improve/plan-14-mcp-portal-approval-discovery` | `fc1a952` | complete branch pushed |
 
-Plans 09 and 11 have no implementation branch yet.
+Plan 11 has no implementation branch yet.
 
 ## Clean Worktree Check
 
@@ -41,6 +42,8 @@ branches during the checkpoint pass:
 - Base `improve-v1` was clean before this checkpoint file was added.
 - After the 2026-06-12 resume, Plans 06, 08, and 12 again reported clean and
   tracking their matching origin branches after push.
+- Plan 09 reported clean and tracking
+  `origin/improve/plan-09-task-event-stream-and-embedding` after push.
 
 ## Reports
 
@@ -55,6 +58,7 @@ integration:
 - Plan 06: `docs/wip/communications/2026-06-11-plan-06-secret-resolution-hardening-research-gate.md`
 - Plan 07: `docs/wip/communications/2026-06-11-plan-07-codex-sdk-upgrade-report.md`
 - Plan 08: `docs/wip/communications/2026-06-11-plan-08-worker-executor-genericization-report.md`
+- Plan 09: `docs/wip/communications/2026-06-12-plan-09-task-event-stream-and-embedding-report.md`
 - Plan 10: `docs/wip/communications/2026-06-11-plan-10-ci-publish-gate-parity-report.md`
 - Plan 12: `docs/wip/communications/2026-06-11-plan-12-backup-pipeline-hardening-report.md`
 - Plan 13: `docs/wip/communications/2026-06-11-plan-13-dockerfile-generation-injection-guards-report.md`
@@ -94,6 +98,28 @@ Plan 08 worker executor genericization:
     `AGENT_VM_TEST_OPENAI_API_KEY`, and `AGENT_VM_TEST_ANTHROPIC_API_KEY` were
     unset in the shell.
 
+Plan 09 task event stream and embedding:
+
+- Resolved on 2026-06-12.
+- Added `GET /zones/:zoneId/tasks/:taskId/events` as a server-sent events route
+  for worker task JSONL replay/tailing with zero-based line cursors.
+- Added `task-event-stream.ts` with terminal-event close,
+  corrupt-final-line tolerance, failure-sentinel fallback, per-task stream cap,
+  and readiness-aware shutdown on heartbeat ticks.
+- Exported `startControllerRuntime` and runtime dependency/options types from
+  the package entrypoint.
+- Branch pushed at `3953657`.
+- Final proof on the plan branch:
+  - focused red proof: new tests failed before implementation because the
+    module/export/route did not exist.
+  - focused green proof: 3 files / 93 tests passed.
+  - focused controller proof: 39 files / 471 tests passed.
+  - `pnpm check`: 6 passed / 0 failed.
+  - `pnpm test:unit`: 199 files / 1808 tests passed.
+  - `pnpm test:integration`: 23 files / 327 tests passed.
+  - `pnpm lint` and `mise run lint`: 0 warnings / 0 errors.
+  - Plan-specific e2e was not required or run.
+
 Plan 12 backup pipeline hardening:
 
 - Resolved on 2026-06-12.
@@ -111,8 +137,10 @@ Plan 11 docs architecture drift:
 
 ## Dependency Boundaries
 
-- Plan 09 waits on Plan 03 and Plan 06; both dependencies are now pushed after
-  the 2026-06-12 Plan 06 resume.
+- Plan 09 completed after Plan 03 and Plan 06 were pushed. A live ancestry
+  check showed Plan 03 is not an ancestor of Plan 06, so Plan 09 followed the
+  isolated branch pattern from current `origin/improve-v1` rather than merging
+  previous plan branches into its worktree.
 - Plan 11 waits on Plan 09 and also has its own heartbeat decision gate.
 - Plan 08 is stacked on Plan 07. Its task 3 interface-name decision and Claude
   executor slice are resolved on the plan branch. Live worker E2E remains an
