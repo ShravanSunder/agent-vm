@@ -1,6 +1,6 @@
 # Plan 12 Backup Pipeline Hardening Report
 
-Status: stopped-at-gate; review findings accepted and fixed
+Status: resumed task 3 complete
 Branch: improve/plan-12-backup-pipeline-hardening
 Base: improve-v1 at 32c0e1c5
 
@@ -29,22 +29,66 @@ require the explicit backupDir fallback decision:
   runtime records, and matching non-managed process identities, require
   `--force`.
 
-The plan remains stopped at task 3's explicit user decision:
+The previous report stopped at task 3's explicit user decision:
 
 - Change both legacy fallback sites to an external default, or
 - Keep the legacy `stateDir/backups` fallback and rely on the new overlap
   assertion to force explicit `gateway.backupDir` for unconfigured legacy
   zones.
 
-I did not change either fallback site:
+The resumed decision was to use the external default. The legacy fallback sites
+now share the same `~/.agent-vm-backups/<zone>` helper, and the `backupDir`
+overlap assertion has been restored.
 
+## 2026-06-12 Resumed Update
+
+Rechecked the storage model before editing:
+
+- `docs/architecture/storage-model.md` documents host `backupDir` as
+  `~/.agent-vm-backups/<zone>/`.
+- The user-dir init profile describes backups under `~/.agent-vm-backups/` so a
+  wipe of the runtime tree cannot remove the recovery archive.
+- `agent-vm init` already writes `gateway.backupDir` from the selected path
+  profile. The stale behavior was only in the unconfigured legacy fallback
+  sites.
+
+Implemented the external fallback decision:
+
+- Added `resolveZoneBackupDir`, defaulting omitted `gateway.backupDir` to
+  `path.join(os.homedir(), ".agent-vm-backups", zoneId)`.
+- Updated backup list/create and `agent-vm paths` to use that shared helper.
+- Restored create-time backup path assertions and reject overlap with
+  `stateDir` or `zoneFilesDir`.
+- Added unit coverage for default fallback output and rejected backup path
+  overlap.
+
+Additional files touched by the resumed decision:
+
+- `packages/agent-vm/src/backup/backup-create-operation.ts`
+- `packages/agent-vm/src/backup/backup-operations.unit.test.ts`
+- `packages/agent-vm/src/cli/agent-vm-entrypoint.unit.test.ts`
 - `packages/agent-vm/src/cli/backup-commands.ts`
+- `packages/agent-vm/src/cli/backup-commands.unit.test.ts`
 - `packages/agent-vm/src/cli/commands/paths-definition.ts`
+- `packages/agent-vm/src/cli/zone-backup-paths.ts`
 
-I also deferred the `backupDir` overlap assertion. A review pass caught that
-adding the assertion while the legacy fallback still resolves to
-`${stateDir}/backups` silently chooses the "keep fallback and fail until
-configured" option before the user decision is made.
+Resumed proof:
+
+- `pnpm vitest run packages/agent-vm/src/backup/backup-operations.unit.test.ts packages/agent-vm/src/cli/backup-commands.unit.test.ts packages/agent-vm/src/cli/agent-vm-entrypoint.unit.test.ts`
+  - exit 0
+  - 3 files passed
+  - 85 tests passed
+- `pnpm fmt:check`
+  - exit 0
+- `mise run lint`
+  - exit 0
+  - 0 warnings
+  - 0 errors
+- `pnpm typecheck`
+  - exit 0
+- `pnpm check`
+  - exit 0
+  - check gate: 6 passed, 0 failed in 21.51s
 
 ## Files Touched
 
@@ -173,8 +217,8 @@ Deferred follow-ups:
 
 - Add a cross-process restore lock if concurrent restore becomes an operator
   concern.
-- Revisit symlink-aware `backupDir` overlap rejection together with the task 3
-  fallback decision.
+- Revisit symlink-aware `backupDir` overlap rejection if operators can configure
+  symlinked backup roots that lexically appear outside durable state.
 
 ## Notes
 
@@ -185,13 +229,13 @@ Deferred follow-ups:
 - Restore logs retained pre-restore directories to stderr as:
   `[agent-vm backup] Retained pre-restore directory '<path>' for manual recovery.`
 
-## Open Gate
+## Resolved Gate
 
-Plan 12 task 3 remains a user decision:
+Plan 12 task 3 user decision was resolved:
 
-1. Change the legacy fallback in both CLI sites to an external default,
-   matching the documented `~/.agent-vm-backups/<zone>/` model.
-2. Keep the legacy fallback and allow the new assertion to fail old
-   unconfigured zones until they set `gateway.backupDir` explicitly.
+- Change the legacy fallback in both CLI sites to an external default, matching
+  the documented `~/.agent-vm-backups/<zone>/` model.
+- Restore the create-time overlap assertion now that omitted `backupDir` no
+  longer resolves under `stateDir`.
 
 Branch pushed to `origin/improve/plan-12-backup-pipeline-hardening`.

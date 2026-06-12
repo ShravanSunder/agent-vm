@@ -1,3 +1,6 @@
+import os from 'node:os';
+import path from 'node:path';
+
 import type { SecretRef } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -98,6 +101,8 @@ const nonManagedProcessIdentity = {
 	lstart: 'Thu Jun 11 10:00:00 2026',
 } satisfies ProcessIdentity;
 
+const defaultShravanBackupDir = path.join(os.homedir(), '.agent-vm-backups', 'shravan');
+
 function createRuntimeRecord(processIdentity: ProcessIdentity): GatewayRuntimeRecord {
 	return {
 		configPath: '/project/config/system.json',
@@ -185,7 +190,7 @@ describe('runBackupCommand', () => {
 		});
 
 		expect(listBackups).toHaveBeenCalledWith({
-			backupDir: './state/shravan/backups',
+			backupDir: defaultShravanBackupDir,
 			zoneId: 'shravan',
 		});
 		expect(outputs.join('')).toContain('shravan__2026-04-11.tar.age');
@@ -260,7 +265,7 @@ describe('runBackupCommand', () => {
 		});
 
 		expect(createBackup).toHaveBeenCalledWith({
-			backupDir: './state/shravan/backups',
+			backupDir: defaultShravanBackupDir,
 			cacheDir: './cache',
 			runtimeDir: './runtime',
 			stateDir: './state/shravan',

@@ -121,6 +121,71 @@ async function listPreRestoreDirectories(targetDirectory: string): Promise<reado
 }
 
 describe('backup plaintext cleanup', () => {
+	it('rejects backupDir nested in stateDir before archiving', async () => {
+		const rootDirectory = await createTemporaryDirectory('agent-vm-backup-boundary-unit-');
+		try {
+			const cacheDir = path.join(rootDirectory, 'cache');
+			const runtimeDir = path.join(rootDirectory, 'runtime');
+			const stateDir = path.join(rootDirectory, 'state', 'sunfam');
+			const backupDir = path.join(stateDir, 'backups');
+			await fs.mkdir(stateDir, { recursive: true });
+
+			let commandCount = 0;
+
+			await expect(
+				createEncryptedBackup({
+					backupDir,
+					cacheDir,
+					encryption: { decrypt: async () => {}, encrypt: async () => {} },
+					execFileAsync: async () => {
+						commandCount += 1;
+					},
+					runtimeDir,
+					stateDir,
+					zoneId: 'sunfam',
+				}),
+			).rejects.toThrow(/backupDir .* must not overlap stateDir/u);
+
+			expect(commandCount).toBe(0);
+		} finally {
+			await fs.rm(rootDirectory, { recursive: true, force: true });
+		}
+	});
+
+	it('rejects backupDir nested in zoneFilesDir before archiving', async () => {
+		const rootDirectory = await createTemporaryDirectory('agent-vm-backup-boundary-unit-');
+		try {
+			const cacheDir = path.join(rootDirectory, 'cache');
+			const runtimeDir = path.join(rootDirectory, 'runtime');
+			const stateDir = path.join(rootDirectory, 'state', 'sunfam');
+			const zoneFilesDir = path.join(rootDirectory, 'zone-files', 'sunfam');
+			const backupDir = path.join(zoneFilesDir, 'backups');
+			await fs.mkdir(stateDir, { recursive: true });
+			await fs.mkdir(zoneFilesDir, { recursive: true });
+
+			let commandCount = 0;
+
+			await expect(
+				createEncryptedBackup({
+					backupDir,
+					cacheDir,
+					encryption: { decrypt: async () => {}, encrypt: async () => {} },
+					execFileAsync: async () => {
+						commandCount += 1;
+					},
+					runtimeDir,
+					stateDir,
+					zoneFilesDir,
+					zoneId: 'sunfam',
+				}),
+			).rejects.toThrow(/backupDir .* must not overlap zoneFilesDir/u);
+
+			expect(commandCount).toBe(0);
+		} finally {
+			await fs.rm(rootDirectory, { recursive: true, force: true });
+		}
+	});
+
 	it('removes the intermediate plaintext tar when encryption fails', async () => {
 		const rootDirectory = await createTemporaryDirectory('agent-vm-backup-create-unit-');
 		try {

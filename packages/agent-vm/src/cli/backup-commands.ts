@@ -20,6 +20,7 @@ import {
 	requireZone,
 	writeJson,
 } from './agent-vm-cli-support.js';
+import { resolveZoneBackupDir } from './zone-backup-paths.js';
 
 interface RunBackupCommandOptions {
 	readonly dependencies: CliDependencies;
@@ -90,7 +91,10 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 	const backupSubcommand = options.restArguments[0];
 	const zone = requireZone(options.systemConfig, readZoneFlag(options.restArguments));
 	const zoneId = zone.id;
-	const backupDir = zone.gateway.backupDir ?? `${zone.gateway.stateDir}/backups`;
+	const backupDir = resolveZoneBackupDir({
+		configuredBackupDir: zone.gateway.backupDir,
+		zoneId,
+	});
 
 	if (backupSubcommand === 'list') {
 		const backupManager = options.dependencies.createZoneBackupManager({
