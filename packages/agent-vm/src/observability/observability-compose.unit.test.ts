@@ -46,9 +46,15 @@ describe('createObservabilityComposeModel', () => {
 			throw new Error('Expected all observability compose services to be present.');
 		}
 
-		expect(victoriaMetrics.ports).toEqual(['127.0.0.1:8428:8428']);
-		expect(victoriaLogs.ports).toEqual(['127.0.0.1:9428:9428']);
-		expect(victoriaTraces.ports).toEqual(['127.0.0.1:10428:10428']);
+		expect(victoriaMetrics.ports).toEqual([
+			{ hostIp: '127.0.0.1', protocol: 'tcp', published: 8428, target: 8428 },
+		]);
+		expect(victoriaLogs.ports).toEqual([
+			{ hostIp: '127.0.0.1', protocol: 'tcp', published: 9428, target: 9428 },
+		]);
+		expect(victoriaTraces.ports).toEqual([
+			{ hostIp: '127.0.0.1', protocol: 'tcp', published: 10_428, target: 10_428 },
+		]);
 		expect(victoriaMetrics.command).not.toContain('-retention.maxDiskSpaceUsageBytes=50GiB');
 		expect(victoriaMetrics.command).not.toContain('-retention.maxDiskUsagePercent=80');
 		expect(victoriaLogs.command).toContain('-retention.maxDiskSpaceUsageBytes=50GiB');
@@ -68,9 +74,9 @@ describe('createObservabilityComposeModel', () => {
 		expect(victoriaTraces.user).toBe(hostUserSpec);
 		expect(otelCollector.user).toBeUndefined();
 		expect(otelCollector.ports).toEqual([
-			'127.0.0.1:4317:4317',
-			'127.0.0.1:4318:4318',
-			'127.0.0.1:13133:13133',
+			{ hostIp: '127.0.0.1', protocol: 'tcp', published: 4317, target: 4317 },
+			{ hostIp: '127.0.0.1', protocol: 'tcp', published: 4318, target: 4318 },
+			{ hostIp: '127.0.0.1', protocol: 'tcp', published: 13_133, target: 13_133 },
 		]);
 		expect(otelCollector.environment).toEqual([
 			'HTTP_PROXY=',
@@ -109,7 +115,7 @@ describe('createObservabilityComposeModel', () => {
 		expect(yaml).not.toMatch(/token|password|secret|authorization|cookie/iu);
 	});
 
-	test('quotes IPv6 loopback published ports for Docker Compose yaml parsing', () => {
+	test('renders IPv6 loopback published ports with explicit Docker Compose long syntax', () => {
 		const yaml = renderObservabilityComposeYaml(
 			createObservabilityComposeModel({
 				...createRuntimeConfig(),
@@ -117,7 +123,8 @@ describe('createObservabilityComposeModel', () => {
 			}),
 		);
 
-		expect(yaml).toContain('- "[::1]:8428:8428"');
-		expect(yaml).toContain('- "[::1]:4318:4318"');
+		expect(yaml).toContain('host_ip: "::1"');
+		expect(yaml).toContain('published: "8428"');
+		expect(yaml).toContain('published: "4318"');
 	});
 });

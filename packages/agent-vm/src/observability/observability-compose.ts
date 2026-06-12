@@ -16,11 +16,18 @@ export interface ObservabilityComposeService {
 	readonly image: string;
 	readonly command?: readonly string[];
 	readonly environment?: readonly string[];
-	readonly ports: readonly string[];
+	readonly ports: readonly ObservabilityComposePort[];
 	readonly restart: 'unless-stopped';
 	readonly user?: string;
 	readonly volumes: readonly string[];
 	readonly depends_on?: readonly string[];
+}
+
+export interface ObservabilityComposePort {
+	readonly hostIp: string;
+	readonly protocol: 'tcp';
+	readonly published: number;
+	readonly target: number;
 }
 
 export interface ObservabilityComposeModel {
@@ -28,9 +35,17 @@ export interface ObservabilityComposeModel {
 	readonly services: Record<string, ObservabilityComposeService>;
 }
 
-function renderLoopbackPort(bindAddress: string, hostPort: number, containerPort: number): string {
-	const host = bindAddress.includes(':') ? `[${bindAddress}]` : bindAddress;
-	return `${host}:${String(hostPort)}:${String(containerPort)}`;
+function createLoopbackPort(
+	bindAddress: string,
+	hostPort: number,
+	containerPort: number,
+): ObservabilityComposePort {
+	return {
+		hostIp: bindAddress,
+		protocol: 'tcp',
+		published: hostPort,
+		target: containerPort,
+	};
 }
 
 function renderBaseRetentionFlags(retention: ObservabilityBaseRetentionPolicy): readonly string[] {
@@ -89,7 +104,7 @@ export function createObservabilityComposeModel(
 					'-storageDataPath=/victoria-metrics-data',
 					...renderBaseRetentionFlags(config.retention.metrics),
 				],
-				ports: [renderLoopbackPort(config.bindAddress, config.ports.metrics, 8428)],
+				ports: [createLoopbackPort(config.bindAddress, config.ports.metrics, 8428)],
 				restart: 'unless-stopped',
 				...(hostUserSpec === undefined ? {} : { user: hostUserSpec }),
 				volumes: [path.join(config.dataDir, 'metrics') + ':/victoria-metrics-data'],
@@ -100,7 +115,7 @@ export function createObservabilityComposeModel(
 					'-storageDataPath=/victoria-logs-data',
 					...renderByteBoundedRetentionFlags(config.retention.logs),
 				],
-				ports: [renderLoopbackPort(config.bindAddress, config.ports.logs, 9428)],
+				ports: [createLoopbackPort(config.bindAddress, config.ports.logs, 9428)],
 				restart: 'unless-stopped',
 				...(hostUserSpec === undefined ? {} : { user: hostUserSpec }),
 				volumes: [path.join(config.dataDir, 'logs') + ':/victoria-logs-data'],
@@ -111,7 +126,7 @@ export function createObservabilityComposeModel(
 					'-storageDataPath=/victoria-traces-data',
 					...renderDiskBoundedRetentionFlags(config.retention.traces),
 				],
-				ports: [renderLoopbackPort(config.bindAddress, config.ports.traces, 10_428)],
+				ports: [createLoopbackPort(config.bindAddress, config.ports.traces, 10_428)],
 				restart: 'unless-stopped',
 				...(hostUserSpec === undefined ? {} : { user: hostUserSpec }),
 				volumes: [path.join(config.dataDir, 'traces') + ':/victoria-traces-data'],
@@ -126,9 +141,9 @@ export function createObservabilityComposeModel(
 					'NO_PROXY=victoria-metrics,victoria-logs,victoria-traces,localhost,127.0.0.1,::1',
 				],
 				ports: [
-					renderLoopbackPort(config.bindAddress, config.ports.collectorGrpc, 4317),
-					renderLoopbackPort(config.bindAddress, config.ports.collectorHttp, 4318),
-					renderLoopbackPort(config.bindAddress, config.ports.collectorHealth, 13_133),
+					createLoopbackPort(config.bindAddress, config.ports.collectorGrpc, 4317),
+					createLoopbackPort(config.bindAddress, config.ports.collectorHttp, 4318),
+					createLoopbackPort(config.bindAddress, config.ports.collectorHealth, 13_133),
 				],
 				restart: 'unless-stopped',
 				volumes: [
@@ -142,6 +157,18 @@ export function createObservabilityComposeModel(
 
 function renderYamlArray(indent: string, values: readonly string[]): readonly string[] {
 	return values.map((value) => `${indent}- ${JSON.stringify(value)}`);
+}
+
+function renderYamlPorts(
+	indent: string,
+	ports: readonly ObservabilityComposePort[],
+): readonly string[] {
+	return ports.flatMap((port) => [
+		`${indent}- host_ip: ${JSON.stringify(port.hostIp)}`,
+		`${indent}  published: ${JSON.stringify(String(port.published))}`,
+		`${indent}  target: ${String(port.target)}`,
+		`${indent}  protocol: ${port.protocol}`,
+	]);
 }
 
 export function renderObservabilityComposeYaml(model: ObservabilityComposeModel): string {
@@ -161,7 +188,7 @@ export function renderObservabilityComposeYaml(model: ObservabilityComposeModel)
 		if (service.user !== undefined) {
 			lines.push(`    user: ${JSON.stringify(service.user)}`);
 		}
-		lines.push('    ports:', ...renderYamlArray('      ', service.ports));
+		lines.push('    ports:', ...renderYamlPorts('      ', service.ports));
 		lines.push('    volumes:', ...renderYamlArray('      ', service.volumes));
 	}
 	return `${lines.join('\n')}\n`;
