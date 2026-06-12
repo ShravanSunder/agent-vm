@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { createClient, type ResolveAllResponse, type ResolveReferenceError } from '@1password/sdk';
+import {
+	createClient,
+	RateLimitExceededError,
+	type ResolveAllResponse,
+	type ResolveReferenceError,
+} from '@1password/sdk';
 
 import type { SecretRef, SecretResolver } from './contracts.js';
 import { withOpCliServiceAccountEnv } from './op-cli-service-account-env.js';
@@ -145,6 +150,66 @@ export interface CreateSecretResolverDependencies {
 	) => Promise<ExecFileResult>;
 	readonly integrationName?: string;
 	readonly integrationVersion?: string;
+	readonly random?: () => number;
+	readonly sleepMs?: (durationMs: number) => Promise<void>;
+}
+
+const sdkRateLimitMaxAttempts = 3;
+const sdkRateLimitBaseDelayMs = 250;
+const sdkRateLimitJitterRatio = 0.25;
+
+async function defaultSleepMs(durationMs: number): Promise<void> {
+	await new Promise<void>((resolve) => {
+		setTimeout(resolve, durationMs);
+	});
+}
+
+function computeSdkRateLimitRetryDelayMs(attempt: number, random: () => number): number {
+	const exponentialDelayMs = sdkRateLimitBaseDelayMs * 2 ** (attempt - 1);
+	const jitterMs = Math.floor(exponentialDelayMs * sdkRateLimitJitterRatio * random());
+	return exponentialDelayMs + jitterMs;
+}
+
+function createSdkRateLimitAttemptsError(options: {
+	readonly attemptCount: number;
+	readonly error: unknown;
+	readonly operation: string;
+}): Error {
+	return new Error(
+		`${options.operation} failed after ${String(options.attemptCount)} attempts: ${formatUnknownError(options.error)}`,
+		{ cause: options.error },
+	);
+}
+
+async function withSdkRateLimitRetry<TValue>(
+	operation: string,
+	dependencies: Pick<CreateSecretResolverDependencies, 'random' | 'sleepMs'>,
+	callback: () => Promise<TValue>,
+): Promise<TValue> {
+	const random = dependencies.random ?? Math.random;
+	const sleepMs = dependencies.sleepMs ?? defaultSleepMs;
+
+	for (let attempt = 1; attempt <= sdkRateLimitMaxAttempts; attempt += 1) {
+		try {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- retry attempts are intentionally sequential.
+			return await callback();
+		} catch (error) {
+			if (!(error instanceof RateLimitExceededError)) {
+				throw error;
+			}
+			if (attempt >= sdkRateLimitMaxAttempts) {
+				throw createSdkRateLimitAttemptsError({
+					attemptCount: attempt,
+					error,
+					operation,
+				});
+			}
+			// oxlint-disable-next-line eslint/no-await-in-loop -- backoff must complete before the next retry.
+			await sleepMs(computeSdkRateLimitRetryDelayMs(attempt, random));
+		}
+	}
+
+	throw new Error(`${operation} retry loop exited unexpectedly.`);
 }
 
 function resolveConfigSecretValue(ref: ConfigSecretRef): string {
@@ -550,17 +615,24 @@ function mapSdkResolveAllResponse(
 
 export async function createSecretResolver(
 	options: {
+		readonly integrationVersion?: string;
 		readonly serviceAccountToken: string;
 	},
 	dependencies: CreateSecretResolverDependencies = {},
 ): Promise<SecretResolver> {
 	const exec = dependencies.execFileAsync ?? execFileAsync;
 	try {
-		const client = await (dependencies.createClient ?? createClient)({
-			auth: options.serviceAccountToken,
-			integrationName: dependencies.integrationName ?? 'agent-vm',
-			integrationVersion: dependencies.integrationVersion ?? '0.0.1',
-		});
+		const client = await withSdkRateLimitRetry(
+			'1Password SDK client creation',
+			dependencies,
+			async () =>
+				await (dependencies.createClient ?? createClient)({
+					auth: options.serviceAccountToken,
+					integrationName: dependencies.integrationName ?? 'agent-vm',
+					integrationVersion:
+						options.integrationVersion ?? dependencies.integrationVersion ?? '0.0.1',
+				}),
+		);
 
 		return {
 			resolve: async (ref: SecretRef): Promise<string> => {
@@ -577,7 +649,11 @@ export async function createSecretResolver(
 					}
 				}
 				try {
-					return await client.secrets.resolve(ref.ref);
+					return await withSdkRateLimitRetry(
+						'1Password SDK resolve',
+						dependencies,
+						async () => await client.secrets.resolve(ref.ref),
+					);
 				} catch (error) {
 					const sdkResolveError = createFallbackStageError('1Password SDK resolve', error, [
 						options.serviceAccountToken,
@@ -600,8 +676,13 @@ export async function createSecretResolver(
 					return splitRefs.resolvedSecrets;
 				}
 				try {
-					const response = await client.secrets.resolveAll(
-						Object.values(splitRefs.onePasswordRefs).map((secretRef) => secretRef.ref),
+					const response = await withSdkRateLimitRetry(
+						'1Password SDK resolveAll',
+						dependencies,
+						async () =>
+							await client.secrets.resolveAll(
+								Object.values(splitRefs.onePasswordRefs).map((secretRef) => secretRef.ref),
+							),
 					);
 					return mergeResolvedSecrets(
 						splitRefs.resolvedSecrets,

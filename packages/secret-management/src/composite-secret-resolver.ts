@@ -24,8 +24,20 @@ function resolveConfigSecret(ref: Extract<SecretRef, { readonly source: 'config'
 	return ref.value;
 }
 
-function formatUnknownError(error: unknown): string {
-	return redactOnePasswordReferences(error instanceof Error ? error.message : String(error));
+function redactKnownSecretValues(message: string, secretValues: readonly string[]): string {
+	return secretValues.reduce((redactedMessage, secretValue) => {
+		if (secretValue.length === 0) {
+			return redactedMessage;
+		}
+		return redactedMessage.replaceAll(secretValue, '<redacted>');
+	}, message);
+}
+
+function formatUnknownError(error: unknown, secretValues: readonly string[] = []): string {
+	return redactKnownSecretValues(
+		redactOnePasswordReferences(error instanceof Error ? error.message : String(error)),
+		secretValues,
+	);
 }
 
 function describeSecretRef(ref: SecretRef): string {
@@ -46,10 +58,11 @@ function describeSecretRef(ref: SecretRef): string {
 function createSecretResolutionError(options: {
 	readonly cause: unknown;
 	readonly ref: SecretRef;
+	readonly secretValues?: readonly string[];
 	readonly secretName: string;
 }): Error {
 	return new Error(
-		`Failed to resolve secret '${options.secretName}' from '${describeSecretRef(options.ref)}': ${formatUnknownError(options.cause)}`,
+		`Failed to resolve secret '${options.secretName}' from '${describeSecretRef(options.ref)}': ${formatUnknownError(options.cause, options.secretValues ?? [])}`,
 		{ cause: options.cause },
 	);
 }
@@ -60,9 +73,12 @@ function throwAggregateSecretResolutionError(failures: readonly Error[]): void {
 	}
 }
 
-function extractAggregateErrors(error: AggregateError): readonly Error[] {
+function extractAggregateErrors(
+	error: AggregateError,
+	secretValues: readonly string[],
+): readonly Error[] {
 	const failures: readonly unknown[] = Array.isArray(error.errors) ? error.errors : [error];
-	return failures.map((failure: unknown) => new Error(formatUnknownError(failure)));
+	return failures.map((failure: unknown) => new Error(formatUnknownError(failure, secretValues)));
 }
 
 export function createCompositeSecretResolver(
@@ -93,6 +109,7 @@ export function createCompositeSecretResolver(
 
 		async resolveAll(refs: Record<string, SecretRef>): Promise<Record<string, string>> {
 			const resolved: Record<string, string> = {};
+			const resolvedSecretValues = new Set<string>();
 			const onePasswordRefs: Record<
 				string,
 				Extract<SecretRef, { readonly source: '1password' }>
@@ -103,12 +120,15 @@ export function createCompositeSecretResolver(
 				switch (ref.source) {
 					case 'environment':
 						try {
-							resolved[name] = resolveEnvironmentSecret(ref, env);
+							const value = resolveEnvironmentSecret(ref, env);
+							resolved[name] = value;
+							resolvedSecretValues.add(value);
 						} catch (error) {
 							failures.push(
 								createSecretResolutionError({
 									cause: error,
 									ref,
+									secretValues: [...resolvedSecretValues],
 									secretName: name,
 								}),
 							);
@@ -116,12 +136,15 @@ export function createCompositeSecretResolver(
 						break;
 					case 'config':
 						try {
-							resolved[name] = resolveConfigSecret(ref);
+							const value = resolveConfigSecret(ref);
+							resolved[name] = value;
+							resolvedSecretValues.add(value);
 						} catch (error) {
 							failures.push(
 								createSecretResolutionError({
 									cause: error,
 									ref,
+									secretValues: [...resolvedSecretValues],
 									secretName: name,
 								}),
 							);
@@ -146,6 +169,7 @@ export function createCompositeSecretResolver(
 									"Secret with source '1password' requires host.secretsProvider to be configured.",
 								),
 								ref,
+								secretValues: [...resolvedSecretValues],
 								secretName: name,
 							}),
 						),
@@ -155,14 +179,16 @@ export function createCompositeSecretResolver(
 					try {
 						Object.assign(resolved, await resolver.resolveAll(onePasswordRefs));
 					} catch (error) {
+						const secretValues = [...resolvedSecretValues];
 						if (error instanceof AggregateError) {
-							failures.push(...extractAggregateErrors(error));
+							failures.push(...extractAggregateErrors(error, secretValues));
 						} else {
 							failures.push(
 								...Object.entries(onePasswordRefs).map(([name, ref]) =>
 									createSecretResolutionError({
 										cause: error,
 										ref,
+										secretValues,
 										secretName: name,
 									}),
 								),

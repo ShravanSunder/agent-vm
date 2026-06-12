@@ -1,6 +1,6 @@
-# Plan 06 Secret Resolution Hardening Research Gate
+# Plan 06 Secret Resolution Hardening Report
 
-Status: blocked pending retry-classification approval
+Status: resumed implementation complete
 Branch: improve/plan-06-secret-resolution-hardening
 Worktree: /Users/shravansunder/Documents/dev/project-dev/agent-vm.improve-plan-06-secret-resolution-hardening
 
@@ -69,7 +69,7 @@ Observed shape for two syntactically base64-shaped synthetic tokens:
 
 No `AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN` or `OP_SERVICE_ACCOUNT_TOKEN` was present, so the real-token unreachable-network spike could not be run without using personal credentials or guessing token internals.
 
-## Decision Needed
+## Decision Resolved
 
 The plan's original retry scope says "network errors, 429/5xx", but the installed SDK exposes only one typed transient signal: `RateLimitExceededError`.
 
@@ -80,4 +80,49 @@ Evidence-backed implementation contract:
 3. Do not retry per-reference `ResolveReferenceError` responses from `resolveAll`; no union member represents a transient class.
 4. Do not retry op-inject fallback failures unless a new typed classification surface is added to `redacted-exec-file.ts`; current fallback errors expose safe redacted detail for humans, not a stable retry classifier.
 
-This is narrower than the proposed plan and needs approval before retry code is written.
+This narrower typed-signal contract was approved on resume.
+
+## 2026-06-12 Resumed Implementation
+
+Implemented the approved contract:
+
+- Added bounded 1Password SDK retry/backoff for SDK client creation,
+  `resolve`, and thrown `resolveAll` failures when the error is
+  `RateLimitExceededError`.
+- Kept generic SDK `Error`, `ResolveReferenceError`, and op-inject fallback
+  failures non-retryable because the installed APIs do not expose stable
+  transient classifiers for those paths.
+- Threaded the installed `@agent-vm/agent-vm` package version into
+  `createSecretResolver` so the 1Password SDK integration version is not
+  frozen at the fallback value.
+- Added a warning when the controller falls back to ambient `GITHUB_TOKEN`.
+- Redacted already-resolved env/config secret values from later composite
+  resolver aggregate errors.
+
+Files touched:
+
+- `packages/secret-management/src/onepassword-secret-resolver.ts`
+- `packages/secret-management/src/onepassword-secret-resolver.unit.test.ts`
+- `packages/secret-management/src/composite-secret-resolver.ts`
+- `packages/secret-management/src/composite-secret-resolver.unit.test.ts`
+- `packages/agent-vm/src/controller/controller-runtime-support.ts`
+- `packages/agent-vm/src/controller/controller-runtime-support.unit.test.ts`
+- `packages/agent-vm/src/controller/controller-runtime-types.ts`
+
+Proof gates:
+
+- `pnpm vitest run --config vitest.config.ts --project unit packages/secret-management/src/onepassword-secret-resolver.unit.test.ts packages/secret-management/src/composite-secret-resolver.unit.test.ts packages/agent-vm/src/controller/controller-runtime-support.unit.test.ts`
+  - exit 0
+  - 3 files passed
+  - 53 tests passed
+- `pnpm fmt:check`
+  - exit 0
+- `mise run lint`
+  - exit 0
+  - 0 warnings
+  - 0 errors
+- `pnpm typecheck`
+  - exit 0
+- `pnpm check`
+  - exit 0
+  - check gate: 6 passed, 0 failed in 22.41s

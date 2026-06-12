@@ -2,6 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { RateLimitExceededError } from '@1password/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -384,6 +385,187 @@ describe('createSecretResolver', () => {
 			}),
 		).resolves.toBe('resolved:op://AI/anthropic/api-key');
 		expect(resolvedReferences).toEqual(['op://AI/anthropic/api-key']);
+	});
+
+	it('passes the configured integration version to the sdk client', async () => {
+		const createClient = vi.fn(
+			async (): Promise<SecretResolverClient> => ({
+				secrets: {
+					resolve: async (secretReference: string): Promise<string> =>
+						`resolved:${secretReference}`,
+					resolveAll: async () => ({ individualResponses: {} }),
+				},
+			}),
+		);
+
+		await createSecretResolver(
+			{ integrationVersion: '9.8.7', serviceAccountToken: 'op-token' },
+			{ createClient },
+		);
+
+		expect(createClient).toHaveBeenCalledWith({
+			auth: 'op-token',
+			integrationName: 'agent-vm',
+			integrationVersion: '9.8.7',
+		});
+	});
+
+	it('retries sdk resolve on typed rate-limit errors before falling back', async () => {
+		const sleepCalls: number[] = [];
+		let resolveAttempts = 0;
+		const fakeClient: SecretResolverClient = {
+			secrets: {
+				resolve: async (secretReference: string): Promise<string> => {
+					resolveAttempts += 1;
+					if (resolveAttempts < 3) {
+						throw new RateLimitExceededError('slow down');
+					}
+					return `resolved:${secretReference}`;
+				},
+				resolveAll: async () => ({ individualResponses: {} }),
+			},
+		};
+
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'op-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => fakeClient,
+				execFileAsync: async (): Promise<ExecFileResult> => {
+					throw new Error('op fallback should not run');
+				},
+				random: () => 0,
+				sleepMs: async (durationMs) => {
+					sleepCalls.push(durationMs);
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: '1password',
+				ref: 'op://AI/anthropic/api-key',
+			}),
+		).resolves.toBe('resolved:op://AI/anthropic/api-key');
+		expect(resolveAttempts).toBe(3);
+		expect(sleepCalls).toEqual([250, 500]);
+	});
+
+	it('does not retry generic sdk resolve errors', async () => {
+		const sleepCalls: number[] = [];
+		let resolveAttempts = 0;
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => ({
+					secrets: {
+						resolve: async (): Promise<never> => {
+							resolveAttempts += 1;
+							throw new Error('access denied');
+						},
+						resolveAll: async () => ({ individualResponses: {} }),
+					},
+				}),
+				execFileAsync: async (): Promise<ExecFileResult> => {
+					throw new Error('op fallback failed');
+				},
+				sleepMs: async (durationMs) => {
+					sleepCalls.push(durationMs);
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: '1password',
+				ref: 'op://AI/anthropic/api-key',
+			}),
+		).rejects.toThrow('1Password SDK resolve and op CLI fallback both failed.');
+		expect(resolveAttempts).toBe(1);
+		expect(sleepCalls).toEqual([]);
+	});
+
+	it('includes attempt count after sdk resolve rate-limit retries are exhausted', async () => {
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => ({
+					secrets: {
+						resolve: async (): Promise<never> => {
+							throw new RateLimitExceededError('slow down');
+						},
+						resolveAll: async () => ({ individualResponses: {} }),
+					},
+				}),
+				execFileAsync: async (): Promise<ExecFileResult> => {
+					throw new Error('op fallback failed');
+				},
+				random: () => 0,
+				sleepMs: async () => {},
+			},
+		);
+
+		await expectRejects(
+			secretResolver.resolve({
+				source: '1password',
+				ref: 'op://AI/anthropic/api-key',
+			}),
+			(error: unknown): void => {
+				expect(renderErrorTree(error)).toContain(
+					'1Password SDK resolve failed after 3 attempts: slow down',
+				);
+			},
+		);
+	});
+
+	it('retries sdk resolveAll on typed rate-limit errors before mapping the response', async () => {
+		const sleepCalls: number[] = [];
+		let resolveAllAttempts = 0;
+		const fakeClient: SecretResolverClient = {
+			secrets: {
+				resolve: async (secretReference: string): Promise<string> => `single:${secretReference}`,
+				resolveAll: async (secretReferences: readonly string[]) => {
+					resolveAllAttempts += 1;
+					if (resolveAllAttempts < 2) {
+						throw new RateLimitExceededError('slow down');
+					}
+					return {
+						individualResponses: Object.fromEntries(
+							secretReferences.map((secretReference) => [
+								secretReference,
+								{
+									content: {
+										secret: `batch:${secretReference}`,
+										itemId: `item:${secretReference}`,
+										vaultId: 'vault-id',
+									},
+								},
+							]),
+						),
+					};
+				},
+			},
+		};
+
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'op-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => fakeClient,
+				random: () => 0,
+				sleepMs: async (durationMs) => {
+					sleepCalls.push(durationMs);
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+			}),
+		).resolves.toEqual({
+			A: 'batch:op://vault/item/a',
+		});
+		expect(resolveAllAttempts).toBe(2);
+		expect(sleepCalls).toEqual([250]);
 	});
 
 	it('resolves all refs through the sdk batch API and preserves caller keys', async () => {
