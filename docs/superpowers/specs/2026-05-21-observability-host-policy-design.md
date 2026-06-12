@@ -366,9 +366,9 @@ started.
   observability is enabled.
 
 Controller-owned gateway start checks must be bounded HTTP probes against the
-collector health endpoint. They must not shell out to `docker`,
-`docker compose`, or any container runtime CLI. The default timeout budget is
-30 seconds.
+collector health endpoint with OTLP HTTP receiver reachability as the collector
+fallback. They must not shell out to `docker`, `docker compose`, or any
+container runtime CLI. The default timeout budget is 30 seconds.
 
 Add a zone-owned opt-in plane only for Gateway telemetry policy:
 

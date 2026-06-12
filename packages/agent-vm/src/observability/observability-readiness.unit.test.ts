@@ -128,6 +128,34 @@ describe('checkObservabilityStackReadiness', () => {
 		});
 	});
 
+	test('accepts collector OTLP HTTP reachability when the collector health port is refused', async () => {
+		const requestedUrls: string[] = [];
+		const cause = new Error('connect ECONNREFUSED 127.0.0.1:13133');
+		Object.defineProperty(cause, 'code', { value: 'ECONNREFUSED' });
+		const result = await checkObservabilityStackReadiness({
+			config: createRuntimeConfig(),
+			fetchImpl: async (url) => {
+				const requestedUrl =
+					typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+				requestedUrls.push(requestedUrl);
+				if (requestedUrl === 'http://127.0.0.1:13133/') {
+					throw new TypeError('fetch failed', { cause });
+				}
+				return new Response(null, { status: 200 });
+			},
+			retryDelayMs: 1,
+		});
+
+		expect(result).toEqual({ ok: true, status: 'ready' });
+		expect(requestedUrls).toEqual([
+			'http://127.0.0.1:13133/',
+			'http://127.0.0.1:4318/v1/logs',
+			'http://127.0.0.1:8428/health',
+			'http://127.0.0.1:9428/health',
+			'http://127.0.0.1:10428/health',
+		]);
+	});
+
 	test('retries transient network failures within the configured timeout', async () => {
 		let attemptCount = 0;
 		const result = await checkObservabilityStackReadiness({
