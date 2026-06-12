@@ -110,6 +110,24 @@ describe('checkObservabilityStackReadiness', () => {
 		});
 	});
 
+	test('includes node network error codes in readiness failures', async () => {
+		const cause = new Error('connect ECONNREFUSED 127.0.0.1:13133');
+		Object.defineProperty(cause, 'code', { value: 'ECONNREFUSED' });
+		const result = await checkObservabilityStackReadiness({
+			config: { ...createRuntimeConfig(), startupCheckTimeoutMs: 5 },
+			fetchImpl: async () => {
+				throw new TypeError('fetch failed', { cause });
+			},
+			retryDelayMs: 1,
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			reason: 'collector health check failed: fetch failed (ECONNREFUSED)',
+			status: 'unavailable',
+		});
+	});
+
 	test('retries transient network failures within the configured timeout', async () => {
 		let attemptCount = 0;
 		const result = await checkObservabilityStackReadiness({

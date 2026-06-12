@@ -65,13 +65,25 @@ async function reserveLoopbackPorts(): Promise<
 	return [collectorGrpc, collectorHttp, collectorHealth, metrics, logs, traces];
 }
 
+async function selectLoopbackPorts(): Promise<
+	readonly [number, number, number, number, number, number]
+> {
+	if (process.env.GITHUB_ACTIONS !== 'true') {
+		return await reserveLoopbackPorts();
+	}
+	const workerId = Number.parseInt(process.env.VITEST_WORKER_ID ?? '0', 10);
+	const workerOffset = Number.isFinite(workerId) && workerId >= 0 ? workerId * 20 : 0;
+	const basePort = 36_000 + workerOffset;
+	return [basePort + 1, basePort + 2, basePort + 3, basePort + 4, basePort + 5, basePort + 6];
+}
+
 async function createRuntimeConfig(): Promise<ManagedObservabilityRuntimeConfig> {
 	const temporaryDirectory = await fs.mkdtemp(
 		path.join(os.tmpdir(), 'agent-vm-observability-storage-'),
 	);
 	temporaryDirectories.push(temporaryDirectory);
 	const [collectorGrpc, collectorHttp, collectorHealth, metrics, logs, traces] =
-		await reserveLoopbackPorts();
+		await selectLoopbackPorts();
 	return {
 		enabled: true,
 		stackMode: 'managed',

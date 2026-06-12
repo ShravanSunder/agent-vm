@@ -54,6 +54,23 @@ function createHealthEndpoints(
 	];
 }
 
+function readErrorCauseCode(error: Error): string | undefined {
+	const cause = error.cause;
+	if (typeof cause !== 'object' || cause === null || !('code' in cause)) {
+		return undefined;
+	}
+	const code = cause.code;
+	return typeof code === 'string' && code.length > 0 ? code : undefined;
+}
+
+function formatReadinessError(error: unknown): string {
+	if (!(error instanceof Error)) {
+		return String(error);
+	}
+	const causeCode = readErrorCauseCode(error);
+	return causeCode === undefined ? error.message : `${error.message} (${causeCode})`;
+}
+
 export async function checkObservabilityStackReadiness(
 	options: CheckObservabilityStackReadinessOptions,
 ): Promise<ObservabilityReadinessResult> {
@@ -81,8 +98,7 @@ export async function checkObservabilityStackReadiness(
 					}
 				} catch (error) {
 					ready = false;
-					const message = error instanceof Error ? error.message : String(error);
-					lastErrorReason = `${endpoint.name} health check failed: ${message}`;
+					lastErrorReason = `${endpoint.name} health check failed: ${formatReadinessError(error)}`;
 					break;
 				}
 			}
