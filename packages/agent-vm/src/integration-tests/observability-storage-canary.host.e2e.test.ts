@@ -125,6 +125,80 @@ async function dockerComposeDown(config: ManagedObservabilityRuntimeConfig): Pro
 	);
 }
 
+function formatUnknownError(error: unknown): string {
+	return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}
+
+async function runDiagnosticCommand(options: {
+	readonly args: readonly string[];
+	readonly command: string;
+}): Promise<string> {
+	const result = await execa(options.command, [...options.args], {
+		reject: false,
+		timeout: 10_000,
+	});
+	const output = [result.stdout, result.stderr].filter((value) => value.length > 0).join('\n');
+	return [
+		`$ ${[options.command, ...options.args].join(' ')}`,
+		`exitCode=${String(result.exitCode)}`,
+		output.length === 0 ? '(no output)' : output,
+	].join('\n');
+}
+
+async function collectObservabilityDockerDiagnostics(
+	config: ManagedObservabilityRuntimeConfig,
+): Promise<string> {
+	const composePath = path.join(config.runtimeDir, 'docker-compose.observability.yml');
+	const composeArgs = ['compose', '--project-name', config.projectName, '--file', composePath];
+	const diagnostics = await Promise.all([
+		runDiagnosticCommand({
+			command: 'docker',
+			args: [...composeArgs, 'ps'],
+		}),
+		runDiagnosticCommand({
+			command: 'docker',
+			args: [...composeArgs, 'port', 'otel-collector', '4318'],
+		}),
+		runDiagnosticCommand({
+			command: 'docker',
+			args: [...composeArgs, 'port', 'otel-collector', '13133'],
+		}),
+		runDiagnosticCommand({
+			command: 'docker',
+			args: [
+				'ps',
+				'--filter',
+				`label=com.docker.compose.project=${config.projectName}`,
+				'--format',
+				'{{.Names}} {{.Ports}}',
+			],
+		}),
+		runDiagnosticCommand({
+			command: 'docker',
+			args: [...composeArgs, 'logs', '--no-color', '--tail', '80', 'otel-collector'],
+		}),
+		runDiagnosticCommand({
+			command: 'ss',
+			args: ['-ltn'],
+		}),
+	]);
+	return diagnostics.join('\n\n');
+}
+
+async function prepareObservabilityStackWithDiagnostics(
+	config: ManagedObservabilityRuntimeConfig,
+): Promise<void> {
+	try {
+		await prepareObservabilityStack({ config, wait: true });
+	} catch (error) {
+		const diagnostics = await collectObservabilityDockerDiagnostics(config);
+		throw new Error(
+			`prepareObservabilityStack failed: ${formatUnknownError(error)}\n\n${diagnostics}`,
+			{ cause: error },
+		);
+	}
+}
+
 function encodeVarint(value: bigint): Buffer {
 	const bytes: number[] = [];
 	let remaining = value;
@@ -516,7 +590,7 @@ describe('smoke: observability Victoria storage canaries', () => {
 			`https://agent-vm-sensitive-user:${Date.now()}@example.com/path`,
 		] as const;
 		try {
-			await prepareObservabilityStack({ config, wait: true });
+			await prepareObservabilityStackWithDiagnostics(config);
 
 			await waitForOtlpLogExport({
 				collectorHttpPort: config.ports.collectorHttp,
