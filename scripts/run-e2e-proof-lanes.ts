@@ -33,6 +33,7 @@ export interface E2eProofLaneSummary {
 export type E2eProofLaneRunner = (lane: E2eProofLane) => Promise<E2eProofLaneResult>;
 
 interface RunE2eProofLanesOptions {
+	readonly isolateHostLane?: boolean;
 	readonly laneRunner?: E2eProofLaneRunner;
 	readonly now?: () => number;
 	readonly runWorkspaceBuild?: () => Promise<void> | void;
@@ -67,6 +68,18 @@ export function createE2eProofLanes(): readonly E2eProofLane[] {
 			label: 'HTTP mediation e2e',
 		},
 	];
+}
+
+function createE2eProofLaneBatches(options: {
+	readonly isolateHostLane: boolean;
+	readonly lanes: readonly E2eProofLane[];
+}): readonly (readonly E2eProofLane[])[] {
+	if (!options.isolateHostLane) {
+		return [options.lanes];
+	}
+	const hostLanes = options.lanes.filter((lane) => lane.id === 'e2e-host');
+	const remainingLanes = options.lanes.filter((lane) => lane.id !== 'e2e-host');
+	return [hostLanes, remainingLanes].filter((batch) => batch.length > 0);
 }
 
 function formatDuration(durationMs: number): string {
@@ -171,6 +184,7 @@ export async function runE2eProofLanes(
 	const stdout = options.stdout ?? process.stdout;
 	const stderr = options.stderr ?? process.stderr;
 	const startTimeMs = now();
+	const isolateHostLane = options.isolateHostLane ?? process.env.GITHUB_ACTIONS === 'true';
 
 	const skipWorkspaceBuild =
 		options.skipWorkspaceBuild ?? process.env.AGENT_VM_E2E_SKIP_WORKSPACE_BUILD === '1';
@@ -182,7 +196,12 @@ export async function runE2eProofLanes(
 		}
 	}
 
-	const results = await Promise.all(lanes.map(async (lane) => await laneRunner(lane)));
+	const results: E2eProofLaneResult[] = [];
+	for (const laneBatch of createE2eProofLaneBatches({ isolateHostLane, lanes })) {
+		// oxlint-disable-next-line no-await-in-loop -- CI runs the Docker host lane before QEMU lanes to avoid host-port contention while preserving VM parallelism.
+		const batchResults = await Promise.all(laneBatch.map(async (lane) => await laneRunner(lane)));
+		results.push(...batchResults);
+	}
 	const summary = summarizeE2eProofLaneResults(results, now() - startTimeMs);
 	const summaryStream = summary.ok ? stdout : stderr;
 	summaryStream.write('\n');

@@ -116,4 +116,41 @@ describe('e2e proof lane runner', () => {
 		expect(summary.ok).toBe(true);
 		expect(events).toEqual(['start:e2e-host', 'start:e2e-vm', 'start:e2e-vm-mediation']);
 	});
+
+	it('isolates the host lane before starting VM lanes when requested', async () => {
+		const events: string[] = [];
+		let finishHostLane: (() => void) | undefined;
+		const hostLaneFinished = new Promise<void>((resolve) => {
+			finishHostLane = resolve;
+		});
+
+		const summaryPromise = runE2eProofLanes(createE2eProofLanes(), {
+			isolateHostLane: true,
+			laneRunner: async (lane) => {
+				events.push(`start:${lane.id}`);
+				if (lane.id === 'e2e-host') {
+					await hostLaneFinished;
+					events.push(`finish:${lane.id}`);
+				}
+				return passedResult(lane, 10);
+			},
+			now: () => 100,
+			skipWorkspaceBuild: true,
+			stderr: createSilentWritable(),
+			stdout: createSilentWritable(),
+		});
+
+		await Promise.resolve();
+		expect(events).toEqual(['start:e2e-host']);
+		finishHostLane?.();
+		const summary = await summaryPromise;
+
+		expect(summary.ok).toBe(true);
+		expect(events).toEqual([
+			'start:e2e-host',
+			'finish:e2e-host',
+			'start:e2e-vm',
+			'start:e2e-vm-mediation',
+		]);
+	});
 });
