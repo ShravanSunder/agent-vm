@@ -14,8 +14,11 @@ export type ObservabilityReadinessResult =
 export interface CheckObservabilityStackReadinessOptions {
 	readonly config: EnabledObservabilityRuntimeConfig;
 	readonly fetchImpl?: typeof fetch;
+	readonly probeTimeoutMs?: number;
 	readonly retryDelayMs?: number;
 }
+
+const DEFAULT_OBSERVABILITY_READINESS_PROBE_TIMEOUT_MS = 1_000;
 
 function formatHttpHost(host: '127.0.0.1' | '::1'): string {
 	return host === '::1' ? '[::1]' : host;
@@ -71,6 +74,14 @@ function formatReadinessError(error: unknown): string {
 	return causeCode === undefined ? error.message : `${error.message} (${causeCode})`;
 }
 
+function computeProbeTimeoutMs(options: {
+	readonly deadlineMs: number;
+	readonly maxProbeTimeoutMs: number;
+	readonly nowMs: number;
+}): number {
+	return Math.max(1, Math.min(options.maxProbeTimeoutMs, options.deadlineMs - options.nowMs));
+}
+
 type CollectorOtlpHttpProbeResult =
 	| {
 			readonly ok: true;
@@ -115,6 +126,7 @@ export async function checkObservabilityStackReadiness(
 	options: CheckObservabilityStackReadinessOptions,
 ): Promise<ObservabilityReadinessResult> {
 	const fetchImpl = options.fetchImpl ?? fetch;
+	const probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_OBSERVABILITY_READINESS_PROBE_TIMEOUT_MS;
 	const retryDelayMs = options.retryDelayMs ?? 100;
 	const healthEndpoints = createHealthEndpoints(options.config);
 	const deadlineMs = Date.now() + options.config.startupCheckTimeoutMs;
@@ -123,11 +135,15 @@ export async function checkObservabilityStackReadiness(
 		for (;;) {
 			let ready = true;
 			for (const endpoint of healthEndpoints) {
-				const remainingMs = Math.max(1, deadlineMs - Date.now());
+				const currentProbeTimeoutMs = computeProbeTimeoutMs({
+					deadlineMs,
+					maxProbeTimeoutMs: probeTimeoutMs,
+					nowMs: Date.now(),
+				});
 				try {
 					// oxlint-disable-next-line no-await-in-loop -- bounded readiness checks must preserve failure attribution
 					const response = await fetchImpl(endpoint.url, {
-						signal: AbortSignal.timeout(remainingMs),
+						signal: AbortSignal.timeout(currentProbeTimeoutMs),
 					});
 					if (!response.ok) {
 						ready = false;
@@ -144,7 +160,11 @@ export async function checkObservabilityStackReadiness(
 						const collectorOtlpProbeResult = await probeCollectorOtlpHttpReceiver({
 							config: options.config,
 							fetchImpl,
-							timeoutMs: Math.max(1, deadlineMs - Date.now()),
+							timeoutMs: computeProbeTimeoutMs({
+								deadlineMs,
+								maxProbeTimeoutMs: probeTimeoutMs,
+								nowMs: Date.now(),
+							}),
 						});
 						if (collectorOtlpProbeResult.ok) {
 							ready = true;

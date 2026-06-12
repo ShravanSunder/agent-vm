@@ -157,6 +157,43 @@ describe('checkObservabilityStackReadiness', () => {
 		]);
 	});
 
+	test('retries a stalled collector OTLP HTTP fallback within the total readiness budget', async () => {
+		let fallbackAttemptCount = 0;
+		const healthCause = new Error('connect ECONNREFUSED 127.0.0.1:13133');
+		Object.defineProperty(healthCause, 'code', { value: 'ECONNREFUSED' });
+		const result = await checkObservabilityStackReadiness({
+			config: { ...createRuntimeConfig(), startupCheckTimeoutMs: 100 },
+			fetchImpl: async (url, init) => {
+				const requestedUrl =
+					typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+				if (requestedUrl === 'http://127.0.0.1:13133/') {
+					throw new TypeError('fetch failed', { cause: healthCause });
+				}
+				if (requestedUrl === 'http://127.0.0.1:4318/v1/logs') {
+					fallbackAttemptCount += 1;
+					if (fallbackAttemptCount === 1) {
+						if (init?.signal === undefined) {
+							throw new Error('Expected probe abort signal.');
+						}
+						await new Promise<never>((_resolve, reject) => {
+							init.signal?.addEventListener(
+								'abort',
+								() => reject(new Error('fallback timed out')),
+								{ once: true },
+							);
+						});
+					}
+				}
+				return new Response(null, { status: 200 });
+			},
+			probeTimeoutMs: 2,
+			retryDelayMs: 1,
+		});
+
+		expect(result).toEqual({ ok: true, status: 'ready' });
+		expect(fallbackAttemptCount).toBe(2);
+	});
+
 	test('retries transient network failures within the configured timeout', async () => {
 		let attemptCount = 0;
 		const result = await checkObservabilityStackReadiness({
