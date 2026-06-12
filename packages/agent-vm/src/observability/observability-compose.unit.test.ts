@@ -72,7 +72,7 @@ describe('createObservabilityComposeModel', () => {
 		expect(victoriaMetrics.user).toBe(hostUserSpec);
 		expect(victoriaLogs.user).toBe(hostUserSpec);
 		expect(victoriaTraces.user).toBe(hostUserSpec);
-		expect(otelCollector.user).toBeUndefined();
+		expect(otelCollector.user).toBe(hostUserSpec);
 		expect(otelCollector.ports).toEqual([
 			{ hostIp: '127.0.0.1', protocol: 'tcp', published: 4317, target: 4317 },
 			{ hostIp: '127.0.0.1', protocol: 'tcp', published: 4318, target: 4318 },

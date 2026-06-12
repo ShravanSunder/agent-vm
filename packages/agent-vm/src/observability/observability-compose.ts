@@ -146,6 +146,7 @@ export function createObservabilityComposeModel(
 					createLoopbackPort(config.bindAddress, config.ports.collectorHealth, 13_133),
 				],
 				restart: 'unless-stopped',
+				...(hostUserSpec === undefined ? {} : { user: hostUserSpec }),
 				volumes: [
 					path.join(config.runtimeDir, 'otel-collector-config.yaml') +
 						':/etc/otelcol/config.yaml:ro',
