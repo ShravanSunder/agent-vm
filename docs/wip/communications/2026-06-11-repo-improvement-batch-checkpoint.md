@@ -24,7 +24,7 @@ or resolve user-decision gates.
 | 05 health monitor hygiene | `origin/improve/plan-05-health-monitor-hygiene` | `9df56f5` | complete branch pushed |
 | 06 secret resolution hardening | `origin/improve/plan-06-secret-resolution-hardening` | `1ab0983` | resumed complete branch pushed |
 | 07 Codex SDK upgrade | `origin/improve/plan-07-codex-sdk-upgrade` | `115f9fc` | complete branch pushed |
-| 08 worker executor genericization | `origin/improve/plan-08-worker-executor-genericization` | `ddc93cb` | task 3 `getSessionRef()` cutover branch pushed; Claude executor tasks remain |
+| 08 worker executor genericization | `origin/improve/plan-08-worker-executor-genericization` | `65ece9f` | resumed Claude executor branch pushed; live worker E2E gated by missing credentials |
 | 10 CI publish gate parity | `origin/improve/plan-10-ci-publish-gate-parity` | `a834de3` | complete branch pushed |
 | 12 backup pipeline hardening | `origin/improve/plan-12-backup-pipeline-hardening` | `6472d19` | resumed complete branch pushed |
 | 13 Dockerfile generation injection guards | `origin/improve/plan-13-dockerfile-generation-injection-guards` | `d08dfc5` | complete branch pushed |
@@ -79,10 +79,20 @@ Plan 08 worker executor genericization:
 - Hard-cutover to `getSessionRef()` completed across interface, Codex executor,
   persistent-thread, task-event consumers, persisted task state fields, and
   tests.
-- Branch pushed at `ddc93cb`.
-- Remaining Plan 08 work: Claude executor implementation, worker executor
-  factory/image packaging decision, Claude-specific proof gates once the
-  executor exists.
+- Claude Agent SDK executor implemented with factory/export wiring, SDK
+  optional-binary availability guard, state-isolated Claude runtime setup,
+  inherited settings/hooks disabled, MCP mapping, and active query cancellation
+  on persistent-thread timeout.
+- Implementation review swarm completed with six read-only lanes. Accepted
+  findings were fixed before final proof.
+- Branch pushed at `65ece9f`.
+- Final proof on the plan branch:
+  - `pnpm check`: 6 passed / 0 failed.
+  - `pnpm test:unit`: 198 files / 1818 tests passed.
+  - `pnpm test:integration`: 23 files / 327 tests passed.
+  - Worker E2E not run because `AGENT_VM_WORKER_E2E`,
+    `AGENT_VM_TEST_OPENAI_API_KEY`, and `AGENT_VM_TEST_ANTHROPIC_API_KEY` were
+    unset in the shell.
 
 Plan 12 backup pipeline hardening:
 
@@ -104,8 +114,9 @@ Plan 11 docs architecture drift:
 - Plan 09 waits on Plan 03 and Plan 06; both dependencies are now pushed after
   the 2026-06-12 Plan 06 resume.
 - Plan 11 waits on Plan 09 and also has its own heartbeat decision gate.
-- Plan 08 is stacked on Plan 07. Its task 3 interface-name decision is resolved;
-  remaining Plan 08 work starts with the Claude executor slice.
+- Plan 08 is stacked on Plan 07. Its task 3 interface-name decision and Claude
+  executor slice are resolved on the plan branch. Live worker E2E remains an
+  environment-gated proof layer.
 
 ## Integration Guardrails
 
@@ -115,10 +126,8 @@ Plan 11 docs architecture drift:
   history/integration git writes.
 - Before integration, substantial pushed branches still need their review
   status checked against the handoff requirement. Plan 12 has completed a
-  review/fix loop before the resumed fallback decision; Plan 08 pre-gate review
-  was dispatched after the branch was pushed, but the three reviewer lanes were
-  later closed while still reporting `previous_status: running`; no candidate
-  findings were returned. Plan 08 therefore still needs a successful
-  review/reduction pass before integration.
+  review/fix loop before the resumed fallback decision. Plan 08 completed a
+  six-lane implementation review swarm after the Claude executor slice; accepted
+  findings were fixed and recorded in the plan report.
 - 2026-06-12 commits were created with `--no-gpg-sign` after the first Plan 06
   signed commit attempt failed with `1Password: failed to fill whole buffer`.
