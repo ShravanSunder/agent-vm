@@ -9,6 +9,7 @@ import type { Readable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { isClaudeCodeRuntimeAvailable } from './work-executor/claude-capability-setup.js';
 import { resolveWorkerRuntimeEntrypoint, shouldRunWorkerRuntimeE2e } from './worker-e2e-gates.js';
 
 function hasCommand(command: string): boolean {
@@ -20,13 +21,20 @@ function hasCommand(command: string): boolean {
 	}
 }
 
-const runWorkerOnlySmoke = shouldRunWorkerRuntimeE2e({
-	commandExists: hasCommand,
-	env: process.env,
-	provider: 'codex',
-});
-
-const describeWorkerOnlySmoke = runWorkerOnlySmoke ? describe : describe.skip;
+const workerRuntimeSmokeProviders = [
+	{
+		apiKeyEnv: 'OPENAI_API_KEY',
+		model: 'gpt-5.4-mini',
+		provider: 'codex',
+		testApiKeyEnv: 'AGENT_VM_TEST_OPENAI_API_KEY',
+	},
+	{
+		apiKeyEnv: 'ANTHROPIC_API_KEY',
+		model: 'claude-haiku-4-5',
+		provider: 'claude',
+		testApiKeyEnv: 'AGENT_VM_TEST_ANTHROPIC_API_KEY',
+	},
+] as const;
 
 interface WorkerProcessOutput {
 	stderr: string;
@@ -267,145 +275,160 @@ const createTaskResponseSchema = z.object({
 	status: z.literal('accepted'),
 });
 
-describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
-	let workerProcess: ChildProcess | undefined;
-
-	afterEach(async () => {
-		if (workerProcess && workerProcess.exitCode === null) {
-			workerProcess.kill('SIGTERM');
-			try {
-				await waitForChildExit(workerProcess, 5_000, 'Worker SIGTERM shutdown');
-			} catch (error) {
-				if (workerProcess.exitCode === null) {
-					workerProcess.kill('SIGKILL');
-					await waitForChildExit(workerProcess, 5_000, 'Worker SIGKILL shutdown');
-				}
-				throw error;
-			}
-		}
+for (const smokeProvider of workerRuntimeSmokeProviders) {
+	const runWorkerOnlySmoke = shouldRunWorkerRuntimeE2e({
+		claudeRuntimeAvailable: isClaudeCodeRuntimeAvailable,
+		commandExists: hasCommand,
+		env: process.env,
+		provider: smokeProvider.provider,
 	});
+	if (!runWorkerOnlySmoke) {
+		continue;
+	}
 
-	it('runs a real task directly against the worker server to completed', async () => {
-		const repoRoot = path.resolve(process.cwd());
-		const workerEntrypoint = resolveWorkerRuntimeEntrypoint(repoRoot);
-		await fs.access(workerEntrypoint);
+	describe(`smoke: worker package real ${smokeProvider.provider} executor loop`, () => {
+		let workerProcess: ChildProcess | undefined;
 
-		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runtime-smoke-'));
-		const stateDir = path.join(tempRoot, 'state');
-		const workDir = path.join(tempRoot, 'work');
-		const sourceRepoDir = await createSampleRepo(path.join(tempRoot, 'source'));
-		const repoDir = path.join(workDir, 'sample-repo');
-		const gitDirPath = path.join(tempRoot, 'gitdirs', 'sample-repo.git');
-		await fs.mkdir(path.dirname(gitDirPath), { recursive: true });
-		execFileSync('git', ['clone', '--bare', sourceRepoDir, gitDirPath], {
-			stdio: 'pipe',
-		});
-		execFileSync('git', ['--git-dir', gitDirPath, 'config', 'core.bare', 'false'], {
-			stdio: 'pipe',
-		});
-		const configPath = path.join(tempRoot, 'worker-config.json');
-		const port = await findAvailablePort();
-		const workerLogPath = path.join(tempRoot, 'worker.log');
-		const workerOutput: WorkerProcessOutput = { stderr: '', stdout: '' };
-
-		await fs.mkdir(stateDir, { recursive: true });
-		await fs.mkdir(workDir, { recursive: true });
-		await fs.writeFile(
-			configPath,
-			JSON.stringify({
-				runtimeInstructions: 'Smoke test runtime instructions.',
-				defaults: { provider: 'codex', model: 'gpt-5.4-mini' },
-				phases: {
-					plan: {
-						skills: [],
-						cycle: { kind: 'noReview' },
-						agentInstructions: null,
-						reviewerInstructions: null,
-					},
-					work: {
-						skills: [],
-						cycle: { kind: 'review', cycleCount: 1 },
-						agentInstructions: null,
-						reviewerInstructions: null,
-					},
-					wrapup: { skills: [], instructions: null },
-				},
-				mcpServers: [],
-				verification: [{ name: 'verify', command: 'bash scripts/verify.sh' }],
-				branchPrefix: 'agent/',
-				stateDir,
-			}),
-		);
-
-		workerProcess = spawn(
-			'node',
-			[workerEntrypoint, 'serve', '--port', String(port), '--config', configPath],
-			{
-				cwd: repoRoot,
-				env: {
-					...process.env,
-					OPENAI_API_KEY: process.env.AGENT_VM_TEST_OPENAI_API_KEY ?? '',
-					WORK_DIR: workDir,
-				},
-				stdio: ['ignore', 'pipe', 'pipe'],
-			},
-		);
-		workerProcess.stdout?.setEncoding('utf8');
-		workerProcess.stderr?.setEncoding('utf8');
-		workerProcess.stdout?.on('data', (chunk: string) => {
-			workerOutput.stdout += chunk;
-		});
-		workerProcess.stderr?.on('data', (chunk: string) => {
-			workerOutput.stderr += chunk;
-		});
-
-		try {
-			await waitForWorkerReady({
-				output: workerOutput,
-				port,
-				timeoutMs: 30_000,
-				workerProcess,
-			});
-
-			const createResponse = await fetch(`http://127.0.0.1:${port}/tasks`, {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					taskId: 'worker-only-smoke',
-					prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
-					repos: [
-						{
-							repoUrl: 'https://example.com/local-fixture.git',
-							baseBranch: 'main',
-							gitDirPath,
-							workPath: repoDir,
-						},
-					],
-					context: { source: 'worker-only-smoke' },
-				}),
-			});
-
-			expect(createResponse.status).toBe(201);
-			const createBody = createTaskResponseSchema.parse(await createResponse.json());
-			const finalState = await waitForTaskCompletion({
-				port,
-				stateDir,
-				taskId: createBody.taskId,
-				timeoutMs: 300_000,
-			});
-			if (finalState.status !== 'completed') {
-				throw new Error(`Worker-only smoke failed: ${JSON.stringify(finalState)}`);
+		afterEach(async () => {
+			if (workerProcess && workerProcess.exitCode === null) {
+				workerProcess.kill('SIGTERM');
+				try {
+					await waitForChildExit(workerProcess, 5_000, 'Worker SIGTERM shutdown');
+				} catch (error) {
+					if (workerProcess.exitCode === null) {
+						workerProcess.kill('SIGKILL');
+						await waitForChildExit(workerProcess, 5_000, 'Worker SIGKILL shutdown');
+					}
+					throw error;
+				}
 			}
-			expect((await fs.readFile(path.join(repoDir, 'READY.txt'), 'utf8')).trim()).toBe('READY');
-		} catch (error) {
-			await fs.writeFile(workerLogPath, workerOutput.stdout + workerOutput.stderr).catch(() => {});
-			const workerLog = await fs.readFile(workerLogPath, 'utf8').catch(() => '');
-			throw new Error(
-				`${error instanceof Error ? error.message : String(error)}\n\nWorker log:\n${workerLog}`,
-				{ cause: error },
+		});
+
+		it('runs a real task directly against the worker server to completed', async () => {
+			const repoRoot = path.resolve(process.cwd());
+			const workerEntrypoint = resolveWorkerRuntimeEntrypoint(repoRoot);
+			await fs.access(workerEntrypoint);
+
+			const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runtime-smoke-'));
+			const stateDir = path.join(tempRoot, 'state');
+			const workDir = path.join(tempRoot, 'work');
+			const sourceRepoDir = await createSampleRepo(path.join(tempRoot, 'source'));
+			const repoDir = path.join(workDir, 'sample-repo');
+			const gitDirPath = path.join(tempRoot, 'gitdirs', 'sample-repo.git');
+			await fs.mkdir(path.dirname(gitDirPath), { recursive: true });
+			execFileSync('git', ['clone', '--bare', sourceRepoDir, gitDirPath], {
+				stdio: 'pipe',
+			});
+			execFileSync('git', ['--git-dir', gitDirPath, 'config', 'core.bare', 'false'], {
+				stdio: 'pipe',
+			});
+			const configPath = path.join(tempRoot, 'worker-config.json');
+			const port = await findAvailablePort();
+			const workerLogPath = path.join(tempRoot, 'worker.log');
+			const workerOutput: WorkerProcessOutput = { stderr: '', stdout: '' };
+
+			await fs.mkdir(stateDir, { recursive: true });
+			await fs.mkdir(workDir, { recursive: true });
+			await fs.writeFile(
+				configPath,
+				JSON.stringify({
+					runtimeInstructions: 'Smoke test runtime instructions.',
+					defaults: { provider: smokeProvider.provider, model: smokeProvider.model },
+					phases: {
+						plan: {
+							skills: [],
+							cycle: { kind: 'noReview' },
+							agentInstructions: null,
+							reviewerInstructions: null,
+						},
+						work: {
+							skills: [],
+							cycle: { kind: 'review', cycleCount: 1 },
+							agentInstructions: null,
+							reviewerInstructions: null,
+						},
+						wrapup: { skills: [], instructions: null },
+					},
+					mcpServers: [],
+					verification: [{ name: 'verify', command: 'bash scripts/verify.sh' }],
+					branchPrefix: 'agent/',
+					stateDir,
+				}),
 			);
-		} finally {
-			await fs.rm(tempRoot, { recursive: true, force: true });
-		}
-	}, 900_000);
-});
+
+			workerProcess = spawn(
+				'node',
+				[workerEntrypoint, 'serve', '--port', String(port), '--config', configPath],
+				{
+					cwd: repoRoot,
+					env: {
+						...process.env,
+						[smokeProvider.apiKeyEnv]: process.env[smokeProvider.testApiKeyEnv] ?? '',
+						WORK_DIR: workDir,
+					},
+					stdio: ['ignore', 'pipe', 'pipe'],
+				},
+			);
+			workerProcess.stdout?.setEncoding('utf8');
+			workerProcess.stderr?.setEncoding('utf8');
+			workerProcess.stdout?.on('data', (chunk: string) => {
+				workerOutput.stdout += chunk;
+			});
+			workerProcess.stderr?.on('data', (chunk: string) => {
+				workerOutput.stderr += chunk;
+			});
+
+			try {
+				await waitForWorkerReady({
+					output: workerOutput,
+					port,
+					timeoutMs: 30_000,
+					workerProcess,
+				});
+
+				const createResponse = await fetch(`http://127.0.0.1:${port}/tasks`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						taskId: 'worker-only-smoke',
+						prompt:
+							'Create a file named READY.txt in the repository root containing exactly READY.',
+						repos: [
+							{
+								repoUrl: 'https://example.com/local-fixture.git',
+								baseBranch: 'main',
+								gitDirPath,
+								workPath: repoDir,
+							},
+						],
+						context: { source: 'worker-only-smoke' },
+					}),
+				});
+
+				expect(createResponse.status).toBe(201);
+				const createBody = createTaskResponseSchema.parse(await createResponse.json());
+				const finalState = await waitForTaskCompletion({
+					port,
+					stateDir,
+					taskId: createBody.taskId,
+					timeoutMs: 300_000,
+				});
+				if (finalState.status !== 'completed') {
+					throw new Error(`Worker-only smoke failed: ${JSON.stringify(finalState)}`);
+				}
+				expect((await fs.readFile(path.join(repoDir, 'READY.txt'), 'utf8')).trim()).toBe('READY');
+			} catch (error) {
+				await fs
+					.writeFile(workerLogPath, workerOutput.stdout + workerOutput.stderr)
+					.catch(() => {});
+				const workerLog = await fs.readFile(workerLogPath, 'utf8').catch(() => '');
+				throw new Error(
+					`${error instanceof Error ? error.message : String(error)}\n\nWorker log:\n${workerLog}`,
+					{ cause: error },
+				);
+			} finally {
+				await fs.rm(tempRoot, { recursive: true, force: true });
+			}
+		}, 900_000);
+	});
+}

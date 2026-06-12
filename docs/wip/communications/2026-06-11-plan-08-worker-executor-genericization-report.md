@@ -1,6 +1,6 @@
 # Plan 08 Worker Executor Genericization Report
 
-Status: resumed task 3 complete; Claude executor tasks not yet implemented
+Status: Claude executor implemented and review-fixed; live worker E2E gated by missing credentials
 Branch: improve/plan-08-worker-executor-genericization
 Base: stacked on improve/plan-07-codex-sdk-upgrade at 115f9fc
 
@@ -12,7 +12,8 @@ Implemented and verified the safe pre-gate parts of Plan 08:
   internal API key env assignments without weakening existing OpenAI redaction.
 - Provider-parameterized worker runtime E2E gates:
   - Codex requires `codex` plus `AGENT_VM_TEST_OPENAI_API_KEY`.
-  - Claude requires `claude` plus `AGENT_VM_TEST_ANTHROPIC_API_KEY`.
+  - Claude requires `AGENT_VM_TEST_ANTHROPIC_API_KEY` and uses the
+    SDK-bundled Claude Code binary path.
 - Extracted Codex runtime capability setup into
   `codex-capability-setup.ts`, keeping Codex MCP registration provider-owned
   while preserving existing Codex executor behavior.
@@ -27,8 +28,14 @@ The previous report stopped at task 3's explicit user decision:
   and tests.
 
 The resumed decision was to hard-cutover to `getSessionRef()`. No Claude
-executor file, factory case, or image bake decision has been written yet; those
-remain the next Plan 08 implementation tasks.
+executor compatibility alias was kept.
+
+The final resumed slice implemented the Claude Agent SDK executor, wired the
+factory/export path, and updated worker runtime E2E provider gates so Claude uses
+the SDK-bundled binary path rather than requiring a global `claude` CLI. The
+review follow-up added an actionable runtime availability guard, isolated Claude
+SDK filesystem state under worker-controlled runtime state, disabled inherited
+Claude settings/hooks, and cancels the active SDK query on worker turn timeout.
 
 ## 2026-06-12 Resumed Update
 
@@ -91,6 +98,148 @@ Resumed proof:
   - exit 0
   - check gate: 6 passed, 0 failed in 22.57s
 
+## 2026-06-12 Claude Executor Update
+
+Implemented the Claude executor slice:
+
+- Added `@anthropic-ai/claude-agent-sdk@0.3.174` and
+  `@anthropic-ai/sdk@0.100.1` to `@agent-vm/agent-vm-worker`.
+- Added `claude-code-executor.ts` using the Claude Agent SDK `query()` API with
+  `execute`, `fix`, `resumeOrRebuild`, and `getSessionRef`.
+- Added `claude-capability-setup.ts` to resolve the SDK optional platform binary
+  and fail actionably if optional dependencies were omitted.
+- Mapped worker reasoning effort to Claude SDK effort values:
+  `minimal -> low`; `low`, `medium`, `high`, and `xhigh` pass through.
+- Mapped worker MCP server capabilities to Claude HTTP MCP server configs.
+- Preserved local tool support by registering `agent-vm-local-tools` through the
+  existing local tool MCP server.
+- Wired `executor-factory.ts` and `index.ts` so `provider: "claude"` creates and
+  exports the Claude executor.
+- Updated worker runtime E2E smoke coverage to loop Codex and Claude provider
+  cases independently.
+- Updated worker E2E gates so Codex still requires the global `codex` command,
+  while Claude requires `AGENT_VM_TEST_ANTHROPIC_API_KEY` plus an available SDK
+  bundled Claude Code binary instead of a global `claude` command.
+
+Packaging decision:
+
+- No worker Dockerfile/global CLI bake change was made in this slice. The
+  selected runtime path is the Claude Agent SDK package plus its optional
+  platform dependency, which is installed with the worker package dependency
+  graph. The executor resolves that binary at creation and gives a concrete
+  reinstall-with-optional-dependencies error if it is missing. Codex remains the
+  only provider that requires a global command gate.
+
+Security and boundary note:
+
+- For configured worker MCP servers with `bearerTokenEnvVar`, the Claude SDK
+  executor resolves the token from runtime environment and passes an
+  `Authorization: Bearer ...` header in the in-memory SDK MCP config. The SDK
+  type does not expose an environment-variable header placeholder. This does not
+  write the token to repo config, images, lockfiles, or generated deployment
+  files.
+- Claude SDK state is isolated with worker-created `HOME` and
+  `CLAUDE_CONFIG_DIR` paths rooted under `STATE_DIR` when available, and
+  `settingSources: []` prevents inherited user/project/local Claude settings or
+  hooks from affecting worker execution.
+
+## 2026-06-12 Implementation Review Fixes
+
+Ran the implementation review swarm with six read-only reviewer lanes covering
+spec compliance, proof gates, contracts/tests, security/trust boundaries,
+reliability, and adversarial code quality.
+
+Accepted and fixed findings:
+
+- Claude runtime availability now fails before executor use if the SDK optional
+  platform binary is missing.
+- Worker E2E gate construction no longer creates skipped tests for disabled
+  providers; unavailable provider cases are not registered as skipped proof.
+- Claude SDK filesystem state is isolated under worker-controlled runtime state.
+- Inherited Claude settings and hooks are disabled with `settingSources: []`.
+- Persistent thread timeouts call optional executor cancellation, and the Claude
+  executor closes the active SDK query.
+- `fix()` no longer attempts unsafe rebuild after a recoverable Claude resume
+  failure, because rebuilding without the prior assistant transcript can silently
+  change conversation state.
+- Claude unit coverage now includes runtime availability, state isolation,
+  fail-safe resume errors, factory wiring, MCP mapping, and timeout cancellation.
+
+Rejected as unsafe:
+
+- Auto-rebuilding a failed Claude `fix()` session from only the worker-provided
+  context. The safe behavior is to fail actionably until the SDK can resume the
+  referenced session.
+
+Claude executor proof:
+
+- Red:
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src/work-executor/claude-code-executor.unit.test.ts packages/agent-vm-worker/src/work-executor/codex-executor.unit.test.ts`
+  - exit 1 before implementation
+  - 10 expected failures from missing Claude executor/factory support
+- Focused green:
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src/work-executor/claude-code-executor.unit.test.ts packages/agent-vm-worker/src/work-executor/codex-executor.unit.test.ts packages/agent-vm-worker/src/worker-e2e-gates.unit.test.ts`
+  - exit 0
+  - 3 files passed
+  - 35 tests passed
+- Review-fix red:
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src/work-executor/claude-code-executor.unit.test.ts packages/agent-vm-worker/src/worker-e2e-gates.unit.test.ts`
+  - exit 1 before review fixes
+  - 5 expected failures covering Claude runtime availability, SDK state
+    isolation/settings, fail-safe resume errors, and timeout cancellation
+- Review-fix focused green:
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src/work-executor/claude-code-executor.unit.test.ts packages/agent-vm-worker/src/work-executor/codex-executor.unit.test.ts packages/agent-vm-worker/src/worker-e2e-gates.unit.test.ts packages/agent-vm-worker/src/work-executor/persistent-thread.unit.test.ts`
+  - exit 0
+  - 4 files passed
+  - 43 tests passed
+- Worker package focused green:
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src`
+  - exit 0
+  - 24 files passed
+  - 195 tests passed
+- `pnpm fmt:check`
+  - exit 0
+  - all matched files use the correct format
+- `mise run lint`
+  - exit 0
+  - 0 warnings
+  - 0 errors
+- `pnpm typecheck`
+  - exit 0
+  - root typecheck plus 11 workspace package typechecks passed
+- `pnpm check`
+  - exit 0
+  - check gate: 6 passed, 0 failed in 28.34s
+- `pnpm test:unit`
+  - exit 0
+  - 198 files passed
+  - 1818 tests passed
+- `pnpm test:integration`
+  - exit 0
+  - 23 files passed
+  - 327 tests passed
+- Worker E2E prerequisite check:
+  `bash -lc 'for n in AGENT_VM_WORKER_E2E AGENT_VM_TEST_OPENAI_API_KEY AGENT_VM_TEST_ANTHROPIC_API_KEY; do if [ -n "${!n:-}" ]; then echo "$n=set"; else echo "$n=unset"; fi; done'`
+  - exit 0
+  - `AGENT_VM_WORKER_E2E=unset`
+  - `AGENT_VM_TEST_OPENAI_API_KEY=unset`
+  - `AGENT_VM_TEST_ANTHROPIC_API_KEY=unset`
+- Validation note:
+  - A concurrent full `pnpm test:unit` plus `pnpm test:integration` run caused
+    the unit lane to abort with exit 134.
+  - `pnpm test:integration` passed in that run.
+  - Rerunning `pnpm test:unit` alone immediately afterward passed. After the
+    review fixes, the current final standalone unit proof is the 198-file /
+    1818-test run listed above.
+
+Worker E2E proof split:
+
+- `AGENT_VM_WORKER_E2E`, `AGENT_VM_TEST_OPENAI_API_KEY`, and
+  `AGENT_VM_TEST_ANTHROPIC_API_KEY` were unset in this shell.
+- Worker runtime E2E was not run here; this branch has unit/integration/static
+  proof for the Claude executor wiring but no live provider roundtrip proof in
+  this environment.
+
 ## Research Gate
 
 Resolved Plan 08 task 1 without finding a design stop:
@@ -144,14 +293,23 @@ programmatic sessions, MCP, permission, result, and lifecycle handling.
 
 - `packages/agent-vm-worker/src/coordinator/coordinator-helpers.ts`
 - `packages/agent-vm-worker/src/coordinator/coordinator-helpers.unit.test.ts`
+- `packages/agent-vm-worker/package.json`
 - `packages/agent-vm-worker/src/work-executor/codex-capability-setup.ts`
 - `packages/agent-vm-worker/src/work-executor/codex-executor.ts`
 - `packages/agent-vm-worker/src/worker-e2e-gates.ts`
 - `packages/agent-vm-worker/src/worker-e2e-gates.unit.test.ts`
 - `packages/agent-vm-worker/src/worker-runtime.worker.e2e.test.ts`
+- `packages/agent-vm-worker/src/work-executor/claude-capability-setup.ts`
+- `packages/agent-vm-worker/src/work-executor/claude-code-executor.ts`
+- `packages/agent-vm-worker/src/work-executor/claude-code-executor.unit.test.ts`
+- `packages/agent-vm-worker/src/work-executor/codex-executor.unit.test.ts`
+- `packages/agent-vm-worker/src/work-executor/executor-factory.ts`
+- `packages/agent-vm-worker/src/work-executor/executor-interface.ts`
+- `packages/agent-vm-worker/src/work-executor/persistent-thread.ts`
+- `packages/agent-vm-worker/src/index.ts`
+- `pnpm-lock.yaml`
 
-All touched files are within the plan's declared write surfaces for safe
-pre-gate work.
+All touched files are within the plan's declared write surfaces.
 
 ## Red/Green Evidence
 
@@ -190,22 +348,30 @@ Green focused tests:
   - first run: exit 1 on `coordinator-helpers.ts` and `codex-executor.ts`.
   - after `pnpm fmt`: exit 0; all matched files use correct format.
 
-Broad resumed gates now run for the task 3 cutover:
+Broad resumed gates now run for the task 3 cutover and Claude executor
+implementation:
 
 - `pnpm check`
   - exit 0
-  - 6 passed / 0 failed
+  - 6 passed / 0 failed in 28.34s
+- `pnpm test:unit`
+  - exit 0
+  - 198 files passed
+  - 1818 tests passed
+- `pnpm test:integration`
+  - exit 0
+  - 23 files passed
+  - 327 tests passed
 
-Full `pnpm test:unit`, full `pnpm test:integration`, and worker E2E are still
-deferred until the remaining Claude executor implementation lands. The current
-branch proof covers the pre-gate work and the task 3 provider-neutral cutover.
+The current branch proof covers the pre-gate work, task 3 provider-neutral
+cutover, and Claude executor implementation. Live worker E2E remains blocked by
+missing provider credentials in this shell.
 
 Worker E2E gate status:
 
-- Codex worker E2E was not rerun in this stopped-at-gate packet.
-- Claude worker E2E is only gate-wired; it is not expected to run until the
-  Claude executor exists and credentials/binary prerequisites are intentionally
-  selected.
+- Codex worker E2E was not rerun in this environment.
+- Claude worker E2E is implemented and gate-wired, but was not run because
+  `AGENT_VM_WORKER_E2E` and `AGENT_VM_TEST_ANTHROPIC_API_KEY` were unset.
 
 ## Resolved Gate
 
@@ -217,8 +383,7 @@ Plan 08 task 3 user decision was resolved:
 
 Remaining Plan 08 work:
 
-- Claude executor implementation.
-- Worker executor factory/image packaging decision.
-- Claude-specific proof gates once the executor exists.
+- Live Claude worker E2E provider proof in an environment with
+  `AGENT_VM_WORKER_E2E=1` and `AGENT_VM_TEST_ANTHROPIC_API_KEY`.
 
 Branch pushed to `origin/improve/plan-08-worker-executor-genericization`.

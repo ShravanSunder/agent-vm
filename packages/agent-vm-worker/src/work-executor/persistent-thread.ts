@@ -24,9 +24,11 @@ function withTimeout<TValue>(
 	promise: Promise<TValue>,
 	timeoutMs: number,
 	label: string,
+	onTimeout?: () => void,
 ): Promise<TValue> {
 	return new Promise((resolve, reject) => {
 		const timeout = setTimeout(() => {
+			onTimeout?.();
 			reject(new Error(`${label} timed out after ${String(timeoutMs)}ms`));
 		}, timeoutMs);
 
@@ -54,6 +56,7 @@ export function createPersistentThread(props: CreatePersistentThreadProps): Pers
 					: props.executor.execute(toStructuredInput(input)),
 				props.turnTimeoutMs,
 				'persistent-thread.send',
+				() => props.executor.cancelActiveTurn?.(),
 			);
 			started = true;
 			return {

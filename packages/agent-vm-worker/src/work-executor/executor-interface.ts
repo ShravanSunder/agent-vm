@@ -19,6 +19,8 @@ export interface WorkExecutor {
 	resumeOrRebuild(sessionRef: string | null, context: readonly StructuredInput[]): Promise<void>;
 	/** Provider-owned handle used to resume the current conversation later. */
 	getSessionRef(): string | null;
+	/** Cancels an in-flight provider turn after the worker-level turn timeout fires. */
+	cancelActiveTurn?(): void;
 }
 
 export interface ToolDefinition {

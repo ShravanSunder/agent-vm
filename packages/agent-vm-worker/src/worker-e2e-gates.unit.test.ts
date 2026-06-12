@@ -57,14 +57,29 @@ describe('shouldRunWorkerRuntimeE2e', () => {
 		).toBe(true);
 	});
 
-	it('allows the claude worker runtime smoke with Anthropic credentials and claude command', () => {
+	it('refuses the claude worker runtime smoke when the SDK runtime is unavailable', () => {
 		expect(
 			shouldRunWorkerRuntimeE2e({
-				commandExists: (command) => command === 'claude',
+				commandExists: () => false,
 				env: {
 					AGENT_VM_WORKER_E2E: '1',
 					AGENT_VM_TEST_ANTHROPIC_API_KEY: 'test-token',
 				},
+				claudeRuntimeAvailable: () => false,
+				provider: 'claude',
+			}),
+		).toBe(false);
+	});
+
+	it('allows the claude worker runtime smoke with Anthropic credentials and SDK runtime', () => {
+		expect(
+			shouldRunWorkerRuntimeE2e({
+				commandExists: () => false,
+				env: {
+					AGENT_VM_WORKER_E2E: '1',
+					AGENT_VM_TEST_ANTHROPIC_API_KEY: 'test-token',
+				},
+				claudeRuntimeAvailable: () => true,
 				provider: 'claude',
 			}),
 		).toBe(true);

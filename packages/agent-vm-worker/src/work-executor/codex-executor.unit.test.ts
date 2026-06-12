@@ -458,12 +458,6 @@ describe('work-executor interface contract', () => {
 });
 
 describe('executor-factory', () => {
-	it('throws for claude provider', () => {
-		expect(() => createWorkExecutor('claude', 'latest', { mcpServers: [], tools: [] })).toThrow(
-			'Claude executor is not implemented yet.',
-		);
-	});
-
 	it('throws for unknown provider', () => {
 		expect(() => createWorkExecutor('unknown', 'latest', { mcpServers: [], tools: [] })).toThrow(
 			"Unknown executor provider: 'unknown'.",
