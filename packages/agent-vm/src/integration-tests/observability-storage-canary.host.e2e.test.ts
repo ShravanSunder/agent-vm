@@ -12,6 +12,7 @@ import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const temporaryDirectories: string[] = [];
 const storageCanaryStartupCheckTimeoutMs = process.env.GITHUB_ACTIONS === 'true' ? 90_000 : 30_000;
+const ciStorageCanaryPorts = [24_317, 24_318, 24_133, 24_428, 24_928, 25_428] as const;
 
 afterEach(async () => {
 	await Promise.all(
@@ -49,6 +50,9 @@ async function reserveLoopbackPort(): Promise<number> {
 async function reserveLoopbackPorts(): Promise<
 	readonly [number, number, number, number, number, number]
 > {
+	if (process.env.GITHUB_ACTIONS === 'true') {
+		return ciStorageCanaryPorts;
+	}
 	const ports = await Promise.all(
 		Array.from({ length: 6 }, async () => await reserveLoopbackPort()),
 	);
