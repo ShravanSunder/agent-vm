@@ -168,12 +168,19 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Eleven workspace packages compose the system. Dependencies flow downward.
+Eleven workspace packages compose the system. Dependencies flow downward in this
+simplified graph; check each package `package.json` for the exact dependency
+edge list.
 
 ```
                 @earendil-works/gondolin
                 (external SDK — QEMU micro-VMs,
                  VFS, HTTP mediation, image builds)
+                          |
+                          v
+                secret-management
+                (SecretRef contracts,
+                 env + 1Password resolution)
                           |
                           v
                 gondolin-adapter
@@ -204,27 +211,33 @@ Eleven workspace packages compose the system. Dependencies flow downward.
        HTTP API :18800, lease manager,
        gateway orchestrator,
        worker task runner,
-       git push from host)
-          |
-          | (imports workerConfigSchema)
-          v
-    agent-vm-worker
-    (Runs INSIDE the VM.
-     6-phase pipeline, coordinator,
-     executors, event sourcing,
-     MCP tools, HTTP API :18789)
+       git push from host,
+       MCP Portal wiring)
+       /       |        \
+      v        v         v
+ config-   mcp-portal   agent-vm-worker
+contracts  (provider    (Runs INSIDE the VM:
+(schemas)   policy)      coordinator, executors,
+                         event sourcing, HTTP :18789)
+      \        |
+       v       v
+       openclaw-mcp-portal-plugin
+       (OpenClaw-facing MCP Portal bridge)
 ```
 
 | Package | Responsibility |
 |---------|----------------|
-| **secrets** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
+| **secret-management** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
+| **config-contracts** | Shared config schemas/helpers used by host config and MCP Portal config surfaces. |
 | **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
 | **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
-| **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
+| **mcp-portal** | MCP provider/profile policy runtime and portal tool surface. |
+| **openclaw-gateway** | OpenClaw lifecycle: config/cache/state/zone-file VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
 | **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, TCP to controller only, no auth, no `prepareHostState`. |
-| **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
-| **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and controller tools such as `git-push` and `git-pull-default`. |
 | **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox system. Registers Gondolin VMs as an OpenClaw sandbox backend. File bridge + shell execution via SSH into tool VMs. |
+| **openclaw-mcp-portal-plugin** | OpenClaw-facing MCP Portal bridge built on the shared portal runtime. |
+| **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and controller tools such as `git-push` and `git-pull-default`. |
+| **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push, and MCP Portal wiring. |
 
 ---
 
@@ -237,14 +250,22 @@ The controller is the host-side process that owns VM lifecycles, serves the HTTP
 `startControllerRuntime()` in `controller-runtime.ts` executes these steps in order:
 
 ```
-  1. Resolve secrets         createSecretResolver() -> composite resolver
-  2. Create TCP pool         createTcpPool(config.tcpPool)
-  3. Create lease manager    createLeaseManager({ tcpPool, createManagedVm })
-  4. Start idle reaper       createIdleReaper({ ttlForLease }) on 60s interval
-  5. Create zone registry    one runtime per selected configured zone
-  6. Start selected zones    OpenClaw gateways at boot; Worker zones on task submit
-  7. Wire HTTP routes        createControllerService() -> Hono app
-  8. Bind HTTP server        startControllerHttpServer({ port: config.host.controllerPort })
+  1. Resolve secrets              createSecretResolver() -> composite resolver
+  2. Resolve controller GitHub    host-only token for controller git operations
+  3. Create TCP pool              createTcpPool(config.tcpPool)
+  4. Create task/heartbeat/zone   ActiveTaskRegistry, RequestHeartbeatRegistry,
+     registries                   ZoneGitCapabilityStore, ZoneGitOperationLocks
+  5. Create health event store    HealthEventStore + durable health event log
+  6. Create lease manager         createLeaseManager({ tcpPool, createManagedVm })
+  7. Start lease reaper           active-use, dead-idle, and idle TTL cleanup
+  8. Create zone registry         OpenClaw and Worker zone runtime dispatch
+  9. Create readiness/stop op     runtimeReadiness + stop-controller operation
+ 10. Compose operations           status, health, worker tasks, zone git, leases
+ 11. Wire HTTP routes             createControllerService() -> Hono app
+ 12. Bind HTTP server             startControllerHttpServer({ port })
+ 13. Start selected zones         OpenClaw gateways at boot; Worker zones on task submit
+ 14. Reap stale leases once       startup cleanup after zone start
+ 15. Start service monitor        optional gateway-service health monitor/recovery
 ```
 
 For worker-type zones, the gateway is not started at boot. Instead, a per-task
@@ -255,28 +276,21 @@ process-wide active zone.
 
 ### HTTP API (Hono on :18800)
 
-The controller exposes a REST API. Routes are split across two modules: core lease routes in `controller-http-routes.ts` and zone operation routes in `controller-zone-operation-routes.ts`.
+The controller exposes a REST API. The complete route table belongs in
+[subsystems/controller.md](../subsystems/controller.md#http-api-routes), which
+is the authoritative reference for paths, methods, and availability. At the
+architecture level the route families are:
 
-| Method | Path | Purpose | Mode |
-|--------|------|---------|------|
-| `GET` | `/health` | Controller liveness check | Both |
-| `POST` | `/lease` | Acquire a tool VM lease (agent, zone, profile) | OpenClaw |
-| `GET` | `/lease/:leaseId` | Keep a lease alive and return agent-facing SSH access | OpenClaw |
-| `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | OpenClaw |
-| `GET` | `/leases` | List all active leases | OpenClaw |
-| `DELETE` | `/lease/:leaseId` | Release a tool VM lease | OpenClaw |
-| `GET` | `/controller-status` | Controller operational status | OpenClaw |
-| `GET` | `/zones/:zoneId/health` | Live gateway health probe | OpenClaw |
-| `GET` | `/zones/:zoneId/logs` | Fetch gateway VM logs | OpenClaw |
-| `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve zone secrets and update auth | OpenClaw |
-| `POST` | `/zones/:zoneId/destroy` | Stop and destroy a gateway zone | OpenClaw |
-| `POST` | `/zones/:zoneId/upgrade` | Restart gateway zone with fresh image | OpenClaw |
-| `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH access to the gateway VM | OpenClaw |
-| `POST` | `/zones/:zoneId/execute-command` | Execute a shell command in the gateway VM; requires zone admin token when adminAccess is configured | OpenClaw |
-| `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
-| `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
-| `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push task branches to remote | Worker |
-| `POST` | `/stop-controller` | Graceful shutdown: release leases, stop gateway, close server | Both |
+- Controller readiness: `GET /health`.
+- Tool VM lease lifecycle: create/read/peek/renew/release leases and track
+  in-flight lease uses with heartbeats.
+- Zone health and operations: controller status, gateway/service health,
+  health-events, health snapshots, logs, credential refresh, destroy, upgrade,
+  SSH enablement, and protected command execution.
+- Zone git operations: zone git status and protected zone git push.
+- Worker task lifecycle: submit tasks, read snapshots, stream task events,
+  close tasks, push task branches, and refresh default/current branches.
+- Controller shutdown: `POST /stop-controller`.
 
 ### Key Subsystems
 
@@ -290,6 +304,30 @@ policy uses the single `leaseIdleTtl.defaultMs` value, bounded request overrides
 and the default 100 minute fallback.
 
 **Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by the push-branches endpoint to verify a task is still active before allowing branch pushes.
+
+**Request Heartbeat Registry** (`request-heartbeat-registry.ts`): Tracks
+caller heartbeat handles for Worker tasks when `CALLER_URL` is configured.
+Runtime shutdown stops all registered heartbeat senders.
+
+**Health Event Store** (`health/health-event-store.ts`): Keeps recent
+zone-scoped health observations in memory and appends durable health events
+under `runtimeDir`. Controller status combines registry diagnosis with these
+health planes.
+
+**Zone Runtime Registry** (`zone-runtimes/zone-runtime-registry.ts`): Builds
+one selected runtime per configured zone and dispatches to OpenClaw or Worker
+zone runtime implementations by `gateway.type`.
+
+**Gateway Service Health Monitor**
+(`health/gateway-service-health-monitor.ts`): Optional background monitor for
+OpenClaw gateway service health. It can classify recovery budget class, restart
+or cold-start gateway VMs, and refresh secret resolvers when configured policy
+allows it.
+
+**Zone Git Capability Store / Operation Locks**
+(`zone-git/zone-git-capability-store.ts`, `zone-git/zone-git-operation-locks.ts`):
+Mint and verify per-zone git capability tokens, and serialize protected zone git
+push operations per zone.
 
 ---
 
