@@ -21,6 +21,7 @@
 		"test": "pnpm test:unit",
 		"test:unit": "pnpm test:taxonomy && vitest run --config vitest.config.ts --project unit",
 		"test:integration": "vitest run --config vitest.config.ts --project integration",
+		"test:e2e:host-docker": "tsx scripts/run-vitest-evidence-project.ts e2e-host-docker",
 		"test:e2e:host": "tsx scripts/run-vitest-evidence-project.ts e2e-host",
 		"test:e2e:inventory": "vitest run --config vitest.config.ts --project e2e-inventory",
 		"test:e2e:vm": "AGENT_VM_GONDOLIN_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-vm",
