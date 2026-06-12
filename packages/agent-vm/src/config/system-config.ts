@@ -501,6 +501,25 @@ const gatewayImageProfileSchema = imageConfigSchema.extend({
 	type: z.enum(gatewayTypeValues),
 });
 
+type GatewayImageProfileSchemaInput = z.infer<typeof gatewayImageProfileSchema>;
+
+function isManagedOpenClawObservabilityProfile(
+	profileName: string,
+	profile: GatewayImageProfileSchemaInput | undefined,
+): boolean {
+	if (!profile || profile.type !== 'openclaw') {
+		return false;
+	}
+	if (profile.source?.base === 'openclaw-gateway') {
+		return true;
+	}
+	return (
+		profile.source === undefined &&
+		profileName === 'openclaw' &&
+		/(?:^|\/)vm-images\/gateways\/openclaw\/build-config\.jsonc?$/u.test(profile.buildConfig)
+	);
+}
+
 const toolVmImageProfileSchema = imageConfigSchema.extend({
 	type: z.literal('toolVm'),
 });
@@ -523,6 +542,186 @@ const zoneMcpConfigSchema = z
 	})
 	.strict();
 
+const victoriaRetentionPeriodSchema = z
+	.string()
+	.min(1)
+	.regex(
+		/^[1-9][0-9]*(?:ms|s|m|h|d|w|M|y)$/u,
+		'retention period must be a positive Victoria duration such as 30d, 12h, or 1M',
+	);
+
+const victoriaByteSizeSchema = z
+	.string()
+	.min(1)
+	.regex(
+		/^[1-9][0-9]*(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$/u,
+		'retention byte size must be a positive value with a unit such as 5GiB or 50GB',
+	);
+
+const observabilityRetentionBaseSchema = z
+	.object({
+		period: victoriaRetentionPeriodSchema,
+		minFreeDiskSpaceBytes: victoriaByteSizeSchema.optional(),
+	})
+	.strict();
+
+const observabilityByteBoundedRetentionPolicySchema = observabilityRetentionBaseSchema
+	.extend({
+		maxDiskSpaceUsageBytes: victoriaByteSizeSchema.optional(),
+	})
+	.strict();
+
+const observabilityDiskBoundedRetentionPolicySchema = observabilityRetentionBaseSchema
+	.extend({
+		maxDiskSpaceUsageBytes: victoriaByteSizeSchema.optional(),
+		maxDiskUsagePercent: z.number().int().min(1).max(100).optional(),
+	})
+	.strict()
+	.refine(
+		(value) =>
+			value.maxDiskSpaceUsageBytes === undefined || value.maxDiskUsagePercent === undefined,
+		'maxDiskSpaceUsageBytes and maxDiskUsagePercent are mutually exclusive',
+	);
+
+const hostObservabilityPortSchema = z.number().int().min(1).max(65_535);
+
+const hostObservabilityPortsSchema = z
+	.object({
+		collectorGrpc: hostObservabilityPortSchema.default(4317),
+		collectorHttp: hostObservabilityPortSchema.default(4318),
+		collectorHealth: hostObservabilityPortSchema.default(13_133),
+		metrics: hostObservabilityPortSchema.default(8428),
+		logs: hostObservabilityPortSchema.default(9428),
+		traces: hostObservabilityPortSchema.default(10_428),
+	})
+	.strict()
+	.refine((ports) => new Set(Object.values(ports)).size === Object.values(ports).length, {
+		message: 'host observability ports must be unique',
+	})
+	.default({
+		collectorGrpc: 4317,
+		collectorHttp: 4318,
+		collectorHealth: 13_133,
+		metrics: 8428,
+		logs: 9428,
+		traces: 10_428,
+	});
+
+const managedHostObservabilityStackSchema = z
+	.object({
+		mode: z.literal('managed').default('managed'),
+		scrubbing: z
+			.object({
+				responsibility: z
+					.literal('agent-vm-managed-collector')
+					.default('agent-vm-managed-collector'),
+			})
+			.strict()
+			.default({ responsibility: 'agent-vm-managed-collector' }),
+	})
+	.strict()
+	.default({
+		mode: 'managed',
+		scrubbing: { responsibility: 'agent-vm-managed-collector' },
+	});
+
+const externalHostObservabilityStackSchema = z
+	.object({
+		mode: z.literal('external'),
+		scrubbing: z
+			.object({
+				responsibility: z.literal('external-collector'),
+			})
+			.strict(),
+	})
+	.strict();
+
+const hostObservabilityCommonShape = {
+	enabled: z.literal(true),
+	mode: z.literal('collector').default('collector'),
+	bindAddress: z.enum(['127.0.0.1', '::1']).default('127.0.0.1'),
+	prepareOnBuild: z.boolean().default(true),
+	waitOnBuild: z.boolean().default(true),
+	startupCheckTimeoutMs: z.number().int().positive().default(30_000),
+	ports: hostObservabilityPortsSchema,
+	controllerStartPolicy: z.enum(['degraded', 'require-ready', 'off']).default('degraded'),
+} as const;
+
+const hostObservabilityRetentionSchema = z
+	.object({
+		metrics: observabilityRetentionBaseSchema,
+		logs: observabilityByteBoundedRetentionPolicySchema,
+		traces: observabilityDiskBoundedRetentionPolicySchema,
+	})
+	.strict();
+
+const managedHostObservabilitySchema = z
+	.object({
+		...hostObservabilityCommonShape,
+		stack: managedHostObservabilityStackSchema,
+		runner: z.literal('docker-compose').default('docker-compose'),
+		dataDir: z.string().min(1),
+		projectName: z
+			.string()
+			.min(1)
+			.regex(
+				/^[a-z0-9][a-z0-9_-]*$/u,
+				'projectName must use lowercase letters, numbers, hyphens, and underscores, and start with a letter or number',
+			)
+			.optional(),
+		retention: hostObservabilityRetentionSchema,
+	})
+	.strict();
+
+const externalHostObservabilitySchema = z
+	.object({
+		...hostObservabilityCommonShape,
+		stack: externalHostObservabilityStackSchema,
+	})
+	.strict();
+
+const hostObservabilitySchema = z.union([
+	z
+		.object({
+			enabled: z.literal(false),
+		})
+		.strict(),
+	managedHostObservabilitySchema,
+	externalHostObservabilitySchema,
+]);
+
+const zoneOpenClawObservabilitySchema = z
+	.object({
+		serviceName: z.string().min(1),
+		traces: z.boolean().default(true),
+		metrics: z.boolean().default(true),
+		logs: z.boolean().default(true),
+		sampleRate: z.number().min(0).max(1).default(1),
+		flushIntervalMs: z.number().int().positive().default(10_000),
+		captureContent: z
+			.object({
+				enabled: z.literal(false).default(false),
+			})
+			.strict()
+			.default({ enabled: false }),
+		diagnosticsFlags: z.array(z.string().min(1)).default([]),
+	})
+	.strict();
+
+const zoneObservabilitySchema = z.discriminatedUnion('enabled', [
+	z
+		.object({
+			enabled: z.literal(false),
+		})
+		.strict(),
+	z
+		.object({
+			enabled: z.literal(true),
+			openclaw: zoneOpenClawObservabilitySchema,
+		})
+		.strict(),
+]);
+
 const systemConfigSchema = z
 	.object({
 		$schema: z.string().min(1).optional(),
@@ -543,6 +742,7 @@ const systemConfigSchema = z
 				})
 				.optional(),
 			githubToken: hostSecretReferenceSchema.optional(),
+			observability: hostObservabilitySchema.optional(),
 		}),
 		controller: controllerConfigSchema.default({ health: defaultControllerHealthConfig }),
 		cacheDir: z.string().min(1).default('./cache'),
@@ -560,6 +760,7 @@ const systemConfigSchema = z
 						resources: zoneResourcesPolicySchema.optional(),
 						secrets: z.record(secretNameSchema, secretReferenceSchema),
 						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
+						observability: zoneObservabilitySchema.optional(),
 						egressHosts: z.array(egressHostSchema).min(1),
 						websocketBypass: z.array(z.string().min(1)).default([]),
 						defaultToolVmProfile: z.string().min(1).optional(),
@@ -652,6 +853,65 @@ const systemConfigSchema = z
 		}
 
 		for (const [zoneIndex, zone] of config.zones.entries()) {
+			if (zone.observability?.enabled === true && config.host.observability?.enabled !== true) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' observability requires host.observability.enabled to be true.`,
+					path: ['zones', zoneIndex, 'observability'],
+				});
+			}
+			if (zone.observability?.enabled === true && zone.gateway.type !== 'openclaw') {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' observability is supported only for OpenClaw gateways in v1.`,
+					path: ['zones', zoneIndex, 'observability'],
+				});
+			}
+			if (zone.observability?.enabled === true && zone.gateway.type === 'openclaw') {
+				const gatewayImageProfile = config.imageProfiles.gateways[zone.gateway.imageProfile];
+				if (
+					!isManagedOpenClawObservabilityProfile(zone.gateway.imageProfile, gatewayImageProfile)
+				) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' observability requires OpenClaw gateway image profile '${zone.gateway.imageProfile}' to use managed base 'openclaw-gateway' so @openclaw/diagnostics-otel is installed.`,
+						path: ['zones', zoneIndex, 'gateway', 'imageProfile'],
+					});
+				}
+			}
+			if (zone.observability?.enabled === true) {
+				const forbiddenDiagnosticsFlagPattern =
+					/[*=]|^(?:1|all|everything)$|(?:body|content|payload|prompt|secret|token|authorization|cookie|transcript|query|header|url)/iu;
+				for (const [
+					flagIndex,
+					diagnosticsFlag,
+				] of zone.observability.openclaw.diagnosticsFlags.entries()) {
+					if (forbiddenDiagnosticsFlagPattern.test(diagnosticsFlag)) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Zone '${zone.id}' observability diagnostics flag '${diagnosticsFlag}' is too broad or can capture sensitive content.`,
+							path: [
+								'zones',
+								zoneIndex,
+								'observability',
+								'openclaw',
+								'diagnosticsFlags',
+								flagIndex,
+							],
+						});
+					}
+				}
+				if (
+					zone.gateway.type === 'openclaw' &&
+					zone.gateway.rawEnvSecrets?.includes('OPENCLAW_DIAGNOSTICS') === true
+				) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' observability owns diagnostics configuration; do not list OPENCLAW_DIAGNOSTICS in gateway.rawEnvSecrets.`,
+						path: ['zones', zoneIndex, 'gateway', 'rawEnvSecrets'],
+					});
+				}
+			}
 			const openClawControlAuthSecretName =
 				zone.gateway.type === 'openclaw' ? zone.gateway.controlAuth.secret : undefined;
 			const openClawGatewayToken = openClawControlAuthSecretName
@@ -890,6 +1150,11 @@ const systemConfigSchema = z
 	});
 
 type ParsedSystemConfig = z.infer<typeof systemConfigSchema>;
+type HostObservabilityConfig = ParsedSystemConfig['host']['observability'];
+type ManagedHostObservabilityConfig = Extract<
+	NonNullable<HostObservabilityConfig>,
+	{ readonly enabled: true; readonly stack: { readonly mode: 'managed' } }
+>;
 
 export type SystemConfig = Omit<ParsedSystemConfig, 'controller'> & {
 	readonly controller?: ParsedSystemConfig['controller'];
@@ -901,7 +1166,7 @@ export const systemConfigSchemaId = 'agent-vm:system:1';
 export function createSystemConfigSchemaArtifact(): Record<string, unknown> {
 	return {
 		$id: systemConfigSchemaId,
-		...z.toJSONSchema(systemConfigSchema, { target: 'draft-07' }),
+		...z.toJSONSchema(systemConfigSchema, { io: 'input', target: 'draft-07' }),
 	};
 }
 
@@ -930,9 +1195,25 @@ function pathsOverlap(firstPath: string, secondPath: string): boolean {
 	);
 }
 
+function isManagedHostObservabilityConfig(
+	observability: HostObservabilityConfig,
+): observability is ManagedHostObservabilityConfig {
+	return observability?.enabled === true && observability.stack.mode === 'managed';
+}
+
 function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigSchema>): void {
 	if (pathsOverlap(config.runtimeDir, config.cacheDir)) {
 		throw new Error('runtimeDir must not overlap cacheDir.');
+	}
+	const observability = config.host.observability;
+	if (isManagedHostObservabilityConfig(observability)) {
+		const { dataDir } = observability;
+		if (pathsOverlap(dataDir, config.cacheDir)) {
+			throw new Error('observability dataDir must not overlap cacheDir.');
+		}
+		if (pathsOverlap(dataDir, config.runtimeDir)) {
+			throw new Error('observability dataDir must not overlap runtimeDir.');
+		}
 	}
 	for (const zone of config.zones) {
 		if (pathsOverlap(config.runtimeDir, zone.gateway.stateDir)) {
@@ -943,6 +1224,17 @@ function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigS
 			pathsOverlap(config.runtimeDir, zone.gateway.zoneFilesDir)
 		) {
 			throw new Error(`runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
+		}
+		if (isManagedHostObservabilityConfig(observability)) {
+			const { dataDir } = observability;
+			if (pathsOverlap(dataDir, zone.gateway.stateDir)) {
+				throw new Error(`observability dataDir must not overlap stateDir for zone '${zone.id}'.`);
+			}
+			if (zone.gateway.type === 'openclaw' && pathsOverlap(dataDir, zone.gateway.zoneFilesDir)) {
+				throw new Error(
+					`observability dataDir must not overlap zoneFilesDir for zone '${zone.id}'.`,
+				);
+			}
 		}
 	}
 }
@@ -996,6 +1288,15 @@ function resolveRelativePaths(
 
 	return {
 		...config,
+		host: isManagedHostObservabilityConfig(config.host.observability)
+			? {
+					...config.host,
+					observability: {
+						...config.host.observability,
+						dataDir: resolvePath(config.host.observability.dataDir),
+					},
+				}
+			: config.host,
 		cacheDir: resolvePath(config.cacheDir),
 		runtimeDir: resolvePath(config.runtimeDir),
 		imageProfiles: {

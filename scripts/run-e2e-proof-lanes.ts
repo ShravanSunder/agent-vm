@@ -3,7 +3,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export type E2eProofLaneId = 'e2e-host' | 'e2e-vm' | 'e2e-vm-mediation';
+export type E2eProofLaneId = 'e2e-host-docker' | 'e2e-host' | 'e2e-vm' | 'e2e-vm-mediation';
 
 export interface E2eProofLane {
 	readonly args: readonly string[];
@@ -33,6 +33,7 @@ export interface E2eProofLaneSummary {
 export type E2eProofLaneRunner = (lane: E2eProofLane) => Promise<E2eProofLaneResult>;
 
 interface RunE2eProofLanesOptions {
+	readonly isolateHostDockerLane?: boolean;
 	readonly laneRunner?: E2eProofLaneRunner;
 	readonly now?: () => number;
 	readonly runWorkspaceBuild?: () => Promise<void> | void;
@@ -45,6 +46,13 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 
 export function createE2eProofLanes(): readonly E2eProofLane[] {
 	return [
+		{
+			args: ['run', 'test:e2e:host-docker'],
+			command: 'pnpm',
+			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			id: 'e2e-host-docker',
+			label: 'Host Docker observability e2e',
+		},
 		{
 			args: ['run', 'test:e2e:host'],
 			command: 'pnpm',
@@ -67,6 +75,18 @@ export function createE2eProofLanes(): readonly E2eProofLane[] {
 			label: 'HTTP mediation e2e',
 		},
 	];
+}
+
+function createE2eProofLaneBatches(options: {
+	readonly isolateHostDockerLane: boolean;
+	readonly lanes: readonly E2eProofLane[];
+}): readonly (readonly E2eProofLane[])[] {
+	if (!options.isolateHostDockerLane) {
+		return [options.lanes];
+	}
+	const hostDockerLanes = options.lanes.filter((lane) => lane.id === 'e2e-host-docker');
+	const remainingLanes = options.lanes.filter((lane) => lane.id !== 'e2e-host-docker');
+	return [hostDockerLanes, remainingLanes].filter((batch) => batch.length > 0);
 }
 
 function formatDuration(durationMs: number): string {
@@ -171,6 +191,8 @@ export async function runE2eProofLanes(
 	const stdout = options.stdout ?? process.stdout;
 	const stderr = options.stderr ?? process.stderr;
 	const startTimeMs = now();
+	const isolateHostDockerLane =
+		options.isolateHostDockerLane ?? process.env.GITHUB_ACTIONS === 'true';
 
 	const skipWorkspaceBuild =
 		options.skipWorkspaceBuild ?? process.env.AGENT_VM_E2E_SKIP_WORKSPACE_BUILD === '1';
@@ -182,7 +204,12 @@ export async function runE2eProofLanes(
 		}
 	}
 
-	const results = await Promise.all(lanes.map(async (lane) => await laneRunner(lane)));
+	const results: E2eProofLaneResult[] = [];
+	for (const laneBatch of createE2eProofLaneBatches({ isolateHostDockerLane, lanes })) {
+		// oxlint-disable-next-line no-await-in-loop -- CI runs the Docker-backed host canary before the parallel host/VM lanes to keep Docker port publication isolated.
+		const batchResults = await Promise.all(laneBatch.map(async (lane) => await laneRunner(lane)));
+		results.push(...batchResults);
+	}
 	const summary = summarizeE2eProofLaneResults(results, now() - startTimeMs);
 	const summaryStream = summary.ok ? stdout : stderr;
 	summaryStream.write('\n');

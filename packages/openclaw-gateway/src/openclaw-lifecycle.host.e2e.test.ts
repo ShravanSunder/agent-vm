@@ -88,6 +88,7 @@ function createZone(overrides?: {
 	readonly runtimeMcpServers?: GatewayZoneConfig['runtimeMcpServers'];
 	readonly runtimeEnvironment?: GatewayZoneConfig['runtimeEnvironment'];
 	readonly runtimeMediatedSecrets?: GatewayZoneConfig['runtimeMediatedSecrets'];
+	readonly observability?: GatewayZoneConfig['observability'];
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly withoutAuthProfilesRef?: boolean;
 	readonly secrets?: GatewayZoneConfig['secrets'];
@@ -127,6 +128,7 @@ function createZone(overrides?: {
 		},
 		id: 'shravan',
 		...(overrides?.mcpPortal ? { mcpPortal: overrides.mcpPortal } : {}),
+		...(overrides?.observability ? { observability: overrides.observability } : {}),
 		secrets: overrides?.secrets ?? {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
@@ -158,6 +160,29 @@ function createZone(overrides?: {
 			: {}),
 		...(overrides?.runtimeMcpServers ? { runtimeMcpServers: overrides.runtimeMcpServers } : {}),
 		websocketBypass: ['gateway.discord.gg:443'],
+	};
+}
+
+function createObservabilityConfig(): NonNullable<GatewayZoneConfig['observability']> {
+	return {
+		mode: 'collector',
+		collector: {
+			host: 'otel-collector.observability.vm.host',
+			grpcPort: 4317,
+			httpPort: 4318,
+			targetHost: '127.0.0.1',
+			targetGrpcPort: 24_317,
+			targetHttpPort: 24_318,
+		},
+		openclaw: {
+			serviceName: 'agent-vm-openclaw-shravan',
+			traces: true,
+			metrics: true,
+			logs: true,
+			sampleRate: 1,
+			flushIntervalMs: 10_000,
+			diagnosticsFlags: ['scheduler.debug'],
+		},
 	};
 }
 
@@ -395,6 +420,42 @@ describe('openclawLifecycle', () => {
 			).toThrow(/DISCORD_BOT_TOKEN.*rawEnvSecrets/u);
 		});
 
+		it('rejects OPENCLAW_DIAGNOSTICS raw env overrides for observability-enabled zones', () => {
+			const zone = createZone({
+				gateway: {
+					rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN', 'OPENCLAW_DIAGNOSTICS'],
+				},
+				observability: createObservabilityConfig(),
+				secrets: {
+					...createZone().secrets,
+					OPENCLAW_DIAGNOSTICS: {
+						injection: 'env',
+						audience: 'gateway',
+						source: 'environment',
+						envVar: 'OPENCLAW_DIAGNOSTICS',
+					},
+				},
+			});
+
+			expect(() =>
+				openclawLifecycle.buildVmSpec({
+					controllerPort: 18800,
+					gatewayCacheDir: '/host/cache/gateways/shravan',
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					resolvedSecrets: {
+						...resolvedSecrets,
+						OPENCLAW_DIAGNOSTICS: '*',
+					},
+					runtimeDir: '/host/runtime',
+					tcpPool: {
+						basePort: 19000,
+						size: 3,
+					},
+					zone,
+				}),
+			).toThrow(/OPENCLAW_DIAGNOSTICS/u);
+		});
+
 		it('injects runtime environment without mediating or persisting it', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
@@ -536,6 +597,33 @@ describe('openclawLifecycle', () => {
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
 			expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
+		});
+
+		it('maps host observability collector endpoints into the gateway VM tcp hosts', () => {
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone({
+					observability: createObservabilityConfig(),
+				}),
+			});
+
+			expect(vmSpec.tcpHosts).toMatchObject({
+				'otel-collector.observability.vm.host:4317': '127.0.0.1:24317',
+				'otel-collector.observability.vm.host:4318': '127.0.0.1:24318',
+			});
+			expect(vmSpec.allowedHosts).toEqual([
+				'controller.vm.host',
+				'api.openai.com',
+				'api.perplexity.ai',
+			]);
 		});
 
 		it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
@@ -1220,6 +1308,165 @@ describe('openclawLifecycle', () => {
 				level: 'debug',
 			});
 		});
+
+		it('writes effective diagnostics OTLP config for observability-enabled zones', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-observability-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						diagnostics: {
+							enabled: false,
+							otel: {
+								captureContent: { enabled: true },
+								endpoint: 'http://stale-collector.example.test:4318',
+								headers: { authorization: 'stale-token' },
+								logsEndpoint: 'http://stale-logs.example.test/v1/logs',
+								metricsEndpoint: 'http://stale-metrics.example.test/v1/metrics',
+								tracesEndpoint: 'http://stale-traces.example.test/v1/traces',
+							},
+						},
+						gateway: {
+							auth: { mode: 'token' },
+							bind: 'loopback',
+						},
+						logging: {
+							level: 'debug',
+						},
+						plugins: {
+							allow: ['gondolin'],
+							entries: {
+								'diagnostics-otel': {
+									enabled: false,
+									config: {
+										endpoint: 'http://stale-plugin.example.test:4318',
+										headers: { authorization: 'stale-plugin-token' },
+									},
+								},
+								gondolin: {
+									enabled: true,
+									config: {},
+								},
+							},
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				observability: createObservabilityConfig(),
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			const effectiveOpenClawConfig = JSON.parse(effectiveOpenClawConfigContent);
+			expect(effectiveOpenClawConfig.plugins.allow).toEqual(['gondolin', 'diagnostics-otel']);
+			expect(effectiveOpenClawConfig.plugins.entries['diagnostics-otel']).toEqual({
+				enabled: true,
+			});
+			expect(effectiveOpenClawConfig.diagnostics).toEqual({
+				enabled: true,
+				flags: ['scheduler.debug'],
+				otel: {
+					captureContent: { enabled: false },
+					enabled: true,
+					endpoint: 'http://otel-collector.observability.vm.host:4318',
+					flushIntervalMs: 10_000,
+					logs: true,
+					metrics: true,
+					protocol: 'http/protobuf',
+					sampleRate: 1,
+					serviceName: 'agent-vm-openclaw-shravan',
+					traces: true,
+				},
+			});
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-collector.example.test');
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-logs.example.test');
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-metrics.example.test');
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-traces.example.test');
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-plugin.example.test');
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-token');
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-plugin-token');
+			expect(effectiveOpenClawConfigContent).not.toContain('logsEndpoint');
+			expect(effectiveOpenClawConfigContent).not.toContain('metricsEndpoint');
+			expect(effectiveOpenClawConfigContent).not.toContain('tracesEndpoint');
+			expect(effectiveOpenClawConfigContent).not.toContain('prompt');
+			expect(effectiveOpenClawConfigContent).not.toContain('payload');
+			expect(effectiveOpenClawConfigContent).not.toContain('resolved-gateway-token');
+		});
+
+		it.each([false, 'off', 'OFF', ' off ', 'false', 0, 'disabled'])(
+			'rejects observability when authored OpenClaw logging disables sensitive redaction as %s',
+			async (redactSensitive) => {
+				const tempDirectory = await mkdtemp(
+					path.join(os.tmpdir(), 'openclaw-lifecycle-observability-redaction-'),
+				);
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							gateway: {
+								auth: { mode: 'token' },
+								bind: 'loopback',
+							},
+							logging: {
+								redactSensitive,
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+					observability: createObservabilityConfig(),
+					withoutAuthProfilesRef: true,
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async () => 'resolved-gateway-token',
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					/logging\.redactSensitive/u,
+				);
+			},
+		);
 
 		it('throws when OPENCLAW_GATEWAY_TOKEN ref is absent', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-no-token-'));

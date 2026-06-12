@@ -136,6 +136,27 @@ export type HttpMediatedGatewaySecretConfig = SecretSourceConfig & {
 
 export type GatewaySecretConfig = EnvInjectedGatewaySecretConfig | HttpMediatedGatewaySecretConfig;
 
+export interface GatewayZoneObservabilityConfig {
+	readonly mode: 'collector';
+	readonly collector: {
+		readonly host: string;
+		readonly grpcPort: number;
+		readonly httpPort: number;
+		readonly targetHost: string;
+		readonly targetGrpcPort: number;
+		readonly targetHttpPort: number;
+	};
+	readonly openclaw: {
+		readonly serviceName: string;
+		readonly traces: boolean;
+		readonly metrics: boolean;
+		readonly logs: boolean;
+		readonly sampleRate: number;
+		readonly flushIntervalMs: number;
+		readonly diagnosticsFlags: readonly string[];
+	};
+}
+
 /**
  * Zone config as the lifecycle sees it.
  * Decoupled from SystemConfig — the controller maps into this shape.
@@ -149,6 +170,7 @@ export interface GatewayZoneConfig {
 	readonly runtimeMediatedSecrets?: Readonly<Record<string, MediatedSecretSpec>>;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+	readonly observability?: GatewayZoneObservabilityConfig;
 	readonly secrets: Readonly<Record<string, GatewaySecretConfig>>;
 	readonly egressHosts: readonly EgressHostConfig[];
 	readonly websocketBypass: readonly string[];

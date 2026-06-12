@@ -119,9 +119,25 @@ export default defineConfig({
 				test: {
 					name: 'e2e-host',
 					include: ['packages/**/*.host.e2e.test.ts'],
+					exclude: [
+						'packages/agent-vm/src/integration-tests/observability-storage-canary.host.e2e.test.ts',
+					],
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
 					maxWorkers: '50%',
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-host-docker',
+					include: [
+						'packages/agent-vm/src/integration-tests/observability-storage-canary.host.e2e.test.ts',
+					],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					fileParallelism: false,
+					maxWorkers: 1,
 				},
 			},
 			{
