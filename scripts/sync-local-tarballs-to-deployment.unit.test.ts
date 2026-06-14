@@ -169,23 +169,23 @@ describe('openclaw gateway overlay rendering', () => {
 		});
 		const overlayJson = JSON.stringify(overlay, null, 2);
 
-		expect(overlay.copy.map((copyEntry) => copyEntry.from)).toEqual(
-			OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES.map(
+		expect(overlay.copy.map((copyEntry) => copyEntry.from)).toEqual([
+			...OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES.map(
 				(packageName) =>
 					`local-agent-vm/${packageName.replace('@agent-vm/', 'agent-vm-')}-0.0.82-abc123ef.tgz`,
 			),
-		);
+			'local-agent-vm/agent-vm-local-packages-openclaw-gateway-abc123ef.json',
+		]);
 		expect(overlay.runAfterBase).toEqual([
 			'mkdir -p /opt/agent-vm/local-packages',
-			expect.stringContaining(
-				'"@agent-vm/gateway-interface": "file:/tmp/agent-vm-gateway-interface-0.0.82-abc123ef.tgz"',
-			),
+			'cp /tmp/agent-vm-local-packages-openclaw-gateway-abc123ef.json /opt/agent-vm/local-packages/package.json',
 			'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
 			expect.stringContaining(
 				'ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin',
 			),
 			expect.stringContaining('rm -f /tmp/agent-vm-config-contracts-0.0.82-abc123ef.tgz'),
 		]);
+		expect(overlay.runAfterBase.every((command) => !command.includes('\n'))).toBe(true);
 		expect(overlayJson).not.toContain('npm install --prefix');
 		expect(overlayJson).not.toContain('pnpm add -g');
 		expect(overlayJson).not.toContain('rm -rf');
@@ -232,24 +232,24 @@ describe('openclaw gateway overlay rendering', () => {
 		});
 		const overlayJson = JSON.stringify(overlay, null, 2);
 
-		expect(overlay.copy.map((copyEntry) => copyEntry.from)).toEqual(
-			TOOL_VM_TARBALL_PACKAGE_NAMES.map(
+		expect(overlay.copy.map((copyEntry) => copyEntry.from)).toEqual([
+			...TOOL_VM_TARBALL_PACKAGE_NAMES.map(
 				(packageName) =>
 					`local-agent-vm/${packageName.replace('@agent-vm/', 'agent-vm-')}-0.0.82-abc123ef.tgz`,
 			),
-		);
+			'local-agent-vm/agent-vm-local-packages-tool-vm-abc123ef.json',
+		]);
 		expect(overlay.runAfterBase).toEqual([
 			'echo keep',
 			'mkdir -p /opt/agent-vm/local-packages',
-			expect.stringContaining(
-				'"@agent-vm/mcp-portal": "file:/tmp/agent-vm-mcp-portal-0.0.82-abc123ef.tgz"',
-			),
+			'cp /tmp/agent-vm-local-packages-tool-vm-abc123ef.json /opt/agent-vm/local-packages/package.json',
 			'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
 			expect.stringContaining(
 				'ln -sfn /opt/agent-vm/local-packages/node_modules/.bin/mcp-portal /pnpm/mcp-portal',
 			),
 			expect.stringContaining('rm -f /tmp/agent-vm-config-contracts-0.0.82-abc123ef.tgz'),
 		]);
+		expect(overlay.runAfterBase.every((command) => !command.includes('\n'))).toBe(true);
 		expect(overlayJson).not.toContain('0.0.81-oldhash');
 	});
 });

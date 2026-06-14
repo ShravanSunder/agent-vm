@@ -31,6 +31,9 @@ accepted review fixes. This is not a consolidation of plan files.
 - Tightened task event stream parsing so newline-terminated malformed final
   events are corruption, not an incomplete tail.
 - Replaced stale docs/test vocabulary from `threadId` to `sessionRef`.
+- Fixed beta tarball sync overlay generation after beta proof exposed that the
+  script still wrote multiline package manifests into `runAfterBase`, which the
+  integrated managed-image guard correctly rejects.
 
 ## Deferred or rejected findings
 
@@ -42,7 +45,7 @@ accepted review fixes. This is not a consolidation of plan files.
 
 ## Proof
 
-Fresh proof after the final review fix:
+Fresh proof after the final review fix and beta sync generator fix:
 
 - `pnpm check`: passed, 6 passed, 0 failed.
 - `pnpm test:unit`: passed, 210 files, 1977 tests.
@@ -77,13 +80,49 @@ Focused red/green proof for the final review fix:
   `pnpm vitest run --config vitest.config.ts --project e2e-host packages/agent-vm/src/backup/backup-manager.host.e2e.test.ts`
   passed, 1 file, 13 tests.
 
+Focused red/green proof for beta overlay generation:
+
+- Red:
+  `pnpm vitest run scripts/sync-local-tarballs-to-deployment.unit.test.ts`
+  failed, 1 file, 2 tests failed, proving generated `runAfterBase` commands
+  contained newline characters and lacked copied package manifests.
+- Green:
+  `pnpm vitest run scripts/sync-local-tarballs-to-deployment.unit.test.ts`
+  passed, 1 file, 10 tests.
+
 ## Beta status
 
-Beta validation remains a separate deployment proof step. The beta checkout was
-already dirty before this integrated branch sync, and an existing beta
-controller session was already running. Do not claim beta runtime proof until the
-integrated tarballs are synced into beta and beta is rebuilt/restarted or an
-equivalent live validation is run.
+Beta validation passed after one repo fix to the tarball sync generator:
+
+- `pnpm dev:sync-tarballs -- --deployment ../shravan-claw-beta`: passed and
+  packed/refreshed all local `@agent-vm/*` tarballs from the integrated
+  `improve-v1` checkout into beta.
+- First `mise exec -- pnpm build` in beta failed because generated
+  `runAfterBase[1]` contained line breaks. Root cause was fixed in
+  `scripts/sync-local-tarballs-to-deployment.ts`.
+- Re-run `pnpm dev:sync-tarballs -- --deployment ../shravan-claw-beta`: passed.
+- Re-run `mise exec -- pnpm build` in beta: passed. Docker and Gondolin builds
+  completed for `gateway/openclaw` and `toolVm/default`. Cache auto-prune was
+  skipped because beta runtime records existed.
+- `pnpm validate` in beta: passed with `"ok": true`.
+- `pnpm stop` in beta: passed with `"ok": true`.
+- Fresh tmux start:
+  `tmux new-session -d -s shravan-claw-beta-controller -c ../shravan-claw-beta 'mise exec -- pnpm start'`.
+- Controller health after restart:
+  `GET http://127.0.0.1:18900/health` returned
+  `{"ok":true,"port":18900,"state":"ready"}`.
+- Controller zone health after restart:
+  `GET http://127.0.0.1:18900/zones/beta/health` returned
+  `{"ok":true,"observation":"http 200","path":"/readyz","port":18789,"statusCode":200,"zoneId":"beta"}`.
+- Direct ingress checks after restart:
+  `GET http://127.0.0.1:18891/readyz` returned `200 {"ready":true}`;
+  `GET http://127.0.0.1:18891/health` returned
+  `200 {"ok":true,"status":"live"}`;
+  `GET http://127.0.0.1:18891/` returned `200` with OpenClaw Control HTML.
+
+The beta checkout was already dirty before this integrated sync. The sync
+updated beta package pins, lockfile/workspace overrides, generated manuals, and
+local overlay tarball references as expected for deployment validation.
 
 ## Cleanup timing
 

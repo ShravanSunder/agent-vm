@@ -45,6 +45,7 @@ interface BetaTarballPackageEntry {
 }
 
 export interface BetaTarballSyncPlan {
+	readonly cacheKey: string;
 	readonly gatewayPackages: readonly BetaTarballPackageEntry[];
 	readonly hostPackageSpecifier: string;
 	readonly packages: readonly BetaTarballPackageEntry[];
@@ -163,6 +164,7 @@ export function createBetaTarballSyncPlan(
 		throw new Error('Internal error: @agent-vm/agent-vm is missing from package plan.');
 	}
 	return {
+		cacheKey: options.cacheKey,
 		gatewayPackages,
 		hostPackageSpecifier: hostPackageEntry.specifier,
 		packages,
@@ -236,9 +238,17 @@ function renderLocalPackageManifest(packageEntries: readonly BetaTarballPackageE
 	)}\n`;
 }
 
+function renderLocalPackageManifestFileName(
+	target: 'openclaw-gateway' | 'tool-vm',
+	plan: BetaTarballSyncPlan,
+): string {
+	return `agent-vm-local-packages-${target}-${plan.cacheKey}.json`;
+}
+
 function renderLocalPackageCopyEntries(
 	existingCopyEntries: readonly OverlayCopyEntry[] | undefined,
 	packageEntries: readonly BetaTarballPackageEntry[],
+	manifestFileName: string,
 ): readonly OverlayCopyEntry[] {
 	return [
 		...(existingCopyEntries ?? []).filter((copyEntry) => !isAgentVmLocalCopyEntry(copyEntry)),
@@ -246,30 +256,36 @@ function renderLocalPackageCopyEntries(
 			from: `local-agent-vm/${packageEntry.overlayFileName}`,
 			to: `/tmp/${packageEntry.overlayFileName}`,
 		})),
+		{
+			from: `local-agent-vm/${manifestFileName}`,
+			to: `/tmp/${manifestFileName}`,
+		},
 	];
 }
 
-function renderLocalPackageTarballPaths(
+function renderLocalPackageTemporaryPaths(
 	packageEntries: readonly BetaTarballPackageEntry[],
+	manifestFileName: string,
 ): readonly string[] {
-	return packageEntries.map((packageEntry) => `/tmp/${packageEntry.overlayFileName}`);
+	return [
+		...packageEntries.map((packageEntry) => `/tmp/${packageEntry.overlayFileName}`),
+		`/tmp/${manifestFileName}`,
+	];
 }
 
-function renderLocalPackageInstallStartCommands(
-	packageEntries: readonly BetaTarballPackageEntry[],
-): readonly string[] {
-	const localPackageManifest = renderLocalPackageManifest(packageEntries);
+function renderLocalPackageInstallStartCommands(manifestFileName: string): readonly string[] {
 	return [
 		'mkdir -p /opt/agent-vm/local-packages',
-		`cat > /opt/agent-vm/local-packages/package.json <<'JSON'\n${localPackageManifest}JSON`,
+		`cp /tmp/${manifestFileName} /opt/agent-vm/local-packages/package.json`,
 		'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
 	];
 }
 
 function renderLocalPackageCleanupCommand(
 	packageEntries: readonly BetaTarballPackageEntry[],
+	manifestFileName: string,
 ): string {
-	return `rm -f ${renderLocalPackageTarballPaths(packageEntries).join(' ')}`;
+	return `rm -f ${renderLocalPackageTemporaryPaths(packageEntries, manifestFileName).join(' ')}`;
 }
 
 function resolveOpenClawPackageOverrides(
@@ -294,17 +310,19 @@ export function renderOpenClawGatewayOverlay(
 	options: RenderOpenClawGatewayOverlayOptions,
 ): OpenClawGatewayOverlay {
 	const baseOverlay = migrateLegacyOpenClawPackageOverrides(options.existingOverlay);
+	const manifestFileName = renderLocalPackageManifestFileName('openclaw-gateway', options.plan);
 	const copyEntries = renderLocalPackageCopyEntries(
 		options.existingOverlay.copy,
 		options.plan.gatewayPackages,
+		manifestFileName,
 	);
 	const runAfterBase = [
 		...(options.existingOverlay.runAfterBase ?? []).filter(
 			(command) => !isAgentVmLocalInstallCommand(command),
 		),
-		...renderLocalPackageInstallStartCommands(options.plan.gatewayPackages),
+		...renderLocalPackageInstallStartCommands(manifestFileName),
 		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin "$package_root/@agent-vm/openclaw-agent-vm-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-mcp-portal-plugin "$package_root/@agent-vm/openclaw-mcp-portal-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal"',
-		renderLocalPackageCleanupCommand(options.plan.gatewayPackages),
+		renderLocalPackageCleanupCommand(options.plan.gatewayPackages, manifestFileName),
 	];
 	return {
 		...baseOverlay,
@@ -317,17 +335,19 @@ export function renderToolVmOverlay(
 	options: RenderOpenClawGatewayOverlayOptions,
 ): OpenClawGatewayOverlay {
 	const baseOverlay = migrateLegacyOpenClawPackageOverrides(options.existingOverlay);
+	const manifestFileName = renderLocalPackageManifestFileName('tool-vm', options.plan);
 	const copyEntries = renderLocalPackageCopyEntries(
 		options.existingOverlay.copy,
 		options.plan.toolVmPackages,
+		manifestFileName,
 	);
 	const runAfterBase = [
 		...(options.existingOverlay.runAfterBase ?? []).filter(
 			(command) => !isAgentVmLocalInstallCommand(command),
 		),
-		...renderLocalPackageInstallStartCommands(options.plan.toolVmPackages),
+		...renderLocalPackageInstallStartCommands(manifestFileName),
 		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal" && ln -sfn /opt/agent-vm/local-packages/node_modules/.bin/mcp-portal /pnpm/mcp-portal',
-		renderLocalPackageCleanupCommand(options.plan.toolVmPackages),
+		renderLocalPackageCleanupCommand(options.plan.toolVmPackages, manifestFileName),
 	];
 	return {
 		...baseOverlay,
@@ -465,6 +485,7 @@ async function packPackage(
 }
 
 async function copyOverlayPackageTarballs(options: {
+	readonly manifestFileName: string;
 	readonly overlayDirectory: string;
 	readonly packageEntries: readonly BetaTarballPackageEntry[];
 	readonly tarballDirectory: string;
@@ -478,6 +499,10 @@ async function copyOverlayPackageTarballs(options: {
 				path.join(localAgentVmDirectory, packageEntry.overlayFileName),
 			),
 		),
+	);
+	await writeFile(
+		path.join(localAgentVmDirectory, options.manifestFileName),
+		renderLocalPackageManifest(options.packageEntries),
 	);
 }
 
@@ -523,7 +548,9 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 		'openclaw',
 	);
 	const overlayPath = path.join(overlayDirectory, 'overlay.jsonc');
+	const gatewayManifestFileName = renderLocalPackageManifestFileName('openclaw-gateway', plan);
 	await copyOverlayPackageTarballs({
+		manifestFileName: gatewayManifestFileName,
 		overlayDirectory,
 		packageEntries: plan.gatewayPackages,
 		tarballDirectory,
@@ -541,7 +568,9 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 		'default',
 	);
 	const toolVmOverlayPath = path.join(toolVmOverlayDirectory, 'overlay.jsonc');
+	const toolVmManifestFileName = renderLocalPackageManifestFileName('tool-vm', plan);
 	await copyOverlayPackageTarballs({
+		manifestFileName: toolVmManifestFileName,
 		overlayDirectory: toolVmOverlayDirectory,
 		packageEntries: plan.toolVmPackages,
 		tarballDirectory,
