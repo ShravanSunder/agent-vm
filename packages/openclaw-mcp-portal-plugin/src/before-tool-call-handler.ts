@@ -1,6 +1,5 @@
 import { resolveMcpPortalProfile } from '@agent-vm/config-contracts';
 import {
-	hashCallArguments,
 	signApprovalToken,
 	type ApprovalTokenCallDigest,
 } from '@agent-vm/mcp-portal/portal-auth/hmac-token';
@@ -21,17 +20,19 @@ import {
 const approvalPromptTimeoutMs = 60_000;
 const approvalTokenLifetimeMs = 5 * 60_000;
 
+type ApprovalTokenCallDigestMap = Readonly<Record<string, ApprovalTokenCallDigest>>;
+
 export interface CreateBeforeToolCallHandlerProps {
 	readonly logger?: {
 		readonly error?: (message: string) => void;
 		readonly warn?: (message: string) => void;
 	};
-	readonly resolveApprovalTokenCallDigests?: (props: {
+	readonly resolveApprovalTokenCallDigests: (props: {
 		readonly agentId: string;
 		readonly approvalCalls: readonly PortalCallRequest[];
 		readonly context: OpenClawPluginHookContext;
 		readonly params: Record<string, unknown>;
-	}) => Promise<readonly ApprovalTokenCallDigest[]>;
+	}) => Promise<ApprovalTokenCallDigestMap | null> | ApprovalTokenCallDigestMap | null;
 	readonly runtimeState: PortalPluginRuntimeState;
 }
 
@@ -72,16 +73,6 @@ function parseCallRequests(params: Record<string, unknown>): readonly PortalCall
 		parsedCalls.push(parsedCall);
 	}
 	return parsedCalls;
-}
-
-function fallbackApprovalTokenCallDigests(
-	calls: readonly PortalCallRequest[],
-): readonly ApprovalTokenCallDigest[] {
-	return calls.map((call) => ({
-		argumentsHash: hashCallArguments(call.arguments),
-		namespace: call.namespace,
-		toolName: call.toolName,
-	}));
 }
 
 function approvalTokenForCallDigests(props: {
@@ -172,7 +163,6 @@ export function createBeforeToolCallHandler(
 							: `policy: ${agentId}/${call.namespace}/${call.toolName} not enabled`,
 				};
 			}
-			return undefined;
 		}
 
 		const approvalCalls: PortalCallRequest[] = [];
@@ -185,27 +175,29 @@ export function createBeforeToolCallHandler(
 		if (approvalCalls.length === 0) {
 			return undefined;
 		}
-		if (approvalCalls.length !== calls.length) {
-			return undefined;
-		}
 
-		const toolNames = approvalCalls
-			.map((call) => `${call.namespace}.${call.toolName}`)
-			.toSorted()
-			.join(', ');
+		const promptApprovalCalls: PortalCallRequest[] = [];
+		const callDigests: ApprovalTokenCallDigest[] = [];
 		let portalApprovalToken: string;
 		try {
-			const callDigests =
-				(await props.resolveApprovalTokenCallDigests?.({
-					agentId,
-					approvalCalls,
-					context,
-					params,
-				})) ?? fallbackApprovalTokenCallDigests(approvalCalls);
-			if (callDigests.length !== approvalCalls.length) {
-				throw new Error(
-					`prepared ${callDigests.length} approval token digests for ${approvalCalls.length} approval call(s)`,
-				);
+			const callDigestsByCallId = await props.resolveApprovalTokenCallDigests({
+				agentId,
+				approvalCalls,
+				context,
+				params,
+			});
+			if (callDigestsByCallId === null) {
+				return undefined;
+			}
+			for (const call of approvalCalls) {
+				const callDigest = callDigestsByCallId[call.id];
+				if (callDigest !== undefined) {
+					promptApprovalCalls.push(call);
+					callDigests.push(callDigest);
+				}
+			}
+			if (promptApprovalCalls.length === 0) {
+				return undefined;
 			}
 			portalApprovalToken = approvalTokenForCallDigests({
 				agentId,
@@ -219,7 +211,11 @@ export function createBeforeToolCallHandler(
 			props.logger?.error?.(message);
 			return { block: true, blockReason: message };
 		}
-		const approvalPreview = approvalCalls.map(approvalCallPreview).join('\n');
+		const toolNames = promptApprovalCalls
+			.map((call) => `${call.namespace}.${call.toolName}`)
+			.toSorted()
+			.join(', ');
+		const approvalPreview = promptApprovalCalls.map(approvalCallPreview).join('\n');
 		return {
 			params: { ...params, portalApprovalToken },
 			requireApproval: {

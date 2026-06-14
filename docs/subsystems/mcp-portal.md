@@ -176,19 +176,23 @@ those params through `/core`.
 ### Item-Level Approval In Batches
 
 `mcp_portal_call` accepts batches, but approval is evaluated per inner MCP call.
-When a batch mixes approval-free calls with approval-required calls:
+When a managed OpenClaw native-tool batch mixes approval-free calls with
+approval-required calls, the `before_tool_call` hook prompts for only the
+approval-required subset. After approval, the plugin injects a short-lived
+server-only `portalApprovalToken` whose digest set covers only that subset.
+MCP Portal core then evaluates the full batch item by item:
 
 - approval-free calls execute normally
 - blocked calls return item-level `call_blocked` errors
-- approval-required calls return item-level `approval_required` errors
-- the whole outer `mcp_portal_call` is not converted into one approval prompt
+- approval-required calls covered by the approved token execute normally
+- approval-required calls without a valid token return item-level approval
+  errors
 
-Agents should retry only the approval-required calls in a separate
-`mcp_portal_call` batch. In OpenClaw native plugin mode, a homogeneous
-approval-required batch triggers the OpenClaw plugin approval prompt. After the
-operator approves it, the plugin injects a short-lived server-only
-`portalApprovalToken`, and MCP Portal core verifies the token before executing
-the gated calls.
+The prompt text lists only the approval-required calls. Approval-free, blocked,
+or hidden siblings remain outside the approval token and are still handled by
+core policy per item. Direct MCP proxy clients that call core without the
+OpenClaw hook see item-level approval errors until they provide a valid
+server-issued approval token.
 
 The token is bound to the approved agent id, exact namespace/tool names, and
 argument hashes. It is short-lived and single-use in both direct MCP proxy mode
@@ -229,6 +233,14 @@ OpenClaw native tools return this value in `details`. Direct MCP proxy tools
 return the same value as JSON text content. Use
 `agent-vm validate --mcp-live` after changing providers, secrets, or profile
 tool names.
+
+Discovery failures do not disable catalog caching entirely. If at least one
+allowed upstream namespace is discovered and another namespace fails, MCP Portal
+caches the degraded catalog and its `discoveryFailures` diagnostics for a short
+TTL, currently `min(profile catalogTtlMs, 10s)`. This protects healthy upstreams
+from being re-discovered on every portal call while a peer namespace is flapping.
+Agent-scope and transport-session invalidation still drops degraded cache
+entries immediately.
 
 Intent verification is future work. A future draft-confirm-commit flow should
 remain server-side and must not turn model-visible fields into proof of

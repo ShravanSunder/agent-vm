@@ -77,6 +77,14 @@ interface CachedPortalSession {
 	readonly session: PortalSession;
 }
 
+interface PortalSessionBuildResult {
+	readonly runtimeDiscoveryFailureCount: number;
+	readonly runtimeDiscoverySuccessCount: number;
+	readonly session: PortalSession;
+}
+
+const degradedSessionCatalogTtlMs = 10_000;
+
 function isHiddenTool(tool: PortalToolRecord, hiddenTools: readonly PortalToolSelector[]): boolean {
 	return hiddenTools.some(
 		(hiddenTool) =>
@@ -151,7 +159,7 @@ export function createPortalSessionManager(
 		agentScopeGenerations.set(scopeKey, generationForScope(scopeKey) + 1);
 	}
 
-	async function buildSession(identity: PortalAgentIdentity): Promise<PortalSession> {
+	async function buildSession(identity: PortalAgentIdentity): Promise<PortalSessionBuildResult> {
 		const policy = resolvePortalAccessPolicy({
 			config: options.accessPolicy,
 			identity,
@@ -160,6 +168,8 @@ export function createPortalSessionManager(
 		const tools: PortalToolRecord[] = [];
 		const discoveryFailures: PortalDiscoveryFailure[] = [...(options.discoveryFailures ?? [])];
 		const allowedNamespaces = policy.allowedNamespaces;
+		let runtimeDiscoveryFailureCount = 0;
+		let runtimeDiscoverySuccessCount = 0;
 
 		const namespaceToolGroups = await Promise.allSettled(
 			allowedNamespaces.map(async (namespace) => ({
@@ -173,9 +183,11 @@ export function createPortalSessionManager(
 		for (const [index, namespaceToolGroup] of namespaceToolGroups.entries()) {
 			if (namespaceToolGroup.status === 'rejected') {
 				const namespace = allowedNamespaces[index] ?? 'unknown';
+				runtimeDiscoveryFailureCount += 1;
 				discoveryFailures.push(discoveryFailureFromError(namespace, namespaceToolGroup.reason));
 				continue;
 			}
+			runtimeDiscoverySuccessCount += 1;
 			const { mcpTools, namespace } = namespaceToolGroup.value;
 			for (const mcpTool of mcpTools) {
 				const portalTool = portalToolFromMcpTool(namespace, mcpTool);
@@ -202,10 +214,14 @@ export function createPortalSessionManager(
 		};
 
 		return {
-			catalog,
-			graph,
-			identity,
-			searchIndex: createSearchIndex(sortedTools, graph),
+			runtimeDiscoveryFailureCount,
+			runtimeDiscoverySuccessCount,
+			session: {
+				catalog,
+				graph,
+				identity,
+				searchIndex: createSearchIndex(sortedTools, graph),
+			},
 		};
 	}
 
@@ -219,14 +235,22 @@ export function createPortalSessionManager(
 			}
 
 			const generation = generationForScope(key);
-			const session = await buildSession(identity);
-			if (
-				generationForScope(key) === generation &&
-				session.catalog.discoveryFailures.length === 0
-			) {
-				sessions.set(key, { expiresAt: now + options.catalogTtlMs, session });
+			const sessionBuildResult = await buildSession(identity);
+			if (generationForScope(key) === generation) {
+				const cacheTtlMs =
+					sessionBuildResult.runtimeDiscoveryFailureCount === 0
+						? options.catalogTtlMs
+						: sessionBuildResult.runtimeDiscoverySuccessCount > 0
+							? Math.min(options.catalogTtlMs, degradedSessionCatalogTtlMs)
+							: null;
+				if (cacheTtlMs !== null) {
+					sessions.set(key, {
+						expiresAt: getNow() + cacheTtlMs,
+						session: sessionBuildResult.session,
+					});
+				}
 			}
-			return session;
+			return sessionBuildResult.session;
 		},
 		async invalidateAgentScope(agentScopeId: string): Promise<void> {
 			incrementAgentScopeGeneration(agentScopeId);

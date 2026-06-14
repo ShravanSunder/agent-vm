@@ -8,6 +8,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBeforeToolCallHandler } from './before-tool-call-handler.js';
 import { createPortalPluginRuntimeState } from './portal-plugin-runtime-state.js';
 
+type ApprovalTokenDigestResolver = NonNullable<
+	Parameters<typeof createBeforeToolCallHandler>[0]['resolveApprovalTokenCallDigests']
+>;
+type BeforeToolCallHandler = ReturnType<typeof createBeforeToolCallHandler>;
+type RuntimeState = ReturnType<typeof createPortalPluginRuntimeState>;
+
 function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState> {
 	return createPortalPluginRuntimeState({
 		configDir: '/config',
@@ -34,9 +40,47 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 	});
 }
 
+function createApprovalTokenDigestResolver(): ApprovalTokenDigestResolver {
+	return vi.fn<ApprovalTokenDigestResolver>(async ({ approvalCalls }) =>
+		Object.fromEntries(
+			approvalCalls.map((call) => [
+				call.id,
+				{
+					argumentsHash: hashCallArguments(call.arguments),
+					namespace: call.namespace,
+					toolName: call.toolName,
+				},
+			]),
+		),
+	);
+}
+
+function createHandlerFixture(
+	options: {
+		readonly resolveApprovalTokenCallDigests?: ApprovalTokenDigestResolver;
+		readonly runtimeState?: RuntimeState;
+	} = {},
+): {
+	readonly handler: BeforeToolCallHandler;
+	readonly resolveApprovalTokenCallDigests: ApprovalTokenDigestResolver;
+	readonly runtimeState: RuntimeState;
+} {
+	const runtimeState = options.runtimeState ?? createRuntimeState();
+	const resolveApprovalTokenCallDigests =
+		options.resolveApprovalTokenCallDigests ?? createApprovalTokenDigestResolver();
+	return {
+		handler: createBeforeToolCallHandler({
+			resolveApprovalTokenCallDigests,
+			runtimeState,
+		}),
+		resolveApprovalTokenCallDigests,
+		runtimeState,
+	};
+}
+
 describe('createBeforeToolCallHandler', () => {
 	it('passes through non-portal tools', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+		const { handler } = createHandlerFixture();
 
 		await expect(
 			handler({ params: {}, toolName: 'shell' }, { agentId: 'shravan' }),
@@ -44,7 +88,7 @@ describe('createBeforeToolCallHandler', () => {
 	});
 
 	it('blocks denied namespace or tool calls before approval', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+		const { handler } = createHandlerFixture();
 
 		await expect(
 			handler(
@@ -67,7 +111,7 @@ describe('createBeforeToolCallHandler', () => {
 	});
 
 	it('blocks portal calls when OpenClaw does not provide agent context', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+		const { handler } = createHandlerFixture();
 
 		await expect(
 			handler(
@@ -92,8 +136,168 @@ describe('createBeforeToolCallHandler', () => {
 		});
 	});
 
-	it('passes mixed batches through so core can fail only gated calls', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+	it('injects an approval token for the approval-required subset of a mixed approval-free batch', async () => {
+		const { handler, resolveApprovalTokenCallDigests, runtimeState } = createHandlerFixture();
+		const approvalSubsetDigest: ApprovalTokenCallDigest[] = [
+			{
+				argumentsHash: hashCallArguments({ title: 'Fix deploy' }),
+				namespace: 'linear',
+				toolName: 'create_issue',
+			},
+		];
+
+		const result = await handler(
+			{
+				params: {
+					calls: [
+						{
+							arguments: { query: 'deploy' },
+							id: 'list',
+							namespace: 'linear',
+							toolName: 'list_issues',
+						},
+						{
+							arguments: { title: 'Fix deploy' },
+							id: 'create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				toolName: 'mcp_portal_call',
+			},
+			{ agentId: 'shravan' },
+		);
+
+		expect(resolveApprovalTokenCallDigests).toHaveBeenCalledWith(
+			expect.objectContaining({
+				approvalCalls: [
+					{
+						arguments: { title: 'Fix deploy' },
+						id: 'create',
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+				],
+			}),
+		);
+		expect(result).toMatchObject({
+			params: { portalApprovalToken: expect.any(String) },
+			requireApproval: expect.objectContaining({
+				description: expect.not.stringContaining('list: linear.list_issues'),
+				title: 'MCP Portal batch: linear.create_issue',
+			}),
+		});
+		expect(
+			verifyApprovalToken({
+				agentId: 'shravan',
+				calls: approvalSubsetDigest,
+				key: runtimeState.getApprovalHmacKey(),
+				maxLifetimeMs: 5 * 60_000,
+				nowMs: Date.now(),
+				token: result?.params?.portalApprovalToken as string,
+			}),
+		).toEqual({ ok: true });
+	});
+
+	it('injects an approval token when an approval-required call has a blocked visible sibling', async () => {
+		const { handler, resolveApprovalTokenCallDigests } = createHandlerFixture();
+
+		const result = await handler(
+			{
+				params: {
+					calls: [
+						{
+							arguments: { query: 'deploy' },
+							id: 'blocked',
+							namespace: 'linear',
+							toolName: 'blocked_issue',
+						},
+						{
+							arguments: { title: 'Fix deploy' },
+							id: 'create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				toolName: 'mcp_portal_call',
+			},
+			{ agentId: 'shravan' },
+		);
+
+		expect(resolveApprovalTokenCallDigests).toHaveBeenCalledWith(
+			expect.objectContaining({
+				approvalCalls: [
+					{
+						arguments: { title: 'Fix deploy' },
+						id: 'create',
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+				],
+			}),
+		);
+		expect(result).toMatchObject({
+			params: { portalApprovalToken: expect.any(String) },
+			requireApproval: expect.objectContaining({ title: 'MCP Portal batch: linear.create_issue' }),
+		});
+	});
+
+	it('injects an approval token when an approval-required call has a hidden sibling', async () => {
+		const { handler, resolveApprovalTokenCallDigests } = createHandlerFixture();
+
+		const result = await handler(
+			{
+				params: {
+					calls: [
+						{
+							arguments: {},
+							id: 'hidden',
+							namespace: 'linear',
+							toolName: 'hidden_issue',
+						},
+						{
+							arguments: { title: 'Fix deploy' },
+							id: 'create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				toolName: 'mcp_portal_call',
+			},
+			{ agentId: 'shravan' },
+		);
+
+		expect(resolveApprovalTokenCallDigests).toHaveBeenCalledWith(
+			expect.objectContaining({
+				approvalCalls: [
+					{
+						arguments: { title: 'Fix deploy' },
+						id: 'create',
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+				],
+			}),
+		);
+		expect(result).toMatchObject({
+			params: { portalApprovalToken: expect.any(String) },
+			requireApproval: expect.objectContaining({ title: 'MCP Portal batch: linear.create_issue' }),
+		});
+	});
+
+	it('passes through mixed batches when approval-required calls cannot be prepared by core', async () => {
+		const { handler } = createHandlerFixture({
+			resolveApprovalTokenCallDigests: async () => ({
+				create: {
+					argumentsHash: hashCallArguments({ title: 'Fix deploy' }),
+					namespace: 'linear',
+					toolName: 'create_issue',
+				},
+			}),
+		});
 
 		await expect(
 			handler(
@@ -107,8 +311,8 @@ describe('createBeforeToolCallHandler', () => {
 								toolName: 'list_issues',
 							},
 							{
-								arguments: { title: 'Fix deploy' },
-								id: 'create',
+								arguments: { title: 42 },
+								id: 'invalid-create',
 								namespace: 'linear',
 								toolName: 'create_issue',
 							},
@@ -121,66 +325,8 @@ describe('createBeforeToolCallHandler', () => {
 		).resolves.toBeUndefined();
 	});
 
-	it('passes mixed batches through when one visible call is blocked by call policy', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
-
-		await expect(
-			handler(
-				{
-					params: {
-						calls: [
-							{
-								arguments: { query: 'deploy' },
-								id: 'list',
-								namespace: 'linear',
-								toolName: 'list_issues',
-							},
-							{
-								arguments: { query: 'deploy' },
-								id: 'blocked',
-								namespace: 'linear',
-								toolName: 'blocked_issue',
-							},
-						],
-					},
-					toolName: 'mcp_portal_call',
-				},
-				{ agentId: 'shravan' },
-			),
-		).resolves.toBeUndefined();
-	});
-
-	it('passes mixed batches through when one sibling is hidden', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
-
-		await expect(
-			handler(
-				{
-					params: {
-						calls: [
-							{
-								arguments: { query: 'deploy' },
-								id: 'list',
-								namespace: 'linear',
-								toolName: 'list_issues',
-							},
-							{
-								arguments: {},
-								id: 'hidden',
-								namespace: 'linear',
-								toolName: 'hidden_issue',
-							},
-						],
-					},
-					toolName: 'mcp_portal_call',
-				},
-				{ agentId: 'shravan' },
-			),
-		).resolves.toBeUndefined();
-	});
-
 	it('injects a portal approval token for homogeneous approval batches', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+		const { handler } = createHandlerFixture();
 		const params: Record<string, unknown> = {
 			calls: [
 				{
@@ -207,7 +353,7 @@ describe('createBeforeToolCallHandler', () => {
 	});
 
 	it('injects a portal approval token when OpenClaw passes stringified params', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+		const { handler } = createHandlerFixture();
 		const params = JSON.stringify({
 			calls: [
 				{
@@ -242,13 +388,13 @@ describe('createBeforeToolCallHandler', () => {
 	it('uses prepared approval token digests from core validation', async () => {
 		const runtimeState = createRuntimeState();
 		const defaultedArguments = { title: 'Default title' };
-		const resolvedDigests: ApprovalTokenCallDigest[] = [
-			{
+		const resolvedDigests = {
+			create: {
 				argumentsHash: hashCallArguments(defaultedArguments),
 				namespace: 'linear',
 				toolName: 'create_issue',
 			},
-		];
+		};
 		const handler = createBeforeToolCallHandler({
 			resolveApprovalTokenCallDigests: async () => resolvedDigests,
 			runtimeState,
@@ -275,7 +421,7 @@ describe('createBeforeToolCallHandler', () => {
 		expect(
 			verifyApprovalToken({
 				agentId: 'shravan',
-				calls: resolvedDigests,
+				calls: Object.values(resolvedDigests),
 				key: runtimeState.getApprovalHmacKey(),
 				maxLifetimeMs: 5 * 60_000,
 				nowMs: Date.now(),
@@ -285,11 +431,10 @@ describe('createBeforeToolCallHandler', () => {
 	});
 
 	it('blocks approval prompts when token digest preparation fails', async () => {
-		const handler = createBeforeToolCallHandler({
+		const { handler } = createHandlerFixture({
 			resolveApprovalTokenCallDigests: async () => {
 				throw new Error('catalog unavailable');
 			},
-			runtimeState: createRuntimeState(),
 		});
 
 		await expect(
@@ -320,8 +465,7 @@ describe('createBeforeToolCallHandler', () => {
 		try {
 			const issuedAt = new Date('2026-05-25T00:00:00.000Z');
 			vi.setSystemTime(issuedAt);
-			const runtimeState = createRuntimeState();
-			const handler = createBeforeToolCallHandler({ runtimeState });
+			const { handler, runtimeState } = createHandlerFixture();
 			const callArguments = { title: 'Fix deploy' };
 
 			const result = await handler(
@@ -363,7 +507,7 @@ describe('createBeforeToolCallHandler', () => {
 	});
 
 	it('allows calls that are enabled and do not require approval', async () => {
-		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+		const { handler } = createHandlerFixture();
 
 		await expect(
 			handler(
