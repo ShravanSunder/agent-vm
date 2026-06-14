@@ -93,6 +93,9 @@ const scaffoldedSystemConfigSchema = z.object({
  */
 const scaffoldedRuntimePathsSchema = z.object({
 	cacheDir: z.string().min(1),
+	host: z.object({
+		projectNamespace: z.string().min(1),
+	}),
 	runtimeDir: z.string().min(1),
 	zones: z.tuple([
 		z.object({
@@ -690,7 +693,6 @@ describe('scaffoldAgentVmProject', () => {
 				getHomeDir: () => fakeHomeDir,
 			},
 		);
-
 		const systemConfigPath = path.join(targetDir, 'config', 'system.jsonc');
 		const systemConfig = scaffoldedRuntimePathsSchema.parse(
 			await readGeneratedSystemConfig(targetDir),
@@ -709,7 +711,7 @@ describe('scaffoldAgentVmProject', () => {
 			path.join(fakeHomeDir, '.agent-vm', 'zone-files', 'shravan'),
 		);
 		expect(systemConfig.zones[0].gateway.backupDir).toBe(
-			path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'),
+			path.join(fakeHomeDir, '.agent-vm-backups', systemConfig.host.projectNamespace, 'shravan'),
 		);
 		expect(loadedSystemConfig.cacheDir).toBe(systemConfig.cacheDir);
 		expect(loadedSystemConfig.runtimeDir).toBe(systemConfig.runtimeDir);
@@ -748,6 +750,9 @@ describe('scaffoldAgentVmProject', () => {
 				getHomeDir: () => fakeHomeDir,
 			},
 		);
+		const systemConfig = scaffoldedRuntimePathsSchema.parse(
+			await readGeneratedSystemConfig(targetDir),
+		);
 
 		// user-dir profile should NOT create misleading repo-local runtime dirs
 		expect(await pathExists(path.join(targetDir, 'state'))).toBe(false);
@@ -760,7 +765,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'zone-files', 'shravan'))).toBe(
 			true,
 		);
-		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'))).toBe(true);
+		expect(
+			await pathExists(
+				path.join(fakeHomeDir, '.agent-vm-backups', systemConfig.host.projectNamespace, 'shravan'),
+			),
+		).toBe(true);
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'workspaces', 'tools'))).toBe(
 			false,
 		);

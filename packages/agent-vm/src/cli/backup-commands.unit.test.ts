@@ -101,7 +101,12 @@ const nonManagedProcessIdentity = {
 	lstart: 'Thu Jun 11 10:00:00 2026',
 } satisfies ProcessIdentity;
 
-const defaultShravanBackupDir = path.join(os.homedir(), '.agent-vm-backups', 'shravan');
+const defaultShravanBackupDir = path.join(
+	os.homedir(),
+	'.agent-vm-backups',
+	'claw-tests-a1b2c3d4',
+	'shravan',
+);
 
 function createRuntimeRecord(processIdentity: ProcessIdentity): GatewayRuntimeRecord {
 	return {

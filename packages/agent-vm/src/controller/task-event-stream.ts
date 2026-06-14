@@ -107,6 +107,7 @@ export async function readTaskEventLogRecords(options: {
 	}
 
 	const afterLineIndex = normalizeAfterLineIndex(options.afterLineIndex);
+	const fileEndsWithNewline = fileContents.endsWith('\n');
 	const candidateLines = fileContents
 		.split('\n')
 		.map((line, index) => ({ index, line }))
@@ -123,7 +124,7 @@ export async function readTaskEventLogRecords(options: {
 			}
 			records.push({ event: parsedJson, id: entry.index });
 		} catch (error) {
-			if (isFinalCandidateLine) {
+			if (isFinalCandidateLine && !fileEndsWithNewline) {
 				return { exists: true, hasIncompleteFinalLine: true, records };
 			}
 			throw new Error(

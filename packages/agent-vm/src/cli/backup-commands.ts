@@ -93,6 +93,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 	const zoneId = zone.id;
 	const backupDir = resolveZoneBackupDir({
 		configuredBackupDir: zone.gateway.backupDir,
+		projectNamespace: options.systemConfig.host.projectNamespace,
 		zoneId,
 	});
 

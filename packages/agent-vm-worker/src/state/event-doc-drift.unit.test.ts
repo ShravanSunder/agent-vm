@@ -57,4 +57,15 @@ describe('agent worker gateway event documentation', () => {
 
 		expect(extractDocumentedTaskEventNames(markdown)).toEqual(readTaskEventNamesFromSchema());
 	});
+
+	it('documents provider-neutral sessionRef fields instead of codex-shaped threadId fields', async () => {
+		const markdownUrl = new URL(
+			'../../../../docs/architecture/agent-worker-gateway.md',
+			import.meta.url,
+		);
+		const markdown = await readFile(markdownUrl, 'utf8');
+
+		expect(markdown).toContain('sessionRef');
+		expect(markdown).not.toContain('threadId');
+	});
 });

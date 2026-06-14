@@ -91,7 +91,7 @@ interface ScaffoldPathProfile {
 	readonly gatewayConfigDir: (zoneId: string) => string;
 	readonly gatewayStateDir: (zoneId: string) => string;
 	readonly gatewayZoneFilesDir: (zoneId: string) => string;
-	readonly gatewayBackupDir: (zoneId: string) => string;
+	readonly gatewayBackupDir: (zoneId: string, projectNamespace: string) => string;
 	readonly gatewayBuildConfig: (gatewayType: GatewayType) => string;
 	readonly gatewayOverlay: (gatewayType: GatewayType) => string;
 	readonly toolVmBuildConfig: string;
@@ -231,7 +231,8 @@ const userDirPathProfile: ScaffoldPathProfile = {
 	gatewayConfigDir: (zoneId) => `./gateways/${zoneId}`,
 	gatewayStateDir: (zoneId) => `~/.agent-vm/state/${zoneId}`,
 	gatewayZoneFilesDir: (zoneId) => `~/.agent-vm/zone-files/${zoneId}`,
-	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
+	gatewayBackupDir: (zoneId, projectNamespace) =>
+		`~/.agent-vm-backups/${projectNamespace}/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
@@ -276,8 +277,12 @@ function resolveConfigWritablePathProfile(
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayStateDir(zoneId), configDir, homeDir),
 		gatewayZoneFilesDir: (zoneId) =>
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayZoneFilesDir(zoneId), configDir, homeDir),
-		gatewayBackupDir: (zoneId) =>
-			resolveHomeRelativeScaffoldPath(pathProfile.gatewayBackupDir(zoneId), configDir, homeDir),
+		gatewayBackupDir: (zoneId, projectNamespace) =>
+			resolveHomeRelativeScaffoldPath(
+				pathProfile.gatewayBackupDir(zoneId, projectNamespace),
+				configDir,
+				homeDir,
+			),
 		toolVmOverlay: resolveHomeRelativeScaffoldPath(pathProfile.toolVmOverlay, configDir, homeDir),
 	};
 }
@@ -415,7 +420,7 @@ const defaultSystemConfig = (
 							rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN'],
 						}
 					: {}),
-				backupDir: pathProfile.gatewayBackupDir(zoneId),
+				backupDir: pathProfile.gatewayBackupDir(zoneId, projectNamespace),
 			},
 			secrets: defaultSecretsForGatewayType(zoneId, gatewayType, secretsProvider),
 			...(gatewayType === 'worker'
@@ -1325,7 +1330,7 @@ async function scaffoldAgentVmProjectInternal(
 			pathProfile.runtimeDir,
 			pathProfile.gatewayStateDir(options.zoneId),
 			...(gatewayType === 'openclaw' ? [pathProfile.gatewayZoneFilesDir(options.zoneId)] : []),
-			pathProfile.gatewayBackupDir(options.zoneId),
+			pathProfile.gatewayBackupDir(options.zoneId, projectNamespace),
 		].map((profilePath) => resolveConfigPath(profilePath, configDir, homeDir));
 		await Promise.all(
 			directoriesToCreate.map((directoryPath) => mkdir(directoryPath, { recursive: true })),

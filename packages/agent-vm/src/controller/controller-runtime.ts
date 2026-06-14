@@ -866,6 +866,7 @@ export async function startControllerRuntime(
 		await runTaskStep('Recovering orphaned worker tasks', async () => {
 			const recoveryResult = await recoverOrphanedWorkerTasksAtStartup({
 				systemConfig: options.systemConfig,
+				zoneIds: registry.selectedZoneIds,
 			});
 			if (recoveryResult.recoveredCount > 0) {
 				writeControllerRuntimeLog(

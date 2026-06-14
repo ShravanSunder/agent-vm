@@ -37,6 +37,7 @@ interface WorkerTaskStartupRecoverySystemConfig {
 
 export interface RecoverOrphanedWorkerTasksOptions {
 	readonly systemConfig: WorkerTaskStartupRecoverySystemConfig;
+	readonly zoneIds?: readonly string[];
 }
 
 export interface WorkerTaskStartupRecoveryResult {
@@ -565,8 +566,12 @@ export async function recoverOrphanedWorkerTasksAtStartup(
 	};
 	const warnings: string[] = [];
 	let recoveredCount = 0;
+	const selectedZoneIds = options.zoneIds === undefined ? null : new Set(options.zoneIds);
 
 	for (const zone of options.systemConfig.zones) {
+		if (selectedZoneIds !== null && !selectedZoneIds.has(zone.id)) {
+			continue;
+		}
 		if (zone.gateway.type !== 'worker') {
 			continue;
 		}

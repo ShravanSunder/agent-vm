@@ -31,7 +31,7 @@ function makeEvent(event: string): {
 
 function makeWorkerZone(overrides?: { readonly stateDir?: string }): GatewayZone {
 	return {
-		id: 'zone-1',
+		id: overrides?.stateDir?.includes('zone-2') === true ? 'zone-2' : 'zone-1',
 		gateway: {
 			type: 'worker',
 			imageProfile: 'worker',
@@ -169,6 +169,39 @@ describe('recoverOrphanedWorkerTasksAtStartup', () => {
 		]);
 		expect(cleanedTasks).toEqual(['task-1']);
 		expect(result.warnings).toContainEqual(expect.stringContaining('worker VM'));
+	});
+
+	it('recovers only selected worker zones when startup is scoped to selected zones', async () => {
+		const listedZones: string[] = [];
+		const cleanedZones: string[] = [];
+
+		const result = await recoverOrphanedWorkerTasksAtStartup(
+			{
+				systemConfig: {
+					runtimeDir: '/tmp/runtime',
+					zones: [
+						makeWorkerZone({ stateDir: '/tmp/state/zone-1' }),
+						makeWorkerZone({ stateDir: '/tmp/state/zone-2' }),
+					],
+				},
+				zoneIds: ['zone-2'],
+			},
+			{
+				appendEvent: async () => {},
+				classifyTaskEventLogForRecovery: async () => 'needs-failure-event',
+				cleanupTaskRuntime: async ({ taskId, zone }) => {
+					cleanedZones.push(`${zone.id}:${taskId}`);
+				},
+				listTaskIds: async (zone) => {
+					listedZones.push(zone.id);
+					return [`task-${zone.id}`];
+				},
+			},
+		);
+
+		expect(result.recoveredCount).toBe(1);
+		expect(listedZones).toEqual(['zone-2']);
+		expect(cleanedZones).toEqual(['zone-2:task-zone-2']);
 	});
 
 	it('continues after per-task recovery failures and reports warnings', async () => {

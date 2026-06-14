@@ -632,14 +632,29 @@ export function registerControllerZoneOperationRoutes(
 	}
 
 	if (operations.streamTaskEvents) {
+		const getTaskState = operations.getTaskState;
 		const streamTaskEvents = operations.streamTaskEvents;
-		app.get('/zones/:zoneId/tasks/:taskId/events', (context) => {
+		app.get('/zones/:zoneId/tasks/:taskId/events', async (context) => {
 			const cursor = parseTaskEventStreamCursor(context);
 			if (!cursor.ok) {
 				return cursor.response;
 			}
 			const zoneId = context.req.param('zoneId');
 			const taskId = context.req.param('taskId');
+			if (getTaskState) {
+				try {
+					const state = await getTaskState(zoneId, taskId);
+					if (!state) {
+						return context.json({ error: 'task-not-found' }, 404);
+					}
+				} catch (error) {
+					const runtimeStatus = zoneRuntimeErrorStatus(error);
+					if (runtimeStatus !== 500) {
+						return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
+					}
+					return context.json(buildErrorResponseBody(error, 'get-task-state-failed'), 500);
+				}
+			}
 			const streamKey = `${zoneId}\0${taskId}`;
 			if (!incrementActiveTaskEventStream(activeTaskEventStreamsByTask, streamKey)) {
 				return context.json(

@@ -99,6 +99,7 @@ export function createPathsSubcommands(io: CliIo, dependencies: CliDependencies)
 					const zoneEntryPromises = systemConfig.zones.flatMap((zone) => {
 						const backupDir = resolveZoneBackupDir({
 							configuredBackupDir: zone.gateway.backupDir,
+							projectNamespace: systemConfig.host.projectNamespace,
 							zoneId: zone.id,
 						});
 						const entries = [

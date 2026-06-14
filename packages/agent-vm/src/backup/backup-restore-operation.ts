@@ -101,6 +101,22 @@ async function stageDirectoryContents(options: {
 	};
 }
 
+async function stageRequiredDirectoryContents(options: {
+	readonly archiveDirectoryName: string;
+	readonly execFileAsync: BackupOperationExecFileAsync;
+	readonly restoreId: string;
+	readonly sourceDirectory: string;
+	readonly targetDirectory: string;
+}): Promise<StagedRestoreDirectory> {
+	const stagedDirectory = await stageDirectoryContents(options);
+	if (stagedDirectory === null) {
+		throw new Error(
+			`Backup archive is missing required '${options.archiveDirectoryName}' directory.`,
+		);
+	}
+	return stagedDirectory;
+}
+
 async function promoteStagedDirectory(stagedDirectory: StagedRestoreDirectory): Promise<void> {
 	const parentDirectory = path.dirname(stagedDirectory.targetDirectory);
 	try {
@@ -165,6 +181,18 @@ async function restoreStagedDirectories(
 	}
 }
 
+async function cleanupUnpromotedIncomingDirectories(
+	stagedDirectories: readonly StagedRestoreDirectory[],
+): Promise<void> {
+	await Promise.all(
+		stagedDirectories.map(async (stagedDirectory) => {
+			if (!stagedDirectory.incomingPromoted) {
+				await fs.rm(stagedDirectory.incomingDirectory, { recursive: true, force: true });
+			}
+		}),
+	);
+}
+
 async function readZoneIdFromManifest(extractDirectory: string): Promise<string> {
 	const manifestPath = path.join(extractDirectory, 'manifest.json');
 	const rawManifest = await fs.readFile(manifestPath, 'utf8');
@@ -200,27 +228,30 @@ export async function restoreEncryptedBackup(options: {
 		const zoneId = await readZoneIdFromManifest(extractDirectory);
 		const restoreId = `${new Date().toISOString().replace(/[:.]/gu, '-')}-${randomUUID()}`;
 		const stagedDirectories: StagedRestoreDirectory[] = [];
-		const stagedStateDirectory = await stageDirectoryContents({
-			execFileAsync,
-			restoreId,
-			sourceDirectory: path.join(extractDirectory, 'state'),
-			targetDirectory: options.stateDir,
-		});
-		if (stagedStateDirectory !== null) {
-			stagedDirectories.push(stagedStateDirectory);
-		}
-		if (options.zoneFilesDir !== undefined) {
-			const stagedZoneFilesDirectory = await stageDirectoryContents({
+		try {
+			const stagedStateDirectory = await stageRequiredDirectoryContents({
+				archiveDirectoryName: 'state',
 				execFileAsync,
 				restoreId,
-				sourceDirectory: path.join(extractDirectory, 'zone-files'),
-				targetDirectory: options.zoneFilesDir,
+				sourceDirectory: path.join(extractDirectory, 'state'),
+				targetDirectory: options.stateDir,
 			});
-			if (stagedZoneFilesDirectory !== null) {
+			stagedDirectories.push(stagedStateDirectory);
+			if (options.zoneFilesDir !== undefined) {
+				const stagedZoneFilesDirectory = await stageRequiredDirectoryContents({
+					archiveDirectoryName: 'zone-files',
+					execFileAsync,
+					restoreId,
+					sourceDirectory: path.join(extractDirectory, 'zone-files'),
+					targetDirectory: options.zoneFilesDir,
+				});
 				stagedDirectories.push(stagedZoneFilesDirectory);
 			}
+			await restoreStagedDirectories(stagedDirectories);
+		} catch (error) {
+			await cleanupUnpromotedIncomingDirectories(stagedDirectories);
+			throw error;
 		}
-		await restoreStagedDirectories(stagedDirectories);
 
 		return {
 			stateDir: options.stateDir,

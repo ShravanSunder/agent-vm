@@ -402,7 +402,7 @@ sequenceDiagram
     Coord->>Exec: execute(prompt + plan)
     Exec->>LLM: Start new conversation thread
     LLM->>Shell: Write code to /work/repos
-    LLM-->>Exec: {response, threadId}
+    LLM-->>Exec: {response, sessionRef}
 
     Coord->>Shell: Run tests + lint
     Shell-->>Coord: lint FAILED (exit 1)
@@ -410,7 +410,7 @@ sequenceDiagram
     Coord->>Exec: fix(lint error output)
     Exec->>LLM: Continue SAME thread (full history)
     LLM->>Shell: Fix lint issues
-    LLM-->>Exec: {response, threadId}
+    LLM-->>Exec: {response, sessionRef}
 
     Coord->>Shell: Run tests + lint
     Shell-->>Coord: all PASS
@@ -444,7 +444,7 @@ The worker never mutates state directly. Instead, every state change is recorded
 
     {"ts":"10:00:00","data":{"event":"task-accepted","taskId":"t-001","config":{...}}}
     {"ts":"10:00:01","data":{"event":"phase-started","phase":"plan"}}
-    {"ts":"10:01:30","data":{"event":"plan-agent-turn","cycle":0,"threadId":"th_abc","tokenCount":1200}}
+    {"ts":"10:01:30","data":{"event":"plan-agent-turn","cycle":0,"sessionRef":"th_abc","tokenCount":1200}}
     {"ts":"10:01:31","data":{"event":"plan-finalized","plan":"Step 1: ..."}}
     {"ts":"10:01:31","data":{"event":"phase-completed","phase":"plan"}}
     {"ts":"10:01:32","data":{"event":"phase-started","phase":"work"}}
@@ -511,9 +511,9 @@ An **executor** is the bridge between the coordinator and an LLM. The coordinato
       |                              |  Start new thread                 |
       |                              |---------------------------------->|
       |                              |                                   |
-      |                              |  Response + threadId              |
+      |                              |  Response + sessionRef            |
       |                              |<----------------------------------|
-      |  { response, threadId }      |                                   |
+      |  { response, sessionRef }    |                                   |
       |<-----------------------------|                                   |
       |                              |                                   |
       |  fix(feedback)               |                                   |
@@ -523,7 +523,7 @@ An **executor** is the bridge between the coordinator and an LLM. The coordinato
       |                              |                                   |
       |                              |  Response (with full history)     |
       |                              |<----------------------------------|
-      |  { response, threadId }      |                                   |
+      |  { response, sessionRef }    |                                   |
       |<-----------------------------|                                   |
 ```
 
@@ -531,7 +531,7 @@ An **executor** is the bridge between the coordinator and an LLM. The coordinato
 
 - **`execute()`** starts a fresh LLM conversation thread
 - **`fix()`** continues the existing thread — the LLM sees the full history of what it already did, plus the new feedback
-- **Thread persistence** matters because it means the agent learns from its mistakes within a single task
+- **Session reference persistence** matters because it means the agent learns from its mistakes within a single task
 
 ### OpenAI Executor (Current Implementation)
 

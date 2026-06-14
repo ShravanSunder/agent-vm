@@ -20,7 +20,12 @@ import {
 } from './agent-vm-entrypoint.js';
 import { parseAgentIds } from './commands/init-definition.js';
 
-const defaultShravanBackupDir = path.join(os.homedir(), '.agent-vm-backups', 'shravan');
+const defaultShravanBackupDir = path.join(
+	os.homedir(),
+	'.agent-vm-backups',
+	'claw-tests-a1b2c3d4',
+	'shravan',
+);
 
 function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
@@ -1125,6 +1130,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		expect(createSecretResolver).toHaveBeenCalledWith({
+			integrationVersion: '0.0.97',
 			serviceAccountToken: 'service-account-token',
 		});
 		expect(runConfigValidation).toHaveBeenCalledWith(

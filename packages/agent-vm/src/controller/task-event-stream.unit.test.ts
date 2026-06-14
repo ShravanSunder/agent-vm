@@ -107,6 +107,21 @@ describe('task event stream', () => {
 		});
 	});
 
+	it('rejects a malformed newline-terminated final event as corrupt', async () => {
+		const taskId = 'task-corrupt-final-line-with-newline';
+		const filePath = eventLogPath(taskId);
+		await appendEvent(filePath, {
+			event: 'task-accepted',
+			taskId,
+			config: makeMinimalTaskConfig(taskId),
+		});
+		await writeFile(filePath, `${await readFile(filePath, 'utf8')}{ "ts":\n`);
+
+		await expect(readTaskEventLogRecords({ eventLogPath: filePath })).rejects.toThrow(
+			/Corrupt event at line 2/u,
+		);
+	});
+
 	it('tails appended events and closes after a terminal event', async () => {
 		const taskId = 'task-tail';
 		const filePath = eventLogPath(taskId);

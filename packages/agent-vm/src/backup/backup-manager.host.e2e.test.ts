@@ -386,6 +386,86 @@ describe('createZoneBackupManager', () => {
 		expect(fs.readFileSync(path.join(stateDir, 'data.json'), 'utf8')).toBe('{"key":"old"}');
 	});
 
+	it('rejects restore archives missing state without touching live state', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-missing-state-'));
+		const extractRoot = path.join(tmpDir, 'archive-root');
+		const stateDir = path.join(tmpDir, 'state');
+		const backupPath = path.join(tmpDir, 'shravan__2026-04-06T10-00-00.tar.age');
+		fs.mkdirSync(extractRoot, { recursive: true });
+		fs.mkdirSync(stateDir, { recursive: true });
+		fs.writeFileSync(path.join(stateDir, 'data.json'), '{"key":"old"}');
+		fs.writeFileSync(path.join(extractRoot, 'manifest.json'), '{"zoneId":"shravan"}');
+		execFileSync('tar', ['cf', backupPath, '-C', extractRoot, '.']);
+
+		const manager = createZoneBackupManager(noopEncryption);
+
+		await expect(
+			manager.restoreBackup({
+				backupPath,
+				stateDir,
+			}),
+		).rejects.toThrow(/missing required 'state' directory/u);
+		expect(fs.readFileSync(path.join(stateDir, 'data.json'), 'utf8')).toBe('{"key":"old"}');
+		expect(
+			fs
+				.readdirSync(path.dirname(stateDir))
+				.filter((entryName) => entryName.startsWith('state.incoming-')),
+		).toEqual([]);
+		expect(
+			fs
+				.readdirSync(path.dirname(stateDir))
+				.filter((entryName) => entryName.startsWith('state.pre-restore-')),
+		).toEqual([]);
+	});
+
+	it('rejects restore archives missing requested zone-files without touching live dirs', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-missing-zone-files-'));
+		const extractRoot = path.join(tmpDir, 'archive-root');
+		const stateDir = path.join(tmpDir, 'state');
+		const zoneFilesDir = path.join(tmpDir, 'zone-files');
+		const backupPath = path.join(tmpDir, 'shravan__2026-04-06T10-00-00.tar.age');
+		fs.mkdirSync(path.join(extractRoot, 'state'), { recursive: true });
+		fs.mkdirSync(stateDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
+		fs.writeFileSync(path.join(stateDir, 'data.json'), '{"key":"old"}');
+		fs.writeFileSync(path.join(zoneFilesDir, 'file.txt'), 'old zone files');
+		fs.writeFileSync(path.join(extractRoot, 'manifest.json'), '{"zoneId":"shravan"}');
+		fs.writeFileSync(path.join(extractRoot, 'state', 'data.json'), '{"key":"new"}');
+		execFileSync('tar', ['cf', backupPath, '-C', extractRoot, '.']);
+
+		const manager = createZoneBackupManager(noopEncryption);
+
+		await expect(
+			manager.restoreBackup({
+				backupPath,
+				stateDir,
+				zoneFilesDir,
+			}),
+		).rejects.toThrow(/missing required 'zone-files' directory/u);
+		expect(fs.readFileSync(path.join(stateDir, 'data.json'), 'utf8')).toBe('{"key":"old"}');
+		expect(fs.readFileSync(path.join(zoneFilesDir, 'file.txt'), 'utf8')).toBe('old zone files');
+		expect(
+			fs
+				.readdirSync(path.dirname(stateDir))
+				.filter((entryName) => entryName.startsWith('state.incoming-')),
+		).toEqual([]);
+		expect(
+			fs
+				.readdirSync(path.dirname(zoneFilesDir))
+				.filter((entryName) => entryName.startsWith('zone-files.incoming-')),
+		).toEqual([]);
+		expect(
+			fs
+				.readdirSync(path.dirname(stateDir))
+				.filter((entryName) => entryName.startsWith('state.pre-restore-')),
+		).toEqual([]);
+		expect(
+			fs
+				.readdirSync(path.dirname(zoneFilesDir))
+				.filter((entryName) => entryName.startsWith('zone-files.pre-restore-')),
+		).toEqual([]);
+	});
+
 	it('returns empty list for non-existent backup directory', () => {
 		const manager = createZoneBackupManager(noopEncryption);
 		const result = manager.listBackups({ backupDir: '/tmp/does-not-exist-xyz' });

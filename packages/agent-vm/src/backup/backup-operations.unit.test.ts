@@ -60,7 +60,7 @@ function createFakeArchiveExecFile(onTarCreate: (tarPath: string) => Promise<voi
 function createFakeRestoreExecFile(options: {
 	readonly failCopyBasename?: string;
 	readonly manifestJson?: string;
-	readonly stateFiles: Readonly<Record<string, string>>;
+	readonly stateFiles?: Readonly<Record<string, string>>;
 	readonly zoneFiles?: Readonly<Record<string, string>>;
 	readonly zoneId?: string;
 }): BackupOperationExecFileAsync {
@@ -70,14 +70,16 @@ function createFakeRestoreExecFile(options: {
 			if (extractDirectory === undefined) {
 				throw new Error('tar extract fixture requires an extract directory.');
 			}
-			const extractedStateDirectory = path.join(extractDirectory, 'state');
-			await fs.mkdir(extractedStateDirectory, { recursive: true });
-			await Promise.all(
-				Object.entries(options.stateFiles).map(
-					async ([fileName, content]) =>
-						await fs.writeFile(path.join(extractedStateDirectory, fileName), content),
-				),
-			);
+			if (options.stateFiles !== undefined) {
+				const extractedStateDirectory = path.join(extractDirectory, 'state');
+				await fs.mkdir(extractedStateDirectory, { recursive: true });
+				await Promise.all(
+					Object.entries(options.stateFiles).map(
+						async ([fileName, content]) =>
+							await fs.writeFile(path.join(extractedStateDirectory, fileName), content),
+					),
+				);
+			}
 			if (options.zoneFiles !== undefined) {
 				const extractedZoneFilesDirectory = path.join(extractDirectory, 'zone-files');
 				await fs.mkdir(extractedZoneFilesDirectory, { recursive: true });
@@ -115,6 +117,14 @@ function createFakeRestoreExecFile(options: {
 async function listPreRestoreDirectories(targetDirectory: string): Promise<readonly string[]> {
 	const parentDirectory = path.dirname(targetDirectory);
 	const prefix = `${path.basename(targetDirectory)}.pre-restore-`;
+	return (await fs.readdir(parentDirectory))
+		.filter((entryName) => entryName.startsWith(prefix))
+		.map((entryName) => path.join(parentDirectory, entryName));
+}
+
+async function listIncomingRestoreDirectories(targetDirectory: string): Promise<readonly string[]> {
+	const parentDirectory = path.dirname(targetDirectory);
+	const prefix = `${path.basename(targetDirectory)}.incoming-`;
 	return (await fs.readdir(parentDirectory))
 		.filter((entryName) => entryName.startsWith(prefix))
 		.map((entryName) => path.join(parentDirectory, entryName));
@@ -387,6 +397,81 @@ describe('staged backup restore', () => {
 			expect(
 				await fs.readFile(path.join(preRestoreDirectories[0] ?? '', 'session.json'), 'utf8'),
 			).toBe('old state\n');
+		} finally {
+			await fs.rm(rootDirectory, { recursive: true, force: true });
+		}
+	});
+
+	it('rejects archives missing required state contents without touching live state', async () => {
+		const rootDirectory = await createTemporaryDirectory('agent-vm-backup-missing-state-unit-');
+		try {
+			const backupPath = path.join(rootDirectory, 'sunfam__2026-06-11T00-00-00-000Z.tar.age');
+			const stateDir = path.join(rootDirectory, 'state', 'sunfam');
+			await fs.mkdir(stateDir, { recursive: true });
+			await fs.writeFile(backupPath, 'encrypted archive');
+			await fs.writeFile(path.join(stateDir, 'session.json'), 'old state\n');
+
+			await expect(
+				restoreEncryptedBackup({
+					backupPath,
+					encryption: {
+						decrypt: async (_inputPath, outputPath) => {
+							await fs.writeFile(outputPath, 'plaintext archive');
+						},
+						encrypt: async () => {},
+					},
+					execFileAsync: createFakeRestoreExecFile({}),
+					stateDir,
+				}),
+			).rejects.toThrow(/missing required 'state' directory/u);
+
+			expect(await fs.readFile(path.join(stateDir, 'session.json'), 'utf8')).toBe('old state\n');
+			expect(await listIncomingRestoreDirectories(stateDir)).toEqual([]);
+			expect(await listPreRestoreDirectories(stateDir)).toEqual([]);
+		} finally {
+			await fs.rm(rootDirectory, { recursive: true, force: true });
+		}
+	});
+
+	it('rejects archives missing requested zone-files contents without touching live dirs', async () => {
+		const rootDirectory = await createTemporaryDirectory(
+			'agent-vm-backup-missing-zone-files-unit-',
+		);
+		try {
+			const backupPath = path.join(rootDirectory, 'sunfam__2026-06-11T00-00-00-000Z.tar.age');
+			const stateDir = path.join(rootDirectory, 'state', 'sunfam');
+			const zoneFilesDir = path.join(rootDirectory, 'zone-files', 'sunfam');
+			await fs.mkdir(stateDir, { recursive: true });
+			await fs.mkdir(zoneFilesDir, { recursive: true });
+			await fs.writeFile(backupPath, 'encrypted archive');
+			await fs.writeFile(path.join(stateDir, 'session.json'), 'old state\n');
+			await fs.writeFile(path.join(zoneFilesDir, 'config.json'), 'old zone files\n');
+
+			await expect(
+				restoreEncryptedBackup({
+					backupPath,
+					encryption: {
+						decrypt: async (_inputPath, outputPath) => {
+							await fs.writeFile(outputPath, 'plaintext archive');
+						},
+						encrypt: async () => {},
+					},
+					execFileAsync: createFakeRestoreExecFile({
+						stateFiles: { 'session.json': 'new state\n' },
+					}),
+					stateDir,
+					zoneFilesDir,
+				}),
+			).rejects.toThrow(/missing required 'zone-files' directory/u);
+
+			expect(await fs.readFile(path.join(stateDir, 'session.json'), 'utf8')).toBe('old state\n');
+			expect(await fs.readFile(path.join(zoneFilesDir, 'config.json'), 'utf8')).toBe(
+				'old zone files\n',
+			);
+			expect(await listIncomingRestoreDirectories(stateDir)).toEqual([]);
+			expect(await listIncomingRestoreDirectories(zoneFilesDir)).toEqual([]);
+			expect(await listPreRestoreDirectories(stateDir)).toEqual([]);
+			expect(await listPreRestoreDirectories(zoneFilesDir)).toEqual([]);
 		} finally {
 			await fs.rm(rootDirectory, { recursive: true, force: true });
 		}

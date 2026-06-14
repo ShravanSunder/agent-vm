@@ -306,7 +306,7 @@ host zoneFilesDir
     agents/default/
 
 host backupDir
-  ~/.agent-vm-backups/<zone>/
+  ~/.agent-vm-backups/<projectNamespace>/<zone>/
 ```
 
 Target state: OpenClaw bundled plugin runtime dependencies are hot boot-time

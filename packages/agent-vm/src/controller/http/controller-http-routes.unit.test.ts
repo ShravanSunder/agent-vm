@@ -3865,6 +3865,10 @@ describe('createControllerApp', () => {
 	});
 
 	it('streams task events through GET /zones/:zoneId/tasks/:taskId/events', async () => {
+		const getTaskState = vi.fn(async () => ({
+			taskId: 'worker-task-1',
+			status: 'work-agent',
+		}));
 		const streamTaskEvents = vi.fn(async function* () {
 			const prepared = createPreparedWorkerTaskStub('worker-task-1');
 			yield {
@@ -3905,6 +3909,7 @@ describe('createControllerApp', () => {
 			operations: {
 				destroyZone: vi.fn(async () => ({})),
 				getStatus: vi.fn(async () => ({})),
+				getTaskState,
 				getZoneLogs: vi.fn(async () => ({})),
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				streamTaskEvents,
@@ -3925,6 +3930,7 @@ describe('createControllerApp', () => {
 
 		expect(response.status).toBe(200);
 		expect(response.headers.get('content-type')).toContain('text/event-stream');
+		expect(getTaskState).toHaveBeenCalledWith('shravan', 'worker-task-1');
 		expect(streamTaskEvents).toHaveBeenCalledWith(
 			'shravan',
 			'worker-task-1',
@@ -3935,6 +3941,47 @@ describe('createControllerApp', () => {
 		expect(body).toContain('id: 0');
 		expect(body).toContain('event: task-completed');
 		expect(body).toContain('id: 1');
+	});
+
+	it('returns 404 for task event streams when the task is unknown', async () => {
+		const getTaskState = vi.fn(async () => null);
+		const streamTaskEvents = vi.fn(async function* () {});
+		const app = createControllerAppForTest({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getTaskState,
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				streamTaskEvents,
+				upgradeZone: vi.fn(async () => ({})),
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '1G',
+				},
+			},
+		});
+
+		const response = await app.request('/zones/shravan/tasks/missing/events', {
+			headers: { accept: 'text/event-stream' },
+		});
+
+		expect(response.status).toBe(404);
+		await expect(response.json()).resolves.toEqual({ error: 'task-not-found' });
+		expect(getTaskState).toHaveBeenCalledWith('shravan', 'missing');
+		expect(streamTaskEvents).not.toHaveBeenCalled();
 	});
 
 	it('proxies close through the configured close operation', async () => {
