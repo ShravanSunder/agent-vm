@@ -27,7 +27,7 @@ or resolve user-decision gates.
 | 08 worker executor genericization | `origin/improve/plan-08-worker-executor-genericization` | `65ece9f` | resumed Claude executor branch pushed; live worker E2E gated by missing credentials |
 | 09 task event stream and embedding | `origin/improve/plan-09-task-event-stream-and-embedding` | `3953657` | complete branch pushed |
 | 10 CI publish gate parity | `origin/improve/plan-10-ci-publish-gate-parity` | `a834de3` | complete branch pushed |
-| 11 docs architecture drift | `origin/improve/plan-11-docs-architecture-drift` | `be698ae` | gated branch pushed; heartbeat decision remains |
+| 11 docs architecture drift | `origin/improve/plan-11-docs-architecture-drift` | `0ef5bb6` | complete branch pushed; heartbeat contract documented |
 | 12 backup pipeline hardening | `origin/improve/plan-12-backup-pipeline-hardening` | `6472d19` | resumed complete branch pushed |
 | 13 Dockerfile generation injection guards | `origin/improve/plan-13-dockerfile-generation-injection-guards` | `d08dfc5` | complete branch pushed |
 | 14 MCP Portal approval/discovery hardening | `origin/improve/plan-14-mcp-portal-approval-discovery` | `fc1a952` | complete branch pushed |
@@ -124,7 +124,8 @@ Plan 09 task event stream and embedding:
 
 Plan 11 docs architecture drift:
 
-- Gated independent slice pushed on 2026-06-12.
+- Independent slice pushed on 2026-06-12; heartbeat decision resolved and
+  pushed on 2026-06-14.
 - Branch is stacked on Plan 09 at `3953657` because the docs update coordinates
   with Plan 09's task event stream route.
 - Reconciled agent-worker event/status docs against
@@ -135,18 +136,22 @@ Plan 11 docs architecture drift:
   quality gate, not the unit/integration test gate.
 - Updated `overview.md` package/API/startup subsystem model and `docs/README.md`
   subsystem map.
-- Branch pushed at `be698ae`.
+- Documented the existing `CALLER_URL` caller heartbeat contract as-is in
+  `docs/subsystems/controller.md`: caller-owned endpoint, empty POST body,
+  request-task-id encoding, 10s cadence, 5s timeout, terminal 404/410 behavior,
+  retry warning cadence, and separation from Tool VM active-use lease
+  heartbeats.
+- Branch pushed at `0ef5bb6`.
 - Final proof on the plan branch:
   - red proof: new doc drift test failed before docs update because stale event
     names were documented.
   - focused green proof: 3 files / 18 tests passed.
+  - focused heartbeat/doc guard proof: 5 files / 33 tests passed.
   - `pnpm check`: 6 passed / 0 failed.
   - `pnpm test:unit`: 200 files / 1809 tests passed.
+  - `pnpm test:integration`: 23 files / 327 tests passed.
   - `pnpm lint` and `mise run lint`: 0 warnings / 0 errors.
-  - `pnpm test:integration` was not required for this independent docs/test
-    slice.
-- Remaining gate: choose whether to document the existing `CALLER_URL`
-  heartbeat contract or delete/split the feature.
+  - `git diff --check`: exit 0.
 
 Plan 12 backup pipeline hardening:
 
@@ -166,8 +171,8 @@ Plan 11 heartbeat decision:
   per-request timeout is 5s, 404 and 410 stop the heartbeat permanently, and
   other failures retry with warnings on the first, third consecutive, then every
   tenth consecutive failure.
-- Required user decision: document this contract as-is, or delete/split the
-  feature in a separate code change.
+- Decision resolved on 2026-06-14: document this contract as-is. Backoff or
+  rate-limit runtime changes remain follow-up work, not part of Plan 11.
 
 ## Dependency Boundaries
 
@@ -175,8 +180,8 @@ Plan 11 heartbeat decision:
   check showed Plan 03 is not an ancestor of Plan 06, so Plan 09 followed the
   isolated branch pattern from current `origin/improve-v1` rather than merging
   previous plan branches into its worktree.
-- Plan 11 is stacked on Plan 09 and remains gated only by the heartbeat
-  document-vs-delete decision.
+- Plan 11 is stacked on Plan 09 and is complete after the heartbeat
+  document-vs-delete decision resolved to documentation.
 - Plan 08 is stacked on Plan 07. Its task 3 interface-name decision and Claude
   executor slice are resolved on the plan branch. Live worker E2E remains an
   environment-gated proof layer.
