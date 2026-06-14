@@ -20,6 +20,8 @@ import {
 } from './agent-vm-entrypoint.js';
 import { parseAgentIds } from './commands/init-definition.js';
 
+const defaultShravanBackupDir = path.join(os.homedir(), '.agent-vm-backups', 'shravan');
+
 function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
 		schemaVersion: 1,
@@ -2975,7 +2977,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		expect(listBackups).toHaveBeenCalledWith(
-			expect.objectContaining({ backupDir: './state/shravan/backups', zoneId: 'shravan' }),
+			expect.objectContaining({ backupDir: defaultShravanBackupDir, zoneId: 'shravan' }),
 		);
 		expect(outputs.join('')).toContain('shravan-2026-04-06.tar.age');
 	});
@@ -3148,7 +3150,7 @@ describe('runAgentVmCli', () => {
 				zoneId: 'shravan',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
-				backupDir: './state/shravan/backups',
+				backupDir: defaultShravanBackupDir,
 			}),
 		);
 		expect(outputs.join('')).toContain('shravan-2026-04-06T12-00.tar.age');

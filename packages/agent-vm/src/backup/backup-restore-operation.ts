@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,28 +7,162 @@ import { promisify } from 'node:util';
 
 import type { BackupEncryption, BackupRestoreResult } from './backup-manager.js';
 
-const execFileAsync = promisify(execFile);
+export type BackupOperationExecFileAsync = (
+	command: string,
+	args: readonly string[],
+) => Promise<void>;
+
+interface StagedRestoreDirectory {
+	readonly incomingDirectory: string;
+	incomingPromoted: boolean;
+	readonly preRestoreDirectory: string;
+	readonly targetDirectory: string;
+	targetMoved: boolean;
+}
+
+const realExecFileAsync = promisify(execFile);
+
+const defaultExecFileAsync: BackupOperationExecFileAsync = async (
+	command: string,
+	args: readonly string[],
+): Promise<void> => {
+	await realExecFileAsync(command, [...args]);
+};
+
+function writeRestoreLog(message: string): void {
+	process.stderr.write(`[agent-vm backup] ${message}\n`);
+}
 
 async function copyExtractedDirectoryContents(
 	sourceDirectory: string,
 	targetDirectory: string,
+	execFileAsync: BackupOperationExecFileAsync,
 ): Promise<void> {
-	try {
-		await fs.access(sourceDirectory);
-	} catch {
-		return;
-	}
-
+	await fs.mkdir(targetDirectory, { recursive: true });
 	const entries = await fs.readdir(sourceDirectory);
 	await Promise.all(
-		entries.map(async (entryName) => {
-			await execFileAsync('cp', [
-				'-a',
-				path.join(sourceDirectory, entryName),
-				path.join(targetDirectory, entryName),
-			]);
-		}),
+		entries.map(
+			async (entryName) =>
+				await execFileAsync('cp', [
+					'-a',
+					path.join(sourceDirectory, entryName),
+					path.join(targetDirectory, entryName),
+				]),
+		),
 	);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function stageDirectoryContents(options: {
+	readonly execFileAsync: BackupOperationExecFileAsync;
+	readonly restoreId: string;
+	readonly sourceDirectory: string;
+	readonly targetDirectory: string;
+}): Promise<StagedRestoreDirectory | null> {
+	if (!(await pathExists(options.sourceDirectory))) {
+		return null;
+	}
+
+	const parentDirectory = path.dirname(options.targetDirectory);
+	const incomingDirectory = path.join(
+		parentDirectory,
+		`${path.basename(options.targetDirectory)}.incoming-${options.restoreId}`,
+	);
+	const preRestoreDirectory = path.join(
+		parentDirectory,
+		`${path.basename(options.targetDirectory)}.pre-restore-${options.restoreId}`,
+	);
+
+	try {
+		await copyExtractedDirectoryContents(
+			options.sourceDirectory,
+			incomingDirectory,
+			options.execFileAsync,
+		);
+	} catch (error) {
+		await fs.rm(incomingDirectory, { recursive: true, force: true });
+		throw error;
+	}
+
+	return {
+		incomingDirectory,
+		incomingPromoted: false,
+		preRestoreDirectory,
+		targetDirectory: options.targetDirectory,
+		targetMoved: false,
+	};
+}
+
+async function promoteStagedDirectory(stagedDirectory: StagedRestoreDirectory): Promise<void> {
+	const parentDirectory = path.dirname(stagedDirectory.targetDirectory);
+	try {
+		await fs.mkdir(parentDirectory, { recursive: true });
+		if (await pathExists(stagedDirectory.targetDirectory)) {
+			await fs.rename(stagedDirectory.targetDirectory, stagedDirectory.preRestoreDirectory);
+			stagedDirectory.targetMoved = true;
+		}
+		await fs.rename(stagedDirectory.incomingDirectory, stagedDirectory.targetDirectory);
+		stagedDirectory.incomingPromoted = true;
+	} catch (error) {
+		if (stagedDirectory.targetMoved && !(await pathExists(stagedDirectory.targetDirectory))) {
+			await fs.rename(stagedDirectory.preRestoreDirectory, stagedDirectory.targetDirectory);
+			stagedDirectory.targetMoved = false;
+		}
+		throw error;
+	}
+}
+
+async function rollbackPromotedDirectory(stagedDirectory: StagedRestoreDirectory): Promise<void> {
+	if (stagedDirectory.incomingPromoted) {
+		await fs.rm(stagedDirectory.targetDirectory, { recursive: true, force: true });
+		stagedDirectory.incomingPromoted = false;
+	}
+	if (stagedDirectory.targetMoved && (await pathExists(stagedDirectory.preRestoreDirectory))) {
+		await fs.rename(stagedDirectory.preRestoreDirectory, stagedDirectory.targetDirectory);
+		stagedDirectory.targetMoved = false;
+	}
+}
+
+async function restoreStagedDirectories(
+	stagedDirectories: readonly StagedRestoreDirectory[],
+): Promise<void> {
+	const promotedDirectories: StagedRestoreDirectory[] = [];
+	try {
+		for (const stagedDirectory of stagedDirectories) {
+			// oxlint-disable-next-line no-await-in-loop -- restore promotion is ordered so rollback can reverse it
+			await promoteStagedDirectory(stagedDirectory);
+			promotedDirectories.push(stagedDirectory);
+		}
+		for (const promotedDirectory of promotedDirectories) {
+			if (promotedDirectory.targetMoved) {
+				writeRestoreLog(
+					`Retained pre-restore directory '${promotedDirectory.preRestoreDirectory}' for manual recovery.`,
+				);
+			}
+		}
+	} catch (error) {
+		for (const stagedDirectory of promotedDirectories.toReversed()) {
+			// oxlint-disable-next-line no-await-in-loop -- rollback must reverse successful promotions one at a time
+			await rollbackPromotedDirectory(stagedDirectory);
+		}
+		throw error;
+	} finally {
+		await Promise.all(
+			stagedDirectories.map(async (stagedDirectory) => {
+				if (!stagedDirectory.incomingPromoted) {
+					await fs.rm(stagedDirectory.incomingDirectory, { recursive: true, force: true });
+				}
+			}),
+		);
+	}
 }
 
 async function readZoneIdFromManifest(extractDirectory: string): Promise<string> {
@@ -51,28 +186,48 @@ export async function restoreEncryptedBackup(options: {
 	readonly encryption: BackupEncryption;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
+	readonly execFileAsync?: BackupOperationExecFileAsync;
 }): Promise<BackupRestoreResult> {
-	const decryptedTarPath = `${options.backupPath}.decrypted.tar`;
-	await options.encryption.decrypt(options.backupPath, decryptedTarPath);
+	const execFileAsync = options.execFileAsync ?? defaultExecFileAsync;
+	const transientDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-restore-'));
+	const decryptedTarPath = path.join(transientDirectory, path.basename(options.backupPath, '.age'));
+	const extractDirectory = path.join(transientDirectory, 'extract');
 
-	const extractDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-extract-'));
 	try {
+		await fs.mkdir(extractDirectory, { recursive: true });
+		await options.encryption.decrypt(options.backupPath, decryptedTarPath);
 		await execFileAsync('tar', ['xf', decryptedTarPath, '-C', extractDirectory]);
-		await copyExtractedDirectoryContents(path.join(extractDirectory, 'state'), options.stateDir);
-		if (options.zoneFilesDir !== undefined) {
-			await copyExtractedDirectoryContents(
-				path.join(extractDirectory, 'zone-files'),
-				options.zoneFilesDir,
-			);
+		const zoneId = await readZoneIdFromManifest(extractDirectory);
+		const restoreId = `${new Date().toISOString().replace(/[:.]/gu, '-')}-${randomUUID()}`;
+		const stagedDirectories: StagedRestoreDirectory[] = [];
+		const stagedStateDirectory = await stageDirectoryContents({
+			execFileAsync,
+			restoreId,
+			sourceDirectory: path.join(extractDirectory, 'state'),
+			targetDirectory: options.stateDir,
+		});
+		if (stagedStateDirectory !== null) {
+			stagedDirectories.push(stagedStateDirectory);
 		}
+		if (options.zoneFilesDir !== undefined) {
+			const stagedZoneFilesDirectory = await stageDirectoryContents({
+				execFileAsync,
+				restoreId,
+				sourceDirectory: path.join(extractDirectory, 'zone-files'),
+				targetDirectory: options.zoneFilesDir,
+			});
+			if (stagedZoneFilesDirectory !== null) {
+				stagedDirectories.push(stagedZoneFilesDirectory);
+			}
+		}
+		await restoreStagedDirectories(stagedDirectories);
 
 		return {
 			stateDir: options.stateDir,
 			...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
-			zoneId: await readZoneIdFromManifest(extractDirectory),
+			zoneId,
 		};
 	} finally {
-		await fs.rm(extractDirectory, { recursive: true, force: true });
-		await fs.unlink(decryptedTarPath);
+		await fs.rm(transientDirectory, { recursive: true, force: true });
 	}
 }

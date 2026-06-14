@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { command, flag, subcommands } from 'cmd-ts';
 
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
+import { resolveZoneBackupDir } from '../zone-backup-paths.js';
 import { createConfigOption, loadSystemConfigFromOption } from './command-definition-support.js';
 
 interface ResolvedPathEntry {
@@ -96,7 +97,10 @@ export function createPathsSubcommands(io: CliIo, dependencies: CliDependencies)
 				handler: async ({ config, sizes }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const zoneEntryPromises = systemConfig.zones.flatMap((zone) => {
-						const backupDir = zone.gateway.backupDir ?? `${zone.gateway.stateDir}/backups`;
+						const backupDir = resolveZoneBackupDir({
+							configuredBackupDir: zone.gateway.backupDir,
+							zoneId: zone.id,
+						});
 						const entries = [
 							buildResolvedPathEntry(`zone[${zone.id}].stateDir`, zone.gateway.stateDir, sizes),
 							buildResolvedPathEntry(`zone[${zone.id}].backupDir`, backupDir, sizes),
