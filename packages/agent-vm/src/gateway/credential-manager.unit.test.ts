@@ -221,6 +221,23 @@ describe('resolveZoneSecrets', () => {
 		).rejects.toThrow("Tool VM secret resolution requires injection 'http-mediation'.");
 	});
 
+	it('requires Tool VM secret resolution to provide filtered secret names', async () => {
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => '',
+			resolveAll: async () => ({}),
+		};
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'http-mediation',
+				secretResolver,
+				systemConfig,
+				zoneId: 'shravan',
+			} as never),
+		).rejects.toThrow('Tool VM secret resolution requires filtered secretNames.');
+	});
+
 	it('rejects targeted Tool VM secrets that bypass the schema with env injection', async () => {
 		const baseZone = systemConfig.zones[0];
 		if (!baseZone) {
@@ -253,6 +270,7 @@ describe('resolveZoneSecrets', () => {
 			resolveZoneSecrets({
 				audience: 'tool-vm',
 				injection: 'http-mediation',
+				secretNames: new Set(['LINEAR_API_KEY']),
 				secretResolver,
 				systemConfig: unsafeConfig,
 				zoneId: 'shravan',

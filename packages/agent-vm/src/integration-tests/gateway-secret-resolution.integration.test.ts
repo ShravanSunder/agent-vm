@@ -259,6 +259,7 @@ describe('smoke: gateway startup secret resolution', () => {
 			resolveZoneSecrets({
 				audience: 'tool-vm',
 				injection: 'http-mediation',
+				secretNames: new Set(['TOOL_VM_HTTP_TOKEN']),
 				secretResolver,
 				systemConfig,
 				zoneId: 'secret-smoke',

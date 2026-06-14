@@ -42,7 +42,7 @@ type ResolveZoneSecretsOptions =
 			readonly secretResolver: SecretResolver;
 			readonly audience: 'tool-vm';
 			readonly injection: 'http-mediation';
-			readonly secretNames?: ReadonlySet<string>;
+			readonly secretNames: ReadonlySet<string>;
 	  };
 
 export async function resolveZoneSecrets(
@@ -51,9 +51,11 @@ export async function resolveZoneSecrets(
 	if (options.audience === 'tool-vm' && options.injection !== 'http-mediation') {
 		throw new Error("Tool VM secret resolution requires injection 'http-mediation'.");
 	}
+	if (options.audience === 'tool-vm' && options.secretNames === undefined) {
+		throw new Error('Tool VM secret resolution requires filtered secretNames.');
+	}
 	const runtimeAudience: RuntimeVmAudience = options.audience;
 	const injectionFilter = options.injection;
-	const secretNameFilter = options.audience === 'tool-vm' ? options.secretNames : undefined;
 	const zone = findZone(options.systemConfig, options.zoneId);
 	if (!zone) {
 		throw new Error(`Unknown zone '${options.zoneId}'.`);
@@ -72,7 +74,7 @@ export async function resolveZoneSecrets(
 		if (injectionFilter && secretConfig.injection !== injectionFilter) {
 			continue;
 		}
-		if (secretNameFilter && !secretNameFilter.has(secretName)) {
+		if (options.audience === 'tool-vm' && !options.secretNames.has(secretName)) {
 			continue;
 		}
 		switch (secretConfig.source) {
@@ -115,7 +117,7 @@ export async function resolveZoneSecrets(
 
 	try {
 		const resolvedSecrets = await options.secretResolver.resolveAll(secretRefs);
-		if (secretNameFilter) {
+		if (options.audience === 'tool-vm') {
 			const unexpectedSecretNames = Object.keys(resolvedSecrets).filter(
 				(secretName) => !Object.hasOwn(secretRefs, secretName),
 			);
