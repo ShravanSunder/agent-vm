@@ -11,6 +11,7 @@ export interface HealthEventStoreOptions {
 		| undefined;
 	readonly eventHistoryLimit: number;
 	readonly latestBucketLimit?: number | undefined;
+	readonly now?: (() => number) | undefined;
 	readonly staleAfterMs: number;
 }
 
@@ -19,19 +20,28 @@ export interface DeriveHealthSnapshotOptions {
 	readonly zoneId: string;
 }
 
+const durableWriteWarningIntervalMs = 60_000;
+
+function formatDurableWriteError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export class HealthEventStore {
 	readonly #eventHistoryLimit: number;
 	readonly #latestBucketLimit: number;
 	readonly #latestByBucket = new Map<string, AgentVmHealthEvent>();
 	readonly #history: AgentVmHealthEvent[] = [];
 	readonly #durableEventLog: HealthEventStoreOptions['durableEventLog'];
+	readonly #now: () => number;
 	#durableWriteQueue: Promise<void> = Promise.resolve();
+	#lastDurableWriteWarningAtMs: number | undefined;
 	readonly #staleAfterMs: number;
 
 	constructor(options: HealthEventStoreOptions) {
 		this.#durableEventLog = options.durableEventLog;
 		this.#eventHistoryLimit = options.eventHistoryLimit;
 		this.#latestBucketLimit = options.latestBucketLimit ?? 1_000;
+		this.#now = options.now ?? Date.now;
 		this.#staleAfterMs = options.staleAfterMs;
 	}
 
@@ -93,9 +103,25 @@ export class HealthEventStore {
 		this.#durableWriteQueue = this.#durableWriteQueue
 			.then(async () => {
 				await this.#durableEventLog?.append(event);
+				this.#lastDurableWriteWarningAtMs = undefined;
 			})
-			.catch(() => {
+			.catch((error: unknown) => {
 				// Durable logs are evidence. In-memory health remains the serving path.
+				this.#warnDurableWriteFailed(error);
 			});
+	}
+
+	#warnDurableWriteFailed(error: unknown): void {
+		const nowMs = this.#now();
+		if (
+			this.#lastDurableWriteWarningAtMs !== undefined &&
+			nowMs - this.#lastDurableWriteWarningAtMs < durableWriteWarningIntervalMs
+		) {
+			return;
+		}
+		this.#lastDurableWriteWarningAtMs = nowMs;
+		process.stderr.write(
+			`[health-event-store] durable health event log append failed: ${formatDurableWriteError(error)}\n`,
+		);
 	}
 }

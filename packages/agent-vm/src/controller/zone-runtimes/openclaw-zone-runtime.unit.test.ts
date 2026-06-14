@@ -2124,6 +2124,204 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		expect(stopSettled).toBe(true);
 	});
 
+	it('logs when a lifecycle operation waits behind a timed-out background operation', async () => {
+		let nowMs = Date.parse('2026-06-07T14:00:00.000Z');
+		let gatewayStartCount = 0;
+		let resolveStaleGatewayStart: ((value: GatewayZoneStartResult) => void) | undefined;
+		const restartTimeoutCallbacks: (() => void)[] = [];
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => nowMs,
+			restartGatewayZone: async () => {
+				gatewayStartCount += 1;
+				const gatewayStartResult: GatewayZoneStartResult = {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284 + gatewayStartCount,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+				if (gatewayStartCount === 2) {
+					return await new Promise<typeof gatewayStartResult>((resolve) => {
+						resolveStaleGatewayStart = resolve;
+					});
+				}
+				return gatewayStartResult;
+			},
+			secretResolver: createResolvingSecretResolver(),
+			setTimeoutImpl: (callback, delayMs) => {
+				if (delayMs === 5_000) {
+					restartTimeoutCallbacks.push(callback);
+				}
+				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+			},
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		try {
+			await runtime.start();
+			const restartPromise = runtime.restart({ timeoutMs: 5_000 });
+			await vi.waitFor(() => {
+				expect(resolveStaleGatewayStart).toBeDefined();
+			});
+			restartTimeoutCallbacks[0]?.();
+			await expect(restartPromise).rejects.toThrow('restart timed out');
+
+			nowMs += 100;
+			const stopPromise = runtime.stop();
+			await Promise.resolve();
+			expect(stderrWrite.mock.calls.join('\n')).toContain(
+				"[openclaw-zone-runtime] waiting for previous lifecycle operation in zone 'shravan'",
+			);
+			nowMs += 250;
+			resolveStaleGatewayStart?.({
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					startCommand: 'start',
+				},
+				vm: {
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 48_286,
+					getVmInstance: vi.fn(),
+					id: 'gateway-vm-stale',
+					setIngressRoutes: vi.fn(),
+				},
+				zone: getOpenClawZone(),
+			});
+			await stopPromise;
+
+			expect(stderrWrite.mock.calls.join('\n')).toContain(
+				"[openclaw-zone-runtime] waited 250ms for previous lifecycle operation in zone 'shravan'",
+			);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('does not log a zero-duration lifecycle wait when queued work acquires immediately', async () => {
+		const nowMs = Date.parse('2026-06-07T14:00:00.000Z');
+		let gatewayStartCount = 0;
+		let resolveStaleGatewayStart: ((value: GatewayZoneStartResult) => void) | undefined;
+		const restartTimeoutCallbacks: (() => void)[] = [];
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => nowMs,
+			restartGatewayZone: async () => {
+				gatewayStartCount += 1;
+				const gatewayStartResult: GatewayZoneStartResult = {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => 48_284 + gatewayStartCount,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+				if (gatewayStartCount === 2) {
+					return await new Promise<typeof gatewayStartResult>((resolve) => {
+						resolveStaleGatewayStart = resolve;
+					});
+				}
+				return gatewayStartResult;
+			},
+			secretResolver: createResolvingSecretResolver(),
+			setTimeoutImpl: (callback, delayMs) => {
+				if (delayMs === 5_000) {
+					restartTimeoutCallbacks.push(callback);
+				}
+				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+			},
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		try {
+			await runtime.start();
+			const restartPromise = runtime.restart({ timeoutMs: 5_000 });
+			await vi.waitFor(() => {
+				expect(resolveStaleGatewayStart).toBeDefined();
+			});
+			restartTimeoutCallbacks[0]?.();
+			await expect(restartPromise).rejects.toThrow('restart timed out');
+
+			const stopPromise = runtime.stop();
+			resolveStaleGatewayStart?.({
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					startCommand: 'start',
+				},
+				vm: {
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					fs: createManagedVmFsStub(),
+					getHostPid: () => 48_286,
+					getVmInstance: vi.fn(),
+					id: 'gateway-vm-stale',
+					setIngressRoutes: vi.fn(),
+				},
+				zone: getOpenClawZone(),
+			});
+			await stopPromise;
+
+			expect(stderrWrite.mock.calls.join('\n')).not.toContain('waited 0ms');
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
 	it('treats restart on a stopped runtime as a cold start without deleting ownership records first', async () => {
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
 		const runtime = createOpenClawZoneRuntime({

@@ -102,6 +102,11 @@ type LifecycleOperationExecution<TResult> =
 			readonly publicResult: Promise<TResult>;
 	  };
 
+interface LifecycleOperationQueueState {
+	promise: Promise<void>;
+	settled: boolean;
+}
+
 function isLifecycleOperationExecutionWithLock<TResult>(
 	execution: LifecycleOperationExecution<TResult>,
 ): execution is {
@@ -225,7 +230,10 @@ export function createOpenClawZoneRuntime(
 	let lastOperation: GatewayLifecycleOperation = 'none';
 	let originalOutageCause: GatewayDiagnosisSnapshot['originalOutageCause'] = { kind: 'unknown' };
 	let lifecycleState: GatewayZoneLifecycleState = { kind: 'stopped' };
-	let lifecycleOperation: Promise<void> = Promise.resolve();
+	let lifecycleOperation: LifecycleOperationQueueState = {
+		promise: Promise.resolve(),
+		settled: true,
+	};
 	let lifecycleGeneration = 0;
 	let staleGatewayPendingClose: GatewayZoneRuntimeHandle | undefined;
 
@@ -520,7 +528,22 @@ export function createOpenClawZoneRuntime(
 			| Promise<LifecycleOperationExecution<TResult>>,
 	): Promise<TResult> => {
 		const runAfterPrevious = async (): Promise<LifecycleOperationExecution<TResult>> => {
-			await lifecycleOperation.catch(() => undefined);
+			const previousLifecycleOperation = lifecycleOperation;
+			if (!previousLifecycleOperation.settled) {
+				const waitStartedAtMs = options.now();
+				writeOpenClawZoneRuntimeLog(
+					`waiting for previous lifecycle operation in zone '${options.zone.id}'`,
+				);
+				await previousLifecycleOperation.promise.catch(() => undefined);
+				const waitedMs = Math.max(0, options.now() - waitStartedAtMs);
+				if (waitedMs > 0) {
+					writeOpenClawZoneRuntimeLog(
+						`waited ${String(waitedMs)}ms for previous lifecycle operation in zone '${options.zone.id}'`,
+					);
+				}
+			} else {
+				await previousLifecycleOperation.promise.catch(() => undefined);
+			}
 			return await operation();
 		};
 		const executionPromise = runAfterPrevious();
@@ -530,7 +553,7 @@ export function createOpenClawZoneRuntime(
 			}
 			return await execution;
 		});
-		lifecycleOperation = executionPromise
+		const lifecycleOperationPromise = executionPromise
 			.then(async (execution) => {
 				if (isLifecycleOperationExecutionWithLock(execution)) {
 					await execution.lock;
@@ -542,6 +565,14 @@ export function createOpenClawZoneRuntime(
 				() => undefined,
 				() => undefined,
 			);
+		const nextLifecycleOperation: LifecycleOperationQueueState = {
+			promise: Promise.resolve(),
+			settled: false,
+		};
+		nextLifecycleOperation.promise = lifecycleOperationPromise.finally(() => {
+			nextLifecycleOperation.settled = true;
+		});
+		lifecycleOperation = nextLifecycleOperation;
 		return await operationResultPromise;
 	};
 

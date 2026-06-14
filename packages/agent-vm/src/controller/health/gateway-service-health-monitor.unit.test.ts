@@ -1,3 +1,4 @@
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -16,6 +17,27 @@ const gatewayServiceAutoRestart = {
 	maxConsecutiveFailedRecoveries: 3,
 	restartTimeoutMs: 10 * 60 * 1000,
 } as const;
+
+class MutableLatestHealthEventStore extends HealthEventStore {
+	#latestEventsByZoneId = new Map<string, readonly AgentVmHealthEvent[]>();
+
+	constructor() {
+		super({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+	}
+
+	override listLatestEventsForZone(zoneId: string): readonly AgentVmHealthEvent[] {
+		return this.#latestEventsByZoneId.get(zoneId) ?? [];
+	}
+
+	override record(_event: AgentVmHealthEvent): void {}
+
+	setLatestEvents(zoneId: string, events: readonly AgentVmHealthEvent[]): void {
+		this.#latestEventsByZoneId.set(zoneId, events);
+	}
+}
 
 describe('createGatewayServiceHealthMonitor', () => {
 	it('records ok and failed gateway service probes', async () => {
@@ -382,6 +404,192 @@ describe('createGatewayServiceHealthMonitor', () => {
 			reason: 'agent-channel-provider-unhealthy',
 			zoneId: 'sunfam',
 		});
+	});
+
+	it('evicts recovered channel-provider event keys instead of growing forever', async () => {
+		let nowMs = 0;
+		const healthEventStore = new MutableLatestHealthEventStore();
+		const recoverGatewayVm = vi.fn(async () => ({
+			elapsedMs: 1,
+			leaseReleaseFailureCount: 0,
+			newBootedAt: '2026-05-27T13:01:00.000Z',
+			newHostPid: 2222,
+			newVmId: 'new-gateway-vm',
+			oldBootedAt: '2026-05-27T12:00:00.000Z',
+			oldHostPid: 1111,
+			oldVmId: 'old-gateway-vm',
+			result: 'ok' as const,
+		}));
+		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart: {
+				...gatewayServiceAutoRestart,
+				channelProviderHealth: {
+					consecutiveFailureThreshold: 1,
+					enabled: true,
+					restartGatewayOnRecoverable: true,
+					restartGatewayOnUnrecoverable: false,
+					transitioningTimeoutMs: 120_000,
+				},
+				consecutiveFailureThreshold: 1,
+				cooldownMs: 0,
+			},
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/health',
+				port: 18789,
+				statusCode: 200,
+				zoneId: 'sunfam',
+			})),
+			recoverGatewayVm,
+			staleAfterMs: 100_000,
+			zoneIds: ['sunfam'],
+		});
+		const recoveredEventCount = 50_000;
+		let firstRecoveredEvent: AgentVmHealthEvent | undefined;
+
+		for (let index = 0; index < recoveredEventCount; index += 1) {
+			nowMs = 10_000 + index;
+			const channelProviderEvent = {
+				channelProviderId: `provider-${String(index)}`,
+				details: { providerType: 'discord' },
+				health: 'unhealthy-recoverable',
+				kind: 'agent-channel-provider-health',
+				observedAtMs: nowMs,
+				result: 'failed',
+				unhealthySinceMs: nowMs,
+				zoneId: 'sunfam',
+			} satisfies AgentVmHealthEvent;
+			firstRecoveredEvent ??= channelProviderEvent;
+			healthEventStore.setLatestEvents('sunfam', [channelProviderEvent]);
+			await monitor.tick();
+		}
+		expect(firstRecoveredEvent).toBeDefined();
+		expect(recoverGatewayVm).toHaveBeenCalledTimes(recoveredEventCount);
+
+		if (firstRecoveredEvent === undefined) {
+			throw new Error('expected at least one recovered channel-provider event');
+		}
+		const lastEvictedEvent = {
+			channelProviderId: 'provider-39999',
+			details: { providerType: 'discord' },
+			health: 'unhealthy-recoverable',
+			kind: 'agent-channel-provider-health',
+			observedAtMs: 49_999,
+			result: 'failed',
+			unhealthySinceMs: 49_999,
+			zoneId: 'sunfam',
+		} satisfies AgentVmHealthEvent;
+		const firstRetainedEvent = {
+			channelProviderId: 'provider-40000',
+			details: { providerType: 'discord' },
+			health: 'unhealthy-recoverable',
+			kind: 'agent-channel-provider-health',
+			observedAtMs: 50_000,
+			result: 'failed',
+			unhealthySinceMs: 50_000,
+			zoneId: 'sunfam',
+		} satisfies AgentVmHealthEvent;
+		nowMs += 100_001;
+		healthEventStore.setLatestEvents('sunfam', [firstRetainedEvent]);
+		await monitor.tick();
+
+		expect(recoverGatewayVm).toHaveBeenCalledTimes(recoveredEventCount);
+
+		healthEventStore.setLatestEvents('sunfam', [lastEvictedEvent]);
+		await monitor.tick();
+
+		expect(recoverGatewayVm).toHaveBeenCalledTimes(recoveredEventCount + 1);
+	});
+
+	it('does not let one zone evict another zone recovered channel-provider key', async () => {
+		let nowMs = 0;
+		const healthEventStore = new MutableLatestHealthEventStore();
+		const recoveredZoneIds: string[] = [];
+		const recoverGatewayVm = vi.fn(async (request: { readonly zoneId: string }) => {
+			recoveredZoneIds.push(request.zoneId);
+			return {
+				elapsedMs: 1,
+				leaseReleaseFailureCount: 0,
+				newBootedAt: '2026-05-27T13:01:00.000Z',
+				newHostPid: 2222,
+				newVmId: 'new-gateway-vm',
+				oldBootedAt: '2026-05-27T12:00:00.000Z',
+				oldHostPid: 1111,
+				oldVmId: 'old-gateway-vm',
+				result: 'ok' as const,
+			};
+		});
+		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart: {
+				...gatewayServiceAutoRestart,
+				channelProviderHealth: {
+					consecutiveFailureThreshold: 1,
+					enabled: true,
+					restartGatewayOnRecoverable: true,
+					restartGatewayOnUnrecoverable: false,
+					transitioningTimeoutMs: 120_000,
+				},
+				consecutiveFailureThreshold: 1,
+				cooldownMs: 0,
+			},
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async (zoneId: string) => ({
+				ok: true,
+				path: '/health',
+				port: 18789,
+				statusCode: 200,
+				zoneId,
+			})),
+			recoverGatewayVm,
+			staleAfterMs: 100_000,
+			zoneIds: ['victim-zone', 'attacker-zone'],
+		});
+		const victimEvent = {
+			channelProviderId: 'victim-provider',
+			details: { providerType: 'discord' },
+			health: 'unhealthy-recoverable',
+			kind: 'agent-channel-provider-health',
+			observedAtMs: 10_000,
+			result: 'failed',
+			unhealthySinceMs: 10_000,
+			zoneId: 'victim-zone',
+		} satisfies AgentVmHealthEvent;
+
+		nowMs = 10_000;
+		healthEventStore.setLatestEvents('victim-zone', [victimEvent]);
+		healthEventStore.setLatestEvents('attacker-zone', []);
+		await monitor.tick();
+
+		expect(recoverGatewayVm).toHaveBeenCalledTimes(1);
+		expect(recoverGatewayVm).toHaveBeenLastCalledWith({
+			consecutiveFailures: 1,
+			reason: 'agent-channel-provider-unhealthy',
+			zoneId: 'victim-zone',
+		});
+
+		for (let index = 0; index < 10_001; index += 1) {
+			nowMs = 20_000 + index;
+			healthEventStore.setLatestEvents('attacker-zone', [
+				{
+					channelProviderId: `attacker-provider-${String(index)}`,
+					details: { providerType: 'discord' },
+					health: 'unhealthy-recoverable',
+					kind: 'agent-channel-provider-health',
+					observedAtMs: nowMs,
+					result: 'failed',
+					unhealthySinceMs: nowMs,
+					zoneId: 'attacker-zone',
+				} satisfies AgentVmHealthEvent,
+			]);
+			await monitor.tick();
+		}
+
+		expect(recoveredZoneIds.filter((zoneId) => zoneId === 'victim-zone')).toHaveLength(1);
 	});
 
 	it('does not restart for a recoverable channel provider by default while gateway service is healthy', async () => {
@@ -1409,10 +1617,14 @@ describe('createGatewayServiceHealthMonitor', () => {
 			expect(recoverGatewayVm).toHaveBeenCalledOnce();
 		});
 		nowMs = 20_000;
-		const secondTickPromise = monitor.tick();
+		let secondTickSettled = false;
+		const secondTickPromise = monitor.tick().then(() => {
+			secondTickSettled = true;
+		});
 		await Promise.resolve();
 
 		expect(recoverGatewayVm).toHaveBeenCalledOnce();
+		expect(secondTickSettled).toBe(false);
 
 		resolveRecovery?.({
 			action: 'gateway-vm-restart',
@@ -1422,6 +1634,147 @@ describe('createGatewayServiceHealthMonitor', () => {
 		});
 		await firstTickPromise;
 		await secondTickPromise;
+	});
+
+	it('keeps one zone probing while another zone recovery is still in flight', async () => {
+		let nowMs = 0;
+		let resolveSlowRecovery: (() => void) | undefined;
+		const probeZoneHealth = vi.fn(async (zoneId: string) => ({
+			ok: zoneId === 'fast-zone',
+			path: '/health',
+			port: 18789,
+			statusCode: zoneId === 'fast-zone' ? 200 : 502,
+			zoneId,
+		}));
+		const recoverGatewayVm = vi.fn(
+			async (request): Promise<GatewayVmRecoveryResult> =>
+				await new Promise((resolve) => {
+					if (request.zoneId !== 'slow-zone') {
+						throw new Error(`unexpected recovery for ${request.zoneId}`);
+					}
+					resolveSlowRecovery = () =>
+						resolve({
+							action: 'gateway-vm-restart',
+							elapsedMs: 5_000,
+							errorCode: 'recovery-timeout',
+							oldVmId: 'old-gateway-vm',
+							result: 'failed',
+						});
+				}),
+		);
+		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart: {
+				...gatewayServiceAutoRestart,
+				consecutiveFailureThreshold: 1,
+				cooldownMs: 0,
+			},
+			healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth,
+			recoverGatewayVm,
+			staleAfterMs: 30_000,
+			zoneIds: ['slow-zone', 'fast-zone'],
+		});
+
+		nowMs = 10_000;
+		const firstTickPromise = monitor.tick();
+		await vi.waitFor(() => {
+			expect(recoverGatewayVm).toHaveBeenCalledOnce();
+		});
+		expect(probeZoneHealth.mock.calls.filter(([zoneId]) => zoneId === 'fast-zone')).toHaveLength(1);
+
+		nowMs = 20_000;
+		const secondTickPromise = monitor.tick();
+		await vi.waitFor(() => {
+			expect(probeZoneHealth.mock.calls.filter(([zoneId]) => zoneId === 'fast-zone')).toHaveLength(
+				2,
+			);
+		});
+		let secondTickSettled = false;
+		void secondTickPromise.then(() => {
+			secondTickSettled = true;
+		});
+		await Promise.resolve();
+		expect(secondTickSettled).toBe(false);
+
+		let stopSettled = false;
+		const stopPromise = monitor.stop().then(() => {
+			stopSettled = true;
+		});
+		await Promise.resolve();
+		expect(stopSettled).toBe(false);
+
+		resolveSlowRecovery?.();
+		await firstTickPromise;
+		await secondTickPromise;
+		await stopPromise;
+		expect(stopSettled).toBe(true);
+	});
+
+	it('does not start new zone work from a queued interval callback after stop begins', async () => {
+		let nowMs = 0;
+		let scheduledCallback: (() => void | Promise<void>) | undefined;
+		let resolveSlowRecovery: (() => void) | undefined;
+		const probeZoneHealth = vi.fn(async (zoneId: string) => ({
+			ok: zoneId === 'fast-zone',
+			path: '/health',
+			port: 18789,
+			statusCode: zoneId === 'fast-zone' ? 200 : 502,
+			zoneId,
+		}));
+		const recoverGatewayVm = vi.fn(
+			async (request): Promise<GatewayVmRecoveryResult> =>
+				await new Promise((resolve) => {
+					if (request.zoneId !== 'slow-zone') {
+						throw new Error(`unexpected recovery for ${request.zoneId}`);
+					}
+					resolveSlowRecovery = () =>
+						resolve({
+							action: 'gateway-vm-restart',
+							elapsedMs: 5_000,
+							errorCode: 'recovery-timeout',
+							oldVmId: 'old-gateway-vm',
+							result: 'failed',
+						});
+				}),
+		);
+		const monitor = createGatewayServiceHealthMonitor({
+			clearIntervalImpl: vi.fn(),
+			gatewayServiceAutoRestart: {
+				...gatewayServiceAutoRestart,
+				consecutiveFailureThreshold: 1,
+				cooldownMs: 0,
+			},
+			healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth,
+			recoverGatewayVm,
+			setIntervalImpl: (callback) => {
+				scheduledCallback = callback;
+				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+			},
+			staleAfterMs: 30_000,
+			zoneIds: ['slow-zone', 'fast-zone'],
+		});
+
+		monitor.start();
+		nowMs = 10_000;
+		const firstTickPromise = monitor.tick();
+		await vi.waitFor(() => {
+			expect(recoverGatewayVm).toHaveBeenCalledOnce();
+		});
+		expect(probeZoneHealth.mock.calls.filter(([zoneId]) => zoneId === 'fast-zone')).toHaveLength(1);
+
+		const stopPromise = monitor.stop();
+		await scheduledCallback?.();
+
+		expect(probeZoneHealth.mock.calls.filter(([zoneId]) => zoneId === 'fast-zone')).toHaveLength(1);
+
+		resolveSlowRecovery?.();
+		await firstTickPromise;
+		await stopPromise;
 	});
 
 	it('awaits an in-flight recovery tick when the monitor stops', async () => {
