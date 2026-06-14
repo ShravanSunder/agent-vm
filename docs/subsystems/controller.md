@@ -152,6 +152,35 @@ const runtime = await startControllerRuntime(options, {
 await runtime.close();
 ```
 
+### Caller Request Heartbeat
+
+Worker task runtimes can emit an external caller heartbeat when the controller
+process has `CALLER_URL` set. This is not an agent-vm HTTP route. It is a
+contract for the embedding caller that submitted the worker task: the caller
+must host:
+
+```text
+POST ${CALLER_URL}/tasks/{requestTaskId}/heartbeat
+```
+
+The controller strips one trailing slash from `CALLER_URL`, URL-encodes
+`requestTaskId`, and sends an empty `POST` body. The heartbeat starts when a
+worker task begins execution and stops when that task execution finishes or the
+controller runtime closes. If multiple worker runtimes reference the same
+`requestTaskId` and caller URL, the controller reference-counts the shared
+heartbeat handle.
+
+The default cadence is 10 seconds and each heartbeat request has a 5 second
+timeout. HTTP 404 and 410 are terminal caller responses: either status stops
+that task heartbeat permanently. Other non-2xx responses and transport failures
+are retryable; the controller warns on the first failure, the third consecutive
+failure, and then every tenth consecutive failure while continuing to retry.
+
+This caller heartbeat is separate from Tool VM active-use heartbeats on
+`POST /lease/:leaseId/uses/:useId/heartbeat`. The caller heartbeat tells an
+embedding host that a submitted worker request is still active; the lease
+heartbeat protects an in-flight Tool VM operation from idle expiry.
+
 `agent-vm controller ssh` intentionally exposes only an interactive SSH session.
 It must reject `-- <remote command>` and `--print` so the CLI does not become an
 unreviewed remote-command runner. Command execution inside a gateway VM is a

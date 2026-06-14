@@ -1,7 +1,9 @@
 # Plan 11 Docs Architecture Drift Report
 
-Status: steps 1-4 implemented and verified on branch
-`improve/plan-11-docs-architecture-drift`; heartbeat decision gate remains open.
+Status: complete on branch `improve/plan-11-docs-architecture-drift`.
+Heartbeat decision gate resolved 2026-06-14 by user direction: document the
+existing `CALLER_URL` heartbeat contract as-is and keep runtime backoff/rate
+limit changes as separate follow-up work.
 
 ## Scope Completed
 
@@ -16,6 +18,10 @@ Status: steps 1-4 implemented and verified on branch
   to `docs/subsystems/controller.md` as the authoritative route table, and the
   missing controller startup/key-subsystem notes.
 - Added `docs/subsystems/mcp-portal.md` to `docs/README.md`.
+- Documented the external caller request heartbeat contract in
+  `docs/subsystems/controller.md`: endpoint shape, caller ownership, cadence,
+  timeout, terminal statuses, retry warning cadence, and its separation from
+  Tool VM active-use lease heartbeats.
 
 ## Reading Coverage
 
@@ -52,19 +58,34 @@ pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worke
 
 Result: exit 0, 3 test files passed, 18 tests passed.
 
+Focused heartbeat/doc guard command after resolving the decision:
+
+```sh
+pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm-worker/src/state packages/agent-vm/src/controller/heartbeat-sender.unit.test.ts packages/agent-vm/src/controller/request-heartbeat-registry.unit.test.ts
+```
+
+Result: exit 0, 5 test files passed, 33 tests passed.
+
 ## Final Verification
 
 ```sh
 pnpm check
 ```
 
-Result: exit 0, 6 gates passed, 0 failed.
+Result: exit 0, 6 gates passed, 0 failed. The type-aware lint sub-gate printed
+existing warnings from script files, but the check gate status was pass.
 
 ```sh
 pnpm test:unit
 ```
 
 Result: exit 0, taxonomy passed, 200 test files passed, 1809 tests passed.
+
+```sh
+pnpm test:integration
+```
+
+Result: exit 0, 23 test files passed, 327 tests passed.
 
 ```sh
 pnpm lint
@@ -85,12 +106,10 @@ git diff --check
 
 Result: exit 0.
 
-## Decision Gate
+## Decision Gate Resolution
 
-The plan's step 5 remains blocked on the explicit heartbeat direction:
-
-- Document the existing `CALLER_URL` heartbeat contract, or
-- delete/split the feature in a separate code change.
+The plan's step 5 was resolved by documenting the existing `CALLER_URL`
+heartbeat contract. Runtime behavior was not changed in this docs slice.
 
 Verified current behavior in `heartbeat-sender.ts`: when `CALLER_URL` is set,
 the controller starts a caller heartbeat sender that posts to
@@ -100,14 +119,11 @@ warnings on the first, third consecutive, then every tenth consecutive failure.
 
 ## Not Run
 
-- `pnpm test:integration` was not required for the completed independent docs
-  slice. The plan required `pnpm check` and `pnpm test:unit` when the guard test
-  was added.
+- E2E lanes were not required for this docs/test slice and were not run.
 
 ## Branch State
 
 - Branch: `improve/plan-11-docs-architecture-drift`
 - Stack base: `origin/improve/plan-09-task-event-stream-and-embedding` at
   `3953657`
-- Current status: ready for heartbeat decision before Plan 11 can be called
-  complete.
+- Current status: complete and ready for review/integration.
