@@ -40,6 +40,7 @@ export interface ControllerRuntimeDependencies {
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadiness;
 	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
 	readonly createManagedToolVm?: (options: {
+		readonly agentId: string;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;

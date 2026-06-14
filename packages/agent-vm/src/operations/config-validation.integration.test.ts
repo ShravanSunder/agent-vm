@@ -438,6 +438,98 @@ describe('runConfigValidation', () => {
 		});
 	});
 
+	it('reports Tool VM mediated secret agent access', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await updateJsonFile(systemConfigPath, (systemConfig) => {
+			const zones = systemConfig.zones;
+			if (!Array.isArray(zones)) {
+				throw new Error('Expected zones array.');
+			}
+			const zone = zones[0];
+			if (typeof zone !== 'object' || zone === null || Array.isArray(zone)) {
+				throw new Error('Expected first zone object.');
+			}
+			const zoneRecord = zone as Record<string, unknown>;
+			zoneRecord.agents = [{ id: 'sun' }, { id: 'mak' }];
+			zoneRecord.egressHosts = [
+				{ host: 'api.openai.com', audience: 'gateway' },
+				{ host: 'api.github.com', audience: 'both' },
+				{ host: 'api.linear.app', audience: 'tool-vm' },
+			];
+			zoneRecord.secrets = {
+				...(zoneRecord.secrets as Record<string, unknown>),
+				GITHUB_TOKEN: {
+					source: 'environment',
+					envVar: 'GITHUB_TOKEN',
+					injection: 'http-mediation',
+					audience: 'both',
+					hosts: ['api.github.com'],
+					agentAccess: ['sun'],
+				},
+				LINEAR_API_KEY: {
+					source: 'environment',
+					envVar: 'LINEAR_API_KEY',
+					injection: 'http-mediation',
+					audience: 'tool-vm',
+					hosts: ['api.linear.app'],
+					agentAccess: 'all',
+				},
+			};
+		});
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.checks).toContainEqual({
+			name: 'zone-agent-secret-access-shravan-GITHUB_TOKEN',
+			ok: true,
+			hint: 'tool-vm: sun; gateway: zone-wide',
+		});
+		expect(result.checks).toContainEqual({
+			name: 'zone-agent-secret-access-shravan-LINEAR_API_KEY',
+			ok: true,
+			hint: 'tool-vm: all declared agents',
+		});
+	});
+
+	it('rejects Tool VM mediated secret agent access before validation checks run when agents are undeclared', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await updateJsonFile(systemConfigPath, (systemConfig) => {
+			const zones = systemConfig.zones;
+			if (!Array.isArray(zones)) {
+				throw new Error('Expected zones array.');
+			}
+			const zone = zones[0];
+			if (typeof zone !== 'object' || zone === null || Array.isArray(zone)) {
+				throw new Error('Expected first zone object.');
+			}
+			const zoneRecord = zone as Record<string, unknown>;
+			delete zoneRecord.agents;
+			zoneRecord.egressHosts = [
+				{ host: 'api.openai.com', audience: 'gateway' },
+				{ host: 'api.github.com', audience: 'tool-vm' },
+			];
+			zoneRecord.secrets = {
+				...(zoneRecord.secrets as Record<string, unknown>),
+				GITHUB_TOKEN: {
+					source: 'environment',
+					envVar: 'GITHUB_TOKEN',
+					injection: 'http-mediation',
+					audience: 'tool-vm',
+					hosts: ['api.github.com'],
+					agentAccess: 'all',
+				},
+			};
+		});
+
+		await expect(loadSystemConfig(systemConfigPath)).rejects.toThrow(/zones\[\]\.agents is empty/u);
+	});
+
 	it('fails when a portal profile references a namespace without an MCP provider', async () => {
 		const systemConfig = await createSystemConfigWithLiveMcpFiles({
 			mcpConfig: {

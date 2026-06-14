@@ -15,6 +15,8 @@ const execFileAsync = promisify(execFile);
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 
 const rawGithubToken = 'real-github-token-for-mediated-env-live-test';
+const rawSunToken = 'real-sun-token-for-mediated-env-live-test';
+const rawMakToken = 'real-mak-token-for-mediated-env-live-test';
 
 async function createTemporaryDirectory(): Promise<string> {
 	return await mkdtemp(path.join(os.tmpdir(), 'agent-vm-live-mediated-env-'));
@@ -66,7 +68,11 @@ async function createMediatedEnvSystemConfig(
 				{
 					agentToolVmProfiles: {},
 					defaultToolVmProfile: 'standard',
-					egressHosts: [{ host: 'api.github.com', audience: 'tool-vm' }],
+					egressHosts: [
+						{ host: 'api.github.com', audience: 'tool-vm' },
+						{ host: 'auth.sun.test', audience: 'tool-vm' },
+						{ host: 'auth.mak.test', audience: 'tool-vm' },
+					],
 					gateway: {
 						type: 'openclaw',
 						controlAuth: {
@@ -82,6 +88,7 @@ async function createMediatedEnvSystemConfig(
 						zoneFilesDir,
 					},
 					id: 'shravan',
+					agents: [{ id: 'shravan' }, { id: 'sun' }, { id: 'mak' }],
 					secrets: {
 						GITHUB_TOKEN: {
 							source: 'config',
@@ -89,6 +96,23 @@ async function createMediatedEnvSystemConfig(
 							injection: 'http-mediation',
 							audience: 'tool-vm',
 							hosts: ['api.github.com'],
+							agentAccess: ['shravan'],
+						},
+						SUN_ONLY_TOKEN: {
+							source: 'config',
+							value: rawSunToken,
+							injection: 'http-mediation',
+							audience: 'tool-vm',
+							hosts: ['auth.sun.test'],
+							agentAccess: ['sun'],
+						},
+						MAK_ONLY_TOKEN: {
+							source: 'config',
+							value: rawMakToken,
+							injection: 'http-mediation',
+							audience: 'tool-vm',
+							hosts: ['auth.mak.test'],
+							agentAccess: ['mak'],
 						},
 						OPENCLAW_GATEWAY_TOKEN: {
 							source: 'config',
@@ -140,7 +164,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 		}
 	});
 
-	it('makes http-mediated placeholders visible to the same non-login SSH shell path OpenClaw uses', async () => {
+	it('makes scoped http-mediated placeholders visible only to the allowed Tool VM agent', async () => {
 		temporaryDirectory = await createTemporaryDirectory();
 		const systemConfig = await createMediatedEnvSystemConfig(temporaryDirectory);
 		const zone = systemConfig.zones[0];
@@ -156,6 +180,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 		await mkdir(hostWorkMountDir, { recursive: true });
 		const toolVm = await createToolVm(
 			{
+				agentId: 'shravan',
 				cacheDir: systemConfig.cacheDir,
 				hostWorkMountDir,
 				profile,
@@ -195,5 +220,75 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 		} finally {
 			await toolVm.close();
 		}
-	}, 90_000);
+
+		const sunWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'sun');
+		await mkdir(sunWorkMountDir, { recursive: true });
+		const sunToolVm = await createToolVm(
+			{
+				agentId: 'sun',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkMountDir: sunWorkMountDir,
+				profile,
+				secretResolver: createStaticSecretResolver({}),
+				systemConfig,
+				tcpSlot: 1,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'default-gondolin-image',
+					imagePath: '',
+				}),
+			},
+		);
+
+		try {
+			const scopedPlaceholderResult = await sunToolVm.exec(
+				'printf "%s|%s" "${SUN_ONLY_TOKEN-__unset__}" "${MAK_ONLY_TOKEN-__unset__}"',
+			);
+			expect(scopedPlaceholderResult.exitCode).toBe(0);
+			const [sunPlaceholder, makPlaceholder] = scopedPlaceholderResult.stdout.split('|');
+			expect(sunPlaceholder).toBeTruthy();
+			expect(sunPlaceholder).not.toBe(rawSunToken);
+			expect(makPlaceholder).toBe('__unset__');
+		} finally {
+			await sunToolVm.close();
+		}
+
+		const makWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'mak');
+		await mkdir(makWorkMountDir, { recursive: true });
+		const makToolVm = await createToolVm(
+			{
+				agentId: 'mak',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkMountDir: makWorkMountDir,
+				profile,
+				secretResolver: createStaticSecretResolver({}),
+				systemConfig,
+				tcpSlot: 2,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'default-gondolin-image',
+					imagePath: '',
+				}),
+			},
+		);
+
+		try {
+			const scopedPlaceholderResult = await makToolVm.exec(
+				'printf "%s|%s" "${SUN_ONLY_TOKEN-__unset__}" "${MAK_ONLY_TOKEN-__unset__}"',
+			);
+			expect(scopedPlaceholderResult.exitCode).toBe(0);
+			const [sunPlaceholder, makPlaceholder] = scopedPlaceholderResult.stdout.split('|');
+			expect(sunPlaceholder).toBe('__unset__');
+			expect(makPlaceholder).toBeTruthy();
+			expect(makPlaceholder).not.toBe(rawMakToken);
+		} finally {
+			await makToolVm.close();
+		}
+	}, 180_000);
 });
