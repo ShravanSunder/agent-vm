@@ -2342,13 +2342,17 @@ describe('startControllerRuntime', () => {
 				maxRequestedMs: 60_000,
 				minRequestedMs: 1_000,
 			},
+			tcpPool: { basePort: 19000, size: 1 },
 		} satisfies LoadedSystemConfig;
 		const runtimeZone = runtimeSystemConfig.zones[0];
 		if (!runtimeZone) {
 			throw new Error('Expected runtime test zone.');
 		}
 		let now = 1_000;
-		let runReaper: (() => void | Promise<void>) | undefined;
+		const intervalCallbacks: {
+			readonly callback: () => void | Promise<void>;
+			readonly delayMs?: number;
+		}[] = [];
 		let startHttpServerArgs:
 			| {
 					app: {
@@ -2360,7 +2364,19 @@ describe('startControllerRuntime', () => {
 		const fakeInterval = setTimeout(() => undefined, 0);
 		clearTimeout(fakeInterval);
 		try {
-			const closeToolVm = vi.fn(async () => {});
+			let failNextToolVmClose = true;
+			const closeToolVm = vi.fn(async () => {
+				if (failNextToolVmClose) {
+					failNextToolVmClose = false;
+					throw new Error('close hung');
+				}
+			});
+			let currentProcessIdentity = {
+				command: 'qemu-system-x86_64 -m 1G',
+				lstart: 'Fri May 22 10:00:00 2026',
+			};
+			const isProcessAlive = vi.fn(() => true);
+			const readProcessIdentity = vi.fn(async () => currentProcessIdentity);
 			const runtime = await startControllerRuntime(
 				{
 					systemConfig: runtimeSystemConfig,
@@ -2390,18 +2406,15 @@ describe('startControllerRuntime', () => {
 						resolve: async () => '',
 						resolveAll: async () => ({}),
 					}),
-					isProcessAlive: () => true,
-					readProcessIdentity: async () => ({
-						command: 'qemu-system-x86_64 -m 1G',
-						lstart: 'Fri May 22 10:00:00 2026',
-					}),
+					isProcessAlive,
+					readProcessIdentity,
 					now: () => now,
 					readIdentityPem: async () => 'pem',
 					runTask: async (_title, fn) => {
 						await fn();
 					},
-					setIntervalImpl: (callback) => {
-						runReaper ??= callback;
+					setIntervalImpl: (callback, delayMs) => {
+						intervalCallbacks.push({ callback, delayMs });
 						return fakeInterval;
 					},
 					startGatewayZone: vi.fn(async () => ({
@@ -2445,8 +2458,13 @@ describe('startControllerRuntime', () => {
 			if (!startHttpServerArgs) {
 				throw new Error('Expected startHttpServer to be called.');
 			}
-			if (!runReaper) {
-				throw new Error('Expected lease reaper callback to be registered.');
+			const leaseReaperIntervals = intervalCallbacks.filter(
+				(interval) => interval.delayMs === 60_000,
+			);
+			expect(leaseReaperIntervals).toHaveLength(1);
+			const leaseReaper = leaseReaperIntervals[0];
+			if (!leaseReaper) {
+				throw new Error('Expected lease reaper callback.');
 			}
 			const runtimeStatusResponse = await startHttpServerArgs.app.request(
 				'/zones/shravan/openclaw-runtime-status',
@@ -2491,9 +2509,27 @@ describe('startControllerRuntime', () => {
 			expect(activeUseResponse.status).toBe(200);
 
 			now = 123_001;
-			await runReaper();
+			currentProcessIdentity = {
+				command: '/usr/bin/python3 unrelated.py',
+				lstart: 'Fri May 22 10:00:01 2026',
+			};
+			await leaseReaper.callback();
 
 			expect(closeToolVm).toHaveBeenCalledTimes(1);
+			expect(isProcessAlive).toHaveBeenCalledWith(12345);
+			expect(readProcessIdentity).toHaveBeenCalledWith(12345);
+			const recoveredLeaseResponse = await startHttpServerArgs.app.request('/lease', {
+				body: JSON.stringify(
+					createLeaseRequestBody({
+						agentId: 'active-use-reap-recovered',
+						sessionKey: 'agent:active-use-reap-recovered:controller-runtime-test',
+					}),
+				),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			});
+			const recoveredLeasePayload: unknown = await recoveredLeaseResponse.json();
+			expect(recoveredLeaseResponse.status, JSON.stringify(recoveredLeasePayload)).toBe(200);
 			await runtime.close();
 		} finally {
 			await rm(tempRoot, { recursive: true, force: true });
