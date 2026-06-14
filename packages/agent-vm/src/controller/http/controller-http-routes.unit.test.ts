@@ -3864,6 +3864,79 @@ describe('createControllerApp', () => {
 		expect(getTaskState).toHaveBeenCalledWith('shravan', 'missing');
 	});
 
+	it('streams task events through GET /zones/:zoneId/tasks/:taskId/events', async () => {
+		const streamTaskEvents = vi.fn(async function* () {
+			const prepared = createPreparedWorkerTaskStub('worker-task-1');
+			yield {
+				id: 0,
+				event: {
+					ts: '2026-06-12T00:00:00.000Z',
+					data: {
+						event: 'task-accepted' as const,
+						taskId: 'worker-task-1',
+						config: {
+							context: prepared.input.context,
+							effectiveConfig: prepared.preStartResult.effectiveConfig,
+							prompt: prepared.input.prompt,
+							repos: [],
+							taskId: prepared.taskId,
+						},
+					},
+				},
+			};
+			yield {
+				id: 1,
+				event: {
+					ts: '2026-06-12T00:00:01.000Z',
+					data: { event: 'task-completed' as const },
+				},
+			};
+		});
+		const app = createControllerAppForTest({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				streamTaskEvents,
+				upgradeZone: vi.fn(async () => ({})),
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '1G',
+				},
+			},
+		});
+
+		const response = await app.request('/zones/shravan/tasks/worker-task-1/events?after=3', {
+			headers: { accept: 'text/event-stream' },
+		});
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('content-type')).toContain('text/event-stream');
+		expect(streamTaskEvents).toHaveBeenCalledWith(
+			'shravan',
+			'worker-task-1',
+			expect.objectContaining({ afterLineIndex: 3 }),
+		);
+		const body = await response.text();
+		expect(body).toContain('event: task-accepted');
+		expect(body).toContain('id: 0');
+		expect(body).toContain('event: task-completed');
+		expect(body).toContain('id: 1');
+	});
+
 	it('proxies close through the configured close operation', async () => {
 		const closeTaskForZone = vi.fn(async () => ({ status: 'closed' as const }));
 		const app = createControllerAppForTest({

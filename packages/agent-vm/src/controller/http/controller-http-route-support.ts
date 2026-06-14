@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 
 import type { Lease, LeaseManager } from '../leases/lease-manager.js';
+import type { TaskEventStreamRecord } from '../task-event-stream.js';
 import type {
 	PreparedWorkerTask,
 	WorkerTaskInput,
@@ -57,6 +58,14 @@ export interface ControllerRouteOperations {
 	) => Promise<unknown>;
 	readonly getStatus: () => Promise<unknown>;
 	readonly getTaskState?: (zoneId: string, taskId: string) => Promise<unknown>;
+	readonly streamTaskEvents?: (
+		zoneId: string,
+		taskId: string,
+		options: {
+			readonly afterLineIndex?: number;
+			readonly signal?: AbortSignal;
+		},
+	) => AsyncIterable<TaskEventStreamRecord>;
 	readonly getZoneHealth?: (
 		zoneId: string,
 	) => Promise<{ readonly ok: boolean } & Record<string, unknown>>;

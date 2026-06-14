@@ -114,6 +114,7 @@ must be translated immediately to controller `workMountDir`.
 - `GET /health` — readiness
 - `POST /zones/:zoneId/worker-tasks` — start worker task, returns `202 { taskId, status: "accepted" }`
 - `GET /zones/:zoneId/tasks/:taskId` — replayed worker task state snapshot
+- `GET /zones/:zoneId/tasks/:taskId/events` — SSE stream of worker task JSONL events
 - `POST /zones/:zoneId/tasks/:taskId/push-branches` — controller-side git push
 - `POST /zones/:zoneId/tasks/:taskId/pull-default` — controller-side default/current branch refresh
 - `POST /zones/:zoneId/tasks/:taskId/close` — request task cancellation
