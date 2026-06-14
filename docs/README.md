@@ -37,6 +37,7 @@ docs/
     controller.md
     gateway-lifecycle.md
     gondolin-vm-layer.md
+    mcp-portal.md
     secrets-and-credentials.md
     worker-task-pipeline.md
 

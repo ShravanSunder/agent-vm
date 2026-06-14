@@ -225,33 +225,39 @@ Once the worker receives a task, it runs a deterministic 6-phase pipeline. Three
 The task moves through these statuses:
 
 ```
-  pending --> planning --> reviewing-plan --> working --> verifying --> reviewing-work --> wrapping-up
-                                                                                            |
-                                                                    +----------+----------+-+
-                                                                    |          |          |
-                                                                completed   failed     closed
-                                                               (success)   (gave up)  (user stopped)
+  pending --> plan-agent --> plan-reviewer --> work-agent --> work-reviewer --> wrapup
+                                                                                  |
+                                                             +----------+---------+--------+
+                                                             |          |                  |
+                                                         completed   failed             closed
+                                                        (success)   (gave up)       (user stopped)
 ```
 
 ```mermaid
 stateDiagram-v2
     [*] --> pending
-    pending --> planning
-    planning --> reviewing_plan : plan created
-    reviewing_plan --> working : approved
-    reviewing_plan --> planning : revision needed (max 2)
-    reviewing_plan --> failed : max loops exceeded
-    working --> verifying : code written
-    verifying --> reviewing_work : all pass
-    verifying --> working : fix needed (max 3)
-    verifying --> failed : max retries exceeded
-    reviewing_work --> wrapping_up : approved
-    reviewing_work --> working : changes requested (max 3)
-    reviewing_work --> failed : max loops exceeded
-    wrapping_up --> completed : PR created
-    wrapping_up --> failed : required action failed
+    pending --> plan_agent : plan phase starts
+    plan_agent --> plan_reviewer : plan reviewer turn
+    plan_reviewer --> plan_agent : revision needed
+    plan_reviewer --> work_agent : plan finalized
+    plan_agent --> failed : task failed
+    plan_reviewer --> failed : max review loops exceeded
+    work_agent --> work_reviewer : work reviewer turn
+    work_reviewer --> work_agent : changes requested
+    work_agent --> failed : task failed
+    work_reviewer --> failed : max review loops exceeded
+    work_reviewer --> wrapup : approved
+    wrapup --> completed : task completed
+    wrapup --> failed : required action failed
+    pending --> closed : task closed
+    plan_agent --> closed : task closed
+    plan_reviewer --> closed : task closed
+    work_agent --> closed : task closed
+    work_reviewer --> closed : task closed
+    wrapup --> closed : task closed
     completed --> [*]
     failed --> [*]
+    closed --> [*]
 ```
 
 ### The 6 Phases
@@ -427,7 +433,7 @@ The worker never mutates state directly. Instead, every state change is recorded
 ### How It Works
 
 ```
-  Event happens (e.g., plan was created)
+  Event happens (e.g., plan agent turn recorded)
         |
         |  1. Append to /state/tasks/{taskId}.jsonl
         |  2. Run applyEvent(currentState, event) -> newState
@@ -438,9 +444,10 @@ The worker never mutates state directly. Instead, every state change is recorded
 
     {"ts":"10:00:00","data":{"event":"task-accepted","taskId":"t-001","config":{...}}}
     {"ts":"10:00:01","data":{"event":"phase-started","phase":"plan"}}
-    {"ts":"10:01:30","data":{"event":"plan-created","plan":"Step 1: ...","threadId":"th_abc"}}
+    {"ts":"10:01:30","data":{"event":"plan-agent-turn","cycle":0,"threadId":"th_abc","tokenCount":1200}}
+    {"ts":"10:01:31","data":{"event":"plan-finalized","plan":"Step 1: ..."}}
     {"ts":"10:01:31","data":{"event":"phase-completed","phase":"plan"}}
-    {"ts":"10:01:32","data":{"event":"phase-started","phase":"plan-review","loop":1}}
+    {"ts":"10:01:32","data":{"event":"phase-started","phase":"work"}}
     ...
 ```
 
@@ -462,19 +469,30 @@ The worker never mutates state directly. Instead, every state change is recorded
   In-memory map of all task states, ready to serve via HTTP
 ```
 
-### All 11 Event Types
+### Worker Task Event Types
 
 | Event | When It Fires | What It Records |
 |---|---|---|
 | `task-accepted` | Task submitted | Task ID, full config, prompt |
-| `phase-started` | Entering a phase | Which phase, loop number (if retry) |
-| `phase-completed` | Exiting a phase | Which phase, token count |
-| `plan-created` | Plan generated or revised | Plan text, LLM thread ID |
-| `work-started` | Code execution begins | LLM thread ID |
-| `review-result` | Plan or work reviewed | Approved/rejected, summary, comments |
-| `verification-result` | Tests/lint ran | Per-command pass/fail, exit codes, output |
-| `fix-applied` | Agent fixed an issue | Token count |
-| `wrapup-result` | PR created, Slack posted | Per-action success/fail, artifacts (PR URL) |
+| `context-gather-failed` | Repo context scan failed before the main phases | Failure reason |
+| `phase-started` | Entering a phase | Phase name |
+| `phase-completed` | Exiting a phase | Phase name |
+| `plan-agent-turn` | Plan agent returns or revises a plan | Cycle, thread ID, token count |
+| `plan-reviewer-turn` | Plan reviewer returns feedback | Cycle, thread ID, token count, review |
+| `plan-finalized` | Plan is accepted for work | Final plan text |
+| `work-agent-turn` | Work agent writes or revises code | Cycle, thread ID, token count |
+| `work-reviewer-turn` | Work reviewer returns feedback and validation results | Cycle, thread ID, token count, review, validation results |
+| `wrapup-turn` | Wrapup agent runs final branch/PR work | Thread ID, token count |
+| `wrapup-result` | Wrapup artifacts are collected | PR URL, branch name, pushed commits |
+| `controller-git-push-started` | Worker asks the host controller to push a branch | Repo URL, branch |
+| `controller-git-push-retry` | Host-side push retries after a transient failure | Repo URL, branch, attempt count, phase, retry delay |
+| `controller-git-push-fetch-retry` | Host-side fetch around push retries | Repo URL, branch, attempt count, retry delay |
+| `controller-git-push-succeeded` | Host-side push completes | Repo URL, branch, attempt count, local and remote heads |
+| `controller-git-push-failed` | Host-side push exhausts or hits a non-retryable failure | Repo URL, branch, attempt count, message |
+| `controller-git-pull-started` | Worker asks the host controller to refresh the default branch | Repo URL |
+| `controller-git-pull-retry` | Host-side pull/default refresh retries | Repo URL, attempt count, retry delay |
+| `controller-git-pull-succeeded` | Host-side pull/default refresh completes | Repo URL, default branch, local and remote heads |
+| `controller-git-pull-failed` | Host-side pull/default refresh fails | Repo URL, attempt count, message |
 | `task-completed` | Pipeline finished | (terminal) |
 | `task-failed` | Something went wrong | Failure reason |
 | `task-closed` | User stopped the task | (terminal, user-initiated) |
@@ -690,59 +708,61 @@ Here's a concrete trace of a successful task from start to finish:
                                                 Status: pending
 
                                                 --- PLAN ---
-                                                Status: planning
+                                                Status: plan-agent
                                                 Bootstrap /work/repos repo files
                                                 from /gitdirs/repo.git
                                                 Scan /work/repos (file tree, CLAUDE.md)
                                                 Ask LLM: "Create a plan for pagination"
                                                 LLM returns plan text
-                                                Emit: plan-created
+                                                Emit: plan-agent-turn
 
                                                 --- PLAN REVIEW ---
-                                                Status: reviewing-plan
+                                                Status: plan-reviewer
                                                 Ask separate LLM: "Review this plan"
                                                 LLM returns { approved: true }
-                                                Emit: review-result (approved)
+                                                Emit: plan-reviewer-turn (approved)
+                                                Emit: plan-finalized
 
                                                 --- WORK ---
-                                                Status: working
+                                                Status: work-agent
                                                 Ask LLM: "Implement this plan"
                                                 LLM writes code to /work/repos
-                                                Emit: work-started
+                                                Emit: work-agent-turn
 
                                                 --- VERIFICATION (attempt 1) ---
-                                                Status: verifying
+                                                Status: work-reviewer
                                                 Run: npm test     -> PASS
                                                 Run: npm run lint  -> FAIL (exit 1)
-                                                Emit: verification-result
+                                                Ask reviewer to inspect diff
+                                                Emit: work-reviewer-turn
+                                                  validationResults include lint failure
 
                                                 --- FIX ---
-                                                Status: working
+                                                Status: work-agent
                                                 Ask SAME LLM thread: "Lint failed, fix it"
                                                 LLM fixes the code
-                                                Emit: fix-applied
+                                                Emit: work-agent-turn
 
                                                 --- VERIFICATION (attempt 2) ---
-                                                Status: verifying
+                                                Status: work-reviewer
                                                 Run: npm test     -> PASS
                                                 Run: npm run lint  -> PASS
-                                                Emit: verification-result
-
-                                                --- WORK REVIEW ---
-                                                Status: reviewing-work
                                                 Ask LLM to review the git diff
                                                 LLM returns { approved: true }
-                                                Emit: review-result (approved)
+                                                Emit: work-reviewer-turn (approved)
 
                                                 --- WRAPUP ---
-                                                Status: wrapping-up
+                                                Status: wrapup
                                                 Start MCP tools
                                                 LLM calls git-push:
                                                   Create branch agent/t-001
                                                   Stage & commit with co-author
                                                   Call controller push-branches API
                                                   Controller pushes branch
+                                                Emit: controller-git-push-started
+                                                Emit: controller-git-push-succeeded
                                                 LLM runs gh pr create
+                                                Emit: wrapup-turn
                                                 Emit: wrapup-result (PR URL)
                                                 Emit: task-completed
                                                 Status: completed

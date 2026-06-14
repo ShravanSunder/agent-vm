@@ -51,9 +51,12 @@ fast formatting and linting.
 - Integration tests: `pnpm test:integration`.
 - E2E inventory: `pnpm test:e2e:inventory`.
 - Default non-secret E2E proof: `mise exec -- pnpm test:e2e`.
-- Full quality gate: `pnpm check`.
-  This includes the `@agent-vm/*` package version sync guard used by the
-  publish script.
+- Static quality gate: `pnpm check`.
+  This includes formatting, type-aware lint, typecheck, test taxonomy, Zod
+  version, and the `@agent-vm/*` package version sync guard used by the publish
+  script. It does not run the unit or integration suites; run
+  `pnpm test:unit` and `pnpm test:integration` separately before claiming done
+  when tests are in scope.
 - OXC formatting: `pnpm fmt:check` to verify, `pnpm fmt` to apply Oxfmt.
 - OXC linting: `pnpm lint` for Oxlint, `pnpm lint:types` for type-aware Oxlint.
 - Typecheck: `pnpm typecheck`.
@@ -77,12 +80,16 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 ## Packages
 
 ```text
-gondolin-adapter          → VM build pipeline, adapter, secret resolver (no internal deps)
-gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter)
-openclaw-gateway          → OpenClaw lifecycle (→ gateway-interface, gondolin-adapter)
+secret-management         → SecretRef/SecretResolver contracts, env + 1Password resolution
+config-contracts          → Shared config schemas/helpers for host and portal config
+gondolin-adapter          → VM build pipeline and adapter (→ secret-management)
+gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter, secret-management)
+mcp-portal                → MCP provider/profile policy runtime (→ config-contracts, secret-management)
+openclaw-gateway          → OpenClaw lifecycle (→ gateway-interface, gondolin-adapter, secret-management)
 worker-gateway            → Worker lifecycle (→ gateway-interface, gondolin-adapter)
-openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ gondolin-adapter)
-agent-vm-worker           → Worker process, runs inside VM (standalone)
+openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ gateway-interface, gondolin-adapter)
+openclaw-mcp-portal-plugin → OpenClaw-facing MCP Portal plugin (→ config-contracts, mcp-portal)
+agent-vm-worker           → Worker process, runs inside VM (→ gateway-interface)
 agent-vm                  → Controller CLI + HTTP server (→ all above)
 ```
 
