@@ -10,6 +10,7 @@ import type {
 	preflightGatewayZoneStart,
 	startGatewayZone,
 } from '../gateway/gateway-zone-orchestrator.js';
+import type { checkObservabilityStackReadiness } from '../observability/observability-readiness.js';
 import type { ControllerRuntimeZoneStatus } from '../operations/controller-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
@@ -36,6 +37,7 @@ export interface ControllerRuntimeDependencies {
 	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
 	readonly clearTimeoutImpl?: (timer: NodeJS.Timeout) => void;
 	readonly appendDurableHealthEvent?: typeof appendDurableHealthEvent;
+	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadiness;
 	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
 	readonly createManagedToolVm?: (options: {
 		readonly profile: ToolVmProfile;

@@ -40,6 +40,13 @@ import {
 } from '../build/zig-compatibility.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import { createObservabilityRuntimeConfig } from '../observability/observability-config.js';
+import {
+	prepareObservabilityStack as prepareObservabilityStackDefault,
+	resolveBuildObservabilityConfig,
+	type PrepareObservabilityStackOptions,
+	type PrepareObservabilityStackResult,
+} from '../observability/observability-lifecycle.js';
 import type {
 	RunTaskContext,
 	RunTaskFn,
@@ -98,6 +105,9 @@ export interface BuildCommandDependencies {
 		targetDir: string,
 		profileName: string,
 	) => Promise<'created' | 'skipped'>;
+	readonly prepareObservabilityStack?: (
+		options: PrepareObservabilityStackOptions,
+	) => Promise<PrepareObservabilityStackResult>;
 }
 
 const ociImageTagSchema = z.object({
@@ -135,6 +145,8 @@ const openClawManagedPackageRules = [
 		isEnabled: (config) => config.channels?.discord?.enabled === true,
 	},
 ] as const satisfies readonly OpenClawManagedPackageRule[];
+
+const diagnosticsOtelOpenClawPackageName = '@openclaw/diagnostics-otel';
 
 interface ImageTarget {
 	readonly buildConfigPath: string;
@@ -509,6 +521,9 @@ async function resolveRequiredOpenClawPackagesForTarget(
 		if (zone.gateway.type !== 'openclaw' || zone.gateway.imageProfile !== imageTarget.name) {
 			continue;
 		}
+		if (zone.observability?.enabled === true) {
+			requiredPackageNames.add(diagnosticsOtelOpenClawPackageName);
+		}
 		// oxlint-disable-next-line no-await-in-loop -- zone config reads are tiny and error messages stay profile-local
 		const rawOpenClawConfig = await loadJsonConfigFile(zone.gateway.config);
 		const openClawConfig = openClawManagedPackageConfigSchema.parse(rawOpenClawConfig);
@@ -706,6 +721,7 @@ function createGondolinPhaseTaskOutput(
 export async function runBuildCommand(
 	options: {
 		readonly forceRebuild?: boolean;
+		readonly skipObservability?: boolean;
 		readonly systemConfig: LoadedSystemConfig;
 	},
 	dependencies: BuildCommandDependencies = {},
@@ -740,6 +756,8 @@ export async function runBuildCommand(
 		dependencies.resolveManagedImageRelease ?? resolveManagedImageReleaseDefault;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
+	const prepareObservabilityStack =
+		dependencies.prepareObservabilityStack ?? prepareObservabilityStackDefault;
 
 	if (shouldAssertZigBuildPrerequisite()) {
 		await assertZigBuildPrerequisite(resolveRequiredZigVersion, resolveZigVersion);
@@ -1051,4 +1069,80 @@ export async function runBuildCommand(
 			taskContext?.setStatus('image cache auto-prune failed');
 		}
 	});
+
+	if (options.skipObservability === true) {
+		await runTaskStep('Observability stack', async (taskContext) => {
+			taskContext?.setStatus('observability stack skipped');
+			taskContext?.setOutput({
+				message: 'Host observability preparation skipped for this build run (--no-observability).',
+			});
+		});
+		return;
+	}
+
+	const runtimeObservabilityConfig = createObservabilityRuntimeConfig(options.systemConfig);
+	if (!runtimeObservabilityConfig.enabled) {
+		if (options.systemConfig.host.observability?.enabled !== false) {
+			return;
+		}
+		await runTaskStep('Observability stack', async (taskContext) => {
+			taskContext?.setStatus('observability disabled');
+			taskContext?.setOutput({
+				message: 'Host observability disabled for this deployment.',
+			});
+		});
+		return;
+	}
+
+	if (!runtimeObservabilityConfig.prepareOnBuild) {
+		await runTaskStep('Observability stack', async (taskContext) => {
+			taskContext?.setStatus('observability stack skipped');
+			taskContext?.setOutput({
+				message: 'Host observability preparation skipped because prepareOnBuild is false.',
+			});
+		});
+		return;
+	}
+
+	if (runtimeObservabilityConfig.stackMode === 'external') {
+		await runTaskStep('Observability stack', async (taskContext) => {
+			taskContext?.setStatus('external observability stack');
+			taskContext?.setOutput({
+				message:
+					'Host observability uses an external observability stack; Docker Compose is not managed by this deployment.',
+			});
+		});
+		return;
+	}
+
+	if (runtimeObservabilityConfig.zones.length === 0) {
+		await runTaskStep('Observability stack', async (taskContext) => {
+			taskContext?.setStatus('observability stack skipped');
+			taskContext?.setOutput({
+				message: 'Host observability preparation skipped because no OpenClaw zone opted in.',
+			});
+		});
+		return;
+	}
+
+	const observabilityConfig = resolveBuildObservabilityConfig(options.systemConfig);
+	if (observabilityConfig !== undefined) {
+		await runTaskStep('Observability stack', async (taskContext) => {
+			taskContext?.setStatus(
+				observabilityConfig.waitOnBuild
+					? 'starting observability stack and waiting'
+					: 'starting observability stack',
+			);
+			const result = await prepareObservabilityStack({
+				config: observabilityConfig,
+				wait: observabilityConfig.waitOnBuild,
+			});
+			taskContext?.setStatus(
+				result.status === 'ready' ? 'observability stack ready' : 'observability stack started',
+			);
+			taskContext?.setOutput({
+				message: `Host observability stack ${result.status}. Rendered ${path.basename(result.composePath)} and ${path.basename(result.collectorConfigPath)}.`,
+			});
+		});
+	}
 }

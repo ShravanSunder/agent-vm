@@ -13,8 +13,13 @@ import {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
+import {
+	createObservabilityRuntimeConfig,
+	type ObservabilityRuntimeConfig,
+} from '../observability/observability-config.js';
+import { checkObservabilityStackReadiness as checkObservabilityStackReadinessDefault } from '../observability/observability-readiness.js';
 import { assertOpenClawToolVmRequirements } from '../operations/openclaw-deployment-requirements.js';
-import { runTaskWithResult } from '../shared/run-task.js';
+import { runTaskWithResult, type RunTaskFn } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 import { runGatewayHealthCheck } from './gateway-health-check.js';
 import {
@@ -52,6 +57,7 @@ const defaultGatewayReadinessMaxAttempts = Math.ceil(
 );
 
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
+	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadinessDefault;
 	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
 	readonly cleanupOrphanedToolVmsIfPresent?: typeof cleanupOrphanedToolVmsIfPresent;
 	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
@@ -84,6 +90,11 @@ interface PreflightCachingSecretResolver {
 	readonly freeze: () => SecretResolver;
 }
 
+type EnabledObservabilityRuntimeConfig = Extract<
+	ObservabilityRuntimeConfig,
+	{ readonly enabled: true }
+>;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -103,6 +114,67 @@ function stableJson(value: unknown): string {
 
 function secretRefCacheKey(secretRef: SecretRef): string {
 	return stableJson(secretRef);
+}
+
+function selectGatewayObservabilityStartupCheck(options: {
+	readonly systemConfig: StartGatewayZoneOptions['systemConfig'];
+	readonly zoneId: string;
+}): EnabledObservabilityRuntimeConfig | undefined {
+	const observabilityConfig = createObservabilityRuntimeConfig(options.systemConfig);
+	if (!observabilityConfig.enabled || observabilityConfig.controllerStartPolicy === 'off') {
+		return undefined;
+	}
+	const selectedZones = observabilityConfig.zones.filter((zone) => zone.zoneId === options.zoneId);
+	if (selectedZones.length === 0) {
+		return undefined;
+	}
+	return {
+		...observabilityConfig,
+		zones: selectedZones,
+	};
+}
+
+async function assertObservabilityStackReady(options: {
+	readonly checkObservabilityStackReadiness: typeof checkObservabilityStackReadinessDefault;
+	readonly config: EnabledObservabilityRuntimeConfig;
+}): Promise<void> {
+	const result = await options.checkObservabilityStackReadiness({ config: options.config });
+	if (!result.ok) {
+		throw new Error(`Host observability stack is not ready: ${result.reason}`);
+	}
+}
+
+async function checkGatewayObservabilityStartup(options: {
+	readonly checkObservabilityStackReadiness: typeof checkObservabilityStackReadinessDefault;
+	readonly runTaskStep: RunTaskFn;
+	readonly systemConfig: StartGatewayZoneOptions['systemConfig'];
+	readonly writeLog?: StartGatewayZoneOptions['writeLog'];
+	readonly zoneId: string;
+}): Promise<void> {
+	const observabilityStartupCheck = selectGatewayObservabilityStartupCheck({
+		systemConfig: options.systemConfig,
+		zoneId: options.zoneId,
+	});
+	if (observabilityStartupCheck === undefined) {
+		return;
+	}
+	const checkStack = async (): Promise<void> => {
+		await assertObservabilityStackReady({
+			checkObservabilityStackReadiness: options.checkObservabilityStackReadiness,
+			config: observabilityStartupCheck,
+		});
+		options.writeLog?.(`Host observability stack is ready for zone '${options.zoneId}'.`);
+	};
+	if (observabilityStartupCheck.controllerStartPolicy === 'require-ready') {
+		await options.runTaskStep('Checking host observability stack', checkStack);
+		return;
+	}
+	void checkStack().catch((error: unknown) => {
+		const message = error instanceof Error ? error.message : String(error);
+		options.writeLog?.(
+			`Host observability stack degraded for zone '${options.zoneId}': ${message}`,
+		);
+	});
 }
 
 function createPreflightCachingSecretResolver(
@@ -370,9 +442,23 @@ export async function preflightGatewayZoneStart(
 	options: StartGatewayZoneOptions,
 	dependencies: Pick<
 		GatewayManagerDependencies,
-		'buildGondolinImage' | 'buildImage' | 'loadBuildConfig' | 'loadGatewayLifecycle'
+		| 'buildGondolinImage'
+		| 'buildImage'
+		| 'checkObservabilityStackReadiness'
+		| 'loadBuildConfig'
+		| 'loadGatewayLifecycle'
 	> = {},
 ): Promise<GatewayZoneStartPreflightResult> {
+	const runTaskStep =
+		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
+	await checkGatewayObservabilityStartup({
+		checkObservabilityStackReadiness:
+			dependencies.checkObservabilityStackReadiness ?? checkObservabilityStackReadinessDefault,
+		runTaskStep,
+		systemConfig: options.systemConfig,
+		...(options.writeLog === undefined ? {} : { writeLog: options.writeLog }),
+		zoneId: options.zoneId,
+	});
 	const prerequisites = await preflightGatewayZoneStartPrerequisites(options, dependencies);
 	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
 	const image =
@@ -392,7 +478,9 @@ async function preflightGatewayZoneStartPrerequisites(
 	dependencies: Pick<GatewayManagerDependencies, 'loadGatewayLifecycle'> = {},
 ): Promise<GatewayZoneStartPrerequisitePreflightResult> {
 	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
-	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
+	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone, {
+		hostObservability: options.systemConfig.host.observability,
+	});
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 	const cachingSecretResolver = createPreflightCachingSecretResolver(options.secretResolver);
 	const [mcpPortalMaterialization] = await Promise.all([
@@ -444,7 +532,9 @@ export async function startGatewayZone(
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
-	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
+	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone, {
+		hostObservability: options.systemConfig.host.observability,
+	});
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 
 	// Phase A: prove ownership before doing any other startup work.
@@ -477,6 +567,16 @@ export async function startGatewayZone(
 		}
 	};
 	await runTaskStep('Preflighting gateway runtime ownership', preflightOrphanedGatewayCleanup);
+	if (options.observabilityStartupCheck !== 'skip') {
+		await checkGatewayObservabilityStartup({
+			checkObservabilityStackReadiness:
+				dependencies.checkObservabilityStackReadiness ?? checkObservabilityStackReadinessDefault,
+			runTaskStep,
+			systemConfig: options.systemConfig,
+			...(options.writeLog === undefined ? {} : { writeLog: options.writeLog }),
+			zoneId: zone.id,
+		});
+	}
 
 	// Phase B: prove non-ownership host-side prerequisites before any
 	// destructive cleanup. The returned resolver is frozen to preflighted

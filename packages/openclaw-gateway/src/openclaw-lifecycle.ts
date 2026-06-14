@@ -40,6 +40,7 @@ const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
 const openClawCommandVmPath = '/usr/local/bin/openclaw';
 const openClawGatewayGuestPath =
 	'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+const diagnosticsOtelPluginId = 'diagnostics-otel';
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -51,21 +52,44 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function setTcpHost(tcpHosts: Record<string, string>, key: string, target: string): void {
+	const existingTarget = tcpHosts[key];
+	if (existingTarget !== undefined && existingTarget !== target) {
+		throw new Error(
+			`OpenClaw tcpHosts entry '${key}' cannot target both '${existingTarget}' and '${target}'.`,
+		);
+	}
+	tcpHosts[key] = target;
+}
+
 function buildGatewayTcpHosts(
 	zone: GatewayZoneConfig,
 	controllerPort: number,
 	tcpPool: { readonly basePort: number; readonly size: number },
 ): Record<string, string> {
-	const tcpHosts: Record<string, string> = {
-		[`${controllerVmHost}:18800`]: `127.0.0.1:${controllerPort}`,
-	};
+	const tcpHosts: Record<string, string> = {};
+	setTcpHost(tcpHosts, `${controllerVmHost}:18800`, `127.0.0.1:${controllerPort}`);
 
 	for (let slot = 0; slot < tcpPool.size; slot += 1) {
-		tcpHosts[`tool-${slot}.vm.host:22`] = `127.0.0.1:${tcpPool.basePort + slot}`;
+		setTcpHost(tcpHosts, `tool-${slot}.vm.host:22`, `127.0.0.1:${tcpPool.basePort + slot}`);
 	}
 
 	for (const websocketHost of zone.websocketBypass) {
-		tcpHosts[websocketHost] = websocketHost;
+		setTcpHost(tcpHosts, websocketHost, websocketHost);
+	}
+
+	if (zone.observability?.mode === 'collector') {
+		const { collector } = zone.observability;
+		setTcpHost(
+			tcpHosts,
+			`${collector.host}:${String(collector.grpcPort)}`,
+			`${collector.targetHost}:${String(collector.targetGrpcPort)}`,
+		);
+		setTcpHost(
+			tcpHosts,
+			`${collector.host}:${String(collector.httpPort)}`,
+			`${collector.targetHost}:${String(collector.targetHttpPort)}`,
+		);
 	}
 
 	return tcpHosts;
@@ -234,6 +258,11 @@ function assertAllowedOpenClawEnvironmentSecrets(
 		...(zone.gateway.rawEnvSecrets ?? []),
 	]);
 	for (const secretName of Object.keys(environmentSecrets)) {
+		if (zone.observability?.mode === 'collector' && secretName === 'OPENCLAW_DIAGNOSTICS') {
+			throw new Error(
+				`[${logPrefix}] OpenClaw observability owns diagnostics configuration; do not inject OPENCLAW_DIAGNOSTICS through gateway raw environment secrets.`,
+			);
+		}
 		if (allowedRawEnvSecrets.has(secretName)) {
 			continue;
 		}
@@ -364,6 +393,19 @@ function buildEffectiveMcpPortalPluginConfig(
 	};
 }
 
+function appendUniqueStrings(
+	existingValues: readonly string[],
+	additionalValues: readonly string[],
+): readonly string[] {
+	const values = [...existingValues];
+	for (const value of additionalValues) {
+		if (!values.includes(value)) {
+			values.push(value);
+		}
+	}
+	return values;
+}
+
 function buildEffectivePluginsConfig(
 	parsedBaseConfig: Record<string, unknown>,
 	runtimePluginConfigs: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
@@ -371,36 +413,45 @@ function buildEffectivePluginsConfig(
 	const existingPluginsConfig = isObjectRecord(parsedBaseConfig.plugins)
 		? parsedBaseConfig.plugins
 		: {};
+	const runtimePluginIds = Object.keys(runtimePluginConfigs ?? {});
+	const existingAllowConfig = Array.isArray(existingPluginsConfig.allow)
+		? existingPluginsConfig.allow.filter((value): value is string => typeof value === 'string')
+		: [];
 	const existingEntriesConfig = isObjectRecord(existingPluginsConfig.entries)
 		? existingPluginsConfig.entries
 		: {};
-	const runtimeEntriesConfig = Object.fromEntries(
-		Object.entries(runtimePluginConfigs ?? {}).map(([pluginId, runtimeConfig]) => {
-			const existingEntryConfig = isObjectRecord(existingEntriesConfig[pluginId])
-				? existingEntriesConfig[pluginId]
-				: {};
-			const existingPluginConfig = isObjectRecord(existingEntryConfig.config)
-				? existingEntryConfig.config
-				: {};
-			const config =
-				pluginId === 'mcp-portal'
-					? buildEffectiveMcpPortalPluginConfig(existingPluginConfig, runtimeConfig)
-					: {
-							...existingPluginConfig,
-							...runtimeConfig,
-						};
-			return [
-				pluginId,
-				{
-					...existingEntryConfig,
-					config,
-				},
-			] as const;
-		}),
-	);
+	const runtimeEntriesConfig: Record<string, unknown> = {};
+	for (const [pluginId, runtimeConfig] of Object.entries(runtimePluginConfigs ?? {})) {
+		const existingEntryConfig = isObjectRecord(existingEntriesConfig[pluginId])
+			? existingEntriesConfig[pluginId]
+			: {};
+		if (pluginId === diagnosticsOtelPluginId) {
+			runtimeEntriesConfig[pluginId] = {
+				enabled: true,
+			};
+			continue;
+		}
+		const existingPluginConfig = isObjectRecord(existingEntryConfig.config)
+			? existingEntryConfig.config
+			: {};
+		const config =
+			pluginId === 'mcp-portal'
+				? buildEffectiveMcpPortalPluginConfig(existingPluginConfig, runtimeConfig)
+				: {
+						...existingPluginConfig,
+						...runtimeConfig,
+					};
+		runtimeEntriesConfig[pluginId] = {
+			...existingEntryConfig,
+			config,
+		};
+	}
 
 	return {
 		...existingPluginsConfig,
+		...(runtimePluginIds.length > 0
+			? { allow: appendUniqueStrings(existingAllowConfig, runtimePluginIds) }
+			: {}),
 		entries: {
 			...existingEntriesConfig,
 			...runtimeEntriesConfig,
@@ -435,6 +486,61 @@ function buildEffectiveLoggingConfig(
 	return {
 		file: openClawRuntimeLogFileVmPath,
 		...existingLoggingConfig,
+	};
+}
+
+function assertObservabilityCompatibleLoggingConfig(
+	parsedBaseConfig: Record<string, unknown>,
+): void {
+	const existingLoggingConfig = isObjectRecord(parsedBaseConfig.logging)
+		? parsedBaseConfig.logging
+		: {};
+	const redactSensitiveValue = existingLoggingConfig.redactSensitive;
+	if (isDisabledOpenClawRedactionValue(redactSensitiveValue)) {
+		throw new Error(
+			"OpenClaw observability requires logging.redactSensitive to stay enabled; remove 'off' or false before enabling telemetry.",
+		);
+	}
+}
+
+function isDisabledOpenClawRedactionValue(value: unknown): boolean {
+	if (value === false || value === 0) {
+		return true;
+	}
+	if (typeof value !== 'string') {
+		return false;
+	}
+	return ['0', 'disable', 'disabled', 'false', 'no', 'off'].includes(value.trim().toLowerCase());
+}
+
+function buildEffectiveDiagnosticsConfig(
+	parsedBaseConfig: Record<string, unknown>,
+	zone: GatewayZoneConfig,
+): Record<string, unknown> | undefined {
+	if (zone.observability?.mode !== 'collector') {
+		return undefined;
+	}
+
+	const existingDiagnosticsConfig = isObjectRecord(parsedBaseConfig.diagnostics)
+		? parsedBaseConfig.diagnostics
+		: {};
+	const { collector, openclaw } = zone.observability;
+	return {
+		...existingDiagnosticsConfig,
+		enabled: true,
+		flags: openclaw.diagnosticsFlags,
+		otel: {
+			captureContent: { enabled: false },
+			enabled: true,
+			endpoint: `http://${collector.host}:${String(collector.httpPort)}`,
+			flushIntervalMs: openclaw.flushIntervalMs,
+			logs: openclaw.logs,
+			metrics: openclaw.metrics,
+			protocol: 'http/protobuf',
+			sampleRate: openclaw.sampleRate,
+			serviceName: openclaw.serviceName,
+			traces: openclaw.traces,
+		},
 	};
 }
 
@@ -612,8 +718,16 @@ async function buildEffectiveOpenClawConfigContent(zone: GatewayZoneConfig): Pro
 		if (!isObjectRecord(parsedBaseConfig)) {
 			throw new Error(`OpenClaw config at '${zone.gateway.config}' must be a JSON object.`);
 		}
+		if (zone.observability?.mode === 'collector') {
+			assertObservabilityCompatibleLoggingConfig(parsedBaseConfig);
+		}
 		const runtimePluginConfigs = {
 			...zone.runtimePluginConfigs,
+			...(zone.observability?.mode === 'collector'
+				? {
+						[diagnosticsOtelPluginId]: {},
+					}
+				: {}),
 			gondolin: {
 				controllerUrl: `http://${controllerVmHost}:18800`,
 				gatewayControlLinkMonitor: {
@@ -629,9 +743,13 @@ async function buildEffectiveOpenClawConfigContent(zone: GatewayZoneConfig): Pro
 		};
 		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
 		const existingAuthConfig = isObjectRecord(config.auth) ? config.auth : {};
+		const effectiveDiagnosticsConfig = buildEffectiveDiagnosticsConfig(parsedBaseConfig, zone);
 		const effectiveConfig = {
 			...parsedBaseConfig,
 			logging: buildEffectiveLoggingConfig(parsedBaseConfig),
+			...(effectiveDiagnosticsConfig === undefined
+				? {}
+				: { diagnostics: effectiveDiagnosticsConfig }),
 			gateway: {
 				...config,
 				auth: {

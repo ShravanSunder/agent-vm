@@ -330,6 +330,8 @@ versions. Do not change `packages/agent-vm/managed-images.json` base image tags
 just to match npm versions. Keep that manifest focused on managed base image
 metadata such as GHCR tags and the OpenClaw upstream version; do not add
 `@agent-vm/*` npm package pins to it.
+Do not change the managed OpenClaw upstream version without explicit maintainer
+permission.
 
 Before publishing, pack and inspect `@agent-vm/agent-vm` from the exact commit
 that will be released. Confirm the packed `package/package.json` has sibling

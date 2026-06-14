@@ -881,6 +881,7 @@ describe('runAgentVmCli', () => {
 		expect(runBuildCommand).toHaveBeenCalledWith(
 			{
 				forceRebuild: false,
+				skipObservability: false,
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
 					runtimeDir: './runtime',
@@ -970,6 +971,33 @@ describe('runAgentVmCli', () => {
 		expect(runBuildCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
 				forceRebuild: true,
+			}),
+			{
+				runTask: expect.any(Function),
+				runTaskGroup: expect.any(Function),
+			},
+		);
+	});
+
+	it('passes build --no-observability through to the build command handler', async () => {
+		const runBuildCommand = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['build', '--no-observability', '--config', './custom-system.json'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runBuildCommand,
+			},
+		);
+
+		expect(runBuildCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				skipObservability: true,
 			}),
 			{
 				runTask: expect.any(Function),

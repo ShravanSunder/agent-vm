@@ -11,6 +11,10 @@ describe('publish workflow', () => {
 		const packageDirectories = await fs.readdir(path.join(process.cwd(), 'packages'), {
 			withFileTypes: true,
 		});
+		type PackageManifestEntry = {
+			readonly name: string;
+			readonly packageJson: { readonly scripts?: Readonly<Record<string, string>> };
+		};
 		const forbiddenLifecycleScripts = [
 			'prepublishOnly',
 			'prepublish',
@@ -20,22 +24,29 @@ describe('publish workflow', () => {
 			'postpublish',
 		];
 
-		const packageManifests = await Promise.all(
-			packageDirectories
-				.filter((entry) => entry.isDirectory())
-				.map(async (packageDirectory) => {
-					const packageJsonPath = path.join(
-						process.cwd(),
-						'packages',
-						packageDirectory.name,
-						'package.json',
-					);
-					const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as {
-						readonly scripts?: Readonly<Record<string, string>>;
-					};
-					return { name: packageDirectory.name, packageJson };
-				}),
-		);
+		const packageManifests = (
+			await Promise.all(
+				packageDirectories
+					.filter((packageDirectory) => packageDirectory.isDirectory())
+					.map(async (packageDirectory): Promise<PackageManifestEntry | undefined> => {
+						const packageDirectoryPath = path.join(
+							process.cwd(),
+							'packages',
+							packageDirectory.name,
+						);
+						const packageDirectoryEntries = await fs.readdir(packageDirectoryPath);
+						if (!packageDirectoryEntries.includes('package.json')) {
+							return undefined;
+						}
+
+						const packageJsonPath = path.join(packageDirectoryPath, 'package.json');
+						const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as {
+							readonly scripts?: Readonly<Record<string, string>>;
+						};
+						return { name: packageDirectory.name, packageJson };
+					}),
+			)
+		).filter((entry): entry is PackageManifestEntry => entry !== undefined);
 
 		for (const { name, packageJson } of packageManifests) {
 			for (const scriptName of forbiddenLifecycleScripts) {

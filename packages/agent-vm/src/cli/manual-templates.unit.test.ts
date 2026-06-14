@@ -20,6 +20,7 @@ describe('manual templates', () => {
 		expect(content).toContain('docs/manual/image-versioning.md');
 		expect(content).toContain('docs/manual/gateway-ingress.md');
 		expect(content).toContain('lease-heartbeat');
+		expect(content).toContain('docs/manual/observability.md');
 		expect(content).toContain('docs/manual/mcp-portal.md');
 		expect(content).toContain('Do not silently edit privileged host/deployment config');
 		expect(content).not.toContain('Discord is enabled by default');
@@ -38,6 +39,7 @@ describe('manual templates', () => {
 			'docs/manual/tool-vm-leases.md',
 			'docs/manual/operations.md',
 			'docs/manual/openclaw.md',
+			'docs/manual/observability.md',
 			'docs/manual/gateway-ingress.md',
 			'docs/manual/openclaw-defaults.md',
 			'docs/manual/mcp-portal.md',
@@ -81,6 +83,23 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'coding agents helping end users set up and operate agent-vm deployments',
 		);
+		const observabilityManual = files.find((file) =>
+			file.relativePath.endsWith('observability.md'),
+		)?.content;
+		expect(observabilityManual).toContain('agent-vm build --no-observability');
+		expect(observabilityManual).toContain('host.observability.stack.mode=managed');
+		expect(observabilityManual).toContain('host.observability.stack.mode=external');
+		expect(observabilityManual).toContain(
+			'host.observability.stack.scrubbing.responsibility=external-collector',
+		);
+		expect(observabilityManual).toContain('Controller startup does not start Docker Compose');
+		expect(observabilityManual).toContain(
+			'External mode checks only the configured OpenTelemetry collector',
+		);
+		expect(observabilityManual).toContain('controllerStartPolicy=degraded');
+		expect(observabilityManual).toContain('host.observability.dataDir');
+		expect(observabilityManual).toContain('zones[].observability.openclaw.diagnosticsFlags');
+		expect(observabilityManual).toContain('Never log secrets');
 		const gatewayIngressManual = files.find((file) =>
 			file.relativePath.endsWith('gateway-ingress.md'),
 		)?.content;
