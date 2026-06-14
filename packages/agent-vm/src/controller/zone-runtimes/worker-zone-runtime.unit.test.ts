@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import type { ActiveWorkerTask } from '../active-task-registry.js';
 import { createWorkerZoneRuntime } from './worker-zone-runtime.js';
+import { ControllerZoneWorkerCloseError } from './zone-runtime-errors.js';
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -65,6 +66,80 @@ function createActiveWorkerTask(
 }
 
 describe('createWorkerZoneRuntime destroy orchestration', () => {
+	it('times out hanging worker close requests during destroy', async () => {
+		vi.useFakeTimers();
+		const activeTask = createActiveWorkerTask('task-1', {
+			host: '127.0.0.1',
+			port: 18881,
+		});
+		const endZoneDestroy = vi.fn();
+		const originalFetch = globalThis.fetch;
+		let closeSignal: AbortSignal | null | undefined;
+		globalThis.fetch = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+			closeSignal = init?.signal;
+			return new Promise<Response>((_resolve, reject) => {
+				if (!closeSignal) {
+					return;
+				}
+				closeSignal.addEventListener(
+					'abort',
+					() => reject(new DOMException('The operation was aborted.', 'AbortError')),
+					{ once: true },
+				);
+			});
+		}) as typeof fetch;
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: {
+				activateReservation: vi.fn(),
+				beginZoneDestroy: vi.fn(),
+				clear: vi.fn(),
+				countOccupiedForZone: vi.fn(() => 1),
+				endZoneDestroy,
+				get: vi.fn(),
+				listForZone: vi.fn(() => [activeTask]),
+				releaseReservation: vi.fn(),
+				setWorkerIngress: vi.fn(),
+				tryReserve: vi.fn(() => 'reservation-1'),
+			},
+			controllerGithubToken: null,
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			runControllerDestroy: async (options, dependencies) => {
+				await dependencies.stopGatewayZone(options.zoneId);
+				return { ok: true, purged: options.purge, zoneId: options.zoneId };
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: workerZone,
+		});
+
+		try {
+			const destroy = runtime.destroy(false);
+			let closeError: unknown;
+			const destroyError = destroy.catch((error: unknown) => {
+				closeError = error;
+			});
+			await Promise.resolve();
+
+			expect(closeSignal).toBeInstanceOf(AbortSignal);
+			await vi.advanceTimersByTimeAsync(10_000);
+			await destroyError;
+			expect(closeError).toBeInstanceOf(ControllerZoneWorkerCloseError);
+			expect(closeError).toMatchObject({
+				body: expect.stringContaining('timed out after 10000ms'),
+				httpStatus: 0,
+				taskId: 'task-1',
+				zoneId: 'worker-zone',
+			});
+			expect(endZoneDestroy).toHaveBeenCalledWith('worker-zone');
+		} finally {
+			globalThis.fetch = originalFetch;
+			vi.useRealTimers();
+		}
+	});
+
 	it('clears only successfully closed tasks and wraps unexpected close rejections', async () => {
 		const activeTask1 = createActiveWorkerTask('task-1', {
 			host: '127.0.0.1',
