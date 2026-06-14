@@ -102,6 +102,7 @@ describe('createSecretResolver', () => {
 			systemConfig,
 			createOnePasswordResolver,
 			resolveToken,
+			async () => '1.2.3',
 		);
 
 		await expect(
@@ -109,6 +110,7 @@ describe('createSecretResolver', () => {
 		).resolves.toBe('resolved:op://vault/item/field');
 		expect(resolveToken).toHaveBeenCalledWith(systemConfig.host.secretsProvider.tokenSource);
 		expect(createOnePasswordResolver).toHaveBeenCalledWith({
+			integrationVersion: '1.2.3',
 			serviceAccountToken: 'service-token',
 		});
 	});
@@ -142,5 +144,34 @@ describe('createSecretResolver', () => {
 			source: 'config',
 			value: 'github-token',
 		});
+	});
+
+	it('warns when host github token falls back to ambient GITHUB_TOKEN', async () => {
+		const previousGithubToken = process.env.GITHUB_TOKEN;
+		process.env.GITHUB_TOKEN = 'ambient-github-token';
+		const warnings: string[] = [];
+		const resolver: SecretResolver = {
+			resolve: vi.fn(async () => {
+				throw new Error('resolver should not be used for ambient token fallback');
+			}),
+			resolveAll: vi.fn(async () => ({})),
+		};
+		try {
+			await expect(
+				resolveControllerGithubToken(baseConfig, resolver, (message) => {
+					warnings.push(message);
+				}),
+			).resolves.toBe('ambient-github-token');
+		} finally {
+			if (previousGithubToken === undefined) {
+				delete process.env.GITHUB_TOKEN;
+			} else {
+				process.env.GITHUB_TOKEN = previousGithubToken;
+			}
+		}
+
+		expect(warnings).toEqual([
+			'[agent-vm] host.githubToken is not configured; using ambient GITHUB_TOKEN from the controller environment.\n',
+		]);
 	});
 });

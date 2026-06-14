@@ -183,4 +183,39 @@ describe('createCompositeSecretResolver', () => {
 			OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
 		});
 	});
+
+	it('redacts successfully resolved values from later resolveAll failures', async () => {
+		const resolvedConfigValue = 'inline-super-secret-value';
+		const resolvedEnvironmentValue = 'environment-super-secret-value';
+		const onePasswordResolver: SecretResolver = {
+			resolve: vi.fn(async () => {
+				throw new Error('single resolver should not be used');
+			}),
+			resolveAll: vi.fn(async () => {
+				throw new Error(
+					`downstream failure leaked ${resolvedConfigValue} and ${resolvedEnvironmentValue}`,
+				);
+			}),
+		};
+		const resolver = createCompositeSecretResolver(onePasswordResolver, {
+			GITHUB_TOKEN: resolvedEnvironmentValue,
+		});
+
+		try {
+			await resolver.resolveAll({
+				INLINE_TOKEN: { source: 'config', value: resolvedConfigValue },
+				GITHUB_TOKEN: { source: 'environment', ref: 'GITHUB_TOKEN' },
+				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
+			});
+			throw new Error('Expected resolveAll to throw an aggregate failure.');
+		} catch (error) {
+			const renderedError =
+				error instanceof AggregateError
+					? error.errors.map((failure: unknown) => String(failure)).join('\n')
+					: String(error);
+			expect(renderedError).not.toContain(resolvedConfigValue);
+			expect(renderedError).not.toContain(resolvedEnvironmentValue);
+			expect(renderedError).toContain('<redacted>');
+		}
+	});
 });

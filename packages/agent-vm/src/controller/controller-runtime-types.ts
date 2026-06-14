@@ -48,6 +48,7 @@ export interface ControllerRuntimeDependencies {
 		readonly secretResolver: SecretResolver;
 	}) => Promise<import('@agent-vm/gondolin-adapter').ManagedVm>;
 	readonly createSecretResolver?: (options: {
+		readonly integrationVersion: string;
 		readonly serviceAccountToken: string;
 	}) => Promise<SecretResolver>;
 	readonly deleteGatewayRuntimeRecord?: typeof deleteGatewayRuntimeRecord;
