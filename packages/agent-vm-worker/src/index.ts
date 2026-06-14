@@ -74,6 +74,10 @@ export {
 } from './shared/repo-location.js';
 export { skillReferenceSchema, type SkillReference } from './shared/skill-types.js';
 export { createCodexExecutor, type CodexExecutorConfig } from './work-executor/codex-executor.js';
+export {
+	createClaudeCodeExecutor,
+	type ClaudeCodeExecutorConfig,
+} from './work-executor/claude-code-executor.js';
 export { createWorkExecutor } from './work-executor/executor-factory.js';
 export type {
 	ExecutorCapabilities,

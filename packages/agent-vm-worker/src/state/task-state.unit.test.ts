@@ -71,23 +71,23 @@ describe('task-state reducer', () => {
 		const afterPlan = applyEvent(started, {
 			event: 'plan-agent-turn',
 			cycle: 1,
-			threadId: 'plan-thread',
+			sessionRef: 'plan-thread',
 			tokenCount: 10,
 		});
 		const afterReview = applyEvent(afterPlan, {
 			event: 'plan-reviewer-turn',
 			cycle: 1,
-			threadId: 'review-thread',
+			sessionRef: 'review-thread',
 			tokenCount: 11,
 			review: REVIEW,
 		});
 
 		expect(afterPlan.status).toBe('plan-agent');
-		expect(afterPlan.planAgentThreadId).toBe('plan-thread');
+		expect(afterPlan.planAgentSessionRef).toBe('plan-thread');
 		expect(afterPlan.currentCycle).toBe(1);
 		expect(afterPlan.currentMaxCycles).toBe(1);
 		expect(afterReview.status).toBe('plan-reviewer');
-		expect(afterReview.planReviewerThreadId).toBe('review-thread');
+		expect(afterReview.planReviewerSessionRef).toBe('review-thread');
 		expect(afterReview.planReviewCycle).toBe(1);
 		expect(afterReview.lastPlanReview).toEqual(REVIEW);
 	});
@@ -108,13 +108,13 @@ describe('task-state reducer', () => {
 		const afterWorkTurn = applyEvent(state, {
 			event: 'work-agent-turn',
 			cycle: 1,
-			threadId: 'work-thread',
+			sessionRef: 'work-thread',
 			tokenCount: 10,
 		});
 		const next = applyEvent(afterWorkTurn, {
 			event: 'work-reviewer-turn',
 			cycle: 1,
-			threadId: 'work-review-thread',
+			sessionRef: 'work-review-thread',
 			tokenCount: 12,
 			review: REVIEW,
 			validationResults: [{ name: 'test', passed: false, exitCode: 1, output: 'failed' }],
@@ -124,7 +124,7 @@ describe('task-state reducer', () => {
 		expect(afterWorkTurn.currentCycle).toBe(1);
 		expect(afterWorkTurn.currentMaxCycles).toBe(2);
 		expect(next.status).toBe('work-reviewer');
-		expect(next.workReviewerThreadId).toBe('work-review-thread');
+		expect(next.workReviewerSessionRef).toBe('work-review-thread');
 		expect(next.workReviewCycle).toBe(1);
 		expect(next.lastWorkReview).toEqual(REVIEW);
 		expect(next.lastValidationResults).toEqual([

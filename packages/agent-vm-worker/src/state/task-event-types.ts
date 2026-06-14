@@ -78,13 +78,13 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 	z.object({
 		event: z.literal('plan-agent-turn'),
 		cycle: z.number().int().nonnegative(),
-		threadId: z.string(),
+		sessionRef: z.string(),
 		tokenCount: z.number().int().nonnegative(),
 	}),
 	z.object({
 		event: z.literal('plan-reviewer-turn'),
 		cycle: z.number().int().positive(),
-		threadId: z.string(),
+		sessionRef: z.string(),
 		tokenCount: z.number().int().nonnegative(),
 		review: reviewResultSchema,
 	}),
@@ -95,13 +95,13 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 	z.object({
 		event: z.literal('work-agent-turn'),
 		cycle: z.number().int().nonnegative(),
-		threadId: z.string(),
+		sessionRef: z.string(),
 		tokenCount: z.number().int().nonnegative(),
 	}),
 	z.object({
 		event: z.literal('work-reviewer-turn'),
 		cycle: z.number().int().positive(),
-		threadId: z.string(),
+		sessionRef: z.string(),
 		tokenCount: z.number().int().nonnegative(),
 		review: reviewResultSchema,
 		validationResults: z.array(verificationCommandResultSchema),
@@ -109,7 +109,7 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 	}),
 	z.object({
 		event: z.literal('wrapup-turn'),
-		threadId: z.string(),
+		sessionRef: z.string(),
 		tokenCount: z.number().int().nonnegative(),
 	}),
 	z.object({

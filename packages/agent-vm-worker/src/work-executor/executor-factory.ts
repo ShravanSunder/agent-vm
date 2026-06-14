@@ -1,4 +1,5 @@
 import type { ReasoningEffort } from '../config/worker-config.js';
+import { createClaudeCodeExecutor } from './claude-code-executor.js';
 import { createCodexExecutor } from './codex-executor.js';
 import type { ExecutorCapabilities, WorkExecutor } from './executor-interface.js';
 
@@ -18,7 +19,12 @@ export function createWorkExecutor(
 				...(reasoningEffort ? { reasoningEffort } : {}),
 			});
 		case 'claude':
-			throw new Error('Claude executor is not implemented yet.');
+			return createClaudeCodeExecutor({
+				model,
+				capabilities,
+				...(workingDirectory ? { workingDirectory } : {}),
+				...(reasoningEffort ? { reasoningEffort } : {}),
+			});
 		default:
 			throw new Error(`Unknown executor provider: '${provider}'.`);
 	}

@@ -21,10 +21,10 @@ function buildThread(
 				return {
 					response: queuedResponses.shift() ?? '',
 					tokenCount: 10,
-					threadId: 'wrapup-thread',
+					sessionRef: 'wrapup-thread',
 				};
 			}),
-			threadId: () => 'wrapup-thread',
+			sessionRef: () => 'wrapup-thread',
 		},
 	};
 }
@@ -70,7 +70,7 @@ describe('runWrapup', () => {
 		expect(onWrapupTurn).toHaveBeenCalledWith({
 			response: expect.any(String),
 			tokenCount: 10,
-			threadId: 'wrapup-thread',
+			sessionRef: 'wrapup-thread',
 		});
 	});
 

@@ -1,18 +1,13 @@
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-
 import { Codex, type Thread, type UserInput } from '@openai/codex-sdk';
-import { execa } from 'execa';
 
 import { writeStderr } from '../shared/stderr.js';
+import { prepareCodexRuntimeCapabilities } from './codex-capability-setup.js';
 import type {
 	ExecutorCapabilities,
 	ExecutorResult,
 	StructuredInput,
 	WorkExecutor,
 } from './executor-interface.js';
-import { getOrCreateLocalToolMcpServer } from './local-tool-mcp-server.js';
 
 function extractErrorMessages(error: unknown): readonly string[] {
 	if (!(error instanceof Error)) {
@@ -63,47 +58,19 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 	const workingDirectory = config.workingDirectory ?? process.cwd();
 	let codex: Codex | null = null;
 	let currentThread: Thread | null = null;
-	let currentThreadId: string | null = null;
+	let currentSessionRef: string | null = null;
 
 	async function ensureCapabilitiesConfigured(): Promise<void> {
 		if (codex !== null) {
 			return;
 		}
 
-		await fs.mkdir(workingDirectory, { recursive: true });
-		const codexHomeBase = process.env.STATE_DIR ?? os.tmpdir();
-		await fs.mkdir(codexHomeBase, { recursive: true });
-		const tempHome = await fs.mkdtemp(path.join(codexHomeBase, 'agent-vm-codex-home-'));
-		await fs.mkdir(path.join(tempHome, '.codex'), { recursive: true });
-
-		for (const mcpServer of config.capabilities.mcpServers) {
-			const mcpAddArgs = [
-				'mcp',
-				'add',
-				mcpServer.name,
-				'--url',
-				mcpServer.url,
-				...(mcpServer.bearerTokenEnvVar
-					? ['--bearer-token-env-var', mcpServer.bearerTokenEnvVar]
-					: []),
-			];
-			// MCP registration must be serialized because each command mutates the same config home.
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			await execa('codex', mcpAddArgs, {
-				cwd: workingDirectory,
-				env: { ...process.env, HOME: tempHome },
-				reject: true,
-			});
-		}
-
-		const localToolServer = await getOrCreateLocalToolMcpServer(config.capabilities.tools);
-		if (localToolServer) {
-			await execa('codex', ['mcp', 'add', 'agent-vm-local-tools', '--url', localToolServer.url], {
-				cwd: workingDirectory,
-				env: { ...process.env, HOME: tempHome },
-				reject: true,
-			});
-		}
+		const runtimeHandle = await prepareCodexRuntimeCapabilities({
+			capabilities: config.capabilities,
+			inheritedEnv: process.env,
+			stateDirectory: process.env.STATE_DIR,
+			workingDirectory,
+		});
 
 		codex = new Codex({
 			...(typeof process.env.OPENAI_API_KEY === 'string' && process.env.OPENAI_API_KEY.length > 0
@@ -112,10 +79,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			config: {
 				skip_git_repo_check: true,
 			},
-			env: {
-				...process.env,
-				HOME: tempHome,
-			},
+			env: runtimeHandle.env,
 		});
 	}
 
@@ -140,12 +104,12 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 		input: readonly StructuredInput[],
 	): Promise<ExecutorResult> {
 		const result = await thread.run(mapToCodexInput(input));
-		const threadId = thread.id ?? currentThreadId ?? '';
+		const sessionRef = thread.id ?? currentSessionRef ?? '';
 
 		return {
 			response: result.finalResponse ?? '',
 			tokenCount: result.usage?.output_tokens ?? 0,
-			threadId,
+			sessionRef,
 		};
 	}
 
@@ -154,7 +118,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			await ensureCapabilitiesConfigured();
 			currentThread = startNewThread();
 			const result = await runInThread(currentThread, input);
-			currentThreadId = result.threadId || null;
+			currentSessionRef = result.sessionRef || null;
 			return result;
 		},
 
@@ -165,21 +129,21 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			}
 
 			const result = await runInThread(currentThread, input);
-			currentThreadId = result.threadId || currentThreadId;
+			currentSessionRef = result.sessionRef || currentSessionRef;
 			return result;
 		},
 
 		async resumeOrRebuild(
-			threadId: string | null,
+			sessionRef: string | null,
 			context: readonly StructuredInput[],
 		): Promise<void> {
 			await ensureCapabilitiesConfigured();
-			if (threadId !== null) {
+			if (sessionRef !== null) {
 				try {
 					if (codex === null) {
 						throw new Error('Codex executor has not been configured.');
 					}
-					currentThread = codex.resumeThread(threadId, {
+					currentThread = codex.resumeThread(sessionRef, {
 						model: config.model,
 						approvalPolicy: 'never',
 						sandboxMode: 'danger-full-access',
@@ -187,7 +151,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 						skipGitRepoCheck: true,
 						networkAccessEnabled: true,
 					});
-					currentThreadId = threadId;
+					currentSessionRef = sessionRef;
 					return;
 				} catch (error) {
 					if (!isRecoverableResumeError(error)) {
@@ -196,20 +160,20 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 
 					const message = error instanceof Error ? error.message : String(error);
 					writeStderr(
-						`[codex-executor] Failed to resume thread ${threadId}; rebuilding thread instead: ${message}`,
+						`[codex-executor] Failed to resume thread ${sessionRef}; rebuilding thread instead: ${message}`,
 					);
 					currentThread = null;
-					currentThreadId = null;
+					currentSessionRef = null;
 				}
 			}
 
 			currentThread = startNewThread();
 			await runInThread(currentThread, context);
-			currentThreadId = currentThread.id ?? null;
+			currentSessionRef = currentThread.id ?? null;
 		},
 
-		getThreadId(): string | null {
-			return currentThreadId;
+		getSessionRef(): string | null {
+			return currentSessionRef;
 		},
 	};
 }

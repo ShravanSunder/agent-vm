@@ -62,7 +62,7 @@ function createMockWorkExecutor(): WorkExecutor & {
 	readonly executeCalls: StructuredInput[][];
 	readonly fixCalls: StructuredInput[][];
 } {
-	let currentThreadId: string | null = null;
+	let currentSessionRef: string | null = null;
 	const executeCalls: StructuredInput[][] = [];
 	const fixCalls: StructuredInput[][] = [];
 	let threadCounter = 0;
@@ -71,37 +71,37 @@ function createMockWorkExecutor(): WorkExecutor & {
 		async execute(input: readonly StructuredInput[]): Promise<ExecutorResult> {
 			executeCalls.push([...input]);
 			threadCounter += 1;
-			currentThreadId = `thread-${threadCounter}`;
+			currentSessionRef = `thread-${threadCounter}`;
 			return {
 				response: 'executed',
 				tokenCount: 50,
-				threadId: currentThreadId,
+				sessionRef: currentSessionRef,
 			};
 		},
 
 		async fix(input: readonly StructuredInput[]): Promise<ExecutorResult> {
-			if (currentThreadId === null) {
+			if (currentSessionRef === null) {
 				throw new Error('No active executor thread. Call execute() first.');
 			}
 			fixCalls.push([...input]);
 			return {
 				response: 'fixed',
 				tokenCount: 30,
-				threadId: currentThreadId,
+				sessionRef: currentSessionRef,
 			};
 		},
 
-		async resumeOrRebuild(threadId: string | null): Promise<void> {
-			if (threadId) {
-				currentThreadId = threadId;
+		async resumeOrRebuild(sessionRef: string | null): Promise<void> {
+			if (sessionRef) {
+				currentSessionRef = sessionRef;
 				return;
 			}
 			threadCounter += 1;
-			currentThreadId = `thread-${threadCounter}`;
+			currentSessionRef = `thread-${threadCounter}`;
 		},
 
-		getThreadId(): string | null {
-			return currentThreadId;
+		getSessionRef(): string | null {
+			return currentSessionRef;
 		},
 
 		executeCalls,
@@ -135,10 +135,10 @@ describe('codex-executor', () => {
 		expect(result).toEqual({
 			response: 'executed',
 			tokenCount: 50,
-			threadId: 'thread-1',
+			sessionRef: 'thread-1',
 		});
 		expect(execaMock).not.toHaveBeenCalled();
-		expect(executor.getThreadId()).toBe('thread-1');
+		expect(executor.getSessionRef()).toBe('thread-1');
 		expect(thread.run).toHaveBeenCalledWith([{ type: 'text', text: 'do the thing' }]);
 	});
 
@@ -159,7 +159,7 @@ describe('codex-executor', () => {
 		const result = await executor.fix([{ type: 'text', text: 'fix this' }]);
 
 		expect(result.response).toBe('fixed');
-		expect(result.threadId).toBe('thread-1');
+		expect(result.sessionRef).toBe('thread-1');
 	});
 
 	it('fix() throws when no thread exists', async () => {
@@ -185,10 +185,10 @@ describe('codex-executor', () => {
 		});
 
 		await executor.resumeOrRebuild('existing-thread', []);
-		expect(executor.getThreadId()).toBe('existing-thread');
+		expect(executor.getSessionRef()).toBe('existing-thread');
 	});
 
-	it('resumeOrRebuild() rebuilds when threadId is null', async () => {
+	it('resumeOrRebuild() rebuilds when sessionRef is null', async () => {
 		const thread = createMockThread('thread-1', 'context built', 10);
 		mockStartThread.mockReturnValue(thread);
 
@@ -199,7 +199,7 @@ describe('codex-executor', () => {
 		});
 
 		await executor.resumeOrRebuild(null, [{ type: 'text', text: 'context' }]);
-		expect(executor.getThreadId()).toBe('thread-1');
+		expect(executor.getSessionRef()).toBe('thread-1');
 	});
 
 	it('resumeOrRebuild() rebuilds on recoverable resume errors', async () => {
@@ -227,7 +227,7 @@ describe('codex-executor', () => {
 			}),
 		);
 		expect(mockStartThread).toHaveBeenCalled();
-		expect(executor.getThreadId()).toBe('thread-2');
+		expect(executor.getSessionRef()).toBe('thread-2');
 		expect(stderrSpy).toHaveBeenCalledWith(
 			expect.stringContaining('Failed to resume thread expired-thread; rebuilding thread instead'),
 		);
@@ -417,8 +417,8 @@ describe('work-executor interface contract', () => {
 
 		expect(result.response).toBe('executed');
 		expect(result.tokenCount).toBe(50);
-		expect(result.threadId).toBe('thread-1');
-		expect(executor.getThreadId()).toBe('thread-1');
+		expect(result.sessionRef).toBe('thread-1');
+		expect(executor.getSessionRef()).toBe('thread-1');
 	});
 
 	it('fix() continues the same thread', async () => {
@@ -426,7 +426,7 @@ describe('work-executor interface contract', () => {
 		const result = await executor.fix([{ type: 'text', text: 'fix this' }]);
 
 		expect(result.response).toBe('fixed');
-		expect(result.threadId).toBe('thread-1');
+		expect(result.sessionRef).toBe('thread-1');
 		expect(executor.fixCalls).toHaveLength(1);
 	});
 
@@ -438,12 +438,12 @@ describe('work-executor interface contract', () => {
 
 	it('resumeOrRebuild() resumes existing thread', async () => {
 		await executor.resumeOrRebuild('existing-thread', []);
-		expect(executor.getThreadId()).toBe('existing-thread');
+		expect(executor.getSessionRef()).toBe('existing-thread');
 	});
 
-	it('resumeOrRebuild() rebuilds when threadId is null', async () => {
+	it('resumeOrRebuild() rebuilds when sessionRef is null', async () => {
 		await executor.resumeOrRebuild(null, [{ type: 'text', text: 'context' }]);
-		expect(executor.getThreadId()).toBe('thread-1');
+		expect(executor.getSessionRef()).toBe('thread-1');
 	});
 
 	it('handles skill inputs', async () => {
@@ -458,12 +458,6 @@ describe('work-executor interface contract', () => {
 });
 
 describe('executor-factory', () => {
-	it('throws for claude provider', () => {
-		expect(() => createWorkExecutor('claude', 'latest', { mcpServers: [], tools: [] })).toThrow(
-			'Claude executor is not implemented yet.',
-		);
-	});
-
 	it('throws for unknown provider', () => {
 		expect(() => createWorkExecutor('unknown', 'latest', { mcpServers: [], tools: [] })).toThrow(
 			"Unknown executor provider: 'unknown'.",

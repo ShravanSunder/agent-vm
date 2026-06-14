@@ -40,18 +40,18 @@ vi.mock('./context/gather-context.js', () => ({
 }));
 
 function createMockExecutor(response: string): WorkExecutor {
-	let threadId: string | null = null;
+	let sessionRef: string | null = null;
 	return {
 		async execute() {
-			threadId = threadId ?? 'thread-1';
-			return { response, tokenCount: 10, threadId };
+			sessionRef = sessionRef ?? 'thread-1';
+			return { response, tokenCount: 10, sessionRef };
 		},
 		async fix() {
-			return { response, tokenCount: 5, threadId: threadId ?? 'thread-1' };
+			return { response, tokenCount: 5, sessionRef: sessionRef ?? 'thread-1' };
 		},
 		async resumeOrRebuild() {},
-		getThreadId() {
-			return threadId;
+		getSessionRef() {
+			return sessionRef;
 		},
 	};
 }

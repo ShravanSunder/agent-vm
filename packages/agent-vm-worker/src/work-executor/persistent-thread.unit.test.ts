@@ -12,7 +12,7 @@ function buildMockExecutor(
 	responses: Array<{
 		readonly response: string;
 		readonly tokenCount: number;
-		readonly threadId: string;
+		readonly sessionRef: string;
 	}>,
 ): {
 	readonly executor: WorkExecutor;
@@ -23,7 +23,7 @@ function buildMockExecutor(
 	function nextResponse(): {
 		readonly response: string;
 		readonly tokenCount: number;
-		readonly threadId: string;
+		readonly sessionRef: string;
 	} {
 		const response = responses[responseIndex];
 		responseIndex += 1;
@@ -43,8 +43,8 @@ function buildMockExecutor(
 			return nextResponse();
 		},
 		async resumeOrRebuild() {},
-		getThreadId() {
-			return responses[Math.max(0, responseIndex - 1)]?.threadId ?? null;
+		getSessionRef() {
+			return responses[Math.max(0, responseIndex - 1)]?.sessionRef ?? null;
 		},
 	};
 
@@ -54,9 +54,9 @@ function buildMockExecutor(
 describe('createPersistentThread', () => {
 	test('first send calls execute and later sends call fix', async () => {
 		const { executor, calls } = buildMockExecutor([
-			{ response: 'r1', tokenCount: 10, threadId: 'thread-1' },
-			{ response: 'r2', tokenCount: 11, threadId: 'thread-1' },
-			{ response: 'r3', tokenCount: 12, threadId: 'thread-1' },
+			{ response: 'r1', tokenCount: 10, sessionRef: 'thread-1' },
+			{ response: 'r2', tokenCount: 11, sessionRef: 'thread-1' },
+			{ response: 'r3', tokenCount: 12, sessionRef: 'thread-1' },
 		]);
 		const thread = createPersistentThread({ executor, turnTimeoutMs: 5_000 });
 
@@ -70,7 +70,7 @@ describe('createPersistentThread', () => {
 			{ method: 'fix', input: 'turn 3' },
 		]);
 		expect(first.response).toBe('r1');
-		expect(third.threadId).toBe('thread-1');
+		expect(third.sessionRef).toBe('thread-1');
 	});
 
 	test('throws on turn timeout', async () => {
@@ -78,22 +78,22 @@ describe('createPersistentThread', () => {
 			execute: () => new Promise(() => {}),
 			fix: () => new Promise(() => {}),
 			async resumeOrRebuild() {},
-			getThreadId: () => null,
+			getSessionRef: () => null,
 		};
 		const thread = createPersistentThread({ executor, turnTimeoutMs: 25 });
 
 		await expect(thread.send('never')).rejects.toThrow(/timed out/i);
 	});
 
-	test('threadId delegates to executor', () => {
+	test('sessionRef delegates to executor', () => {
 		const executor = {
 			execute: vi.fn(),
 			fix: vi.fn(),
 			resumeOrRebuild: vi.fn(),
-			getThreadId: vi.fn(() => 'thread-xyz'),
+			getSessionRef: vi.fn(() => 'thread-xyz'),
 		} as unknown as WorkExecutor;
 		const thread = createPersistentThread({ executor, turnTimeoutMs: 1_000 });
 
-		expect(thread.threadId()).toBe('thread-xyz');
+		expect(thread.sessionRef()).toBe('thread-xyz');
 	});
 });

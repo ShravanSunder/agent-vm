@@ -9,9 +9,9 @@ function buildThread(responses: readonly string[]): PersistentThread {
 		send: vi.fn(async () => ({
 			response: responses[responseIndex++] ?? '',
 			tokenCount: 10,
-			threadId: 'thread-1',
+			sessionRef: 'thread-1',
 		})),
-		threadId: () => 'thread-1',
+		sessionRef: () => 'thread-1',
 	};
 }
 

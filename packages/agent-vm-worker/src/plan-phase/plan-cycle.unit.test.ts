@@ -9,9 +9,9 @@ function buildThread(responses: readonly string[]): PersistentThread {
 		send: vi.fn(async () => ({
 			response: responses[responseIndex++] ?? '',
 			tokenCount: 10,
-			threadId: 'thread-1',
+			sessionRef: 'thread-1',
 		})),
-		threadId: () => 'thread-1',
+		sessionRef: () => 'thread-1',
 	};
 }
 
@@ -119,9 +119,9 @@ describe('runPlanCycle', () => {
 		const planThread: PersistentThread = {
 			send: vi.fn(async (input: string) => {
 				planInputs.push(input);
-				return { response: JSON.stringify({ plan: 'plan' }), tokenCount: 1, threadId: 'p' };
+				return { response: JSON.stringify({ plan: 'plan' }), tokenCount: 1, sessionRef: 'p' };
 			}),
-			threadId: () => 'p',
+			sessionRef: () => 'p',
 		};
 		const reviewThread: PersistentThread = {
 			send: vi.fn(async (input: string) => {
@@ -129,10 +129,10 @@ describe('runPlanCycle', () => {
 				return {
 					response: JSON.stringify({ approved: true, summary: 'ok', comments: [] }),
 					tokenCount: 1,
-					threadId: 'r',
+					sessionRef: 'r',
 				};
 			}),
-			threadId: () => 'r',
+			sessionRef: () => 'r',
 		};
 
 		await runPlanCycle({

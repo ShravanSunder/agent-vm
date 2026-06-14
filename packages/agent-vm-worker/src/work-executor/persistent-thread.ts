@@ -3,12 +3,12 @@ import type { StructuredInput, WorkExecutor } from './executor-interface.js';
 export interface PersistentThreadResponse {
 	readonly response: string;
 	readonly tokenCount: number;
-	readonly threadId: string;
+	readonly sessionRef: string;
 }
 
 export interface PersistentThread {
 	readonly send: (input: string) => Promise<PersistentThreadResponse>;
-	readonly threadId: () => string | null;
+	readonly sessionRef: () => string | null;
 }
 
 export interface CreatePersistentThreadProps {
@@ -24,9 +24,11 @@ function withTimeout<TValue>(
 	promise: Promise<TValue>,
 	timeoutMs: number,
 	label: string,
+	onTimeout?: () => void,
 ): Promise<TValue> {
 	return new Promise((resolve, reject) => {
 		const timeout = setTimeout(() => {
+			onTimeout?.();
 			reject(new Error(`${label} timed out after ${String(timeoutMs)}ms`));
 		}, timeoutMs);
 
@@ -54,16 +56,17 @@ export function createPersistentThread(props: CreatePersistentThreadProps): Pers
 					: props.executor.execute(toStructuredInput(input)),
 				props.turnTimeoutMs,
 				'persistent-thread.send',
+				() => props.executor.cancelActiveTurn?.(),
 			);
 			started = true;
 			return {
 				response: result.response,
 				tokenCount: result.tokenCount,
-				threadId: result.threadId,
+				sessionRef: result.sessionRef,
 			};
 		},
-		threadId(): string | null {
-			return props.executor.getThreadId();
+		sessionRef(): string | null {
+			return props.executor.getSessionRef();
 		},
 	};
 }
