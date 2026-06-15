@@ -5,9 +5,9 @@ import path from 'node:path';
 import {
 	loadMcpConfig,
 	loadMcpPortalConfig,
+	type FormattedSecretValue,
 	type McpConfig,
 	type McpPortalConfig,
-	type SecretValue,
 } from '@agent-vm/config-contracts';
 import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
@@ -98,7 +98,7 @@ function addUrlHost(hosts: Set<string>, url: string, context: string): void {
 
 function providerSecrets(
 	provider: McpConfig['providers'][string],
-): Readonly<Record<string, SecretValue>> {
+): Readonly<Record<string, FormattedSecretValue>> {
 	return provider.transport.kind === 'stdio' ? provider.transport.env : provider.transport.headers;
 }
 
@@ -112,11 +112,22 @@ function buildManagedEffectivePortalConfig(portalConfig: McpPortalConfig): McpPo
 	return coreConfig;
 }
 
-function providerSecretRef(secret: SecretValue): SecretRef {
+function providerSecretRef(secret: FormattedSecretValue): SecretRef {
 	if (secret.source === 'environment') {
 		return { ref: secret.name, source: 'environment' };
 	}
 	return { ref: secret.ref, source: '1password' };
+}
+
+function generatedEnvironmentSecretForProviderSecret(
+	secret: FormattedSecretValue,
+	envName: string,
+): FormattedSecretValue {
+	const generatedSecret = { name: envName, source: 'environment' } as const;
+	if (secret.format === undefined) {
+		return generatedSecret;
+	}
+	return { ...generatedSecret, format: secret.format };
 }
 
 function assertAllowedRawEnvSecret(
@@ -220,7 +231,7 @@ async function buildEffectivePlanFromConfig(
 			secretSourcesByEnvName.set(envName, { providerName: providerNamespace, secretName });
 			secretRefs[envName] = providerSecretRef(secret);
 			secretPoliciesByEnvName.set(envName, policy);
-			transportSecrets[secretName] = { name: envName, source: 'environment' };
+			transportSecrets[secretName] = generatedEnvironmentSecretForProviderSecret(secret, envName);
 		}
 		effectiveProviders[providerName] = effectiveProvider;
 	}

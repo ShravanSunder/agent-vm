@@ -502,6 +502,100 @@ describe('MCP Portal effective config materialization', () => {
 		});
 	});
 
+	it('preserves provider secret formats on generated environment refs while runtime values stay raw', async () => {
+		const mcpConfig = {
+			providers: {
+				linear: {
+					kind: 'mcp',
+					namespace: 'linear',
+					secretPolicies: {
+						authorization: { hosts: ['api.linear.app'], injection: 'http-mediation' },
+					},
+					transport: {
+						headers: {
+							authorization: {
+								format: { kind: 'bearer' },
+								ref: 'op://agent-vm/linear/credential',
+								source: '1password',
+							},
+						},
+						kind: 'streamable-http',
+						url: 'https://api.linear.app/mcp',
+					},
+				},
+				vendor: {
+					kind: 'mcp',
+					namespace: 'vendor',
+					secretPolicies: {
+						authorization: { hosts: [], injection: 'env' },
+					},
+					transport: {
+						headers: {
+							authorization: {
+								format: { kind: 'prefix', prefix: 'Token' },
+								name: 'VENDOR_TOKEN',
+								source: 'environment',
+							},
+						},
+						kind: 'streamable-http',
+						url: 'https://mcp.vendor.test/mcp',
+					},
+				},
+			},
+			schemaVersion: 1,
+		};
+		const secretResolver = createSecretResolver({
+			'op://agent-vm/linear/credential': 'linear-token',
+			VENDOR_TOKEN: 'vendor-token',
+		});
+
+		const result = await resolveMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				allowedRawEnvSecretNames: ['AGENT_VM_MCP_VENDOR_AUTHORIZATION'],
+				mcpConfig,
+				secretResolver,
+			}),
+		);
+
+		expect(result.effectiveMcpConfig.providers.linear?.transport).toMatchObject({
+			headers: {
+				authorization: {
+					format: { kind: 'bearer' },
+					name: 'AGENT_VM_MCP_LINEAR_AUTHORIZATION',
+					source: 'environment',
+				},
+			},
+		});
+		expect(result.effectiveMcpConfig.providers.vendor?.transport).toMatchObject({
+			headers: {
+				authorization: {
+					format: { kind: 'prefix', prefix: 'Token' },
+					name: 'AGENT_VM_MCP_VENDOR_AUTHORIZATION',
+					source: 'environment',
+				},
+			},
+		});
+		expect(result.runtimeMediatedSecrets).toEqual({
+			AGENT_VM_MCP_LINEAR_AUTHORIZATION: {
+				hosts: ['api.linear.app'],
+				value: 'linear-token',
+			},
+		});
+		expect(result.runtimeEnvironment).toEqual({
+			AGENT_VM_MCP_VENDOR_AUTHORIZATION: 'vendor-token',
+		});
+		expect(secretResolver.resolveAllMock).toHaveBeenCalledWith({
+			AGENT_VM_MCP_LINEAR_AUTHORIZATION: {
+				ref: 'op://agent-vm/linear/credential',
+				source: '1password',
+			},
+			AGENT_VM_MCP_VENDOR_AUTHORIZATION: {
+				ref: 'VENDOR_TOKEN',
+				source: 'environment',
+			},
+		});
+	});
+
 	it('reports both source secrets when normalized provider secret names collide', async () => {
 		const mcpConfig = {
 			providers: {

@@ -15,6 +15,16 @@ describe('provider runtime resolution', () => {
 						transport: {
 							headers: {
 								Authorization: { name: 'LINEAR_TOKEN', source: 'environment' },
+								'X-Vendor-Token': {
+									format: { kind: 'prefix', prefix: 'Token' },
+									name: 'VENDOR_TOKEN',
+									source: 'environment',
+								},
+								authorization: {
+									format: { kind: 'bearer' },
+									name: 'LINEAR_MCP_TOKEN',
+									source: 'environment',
+								},
 							},
 							kind: 'streamable-http',
 							requiredEgressHosts: [],
@@ -50,7 +60,11 @@ describe('provider runtime resolution', () => {
 
 		expect(resolved).toEqual([
 			{
-				headers: { Authorization: 'resolved:LINEAR_TOKEN' },
+				headers: {
+					Authorization: 'resolved:LINEAR_TOKEN',
+					'X-Vendor-Token': 'Token resolved:VENDOR_TOKEN',
+					authorization: 'Bearer resolved:LINEAR_MCP_TOKEN',
+				},
 				namespace: 'linear',
 				transport: 'streamable-http',
 				url: 'https://mcp.linear.app/mcp',

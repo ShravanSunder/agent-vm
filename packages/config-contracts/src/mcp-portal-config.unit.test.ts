@@ -84,6 +84,23 @@ describe('loadMcpPortalConfig', () => {
 		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/server/u);
 	});
 
+	it('rejects provider secret formatting on portal auth secrets', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"externalAuth": {
+				"masterKey": {
+					"source": "environment",
+					"name": "MCP_PORTAL_MASTER_KEY",
+					"format": { "kind": "bearer" }
+				}
+			},
+			"agents": { "shravan": { "profile": "default" } },
+			"profiles": { "default": { "namespaces": {} } }
+		}`);
+
+		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/format/u);
+	});
+
 	it('rejects external proxy hosts outside loopback', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,

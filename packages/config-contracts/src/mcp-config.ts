@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { loadJsonConfigFile } from './json-config-file.js';
-import { secretValueSchema, type SecretValue } from './secret-value.js';
+import { formattedSecretValueSchema, type FormattedSecretValue } from './secret-value.js';
 
 const mcpProviderDiscoverySchema = z
 	.object({
@@ -21,7 +21,7 @@ const streamableHttpTransportSchema = z
 	.object({
 		kind: z.literal('streamable-http'),
 		url: remoteTransportUrlSchema,
-		headers: z.record(z.string(), secretValueSchema).default({}),
+		headers: z.record(z.string(), formattedSecretValueSchema).default({}),
 		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
 	.strict();
@@ -30,7 +30,7 @@ const sseTransportSchema = z
 	.object({
 		kind: z.literal('sse'),
 		url: remoteTransportUrlSchema,
-		headers: z.record(z.string(), secretValueSchema).default({}),
+		headers: z.record(z.string(), formattedSecretValueSchema).default({}),
 		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
 	.strict();
@@ -41,7 +41,7 @@ const stdioTransportSchema = z
 		command: z.string().min(1),
 		args: z.array(z.string()).default([]),
 		cwd: z.string().min(1).optional(),
-		env: z.record(z.string(), secretValueSchema).default({}),
+		env: z.record(z.string(), formattedSecretValueSchema).default({}),
 		networkAccess: z.enum(['declared', 'none']).optional(),
 		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
@@ -97,7 +97,7 @@ export type McpProvider = z.infer<typeof mcpProviderSchema>;
 
 export type ResolvedMcpProvider =
 	| {
-			readonly headers: Readonly<Record<string, SecretValue>>;
+			readonly headers: Readonly<Record<string, FormattedSecretValue>>;
 			readonly namespace: string;
 			readonly transport: 'streamable-http' | 'sse';
 			readonly url: string;
@@ -106,7 +106,7 @@ export type ResolvedMcpProvider =
 			readonly args: readonly string[];
 			readonly command: string;
 			readonly cwd?: string;
-			readonly env: Readonly<Record<string, SecretValue>>;
+			readonly env: Readonly<Record<string, FormattedSecretValue>>;
 			readonly namespace: string;
 			readonly transport: 'stdio';
 	  };
@@ -123,7 +123,7 @@ export function mcpConfigToResolvedProviders(config: McpConfig): readonly Resolv
 				args: readonly string[];
 				command: string;
 				cwd?: string;
-				env: Readonly<Record<string, SecretValue>>;
+				env: Readonly<Record<string, FormattedSecretValue>>;
 				namespace: string;
 				transport: 'stdio';
 			} = {
