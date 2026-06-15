@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { startControllerTelemetry } from '../observability/controller-telemetry.js';
 import type { ManagedObservabilityRuntimeConfig } from '../observability/observability-config.js';
 import { prepareObservabilityStack } from '../observability/observability-lifecycle.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
@@ -524,8 +525,12 @@ async function waitForVictoriaLogs(options: {
 		// oxlint-disable-next-line no-await-in-loop -- bounded external ingestion poll
 		await waitForProtocolRetryInterval(500);
 	}
+	const sampleResponse = await queryVictoriaLogs({
+		logsPort: options.logsPort,
+		query: '*',
+	});
 	throw new Error(
-		`Timed out waiting for VictoriaLogs query '${options.query}'. Last response: ${lastResponse}`,
+		`Timed out waiting for VictoriaLogs query '${options.query}'. Last response: ${lastResponse}. Sample response: ${sampleResponse}`,
 	);
 }
 
@@ -655,6 +660,87 @@ describe('smoke: observability Victoria storage canaries', () => {
 				},
 			]) {
 				expect(result).not.toContain(canary);
+			}
+		} finally {
+			await dockerComposeDown(config);
+		}
+	});
+
+	it('stores controller telemetry from the real producer facade', async () => {
+		const config = await createRuntimeConfig();
+		const safeMarker = `agent-vm-controller-storage-marker-${Date.now()}`;
+		const sensitiveCanaries = [
+			`agent-vm-sensitive-token-${Date.now()}`,
+			`agent-vm-sensitive-password-${Date.now()}`,
+			`agent-vm-sensitive-payload-${Date.now()}`,
+		] as const;
+		try {
+			await prepareObservabilityStackWithDiagnostics(config);
+
+			const telemetry = startControllerTelemetry({
+				identity: {
+					branchName: 'feat/observability-producers',
+					repositoryIdentity: 'agent-vm-observability-storage-canary-repo',
+					runtimeFlavor: 'agent-vm',
+					serviceVersion: '0.0.0-test',
+					worktreeIdentity: 'agent-vm-observability-storage-canary-worktree',
+				},
+				observabilityConfig: config,
+				projectNamespace: config.projectName,
+				proof: {
+					marker: safeMarker,
+					startedAt: new Date().toISOString(),
+					stateFile: path.join(config.runtimeDir, 'controller-telemetry-state.json'),
+				},
+			});
+			if (telemetry === undefined) {
+				throw new Error('Expected controller telemetry to start for enabled managed config.');
+			}
+
+			telemetry.recordControllerLifecycleEvent({
+				eventName: 'storage-canary-started',
+				observedAtMs: Date.now(),
+			});
+			telemetry.healthEventSink.record({
+				agentId: sensitiveCanaries[0],
+				elapsedMs: 12,
+				errorCode: sensitiveCanaries[1],
+				kind: 'tool-vm-ssh',
+				leaseId: sensitiveCanaries[2],
+				observedAtMs: Date.now(),
+				operation: 'probe',
+				result: 'timeout',
+				zoneId: 'storage-canary',
+			});
+			await telemetry.forceFlush();
+			await telemetry.shutdown();
+
+			const logsQueryResult = await waitForVictoriaLogs({
+				logsPort: config.ports.logs,
+				query: `agent.proof.marker:=${JSON.stringify(safeMarker)}`,
+			});
+			expect(logsQueryResult).toContain('agent-vm-controller');
+			expect(logsQueryResult).toContain('agent_vm.health_event');
+			expect(logsQueryResult).toContain('agent_vm.log.name');
+			expect(logsQueryResult).toContain(safeMarker);
+			const metricsQueryResult = await waitForVictoriaMetrics({
+				metricsPort: config.ports.metrics,
+				query: 'agent_vm_health_events_total',
+				expected: 'agent_vm_health_events_total',
+			});
+			expect(metricsQueryResult).toContain('agent_vm_health_events_total');
+			expect(metricsQueryResult).toContain('storage-canary');
+			const tracesQueryResult = await waitForVictoriaTraces({
+				tracesPort: config.ports.traces,
+				query: '"resource_attr:service.name":"agent-vm-controller"',
+				expected: 'agent_vm.health.tool-vm-ssh',
+			});
+			expect(tracesQueryResult).toContain('agent_vm.health.tool-vm-ssh');
+			expect(tracesQueryResult).toContain('agent-vm-controller');
+			for (const sensitiveCanary of sensitiveCanaries) {
+				expect(logsQueryResult).not.toContain(sensitiveCanary);
+				expect(metricsQueryResult).not.toContain(sensitiveCanary);
+				expect(tracesQueryResult).not.toContain(sensitiveCanary);
 			}
 		} finally {
 			await dockerComposeDown(config);

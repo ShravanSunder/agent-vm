@@ -3,11 +3,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import type { ControllerTelemetry } from '../observability/controller-telemetry.js';
 import type { CheckObservabilityStackReadinessOptions } from '../observability/observability-readiness.js';
 import {
 	createManagedExecProcessStub,
@@ -29,6 +31,8 @@ type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequ
 
 let previousOnePasswordServiceAccountToken: string | undefined;
 let previousOpenClawGatewayToken: string | undefined;
+let previousObservabilityMarker: string | undefined;
+let previousObservabilityQueryStart: string | undefined;
 const controllerRuntimeTestRoot = path.join(
 	tmpdir(),
 	`agent-vm-controller-runtime-test-${process.pid}`,
@@ -96,6 +100,8 @@ async function writeDefaultOpenClawConfigFixture(): Promise<void> {
 beforeEach(async () => {
 	previousOnePasswordServiceAccountToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
 	previousOpenClawGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+	previousObservabilityMarker = process.env.AGENT_VM_OBSERVABILITY_MARKER;
+	previousObservabilityQueryStart = process.env.AGENT_VM_OBSERVABILITY_QUERY_START;
 	process.env.OP_SERVICE_ACCOUNT_TOKEN = 'test-op-service-account-token';
 	process.env.OPENCLAW_GATEWAY_TOKEN = 'test-openclaw-gateway-token';
 	await writeDefaultOpenClawConfigFixture();
@@ -111,6 +117,16 @@ afterEach(async () => {
 		delete process.env.OPENCLAW_GATEWAY_TOKEN;
 	} else {
 		process.env.OPENCLAW_GATEWAY_TOKEN = previousOpenClawGatewayToken;
+	}
+	if (previousObservabilityMarker === undefined) {
+		delete process.env.AGENT_VM_OBSERVABILITY_MARKER;
+	} else {
+		process.env.AGENT_VM_OBSERVABILITY_MARKER = previousObservabilityMarker;
+	}
+	if (previousObservabilityQueryStart === undefined) {
+		delete process.env.AGENT_VM_OBSERVABILITY_QUERY_START;
+	} else {
+		process.env.AGENT_VM_OBSERVABILITY_QUERY_START = previousObservabilityQueryStart;
 	}
 	await rm(controllerRuntimeTestRoot, { force: true, recursive: true });
 });
@@ -1134,6 +1150,156 @@ describe('startControllerRuntime', () => {
 		expect('projectName' in runtimeConfig).toBe(false);
 		expect(startGatewayZone).toHaveBeenCalledOnce();
 		await expect(runtime.close()).resolves.toBeUndefined();
+	});
+
+	it('starts controller telemetry and flushes gateway health events for observability-enabled runtimes', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.AGENT_VM_OBSERVABILITY_MARKER = 'controller-runtime-proof-marker';
+		process.env.AGENT_VM_OBSERVABILITY_QUERY_START = '2026-06-14T14:55:00.000Z';
+		const observabilitySystemConfig = createObservabilitySystemConfig('degraded');
+		const observabilityZone = observabilitySystemConfig.zones[0];
+		if (!observabilityZone) {
+			throw new Error('Expected observability test zone.');
+		}
+		let nowMs = 1_781_445_300_000;
+		const telemetryHealthEvents: AgentVmHealthEvent[] = [];
+		const telemetryLifecycleEvents: string[] = [];
+		const telemetryCloseOrder: string[] = [];
+		const telemetry: ControllerTelemetry = {
+			forceFlush: vi.fn(async () => {
+				telemetryCloseOrder.push('forceFlush');
+			}),
+			healthEventSink: {
+				record: vi.fn((event) => {
+					telemetryHealthEvents.push(event);
+				}),
+			},
+			recordControllerLifecycleEvent: vi.fn((event) => {
+				telemetryLifecycleEvents.push(event.eventName);
+			}),
+			shutdown: vi.fn(async () => {
+				telemetryCloseOrder.push('shutdown');
+			}),
+		};
+		const startControllerTelemetry = vi.fn(() => telemetry);
+		const intervalCallbacks: {
+			readonly callback: () => void | Promise<void>;
+			readonly delayMs: number;
+		}[] = [];
+		const fakeInterval = setTimeout(() => undefined, 0);
+		clearTimeout(fakeInterval);
+		const startGatewayZone = vi.fn(async () => ({
+			image: {
+				built: true,
+				fingerprint: 'gateway-image',
+				imagePath: '/tmp/gateway-image',
+			},
+			ingress: {
+				host: '127.0.0.1',
+				port: 18791,
+			},
+			processSpec: openClawProcessSpec,
+			vm: {
+				close: vi.fn(async () => {}),
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh ...',
+					host: '127.0.0.1',
+					identityFile: '/tmp/key',
+					port: 19000,
+					user: 'sandbox',
+				})),
+				exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '200' })),
+				fs: createManagedVmFsStub(),
+				getHostPid: vi.fn(() => 48_282),
+				getVmInstance: vi.fn(),
+				id: 'gateway-vm-telemetry',
+				setIngressRoutes: vi.fn(),
+			},
+			zone: observabilityZone,
+		}));
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: observabilitySystemConfig,
+				zoneIds: ['shravan'],
+			},
+			{
+				checkObservabilityStackReadiness: vi.fn(
+					async () => ({ ok: true, status: 'ready' }) as const,
+				),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				isProcessAlive: () => true,
+				now: () => nowMs,
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
+				}),
+				resolveControllerTelemetryIdentity: async () => ({
+					branchName: 'main',
+					releaseChannel: 'beta',
+					repositoryIdentity: 'repo',
+					runtimeFlavor: 'beta',
+					serviceVersion: '0.0.99',
+					worktreeIdentity: 'worktree',
+				}),
+				resolveControllerTelemetryServiceVersion: async () => '0.0.99',
+				runTask: async (_title, fn) => {
+					await fn();
+				},
+				setIntervalImpl: (callback, delayMs) => {
+					intervalCallbacks.push({ callback, delayMs });
+					return fakeInterval;
+				},
+				startControllerTelemetry,
+				startGatewayZone,
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {},
+				})),
+			},
+		);
+		const gatewayServiceIntervalMs =
+			observabilitySystemConfig.controller?.health.gatewayServiceIntervalMs;
+		if (gatewayServiceIntervalMs === undefined) {
+			throw new Error('Expected controller health config.');
+		}
+		const monitorTick = intervalCallbacks.find(
+			(interval) => interval.delayMs === gatewayServiceIntervalMs,
+		)?.callback;
+		if (!monitorTick) {
+			throw new Error('Expected gateway-service monitor interval callback.');
+		}
+
+		await monitorTick();
+		nowMs += 100;
+		await runtime.close();
+
+		expect(startControllerTelemetry).toHaveBeenCalledWith(
+			expect.objectContaining({
+				observabilityConfig: expect.objectContaining({
+					enabled: true,
+					stackMode: 'managed',
+				}),
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				proof: {
+					marker: 'controller-runtime-proof-marker',
+					startedAt: '2026-06-14T14:55:00.000Z',
+				},
+			}),
+		);
+		expect(telemetryLifecycleEvents).toEqual(['controller-started', 'controller-stopping']);
+		expect(telemetryHealthEvents).toEqual([
+			expect.objectContaining({
+				kind: 'gateway-service-health',
+				result: 'ok',
+				zoneId: 'shravan',
+			}),
+		]);
+		expect(telemetryCloseOrder).toEqual(['forceFlush', 'shutdown']);
 	});
 
 	it('closes the controller server when required host observability readiness fails', async () => {

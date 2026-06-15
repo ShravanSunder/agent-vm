@@ -909,6 +909,10 @@ describe('runBuildCommand', () => {
 		expect(generatedDockerfile).toContain(
 			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/codex@2026.5.7" "@openclaw/diagnostics-otel@2026.5.7"',
 		);
+		expect(generatedDockerfile).not.toContain('openclaw-diagnostics-otel.tgz');
+		expect(generatedDockerfile).not.toContain(
+			'npm pack "$(pnpm root -g)/@openclaw/diagnostics-otel"',
+		);
 	});
 
 	it('does not add disabled OpenClaw channel packages', async () => {

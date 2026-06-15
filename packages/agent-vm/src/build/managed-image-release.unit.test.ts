@@ -108,7 +108,7 @@ describe('managed image release', () => {
 			imageTargetName: 'openclaw',
 			managedImageRelease: createTestManagedImageRelease(),
 			outputDirectory,
-			requiredOpenClawPackageNames: ['@openclaw/discord'],
+			requiredOpenClawPackageNames: ['@openclaw/discord', '@openclaw/diagnostics-otel'],
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
@@ -116,7 +116,7 @@ describe('managed image release', () => {
 			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.27.1 AS openclaw-runtime',
 		);
 		const openClawInstallIndex = generatedDockerfile.indexOf(
-			`RUN pnpm add -g "openclaw@${managedOpenClawVersion}" "@openclaw/codex@${managedOpenClawVersion}" "@openclaw/discord@${managedOpenClawVersion}"`,
+			`RUN pnpm add -g "openclaw@${managedOpenClawVersion}" "@openclaw/codex@${managedOpenClawVersion}" "@openclaw/discord@${managedOpenClawVersion}" "@openclaw/diagnostics-otel@${managedOpenClawVersion}"`,
 		);
 		const openClawPostinstallIndex = generatedDockerfile.indexOf(
 			'(cd "$openclaw_package_root" && node scripts/postinstall-bundled-plugins.mjs)',
@@ -129,6 +129,7 @@ describe('managed image release', () => {
 		expect(openClawStageIndex).toBeGreaterThanOrEqual(0);
 		expect(openClawInstallIndex).toBeGreaterThan(openClawStageIndex);
 		expect(openClawPostinstallIndex).toBeGreaterThan(openClawInstallIndex);
+		expect(generatedDockerfile).not.toContain('openclaw-diagnostics-otel.tgz');
 		expect(finalStageIndex).toBeGreaterThan(openClawPostinstallIndex);
 		expect(agentVmInstallIndex).toBeGreaterThan(finalStageIndex);
 	});

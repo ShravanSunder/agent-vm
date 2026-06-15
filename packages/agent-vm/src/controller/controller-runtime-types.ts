@@ -10,6 +10,8 @@ import type {
 	preflightGatewayZoneStart,
 	startGatewayZone,
 } from '../gateway/gateway-zone-orchestrator.js';
+import type { resolveControllerTelemetryIdentity } from '../observability/controller-telemetry-identity.js';
+import type { startControllerTelemetry } from '../observability/controller-telemetry.js';
 import type { checkObservabilityStackReadiness } from '../observability/observability-readiness.js';
 import type { ControllerRuntimeZoneStatus } from '../operations/controller-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
@@ -39,6 +41,9 @@ export interface ControllerRuntimeDependencies {
 	readonly appendDurableHealthEvent?: typeof appendDurableHealthEvent;
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadiness;
 	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
+	readonly resolveControllerTelemetryIdentity?: typeof resolveControllerTelemetryIdentity;
+	readonly resolveControllerTelemetryServiceVersion?: () => Promise<string>;
+	readonly startControllerTelemetry?: typeof startControllerTelemetry;
 	readonly createManagedToolVm?: (options: {
 		readonly agentId: string;
 		readonly profile: ToolVmProfile;

@@ -1,12 +1,21 @@
+import path from 'node:path';
+
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { configureHostNetworkDefaults, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
+import { resolveCliVersion } from '../cli/cli-version.js';
 import { resolveControllerHealthConfig } from '../config/system-config.js';
 import {
 	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
 	startGatewayZone,
 } from '../gateway/gateway-zone-orchestrator.js';
+import { resolveControllerTelemetryIdentity as resolveControllerTelemetryIdentityDefault } from '../observability/controller-telemetry-identity.js';
+import {
+	startControllerTelemetry as startControllerTelemetryDefault,
+	type ControllerTelemetry,
+	type ControllerTelemetryProofAttributes,
+} from '../observability/controller-telemetry.js';
 import {
 	createObservabilityRuntimeConfig,
 	type EnabledObservabilityRuntimeConfig,
@@ -83,6 +92,57 @@ function formatUnknownError(error: unknown): string {
 		return error.message;
 	}
 	return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
+function readNonEmptyEnv(name: string): string | undefined {
+	const value = process.env[name]?.trim();
+	return value && value.length > 0 ? value : undefined;
+}
+
+function createControllerTelemetryProofAttributes():
+	| ControllerTelemetryProofAttributes
+	| undefined {
+	const marker = readNonEmptyEnv('AGENT_VM_OBSERVABILITY_MARKER');
+	const startedAt = readNonEmptyEnv('AGENT_VM_OBSERVABILITY_QUERY_START');
+	const stateFile = readNonEmptyEnv('AGENT_VM_OBSERVABILITY_STATE_FILE');
+	if (!marker && !startedAt && !stateFile) {
+		return undefined;
+	}
+	return {
+		...(marker ? { marker } : {}),
+		...(startedAt ? { startedAt } : {}),
+		...(stateFile ? { stateFile } : {}),
+	};
+}
+
+function getDeploymentRootForSystemConfig(systemConfigPath: string): string {
+	return path.resolve(path.dirname(systemConfigPath), '..');
+}
+
+async function flushControllerTelemetry(
+	controllerTelemetry: ControllerTelemetry | undefined,
+): Promise<void> {
+	if (!controllerTelemetry) {
+		return;
+	}
+	try {
+		await controllerTelemetry.forceFlush();
+	} catch (error) {
+		writeControllerRuntimeLog(`Controller telemetry flush failed: ${formatUnknownError(error)}`);
+	}
+}
+
+async function shutdownControllerTelemetry(
+	controllerTelemetry: ControllerTelemetry | undefined,
+): Promise<void> {
+	if (!controllerTelemetry) {
+		return;
+	}
+	try {
+		await controllerTelemetry.shutdown();
+	} catch (error) {
+		writeControllerRuntimeLog(`Controller telemetry shutdown failed: ${formatUnknownError(error)}`);
+	}
 }
 
 function isOpenClawZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig & {
@@ -422,6 +482,33 @@ export async function startControllerRuntime(
 		dependencies.zoneGitCapabilityStore ?? new ZoneGitCapabilityStore();
 	const zoneGitOperationLocks = dependencies.zoneGitOperationLocks ?? new ZoneGitOperationLocks();
 	const controllerHealthConfig = resolveControllerHealthConfig(options.systemConfig);
+	const observabilityRuntimeConfig = createObservabilityRuntimeConfig(options.systemConfig);
+	let controllerTelemetry: ControllerTelemetry | undefined;
+	if (observabilityRuntimeConfig.enabled) {
+		try {
+			const serviceVersion = await (
+				dependencies.resolveControllerTelemetryServiceVersion ?? resolveCliVersion
+			)();
+			const identity = await (
+				dependencies.resolveControllerTelemetryIdentity ?? resolveControllerTelemetryIdentityDefault
+			)({
+				cwd: getDeploymentRootForSystemConfig(options.systemConfig.systemConfigPath),
+				serviceVersion,
+			});
+			controllerTelemetry = (
+				dependencies.startControllerTelemetry ?? startControllerTelemetryDefault
+			)({
+				identity,
+				observabilityConfig: observabilityRuntimeConfig,
+				projectNamespace: options.systemConfig.host.projectNamespace,
+				proof: createControllerTelemetryProofAttributes(),
+			});
+		} catch (error) {
+			writeControllerRuntimeLog(
+				`Controller telemetry disabled after startup failure: ${formatUnknownError(error)}`,
+			);
+		}
+	}
 	const healthEventStore = new HealthEventStore({
 		durableEventLog: {
 			append: async (event) => {
@@ -434,6 +521,7 @@ export async function startControllerRuntime(
 			},
 		},
 		eventHistoryLimit: controllerHealthConfig.eventHistoryLimit,
+		...(controllerTelemetry ? { healthEventSinks: [controllerTelemetry.healthEventSink] } : {}),
 		staleAfterMs: controllerHealthConfig.staleAfterMs,
 	});
 	const stateDirFor = (zoneId: string): string => {
@@ -856,9 +944,23 @@ export async function startControllerRuntime(
 			await registry.startSelectedZones();
 		});
 		runtimeReadiness.set('ready');
+		controllerTelemetry?.recordControllerLifecycleEvent({
+			eventName: 'controller-started',
+			observedAtMs: now(),
+		});
 	} catch (error) {
 		runtimeReadiness.set('stopping');
-		await serverRef.current?.close();
+		controllerTelemetry?.recordControllerLifecycleEvent({
+			eventName: 'controller-start-failed',
+			observedAtMs: now(),
+		});
+		try {
+			await serverRef.current?.close();
+		} finally {
+			await healthEventStore.flushHealthEventSinks();
+			await flushControllerTelemetry(controllerTelemetry);
+			await shutdownControllerTelemetry(controllerTelemetry);
+		}
 		throw error;
 	}
 
@@ -904,20 +1006,32 @@ export async function startControllerRuntime(
 	return {
 		async close(): Promise<void> {
 			runtimeReadiness.set('stopping');
+			controllerTelemetry?.recordControllerLifecycleEvent({
+				eventName: 'controller-stopping',
+				observedAtMs: now(),
+			});
 			clearReaperTimer();
 			await gatewayServiceHealthMonitor?.stop();
-			await healthEventStore.flushDurableWrites();
 			requestHeartbeatRegistry.stopAll();
 			const releaseError = await releaseAllLeases();
 			let stopError: Error | undefined;
+			let serverCloseError: Error | undefined;
 			try {
 				await registry.stopAllZones();
 			} catch (error) {
 				stopError = error instanceof Error ? error : new Error(formatUnknownError(error));
 			} finally {
-				await serverRef.current?.close();
+				try {
+					await serverRef.current?.close();
+				} catch (error) {
+					serverCloseError = error instanceof Error ? error : new Error(formatUnknownError(error));
+				}
+				await healthEventStore.flushDurableWrites();
+				await healthEventStore.flushHealthEventSinks();
+				await flushControllerTelemetry(controllerTelemetry);
+				await shutdownControllerTelemetry(controllerTelemetry);
 			}
-			const closeErrors = [releaseError, stopError].filter(
+			const closeErrors = [releaseError, stopError, serverCloseError].filter(
 				(error): error is Error => error !== undefined,
 			);
 			if (closeErrors.length === 1) {

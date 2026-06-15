@@ -10,8 +10,13 @@ export interface HealthEventStoreOptions {
 		| { readonly append: (event: AgentVmHealthEvent) => Promise<void> }
 		| undefined;
 	readonly eventHistoryLimit: number;
+	readonly healthEventSinks?: readonly HealthEventSink[] | undefined;
 	readonly latestBucketLimit?: number | undefined;
 	readonly staleAfterMs: number;
+}
+
+export interface HealthEventSink {
+	readonly record: (event: AgentVmHealthEvent) => Promise<void> | void;
 }
 
 export interface DeriveHealthSnapshotOptions {
@@ -25,12 +30,15 @@ export class HealthEventStore {
 	readonly #latestByBucket = new Map<string, AgentVmHealthEvent>();
 	readonly #history: AgentVmHealthEvent[] = [];
 	readonly #durableEventLog: HealthEventStoreOptions['durableEventLog'];
+	readonly #healthEventSinks: readonly HealthEventSink[];
 	#durableWriteQueue: Promise<void> = Promise.resolve();
+	#healthEventSinkQueue: Promise<void> = Promise.resolve();
 	readonly #staleAfterMs: number;
 
 	constructor(options: HealthEventStoreOptions) {
 		this.#durableEventLog = options.durableEventLog;
 		this.#eventHistoryLimit = options.eventHistoryLimit;
+		this.#healthEventSinks = options.healthEventSinks ?? [];
 		this.#latestBucketLimit = options.latestBucketLimit ?? 1_000;
 		this.#staleAfterMs = options.staleAfterMs;
 	}
@@ -48,6 +56,7 @@ export class HealthEventStore {
 		}
 		this.#evictOldestLatestBuckets();
 		this.#queueDurableWrite(event);
+		this.#queueHealthEventSinks(event);
 	}
 
 	#evictOldestLatestBuckets(): void {
@@ -70,6 +79,10 @@ export class HealthEventStore {
 
 	async flushDurableWrites(): Promise<void> {
 		await this.#durableWriteQueue;
+	}
+
+	async flushHealthEventSinks(): Promise<void> {
+		await this.#healthEventSinkQueue;
 	}
 
 	listLatestEventsForZone(zoneId: string): readonly AgentVmHealthEvent[] {
@@ -96,6 +109,27 @@ export class HealthEventStore {
 			})
 			.catch(() => {
 				// Durable logs are evidence. In-memory health remains the serving path.
+			});
+	}
+
+	#queueHealthEventSinks(event: AgentVmHealthEvent): void {
+		if (this.#healthEventSinks.length === 0) {
+			return;
+		}
+		this.#healthEventSinkQueue = this.#healthEventSinkQueue
+			.then(async () => {
+				await Promise.all(
+					this.#healthEventSinks.map(async (sink) => {
+						try {
+							await sink.record(event);
+						} catch {
+							// Telemetry is operator evidence. Health state remains the serving path.
+						}
+					}),
+				);
+			})
+			.catch(() => {
+				// Keep future telemetry events flowing after an unexpected sink failure.
 			});
 	}
 }
