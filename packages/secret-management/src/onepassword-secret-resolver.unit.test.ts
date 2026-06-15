@@ -1277,8 +1277,11 @@ describe('createOpCliSecretResolver', () => {
 				const renderedError = String(error);
 				expect(renderedError).toContain('op failed: exit code 1');
 				expect(renderedError).toContain('output=redacted');
+				expect(renderedError).toContain('stdoutBytes=0');
+				expect(renderedError).toContain('stderrBytes=18');
 				expect(renderedError).toContain('opEnvIsolation=enabled');
 				expect(renderedError).toContain('opAuth=service-account-token');
+				expect(renderedError).toContain('opSubcommand=inject');
 				expect(renderedError).toContain('opConfig=isolated');
 				expect(renderedError).toContain('opBiometricUnlock=false');
 				expect(renderedError).toContain('opConnectEnv=absent');
@@ -1354,8 +1357,11 @@ describe('createOpCliSecretResolver', () => {
 		expect(probe.ok).toBe(false);
 		expect(probe.hint).toContain('op whoami failed with isolated service-account env');
 		expect(probe.hint).toContain('output=redacted');
+		expect(probe.hint).toContain('stdoutBytes=0');
+		expect(probe.hint).toContain('stderrBytes=18');
 		expect(probe.hint).toContain('opEnvIsolation=enabled');
 		expect(probe.hint).toContain('opAuth=service-account-token');
+		expect(probe.hint).toContain('opSubcommand=whoami');
 		expect(probe.hint).not.toContain('SUPER-SECRET-VALUE');
 	});
 

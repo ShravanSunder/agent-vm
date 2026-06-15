@@ -90,6 +90,18 @@ function createDeferredPromise<TResult>(): DeferredPromise<TResult> {
 	};
 }
 
+async function flushNextPendingEventLoopWork(remainingCount: number): Promise<void> {
+	if (remainingCount === 0) {
+		return;
+	}
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	await flushNextPendingEventLoopWork(remainingCount - 1);
+}
+
+async function flushPendingEventLoopWork(): Promise<void> {
+	await flushNextPendingEventLoopWork(20);
+}
+
 afterEach(async () => {
 	cleanupOrphanedGatewayIfPresentMock.mockClear();
 	cleanupOrphanedToolVmsIfPresentMock.mockClear();
@@ -1653,6 +1665,100 @@ describe('startGatewayZone', () => {
 		});
 
 		await expect(readdir(effectiveConfigDir)).resolves.toEqual([]);
+	});
+
+	it('deduplicates overlapping MCP Portal and zone secret refs during protected restart preflight', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const overlappingRef = 'op://agent-vm/shravan-perplexity/credential';
+		const configDir = path.dirname(baseZone.gateway.config);
+		await writeMinimalMcpPortalConfigs(configDir, {
+			providers: {
+				perplexity: {
+					kind: 'mcp',
+					namespace: 'perplexity',
+					secretPolicies: {
+						PERPLEXITY_API_KEY: {
+							hosts: ['api.perplexity.ai'],
+							injection: 'http-mediation',
+						},
+					},
+					transport: {
+						args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+						command: 'npx',
+						env: {
+							PERPLEXITY_API_KEY: {
+								ref: overlappingRef,
+								source: '1password',
+							},
+						},
+						kind: 'stdio',
+						networkAccess: 'declared',
+						requiredEgressHosts: ['api.perplexity.ai'],
+					},
+				},
+			},
+			schemaVersion: 1,
+		});
+		const firstResolveAllStarted = createDeferredPromise<void>();
+		const releaseFirstResolveAll = createDeferredPromise<void>();
+		const resolveSecretRef = (secretRef: SecretRef): string => {
+			if (secretRef.source === 'config') {
+				return secretRef.value;
+			}
+			switch (secretRef.ref) {
+				case 'op://agent-vm/shravan-discord/bot-token':
+					return 'resolved-discord-token';
+				case 'op://agent-vm/shravan-gateway-auth/password':
+					return 'resolved-gateway-token';
+				case overlappingRef:
+					return 'resolved-shared-perplexity-key';
+				default:
+					throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
+			}
+		};
+		const resolveAllMock = vi.fn(async (secretRefs: Record<string, SecretRef>) => {
+			if (resolveAllMock.mock.calls.length === 1) {
+				firstResolveAllStarted.resolve(undefined);
+				await releaseFirstResolveAll.promise;
+			}
+			return Object.fromEntries(
+				Object.entries(secretRefs).map(([secretName, secretRef]) => [
+					secretName,
+					resolveSecretRef(secretRef),
+				]),
+			);
+		});
+		const secretResolver: SecretResolver = {
+			resolve: async (secretRef) => resolveSecretRef(secretRef),
+			resolveAll: resolveAllMock,
+		};
+
+		const preflightPromise = preflightGatewayZoneStart({
+			prebuiltImage: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/gateway-image' },
+			secretResolver,
+			systemConfig,
+			zoneId: 'shravan',
+			zoneOverride: {
+				...baseZone,
+				agents: [{ id: 'shravan' }],
+				mcpPortal: { configDir },
+			},
+		});
+		await firstResolveAllStarted.promise;
+		await flushPendingEventLoopWork();
+		releaseFirstResolveAll.resolve(undefined);
+		await preflightPromise;
+
+		const overlappingResolveCount = resolveAllMock.mock.calls
+			.flatMap(([secretRefs]) => Object.values(secretRefs))
+			.filter(
+				(secretRef) => secretRef.source === '1password' && secretRef.ref === overlappingRef,
+			).length;
+		expect(overlappingResolveCount).toBe(1);
 	});
 
 	it('does not generate OpenClaw mcp.servers entries for managed MCP Portal', async () => {

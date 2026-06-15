@@ -181,6 +181,7 @@ function createPreflightCachingSecretResolver(
 	secretResolver: SecretResolver,
 ): PreflightCachingSecretResolver {
 	const cachedSecrets = new Map<string, string>();
+	const inFlightSecrets = new Map<string, Promise<string>>();
 	let frozen = false;
 	const resolver: SecretResolver = {
 		resolve: async (secretRef) => {
@@ -192,16 +193,39 @@ function createPreflightCachingSecretResolver(
 				}
 				return cachedSecret;
 			}
+			const inFlightSecret = inFlightSecrets.get(cacheKey);
+			if (inFlightSecret !== undefined) {
+				return await inFlightSecret;
+			}
 			if (frozen) {
 				throw new Error('Gateway secret preflight cache missed a post-preflight resolve call.');
 			}
-			const resolvedSecret = await secretResolver.resolve(secretRef);
-			cachedSecrets.set(cacheKey, resolvedSecret);
-			return resolvedSecret;
+			const freshSecret = Promise.resolve()
+				.then(async () => await secretResolver.resolve(secretRef))
+				.then((resolvedSecret) => {
+					cachedSecrets.set(cacheKey, resolvedSecret);
+					return resolvedSecret;
+				})
+				.finally(() => {
+					inFlightSecrets.delete(cacheKey);
+				});
+			inFlightSecrets.set(cacheKey, freshSecret);
+			return await freshSecret;
 		},
 		resolveAll: async (secretRefs) => {
 			const resolvedSecrets: Record<string, string> = {};
-			const missingSecretRefs: Record<string, SecretRef> = {};
+			const pendingSecrets: {
+				readonly promise: Promise<string>;
+				readonly secretName: string;
+			}[] = [];
+			const newSecretGroupsByCacheKey = new Map<
+				string,
+				{
+					readonly resolverSecretName: string;
+					readonly requestedSecretNames: string[];
+					readonly secretRef: SecretRef;
+				}
+			>();
 			for (const [secretName, secretRef] of Object.entries(secretRefs)) {
 				const cacheKey = secretRefCacheKey(secretRef);
 				if (cachedSecrets.has(cacheKey)) {
@@ -210,27 +234,71 @@ function createPreflightCachingSecretResolver(
 						throw new Error('Preflight secret cache contained an undefined value.');
 					}
 					resolvedSecrets[secretName] = cachedSecret;
+					continue;
+				}
+				const inFlightSecret = inFlightSecrets.get(cacheKey);
+				if (inFlightSecret !== undefined) {
+					pendingSecrets.push({ promise: inFlightSecret, secretName });
+					continue;
+				}
+				const newSecretGroup = newSecretGroupsByCacheKey.get(cacheKey);
+				if (newSecretGroup !== undefined) {
+					newSecretGroup.requestedSecretNames.push(secretName);
 				} else {
-					missingSecretRefs[secretName] = secretRef;
+					newSecretGroupsByCacheKey.set(cacheKey, {
+						requestedSecretNames: [secretName],
+						resolverSecretName: secretName,
+						secretRef,
+					});
 				}
 			}
-			if (Object.keys(missingSecretRefs).length === 0) {
+			if (newSecretGroupsByCacheKey.size === 0) {
+				await Promise.all(
+					pendingSecrets.map(async ({ promise, secretName }) => {
+						resolvedSecrets[secretName] = await promise;
+					}),
+				);
 				return resolvedSecrets;
 			}
 			if (frozen) {
 				throw new Error(
-					`Gateway secret preflight cache missed ${String(Object.keys(missingSecretRefs).length)} post-preflight resolveAll secret(s).`,
+					`Gateway secret preflight cache missed ${String(newSecretGroupsByCacheKey.size)} post-preflight resolveAll secret(s).`,
 				);
 			}
-			const freshSecrets = await secretResolver.resolveAll(missingSecretRefs);
-			for (const [secretName, secretRef] of Object.entries(missingSecretRefs)) {
-				const resolvedSecret = freshSecrets[secretName];
-				if (resolvedSecret === undefined) {
-					throw new Error(`Secret resolver omitted preflight secret '${secretName}'.`);
+			const missingSecretRefs: Record<string, SecretRef> = Object.fromEntries(
+				[...newSecretGroupsByCacheKey.values()].map((group) => [
+					group.resolverSecretName,
+					group.secretRef,
+				]),
+			);
+			const freshSecretsPromise = Promise.resolve().then(
+				async () => await secretResolver.resolveAll(missingSecretRefs),
+			);
+			for (const [cacheKey, group] of newSecretGroupsByCacheKey.entries()) {
+				const freshSecret = freshSecretsPromise
+					.then((freshSecrets) => {
+						const resolvedSecret = freshSecrets[group.resolverSecretName];
+						if (resolvedSecret === undefined) {
+							throw new Error(
+								`Secret resolver omitted preflight secret '${group.resolverSecretName}'.`,
+							);
+						}
+						cachedSecrets.set(cacheKey, resolvedSecret);
+						return resolvedSecret;
+					})
+					.finally(() => {
+						inFlightSecrets.delete(cacheKey);
+					});
+				inFlightSecrets.set(cacheKey, freshSecret);
+				for (const secretName of group.requestedSecretNames) {
+					pendingSecrets.push({ promise: freshSecret, secretName });
 				}
-				cachedSecrets.set(secretRefCacheKey(secretRef), resolvedSecret);
-				resolvedSecrets[secretName] = resolvedSecret;
 			}
+			await Promise.all(
+				pendingSecrets.map(async ({ promise, secretName }) => {
+					resolvedSecrets[secretName] = await promise;
+				}),
+			);
 			return resolvedSecrets;
 		},
 	};
@@ -627,15 +695,16 @@ export async function startGatewayZone(
 
 	// Phase D: collect startup artifacts in parallel.
 	//
-	// All four branches operate on disjoint paths and have no shared in-process
-	// state:
+	// All four branches operate on disjoint host paths. Secret work is shared
+	// through the preflight cache so overlapping refs await one in-flight
+	// underlying resolution:
 	//   - mcpPortalMaterialization writes $cacheDir/gateways/$zoneId/mcp-portal-effective/
 	//   - assertions reads $zone.gateway.config (pure validation)
-	//   - resolveZoneSecrets reads zone.secrets (no IO beyond secretResolver)
+	//   - resolveZoneSecrets reads zone.secrets
 	//   - image is the prebuilt Phase B image whenever protected preflight ran
 	//
 	// mcpPortalMaterialization and resolveZoneSecrets both call
-	// secretResolver.resolveAll concurrently with disjoint ref sets. The
+	// secretResolver.resolveAll concurrently. The
 	// @1password/sdk JS client is documented in its source to be concurrency-
 	// safe on a single Client instance (SharedCore WASM module handles
 	// concurrent invocations). The op-CLI fallback layer is intentionally

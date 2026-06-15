@@ -76,6 +76,7 @@ function hasEnvironmentPrefix(
 
 function formatOpCliAuthContext(
 	env: Readonly<Record<string, string | undefined>> | undefined,
+	args: readonly string[],
 ): readonly string[] {
 	if (env === undefined) {
 		return ['opEnvIsolation=disabled', 'opAuth=ambient-process'];
@@ -84,6 +85,7 @@ function formatOpCliAuthContext(
 	return [
 		'opEnvIsolation=enabled',
 		`opAuth=${env.OP_SERVICE_ACCOUNT_TOKEN === undefined ? 'missing' : 'service-account-token'}`,
+		`opSubcommand=${args[0] ?? 'unknown'}`,
 		`opConfig=${env.OP_CONFIG_DIR === undefined ? 'default' : 'isolated'}`,
 		`opBiometricUnlock=${env.OP_BIOMETRIC_UNLOCK_ENABLED ?? 'unset'}`,
 		`opCache=${env.OP_CACHE ?? 'unset'}`,
@@ -94,10 +96,13 @@ function formatOpCliAuthContext(
 }
 
 function formatRedactedExecErrorDetail(options: {
+	readonly args: readonly string[];
 	readonly command: string;
 	readonly elapsedMs: number;
 	readonly env?: Readonly<Record<string, string | undefined>> | undefined;
 	readonly error: Error;
+	readonly stderr: string;
+	readonly stdout: string;
 }): string {
 	const error = options.error;
 	const exitCode = readErrorCode(error) ?? 'unknown';
@@ -106,31 +111,38 @@ function formatRedactedExecErrorDetail(options: {
 		signal === undefined ? `exit code ${exitCode}` : `exit code ${exitCode}, signal ${signal}`,
 		`elapsedMs=${String(options.elapsedMs)}`,
 		'output=redacted',
+		`stdoutBytes=${String(Buffer.byteLength(options.stdout, 'utf8'))}`,
+		`stderrBytes=${String(Buffer.byteLength(options.stderr, 'utf8'))}`,
 	];
 	const killed = readErrorKilled(error);
 	if (killed !== undefined) {
 		details.push(`killed=${String(killed)}`);
 	}
 	if (options.command === 'op') {
-		details.push(...formatOpCliAuthContext(options.env));
+		details.push(...formatOpCliAuthContext(options.env, options.args));
 	}
 	return details.join('; ');
 }
 
 function createExecFileError(options: {
+	readonly args: readonly string[];
 	readonly command: string;
 	readonly elapsedMs: number;
 	readonly env?: Readonly<Record<string, string | undefined>> | undefined;
 	readonly error: Error;
 	readonly redactErrorOutput?: boolean | undefined;
 	readonly stderr: string;
+	readonly stdout: string;
 }): Error {
 	if (options.redactErrorOutput) {
 		const safeDetail = formatRedactedExecErrorDetail({
+			args: options.args,
 			command: options.command,
 			elapsedMs: options.elapsedMs,
 			...(options.env ? { env: options.env } : {}),
 			error: options.error,
+			stderr: options.stderr,
+			stdout: options.stdout,
 		});
 		return new RedactedExecFileError(`${options.command} failed: ${safeDetail}`, safeDetail);
 	}
@@ -184,12 +196,14 @@ export function execFileAsync(
 				if (error) {
 					rejectOnce(
 						createExecFileError({
+							args,
 							command,
 							elapsedMs: Date.now() - startedAtMs,
 							env: options?.env,
 							error,
 							redactErrorOutput: options?.redactErrorOutput,
 							stderr,
+							stdout,
 						}),
 					);
 					return;
