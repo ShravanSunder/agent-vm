@@ -934,6 +934,30 @@ always mediated. `source: "environment"` is allowed for a Tool VM secret only
 when `injection` is `http-mediation`; in that case the controller reads the
 environment variable and Gondolin mediates the value.
 
+For `http-mediation` secrets with `audience: "tool-vm"` or `"both"`,
+`agentAccess` is required, and the OpenClaw zone must declare at least one
+`zones[].agents[].id` so the access rule has an agent set to evaluate. Use
+`"all"` to make the mediated placeholder available to every declared OpenClaw
+agent in the zone, or a non-empty array such as `["sun"]` to scope placeholder
+delivery to specific declared agents. The controller selects the allowed secret
+names for the requesting `agentId` before resolving secret refs, so an
+agent-scoped Tool VM never causes other agents' mediated secret refs to be read
+for that lease. For `audience: "both"`, `agentAccess` scopes only Tool VM
+placeholder delivery; gateway mediation remains zone-wide.
+
+Example Tool VM-mediated secret scoped to one agent:
+
+```jsonc
+"GITHUB_TOKEN": {
+  "source": "1password",
+  "ref": "op://agent-vm/example-sun-github/credential",
+  "injection": "http-mediation",
+  "audience": "tool-vm",
+  "hosts": ["api.github.com", "github.com"],
+  "agentAccess": ["sun"]
+}
+```
+
 OpenClaw zones allow raw gateway env secrets only when the secret is referenced
 by `gateway.controlAuth.secret` or is listed in `gateway.rawEnvSecrets`. This
 keeps provider API tokens on the mediated path by default and makes every
@@ -1036,6 +1060,14 @@ The schema rejects:
 - Env-injected zone secrets with non-gateway audience or declared `hosts`.
 - OpenClaw env-injected zone secrets not listed in `gateway.rawEnvSecrets`,
   except the configured `gateway.controlAuth.secret`.
+- Tool VM-reaching mediated secrets without `agentAccess: "all"` or a non-empty
+  agent id array.
+- Tool VM-reaching mediated secrets in OpenClaw zones with no declared
+  `zones[].agents`.
+- Tool VM-reaching mediated secrets whose `agentAccess` array references an
+  unknown `zones[].agents[].id`.
+- Worker zones declaring `agentAccess`, because worker zones do not boot
+  OpenClaw Tool VMs.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
 - OpenClaw zones without `gateway.controlAuth` or without the referenced
   gateway-only env secret.

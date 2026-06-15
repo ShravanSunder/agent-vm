@@ -221,6 +221,23 @@ describe('resolveZoneSecrets', () => {
 		).rejects.toThrow("Tool VM secret resolution requires injection 'http-mediation'.");
 	});
 
+	it('requires Tool VM secret resolution to provide filtered secret names', async () => {
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => '',
+			resolveAll: async () => ({}),
+		};
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'http-mediation',
+				secretResolver,
+				systemConfig,
+				zoneId: 'shravan',
+			} as never),
+		).rejects.toThrow('Tool VM secret resolution requires filtered secretNames.');
+	});
+
 	it('rejects targeted Tool VM secrets that bypass the schema with env injection', async () => {
 		const baseZone = systemConfig.zones[0];
 		if (!baseZone) {
@@ -253,6 +270,7 @@ describe('resolveZoneSecrets', () => {
 			resolveZoneSecrets({
 				audience: 'tool-vm',
 				injection: 'http-mediation',
+				secretNames: new Set(['LINEAR_API_KEY']),
 				secretResolver,
 				systemConfig: unsafeConfig,
 				zoneId: 'shravan',
@@ -260,6 +278,116 @@ describe('resolveZoneSecrets', () => {
 		).rejects.toThrow(
 			"Tool VM secret 'LINEAR_API_KEY' in zone 'shravan' must use injection 'http-mediation'.",
 		);
+	});
+
+	it('filters Tool VM secret names before resolving refs', async () => {
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const filteredConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...baseZone,
+					egressHosts: [{ host: 'api.example.com', audience: 'tool-vm' as const }],
+					secrets: {
+						SHARED_TOKEN: {
+							source: 'environment' as const,
+							envVar: 'SHARED_TOKEN',
+							injection: 'http-mediation' as const,
+							audience: 'tool-vm' as const,
+							hosts: ['api.example.com'],
+							agentAccess: 'all' as const,
+						},
+						SUN_ONLY_TOKEN: {
+							source: 'environment' as const,
+							envVar: 'SUN_ONLY_TOKEN',
+							injection: 'http-mediation' as const,
+							audience: 'tool-vm' as const,
+							hosts: ['api.example.com'],
+							agentAccess: ['sun'],
+						},
+					},
+				},
+			],
+		} satisfies SystemConfig;
+		const resolveAll = vi.fn(async () => ({ SHARED_TOKEN: 'shared-token' }));
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('resolve should not be called for zone batch resolution');
+			},
+			resolveAll,
+		};
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'http-mediation',
+				secretNames: new Set(['SHARED_TOKEN']),
+				secretResolver,
+				systemConfig: filteredConfig,
+				zoneId: 'shravan',
+			}),
+		).resolves.toEqual({ SHARED_TOKEN: 'shared-token' });
+		expect(resolveAll).toHaveBeenCalledWith({
+			SHARED_TOKEN: { source: 'environment', ref: 'SHARED_TOKEN' },
+		});
+	});
+
+	it('rejects unauthorized Tool VM secret names returned by a resolver', async () => {
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const filteredConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...baseZone,
+					egressHosts: [{ host: 'api.example.com', audience: 'tool-vm' as const }],
+					secrets: {
+						SHARED_TOKEN: {
+							source: 'environment' as const,
+							envVar: 'SHARED_TOKEN',
+							injection: 'http-mediation' as const,
+							audience: 'tool-vm' as const,
+							hosts: ['api.example.com'],
+							agentAccess: 'all' as const,
+						},
+						MAK_ONLY_TOKEN: {
+							source: 'environment' as const,
+							envVar: 'MAK_ONLY_TOKEN',
+							injection: 'http-mediation' as const,
+							audience: 'tool-vm' as const,
+							hosts: ['api.example.com'],
+							agentAccess: ['mak'],
+						},
+					},
+				},
+			],
+		} satisfies SystemConfig;
+		const resolveAll = vi.fn(async () => ({
+			MAK_ONLY_TOKEN: 'mak-token',
+			SHARED_TOKEN: 'shared-token',
+		}));
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('resolve should not be called for zone batch resolution');
+			},
+			resolveAll,
+		};
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'http-mediation',
+				secretNames: new Set(['SHARED_TOKEN']),
+				secretResolver,
+				systemConfig: filteredConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(/unauthorized Tool VM secret names: MAK_ONLY_TOKEN/u);
 	});
 
 	it('throws when a zone secret is missing an explicit ref', async () => {

@@ -110,6 +110,7 @@ export interface SharedZoneRuntimeDependencies {
 	readonly activeTaskRegistry: ActiveTaskRegistry;
 	readonly controllerGithubToken: string | null;
 	readonly createManagedToolVm: (options: {
+		readonly agentId: string;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;

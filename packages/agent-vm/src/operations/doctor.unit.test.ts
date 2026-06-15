@@ -266,6 +266,71 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === 'docker-cli')).toBeUndefined();
 	});
 
+	it('reports Tool VM mediated secret agent access', () => {
+		const baseConfig = createExternalObservabilitySystemConfig();
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base doctor config to include an OpenClaw zone.');
+		}
+		const scopedSecretConfig = {
+			...baseConfig,
+			zones: [
+				{
+					...baseZone,
+					agents: [{ id: 'shravan' }, { id: 'sun' }],
+					egressHosts: [
+						...baseZone.egressHosts,
+						{ host: 'api.github.com', audience: 'tool-vm' as const },
+						{ host: 'api.github.com', audience: 'gateway' as const },
+						{ host: 'api.linear.app', audience: 'tool-vm' as const },
+					],
+					secrets: {
+						...baseZone.secrets,
+						GITHUB_TOKEN: {
+							source: '1password',
+							ref: 'op://agent-vm/example-sun-github/credential',
+							injection: 'http-mediation',
+							audience: 'both',
+							hosts: ['api.github.com'],
+							agentAccess: ['sun'],
+						},
+						LINEAR_API_KEY: {
+							source: '1password',
+							ref: 'op://agent-vm/shravan-linear/credential',
+							injection: 'http-mediation',
+							audience: 'tool-vm',
+							hosts: ['api.linear.app'],
+							agentAccess: 'all',
+						},
+					},
+				},
+			],
+		} satisfies SystemConfig;
+
+		const result = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
+			systemConfig: scopedSecretConfig,
+		});
+
+		expect(result.checks).toContainEqual({
+			name: 'zone-agent-secret-access-shravan-GITHUB_TOKEN',
+			ok: true,
+			hint: 'tool-vm: sun; gateway: zone-wide',
+		});
+		expect(result.checks).toContainEqual({
+			name: 'zone-agent-secret-access-shravan-LINEAR_API_KEY',
+			ok: true,
+			hint: 'tool-vm: all declared agents',
+		});
+	});
+
 	it('recommends managed observability when host observability is omitted', () => {
 		const result = runControllerDoctor({
 			availableBinaries: allBinaries,

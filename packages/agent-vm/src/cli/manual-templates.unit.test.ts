@@ -167,6 +167,12 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'Tool VMs and agent sandboxes do not receive gateway SSH secrets',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'agentAccess is required',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'filters by agentId before resolving secret refs',
+		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('workspaceAccess');
@@ -176,6 +182,7 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.content).join('\n')).toContain(
 			'Tool VM secrets must use injection http-mediation',
 		);
+		expect(files.map((file) => file.content).join('\n')).toContain('declare agentAccess as "all"');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('plugins.slots.memory');

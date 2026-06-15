@@ -31,6 +31,7 @@ import {
 	type ZoneGitToolVmMount,
 } from '../controller/zone-git/zone-git-paths.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
+import { selectToolVmMediatedSecretNamesForAgent } from './tool-vm-secret-selection.js';
 
 const TOOL_VM_MEDIATED_ENV_PROFILE_PATH = '/etc/profile.d/agent-vm-mediated-env.sh';
 const TOOL_VM_MEDIATED_ENVIRONMENT_PATH = '/etc/environment';
@@ -199,6 +200,7 @@ async function writeToolVmMediatedEnvBootstrap(
 
 export async function createToolVm(
 	options: {
+		readonly agentId: string;
 		readonly cacheDir: string;
 		readonly profile: ToolVmProfile;
 		readonly systemConfig: LoadedSystemConfig;
@@ -231,9 +233,14 @@ export async function createToolVm(
 		hostWorkMountDir: options.hostWorkMountDir,
 		zone,
 	});
+	const toolVmSecretNames = selectToolVmMediatedSecretNamesForAgent({
+		agentId: options.agentId,
+		zone,
+	});
 	const resolvedSecrets = await resolveZoneSecrets({
 		audience: 'tool-vm',
 		injection: 'http-mediation',
+		secretNames: toolVmSecretNames,
 		secretResolver: options.secretResolver,
 		systemConfig: options.systemConfig,
 		zoneId: options.zoneId,

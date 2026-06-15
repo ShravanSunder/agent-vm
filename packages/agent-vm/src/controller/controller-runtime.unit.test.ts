@@ -692,6 +692,23 @@ describe('startControllerRuntime', () => {
 		const setIntervalMock = vi.fn(() => fakeInterval);
 		const startupEvents: string[] = [];
 		let statusNowMs = 10_000;
+		const createManagedToolVm = vi.fn(async () => ({
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({
+				command: 'ssh ...',
+				host: '127.0.0.1',
+				identityFile: '/tmp/key',
+				port: 19000,
+				user: 'sandbox',
+			})),
+			exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
+			fs: createManagedVmFsStub(),
+			id: 'tool-vm-1',
+			setIngressRoutes: vi.fn(),
+			getHostPid: () => 12345,
+			getVmInstance: vi.fn(),
+		}));
 		const configureHostNetworkDefaults = vi.fn(() => {
 			startupEvents.push('host-network-defaults');
 			return {
@@ -705,23 +722,7 @@ describe('startControllerRuntime', () => {
 				zoneIds: ['shravan'],
 			},
 			{
-				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => {}),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({
-						command: 'ssh ...',
-						host: '127.0.0.1',
-						identityFile: '/tmp/key',
-						port: 19000,
-						user: 'sandbox',
-					})),
-					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					id: 'tool-vm-1',
-					setIngressRoutes: vi.fn(),
-					getHostPid: () => 12345,
-					getVmInstance: vi.fn(),
-				})),
+				createManagedToolVm,
 				configureHostNetworkDefaults,
 				createSecretResolver: async () => {
 					startupEvents.push('secrets');
@@ -836,6 +837,12 @@ describe('startControllerRuntime', () => {
 		});
 		const leasePayload: unknown = await leaseResponse.json();
 		expect(leaseResponse.status, JSON.stringify(leasePayload)).toBe(200);
+		expect(createManagedToolVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'shravan-agent',
+				zoneId: 'shravan',
+			}),
+		);
 		const leaseId = readStringProperty(leasePayload, 'leaseId');
 		const toolVmHealthResponse = await startHttpServerArgs.app.request(
 			'/zones/shravan/health-events',

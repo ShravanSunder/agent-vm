@@ -174,6 +174,15 @@ Tool VM secrets must use `http-mediation`; the Tool VM never receives raw
 Tool VM audience, but that only tells the controller where to read the value
 before handing it to Gondolin mediation.
 
+Tool VM-reaching mediated secrets also require `agentAccess`. Use
+`agentAccess: "all"` only for a deliberate all-declared-agents placeholder, or a
+non-empty agent id array such as `["sun"]` for per-agent delivery. The OpenClaw
+zone must declare agents before Tool VM secret access can be selected. The Tool
+VM lifecycle selects allowed secret names for the requested `agentId` before
+resolving refs, so a Sun-only GitHub token is not resolved while booting Mak or
+Ember Tool VMs. For `audience: "both"`, `agentAccess` scopes only Tool VM
+placeholder delivery; gateway mediation remains zone-wide.
+
 For stdio MCP providers, prefer `http-mediation` when the upstream server reads
 an API key from env and sends it in an outbound request location that Gondolin
 substitutes. The stdio process receives a placeholder env value, not the real
@@ -185,14 +194,28 @@ auth that Gondolin does not substitute.
 
 ## splitResolvedGatewaySecrets
 
-After zone secrets are resolved to plaintext,
-`splitResolvedSecretsByInjection` categorizes them by runtime audience and
-injection mode:
+Tool VM-mediated secrets have one extra selection stage before plaintext
+resolution. The Tool VM lifecycle selects allowed secret names for the lease
+`agentId`, `resolveZoneSecrets` filters to that name set before building
+`SecretRef`s, and only then does `splitResolvedSecretsByInjection` categorize the
+resolved values by runtime audience and injection mode:
 
 ```
-  resolvedSecrets: Record<string, string>
+  zone.secrets + runtime audience + optional agentId
     |
-    for each (secretName, secretValue):
+    +-- runtime audience is tool-vm
+    |     select secret names where agentAccess includes agentId or is "all"
+    |     reject if Tool VM mediated secrets exist and agentId is undeclared
+    |
+    +-- resolveZoneSecrets
+    |     skip secrets outside the selected Tool VM name set
+    |     build SecretRef only for allowed names
+    |     reject resolver output containing unrequested Tool VM names
+    |
+    resolvedSecrets: Record<string, string>
+    |
+    splitResolvedSecretsByInjection:
+      for each (secretName, secretValue):
       |
       +-- zone.secrets[secretName].audience does not target runtime
       |     --> skipped
@@ -304,8 +327,8 @@ Worker-zone mediated secrets can be described to agents with zone
 runtime instructions under `/agent-vm/agents.md` and
 `/agent-vm/runtime-instructions.md`, and injects the same text into the prompt
 `runtimeInstructions` layer. OpenClaw zones do not consume `runtimeAuthHints`;
-Tool VM service auth is controlled by Tool VM-audience mediated secrets and
-`egressHosts`.
+Tool VM service auth is controlled by Tool VM-audience mediated secrets,
+`agentAccess`, and `egressHosts`.
 
 `runtimeAuthHints` do not mount credential files or expose real secret values.
 They name the service, mediated host list, tool names, and placeholder env var
@@ -323,7 +346,7 @@ toolchain setup is not known.
 |--------|------------|------------|-----------|
 | Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | VM environment variable; OpenClaw requires `gateway.controlAuth.secret` or `gateway.rawEnvSecrets` |
 | Zone secret (injection: http-mediation, audience: gateway/both) | Host | Placeholder only | Gateway VM Gondolin proxy injects into HTTP requests |
-| Zone secret (injection: http-mediation, audience: tool-vm/both) | Host | Placeholder only | Tool VM Gondolin proxy injects into HTTP requests |
+| Zone secret (injection: http-mediation, audience: tool-vm/both) | Host | Placeholder only for allowed declared agents | Tool VM Gondolin proxy injects into HTTP requests after `agentAccess` filtering |
 | Worker runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated worker runtime instructions under `/agent-vm` |
 | gateway.controlAuth.secret | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/secrets.env` and token-only `/run/openclaw/gateway-token.env`; allowed raw env by default |
 | githubToken | Host | No | Controller-side git push only |

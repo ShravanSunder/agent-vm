@@ -50,6 +50,8 @@ function hostMatchesPattern(host: string, pattern: string): boolean {
 }
 
 const vmAudienceSchema = z.enum(vmAudienceValues);
+const toolVmReachableAudienceSchema = z.enum(['tool-vm', 'both']);
+const agentAccessSchema = z.union([z.literal('all'), z.array(agentIdSchema).min(1)]);
 const secretNameSchema = z
 	.string()
 	.min(1)
@@ -93,33 +95,66 @@ const configEnvSecretSchema = z
 	})
 	.strict();
 
-const onePasswordMediatedSecretSchema = z
+const onePasswordGatewayMediatedSecretSchema = z
 	.object({
 		source: z.literal('1password'),
 		ref: z.string().min(1),
 		injection: z.literal('http-mediation'),
-		audience: vmAudienceSchema,
+		audience: z.literal('gateway'),
 		hosts: z.array(z.string().min(1)).min(1),
 	})
 	.strict();
 
-const environmentMediatedSecretSchema = z
+const onePasswordToolVmMediatedSecretSchema = z
+	.object({
+		source: z.literal('1password'),
+		ref: z.string().min(1),
+		injection: z.literal('http-mediation'),
+		audience: toolVmReachableAudienceSchema,
+		hosts: z.array(z.string().min(1)).min(1),
+		agentAccess: agentAccessSchema,
+	})
+	.strict();
+
+const environmentGatewayMediatedSecretSchema = z
 	.object({
 		source: z.literal('environment'),
 		envVar: z.string().min(1),
 		injection: z.literal('http-mediation'),
-		audience: vmAudienceSchema,
+		audience: z.literal('gateway'),
 		hosts: z.array(z.string().min(1)).min(1),
 	})
 	.strict();
 
-const configMediatedSecretSchema = z
+const environmentToolVmMediatedSecretSchema = z
+	.object({
+		source: z.literal('environment'),
+		envVar: z.string().min(1),
+		injection: z.literal('http-mediation'),
+		audience: toolVmReachableAudienceSchema,
+		hosts: z.array(z.string().min(1)).min(1),
+		agentAccess: agentAccessSchema,
+	})
+	.strict();
+
+const configGatewayMediatedSecretSchema = z
 	.object({
 		source: z.literal('config'),
 		value: z.string().min(1),
 		injection: z.literal('http-mediation'),
-		audience: vmAudienceSchema,
+		audience: z.literal('gateway'),
 		hosts: z.array(z.string().min(1)).min(1),
+	})
+	.strict();
+
+const configToolVmMediatedSecretSchema = z
+	.object({
+		source: z.literal('config'),
+		value: z.string().min(1),
+		injection: z.literal('http-mediation'),
+		audience: toolVmReachableAudienceSchema,
+		hosts: z.array(z.string().min(1)).min(1),
+		agentAccess: agentAccessSchema,
 	})
 	.strict();
 
@@ -127,9 +162,12 @@ const secretReferenceSchema = z.union([
 	onePasswordEnvSecretSchema,
 	environmentEnvSecretSchema,
 	configEnvSecretSchema,
-	onePasswordMediatedSecretSchema,
-	environmentMediatedSecretSchema,
-	configMediatedSecretSchema,
+	onePasswordGatewayMediatedSecretSchema,
+	onePasswordToolVmMediatedSecretSchema,
+	environmentGatewayMediatedSecretSchema,
+	environmentToolVmMediatedSecretSchema,
+	configGatewayMediatedSecretSchema,
+	configToolVmMediatedSecretSchema,
 ]);
 
 const runtimeAuthHintSchema = z.discriminatedUnion('kind', [
@@ -853,6 +891,8 @@ const systemConfigSchema = z
 		}
 
 		for (const [zoneIndex, zone] of config.zones.entries()) {
+			const zoneAgents = zone.agents ?? [];
+			const zoneAgentIds = new Set(zoneAgents.map((agent) => agent.id));
 			if (zone.observability?.enabled === true && config.host.observability?.enabled !== true) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
@@ -980,6 +1020,44 @@ const systemConfigSchema = z
 				}
 			}
 
+			for (const [secretName, secret] of Object.entries(zone.secrets)) {
+				if (
+					secret.injection !== 'http-mediation' ||
+					!targetsAudience(secret.audience, 'tool-vm') ||
+					!('agentAccess' in secret)
+				) {
+					continue;
+				}
+				if (zone.gateway.type !== 'openclaw') {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Worker zone '${zone.id}' secret '${secretName}' must not declare agentAccess because worker zones do not boot OpenClaw Tool VMs.`,
+						path: ['zones', zoneIndex, 'secrets', secretName, 'agentAccess'],
+					});
+					continue;
+				}
+				if (zoneAgentIds.size === 0) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `OpenClaw zone '${zone.id}' secret '${secretName}' uses Tool VM agentAccess but zones[].agents is empty. Declare at least one zone agent so agentAccess can be evaluated.`,
+						path: ['zones', zoneIndex, 'agents'],
+					});
+					continue;
+				}
+				if (Array.isArray(secret.agentAccess)) {
+					for (const [agentAccessIndex, agentId] of secret.agentAccess.entries()) {
+						if (zoneAgentIds.has(agentId)) {
+							continue;
+						}
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Zone '${zone.id}' secret '${secretName}' agentAccess references unknown agent '${agentId}'.`,
+							path: ['zones', zoneIndex, 'secrets', secretName, 'agentAccess', agentAccessIndex],
+						});
+					}
+				}
+			}
+
 			// Keep zone gateway type readable at the use site while image profiles
 			// remain the source of boot-image details. This cross-check prevents
 			// a worker lifecycle from accidentally booting an OpenClaw image, or
@@ -1006,7 +1084,6 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
 			}
-			const zoneAgents = zone.agents ?? [];
 			if (
 				zone.gateway.type !== 'openclaw' &&
 				(zoneAgents.length > 0 || zone.mcpPortal !== undefined)
