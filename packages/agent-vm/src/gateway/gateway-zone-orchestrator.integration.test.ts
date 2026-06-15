@@ -1510,6 +1510,7 @@ describe('startGatewayZone', () => {
 			injection: 'http-mediation',
 			audience: 'tool-vm',
 			hosts: ['api.linear.app'],
+			agentAccess: 'all',
 		};
 		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
 		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);

@@ -139,7 +139,7 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
        | Resolves hostWorkMountDir, allocates TCP slot, boots tool VM
        v
   Tool VM (Zone 3 — untrusted)
-       | /workspace mounted, no secrets, no network
+       | /workspace mounted, no raw secrets, scoped mediated placeholders only
        | SSH access via tool-{slot}.vm.host:22
 ```
 

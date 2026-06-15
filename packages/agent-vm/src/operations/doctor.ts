@@ -10,6 +10,7 @@ import { workerLifecycle } from '@agent-vm/worker-gateway';
 
 import { buildZigInstallHint, checkGondolinZigCompatibility } from '../build/zig-compatibility.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import { buildOpenClawAgentSecretAccessChecks } from './agent-secret-access-checks.js';
 import { hasRuntimeConfigReferences, isRuntimeSystemConfigPath } from './runtime-config-paths.js';
 
 export interface DoctorCheck {
@@ -608,6 +609,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		),
 		...buildZoneToolVmProfileChecks(options.systemConfig),
 		...buildOpenClawAgentSetupChecks(options.systemConfig),
+		...buildOpenClawAgentSecretAccessChecks(options.systemConfig),
 		...buildLegacyDockerfileImageProfileChecks(options.systemConfig),
 		...options.systemConfig.zones.map(
 			(zone) =>

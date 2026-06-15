@@ -938,6 +938,7 @@ describe('createOpenClawZoneRuntime', () => {
 					injection: 'http-mediation',
 					audience: 'tool-vm',
 					hosts: ['api.linear.app'],
+					agentAccess: 'all',
 				},
 			},
 			egressHosts: [...baseZone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }],

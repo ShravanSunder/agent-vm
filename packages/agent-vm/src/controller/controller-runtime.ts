@@ -465,6 +465,7 @@ export async function startControllerRuntime(
 		dependencies.createManagedToolVm ??
 		(async (toolVmOptions): Promise<ManagedVm> =>
 			await createToolVm({
+				agentId: toolVmOptions.agentId,
 				cacheDir: options.systemConfig.cacheDir,
 				profile: toolVmOptions.profile,
 				systemConfig: options.systemConfig,
@@ -534,6 +535,7 @@ export async function startControllerRuntime(
 		controllerPort: options.systemConfig.host.controllerPort,
 		createManagedVm: async (leaseOptions) =>
 			await createManagedToolVm({
+				agentId: leaseOptions.agentId,
 				profile: leaseOptions.profile,
 				tcpSlot: leaseOptions.tcpSlot,
 				hostWorkMountDir: leaseOptions.hostWorkMountDir,

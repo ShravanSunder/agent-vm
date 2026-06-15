@@ -12,6 +12,7 @@ import { execa } from 'execa';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { planMcpPortalEffectiveConfig } from '../gateway/mcp-portal-effective-config.js';
+import { buildOpenClawAgentSecretAccessChecks } from './agent-secret-access-checks.js';
 import {
 	type ConfigValidationCheck,
 	type ConfigValidationCommandOptions,
@@ -542,6 +543,7 @@ export async function runConfigValidation(
 		),
 		...buildZoneToolVmProfileChecks(systemConfig),
 		...buildOpenClawAgentSetupChecks(systemConfig),
+		...buildOpenClawAgentSecretAccessChecks(systemConfig),
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...zoneConfigChecks,
 		...mcpPortalConfigChecks,

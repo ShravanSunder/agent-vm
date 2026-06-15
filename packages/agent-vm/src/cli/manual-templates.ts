@@ -359,6 +359,7 @@ Secrets are declared in ${options.systemConfigPath}.
 Use http-mediation for service tokens that should be swapped into outbound requests by the controller.
 Use env only when the gateway process itself must read the raw value.
 Do not bake secrets into Dockerfiles or images.
+For Tool VM-reaching mediated secrets, agentAccess is required and the zone must declare agents. Use agentAccess: "all" only for a deliberate all-declared-agents placeholder, or a non-empty agent list such as ["sun"] for per-agent delivery. The controller filters by agentId before resolving secret refs, so non-matching agents do not cause scoped refs to be read. For audience "both", agentAccess scopes Tool VM delivery only; gateway mediation remains zone-wide.
 
 Zones scaffold controller SSH adminAccess as mode: "none" because secret-backed admin SSH requires an operator-created secret. To protect controller-mediated SSH, create the secret first, then change zones[].adminAccess to mode: "secret" with a real secret reference.
 Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw admin commands source the token named by gateway.controlAuth.secret.
@@ -419,7 +420,7 @@ Discord recipe:
 - agent-vm build installs @openclaw/discord for managed OpenClaw images when channels.discord is enabled.
 - Pin @openclaw/discord in vm-images/gateways/openclaw/overlay.jsonc only when the deployment needs to override the managed default version.
 - Do not add runtimeAuthHints to OpenClaw zones; they are worker gateway runtime instructions only.
-- Tool VM secrets must use injection http-mediation. source environment is allowed only as the controller-side source for mediated Tool VM secrets; never use injection env for Tool VM audience.
+- Tool VM secrets must use injection http-mediation and declare agentAccess as "all" or a non-empty list of declared zone agent ids. source environment is allowed only as the controller-side source for mediated Tool VM secrets; never use injection env for Tool VM audience.
 `,
 			),
 		},

@@ -513,6 +513,7 @@ describe('runControllerOperationCommand', () => {
 			injection: 'http-mediation',
 			audience: 'tool-vm',
 			hosts: ['api.linear.app'],
+			agentAccess: 'all',
 		};
 		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
 
@@ -575,6 +576,7 @@ describe('runControllerOperationCommand', () => {
 			injection: 'http-mediation',
 			audience: 'tool-vm',
 			hosts: ['api.linear.app'],
+			agentAccess: 'all',
 		};
 		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
 		const refreshZoneCredentials = vi.fn(async () => ({}));

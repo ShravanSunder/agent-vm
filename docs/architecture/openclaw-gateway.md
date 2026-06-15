@@ -30,7 +30,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
   |  | Gateway VM      |  | Tool VM 0     |  | Tool VM 1     |     |
   |  | (Zone 2)        |  | (Zone 3)      |  | (Zone 3)      |     |
   |  | long-running    |  | ephemeral     |  | ephemeral     |     |
-  |  | OpenClaw :18789 |  | no secrets    |  | no secrets    |     |
+  |  | OpenClaw :18789 |  | no raw secrets|  | no raw secrets|     |
   |  | 4 VFS mounts    |  | no network    |  | no network    |     |
   |  | TCP to all tools|  | /workspace    |  | /workspace    |     |
   |  +-----------------+  +---------------+  +---------------+      |
@@ -247,6 +247,13 @@ If no agent-specific mapping exists, it falls back to the zone's
 `defaultToolVmProfile`. This lets one OpenClaw zone serve multiple agents with
 different Tool VM images while keeping the gateway and durable `/zone` namespace
 shared.
+
+For Tool VM-mediated service tokens, the controller filters zone secrets by the
+requesting declared `agentId` and each secret's `agentAccess` before resolving
+refs. `agentAccess: "all"` is the explicit all-declared-agents case; arrays such
+as `["sun"]` keep a mediated placeholder out of other agents' Tool VMs and avoid
+resolving that secret for their leases. For `audience: "both"`, the rule scopes
+only the Tool VM side; gateway mediation is still zone-wide.
 
 Before the first Tool VM boot for an agent-scoped sandbox work mount, the
 controller can seed configured files such as `.config/gcloud/...` into that

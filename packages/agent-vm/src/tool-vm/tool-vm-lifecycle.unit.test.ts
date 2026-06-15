@@ -96,6 +96,7 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 			zones: [
 				{
 					egressHosts: [{ host: 'api.anthropic.com', audience: 'gateway' }],
+					agents: [{ id: 'sun' }, { id: 'mak' }, { id: 'ember' }],
 					gateway: {
 						type: 'openclaw',
 						controlAuth: {
@@ -215,6 +216,7 @@ describe('createToolVm', () => {
 		await createToolVm(
 			{
 				cacheDir: systemConfig.cacheDir,
+				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -319,6 +321,7 @@ describe('createToolVm', () => {
 				injection: 'http-mediation',
 				audience: 'both',
 				hosts: ['api.github.com'],
+				agentAccess: ['sun'],
 			},
 			LINEAR_API_KEY: {
 				source: 'environment',
@@ -326,6 +329,7 @@ describe('createToolVm', () => {
 				injection: 'http-mediation',
 				audience: 'tool-vm',
 				hosts: ['api.linear.app'],
+				agentAccess: 'all',
 			},
 			READWISE_ACCESS_TOKEN: {
 				source: 'environment',
@@ -333,6 +337,7 @@ describe('createToolVm', () => {
 				injection: 'http-mediation',
 				audience: 'tool-vm',
 				hosts: ['mcp2.readwise.io'],
+				agentAccess: ['mak'],
 			},
 		};
 		const secretValues = {
@@ -340,6 +345,14 @@ describe('createToolVm', () => {
 			LINEAR_API_KEY: 'linear-real-secret',
 			READWISE_ACCESS_TOKEN: 'readwise-real-secret',
 		};
+		const resolveAll = vi.fn(async (refs: Record<string, SecretRef>) =>
+			Object.fromEntries(
+				Object.keys(refs).map((secretName) => [
+					secretName,
+					secretValues[secretName as keyof typeof secretValues],
+				]),
+			),
+		);
 		const resolveSecret = vi.fn(async (ref: SecretRef): Promise<string> => {
 			if (!ref.ref) {
 				throw new Error('Expected test secret ref to use a resolvable reference.');
@@ -352,7 +365,7 @@ describe('createToolVm', () => {
 		});
 		const secretResolver: SecretResolver = {
 			resolve: resolveSecret,
-			resolveAll: vi.fn(async () => secretValues),
+			resolveAll,
 		};
 		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
@@ -366,6 +379,7 @@ describe('createToolVm', () => {
 		await createToolVm(
 			{
 				cacheDir: systemConfig.cacheDir,
+				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -396,14 +410,15 @@ describe('createToolVm', () => {
 					hosts: ['api.linear.app'],
 					value: 'linear-real-secret',
 				},
-				READWISE_ACCESS_TOKEN: {
-					hosts: ['mcp2.readwise.io'],
-					value: 'readwise-real-secret',
-				},
 			},
 		});
 		expect(capturedCreateVmOptions?.secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(capturedCreateVmOptions?.secrets).not.toHaveProperty('GATEWAY_ONLY_TOKEN');
+		expect(capturedCreateVmOptions?.secrets).not.toHaveProperty('READWISE_ACCESS_TOKEN');
+		expect(resolveAll).toHaveBeenCalledWith({
+			GITHUB_TOKEN: { source: 'environment', ref: 'GITHUB_TOKEN' },
+			LINEAR_API_KEY: { source: 'environment', ref: 'LINEAR_API_KEY' },
+		});
 		expect(resolveSecret).not.toHaveBeenCalledWith(
 			expect.objectContaining({ ref: 'DISCORD_BOT_TOKEN' }),
 		);
@@ -418,9 +433,7 @@ describe('createToolVm', () => {
 		expect(bootstrapCommand).toContain('/etc/profile.d/agent-vm-mediated-env.sh');
 		expect(bootstrapCommand).toContain('/etc/environment');
 		expect(bootstrapCommand).toContain('/etc/ssh/sshd_config');
-		expect(bootstrapCommand).toContain(
-			"for name in 'GITHUB_TOKEN' 'LINEAR_API_KEY' 'READWISE_ACCESS_TOKEN'",
-		);
+		expect(bootstrapCommand).toContain("for name in 'GITHUB_TOKEN' 'LINEAR_API_KEY'");
 		expect(bootstrapCommand).toContain('printf \'SetEnv BASH_ENV=%s\' "$profile_path"');
 		expect(bootstrapCommand).toContain('printf \' %s=%s\' "$name" "$value"');
 		expect(bootstrapCommand).toContain(
@@ -429,6 +442,7 @@ describe('createToolVm', () => {
 		expect(bootstrapCommand).toContain('cat "$sshd_config_tmp" > "$sshd_config_path"');
 		expect(bootstrapCommand).not.toContain('DISCORD_BOT_TOKEN');
 		expect(bootstrapCommand).not.toContain('GATEWAY_ONLY_TOKEN');
+		expect(bootstrapCommand).not.toContain('READWISE_ACCESS_TOKEN');
 		expect(bootstrapCommand).not.toContain('github-real-secret');
 		expect(bootstrapCommand).not.toContain('linear-real-secret');
 		expect(bootstrapCommand).not.toContain('readwise-real-secret');
@@ -471,6 +485,7 @@ describe('createToolVm', () => {
 					injection: 'http-mediation',
 					audience: 'tool-vm',
 					hosts: ['api.github.com'],
+					agentAccess: 'all',
 				},
 			};
 			const standardProfile = systemConfig.toolVmProfiles.standard;
@@ -486,6 +501,7 @@ describe('createToolVm', () => {
 				createToolVm(
 					{
 						cacheDir: systemConfig.cacheDir,
+						agentId: 'sun',
 						profile: standardProfile,
 						systemConfig,
 						tcpSlot: 0,
@@ -554,6 +570,7 @@ describe('createToolVm', () => {
 		await createToolVm(
 			{
 				cacheDir: systemConfig.cacheDir,
+				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -630,6 +647,7 @@ describe('createToolVm', () => {
 			createToolVm(
 				{
 					cacheDir: systemConfig.cacheDir,
+					agentId: 'sun',
 					profile: standardProfile,
 					systemConfig,
 					tcpSlot: 0,
@@ -688,6 +706,7 @@ describe('createToolVm', () => {
 		await createToolVm(
 			{
 				cacheDir: systemConfig.cacheDir,
+				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -766,6 +785,7 @@ describe('createToolVm', () => {
 		const result = await createToolVm(
 			{
 				cacheDir: systemConfig.cacheDir,
+				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -838,6 +858,7 @@ describe('createToolVm', () => {
 		await createToolVm(
 			{
 				cacheDir: systemConfig.cacheDir,
+				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -877,6 +898,7 @@ describe('createToolVm', () => {
 			createToolVm(
 				{
 					cacheDir: systemConfig.cacheDir,
+					agentId: 'sun',
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),
 					systemConfig,
@@ -921,6 +943,7 @@ describe('createToolVm', () => {
 			createToolVm(
 				{
 					cacheDir: systemConfig.cacheDir,
+					agentId: 'sun',
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),
 					systemConfig,
@@ -968,6 +991,7 @@ describe('createToolVm', () => {
 			createToolVm(
 				{
 					cacheDir: systemConfig.cacheDir,
+					agentId: 'sun',
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),
 					systemConfig,

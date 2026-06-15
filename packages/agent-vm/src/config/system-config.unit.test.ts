@@ -169,6 +169,40 @@ function extractFirstJsonCodeBlock(markdown: string): string {
 	return jsonText;
 }
 
+function requireRecordProperty(
+	record: Record<string, unknown>,
+	propertyName: string,
+): Record<string, unknown> {
+	const value = record[propertyName];
+	if (!isRecord(value)) {
+		throw new Error(`Expected JSON schema property '${propertyName}' to be an object.`);
+	}
+	return value;
+}
+
+function requireArrayProperty(
+	record: Record<string, unknown>,
+	propertyName: string,
+): readonly unknown[] {
+	const value = record[propertyName];
+	if (!Array.isArray(value)) {
+		throw new Error(`Expected JSON schema property '${propertyName}' to be an array.`);
+	}
+	return value;
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+	return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function readJsonSchemaStringConst(schema: Record<string, unknown>): string | undefined {
+	return typeof schema.const === 'string' ? schema.const : undefined;
+}
+
+function readJsonSchemaStringEnum(schema: Record<string, unknown>): readonly string[] {
+	return isStringArray(schema.enum) ? schema.enum : [];
+}
+
 describe('loadSystemConfig', () => {
 	test('loads system.jsonc with comments and trailing commas', async () => {
 		const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-system-config-'));
@@ -1311,7 +1345,7 @@ describe('loadSystemConfig', () => {
 		const zone = configureFirstZoneAsWorker(config);
 		zone.egressHosts = [
 			{ host: 'api.github.com', audience: 'gateway' },
-			{ host: 'api.linear.app', audience: 'both' },
+			{ host: 'api.linear.app', audience: 'gateway' },
 		];
 		zone.secrets = {
 			GITHUB_TOKEN: {
@@ -1325,7 +1359,7 @@ describe('loadSystemConfig', () => {
 				source: 'environment',
 				envVar: 'LINEAR_API_KEY',
 				injection: 'http-mediation',
-				audience: 'both',
+				audience: 'gateway',
 				hosts: ['api.linear.app'],
 			},
 		};
@@ -1375,6 +1409,7 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
 		delete zone.allowedHosts;
+		zone.agents = [{ id: 'shravan' }];
 		zone.egressHosts = [
 			{ host: 'api.github.com', audience: 'both' },
 			{ host: 'api.linear.app', audience: 'tool-vm' },
@@ -1386,6 +1421,7 @@ describe('loadSystemConfig', () => {
 			injection: 'http-mediation',
 			audience: 'both',
 			hosts: ['api.github.com'],
+			agentAccess: 'all',
 		};
 
 		expect(parseSystemConfigInputForTest(config)).toMatchObject({
@@ -1401,6 +1437,7 @@ describe('loadSystemConfig', () => {
 							audience: 'both',
 							hosts: ['api.github.com'],
 							injection: 'http-mediation',
+							agentAccess: 'all',
 						},
 					},
 				},
@@ -1411,6 +1448,7 @@ describe('loadSystemConfig', () => {
 	test('allows mediated secret hosts covered by egress host wildcard patterns', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
+		zone.agents = [{ id: 'shravan' }];
 		zone.egressHosts = [
 			{ host: '*.github.com', audience: 'both' },
 			{ host: 'discord.com', audience: 'gateway' },
@@ -1421,6 +1459,7 @@ describe('loadSystemConfig', () => {
 			injection: 'http-mediation',
 			audience: 'both',
 			hosts: ['api.github.com'],
+			agentAccess: 'all',
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-egress-wildcard-', config);
 
@@ -1661,6 +1700,7 @@ describe('loadSystemConfig', () => {
 	test('allows environment-sourced Tool VM secrets only through http mediation', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
+		zone.agents = [{ id: 'shravan' }];
 		zone.egressHosts = [
 			...(zone.egressHosts ?? []),
 			{ host: 'api.linear.app', audience: 'tool-vm' },
@@ -1671,6 +1711,7 @@ describe('loadSystemConfig', () => {
 			injection: 'http-mediation',
 			audience: 'tool-vm',
 			hosts: ['api.linear.app'],
+			agentAccess: 'all',
 		};
 
 		expect(parseSystemConfigInputForTest(config)).toMatchObject({
@@ -1688,9 +1729,192 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
+	test('accepts all-agent access on Tool VM mediated secrets', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.github.com'],
+			agentAccess: 'all',
+		};
+
+		expect(parseSystemConfigInputForTest(config)).toMatchObject({
+			zones: [
+				expect.objectContaining({
+					secrets: expect.objectContaining({
+						GITHUB_TOKEN: expect.objectContaining({
+							agentAccess: 'all',
+						}),
+					}),
+				}),
+			],
+		});
+	});
+
+	test('rejects all-agent access on Tool VM mediated secrets without declared zone agents', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.github.com'],
+			agentAccess: 'all',
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/zones\[\]\.agents is empty/u);
+	});
+
+	test('accepts per-agent access on Tool VM mediated secrets', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.github.com'],
+			agentAccess: ['sun'],
+		};
+
+		expect(parseSystemConfigInputForTest(config)).toMatchObject({
+			zones: [
+				expect.objectContaining({
+					secrets: expect.objectContaining({
+						GITHUB_TOKEN: expect.objectContaining({
+							agentAccess: ['sun'],
+						}),
+					}),
+				}),
+			],
+		});
+	});
+
+	test('accepts agent access on shared mediated secrets and scopes the Tool VM side', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'both' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'both',
+			hosts: ['api.github.com'],
+			agentAccess: ['sun'],
+		};
+
+		expect(parseSystemConfigInputForTest(config)).toMatchObject({
+			zones: [
+				expect.objectContaining({
+					secrets: expect.objectContaining({
+						GITHUB_TOKEN: expect.objectContaining({
+							audience: 'both',
+							agentAccess: ['sun'],
+						}),
+					}),
+				}),
+			],
+		});
+	});
+
+	test('rejects Tool VM mediated secrets without agentAccess', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.github.com'],
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/agentAccess/u);
+	});
+
+	test('rejects empty per-agent access arrays on Tool VM mediated secrets', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.github.com'],
+			agentAccess: [],
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/agentAccess/u);
+	});
+
+	test('rejects per-agent secret access for unknown agents', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.agents = [{ id: 'sun' }];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.github.com'],
+			agentAccess: ['ember'],
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/secret 'GITHUB_TOKEN' agentAccess references unknown agent 'ember'/u,
+		);
+	});
+
+	test('rejects agentAccess on gateway-only mediated secrets', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'gateway',
+			hosts: ['api.github.com'],
+			agentAccess: 'all',
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/agentAccess/u);
+	});
+
+	test('rejects worker-zone Tool VM agent access', () => {
+		const config = createValidSystemConfigInput();
+		const zone = configureFirstZoneAsWorker(config);
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.github.com'],
+			agentAccess: 'all',
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/worker zones do not boot OpenClaw Tool VMs/u,
+		);
+	});
+
 	test('rejects mediated secret hosts that are not declared for the same audience', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
+		zone.agents = [{ id: 'shravan' }];
 		zone.egressHosts = [{ host: 'api.linear.app', audience: 'gateway' }];
 		zone.secrets.LINEAR_API_KEY = {
 			source: 'environment',
@@ -1698,6 +1922,7 @@ describe('loadSystemConfig', () => {
 			injection: 'http-mediation',
 			audience: 'tool-vm',
 			hosts: ['api.linear.app'],
+			agentAccess: 'all',
 		};
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-mediated-egress-audience-',
@@ -1710,6 +1935,7 @@ describe('loadSystemConfig', () => {
 	test('rejects shared mediated secret hosts that are not declared for both audiences', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
+		zone.agents = [{ id: 'shravan' }];
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -1717,6 +1943,7 @@ describe('loadSystemConfig', () => {
 			injection: 'http-mediation',
 			audience: 'both',
 			hosts: ['api.github.com'],
+			agentAccess: 'all',
 		};
 
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/egressHosts/u);
@@ -1777,12 +2004,14 @@ describe('loadSystemConfig', () => {
 
 	test('rejects OpenClaw gateway token outside gateway env injection', async () => {
 		const config = createValidSystemConfigInput();
+		config.zones[0].agents = [{ id: 'shravan' }];
 		config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN = {
 			source: 'environment',
 			envVar: 'OPENCLAW_GATEWAY_TOKEN',
 			injection: 'http-mediation',
 			audience: 'tool-vm',
 			hosts: ['openclaw.local'],
+			agentAccess: 'all',
 		};
 
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
@@ -1790,12 +2019,14 @@ describe('loadSystemConfig', () => {
 
 	test('rejects OpenClaw gateway token with shared audience', async () => {
 		const config = createValidSystemConfigInput();
+		config.zones[0].agents = [{ id: 'shravan' }];
 		config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN = {
 			source: 'environment',
 			envVar: 'OPENCLAW_GATEWAY_TOKEN',
 			injection: 'http-mediation',
 			audience: 'both',
 			hosts: ['openclaw.local'],
+			agentAccess: 'all',
 		};
 
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
@@ -1926,7 +2157,7 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/http-mediation/u);
 	});
 
-	test('rejects worker runtime auth hints that reference Tool VM-only secrets', async () => {
+	test('rejects worker zone Tool VM-only mediated secrets before runtime auth hints', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = configureFirstZoneAsWorker(config);
 		zone.egressHosts = [{ host: 'api.linear.app', audience: 'tool-vm' }];
@@ -1936,6 +2167,7 @@ describe('loadSystemConfig', () => {
 			injection: 'http-mediation',
 			audience: 'tool-vm',
 			hosts: ['api.linear.app'],
+			agentAccess: 'all',
 		};
 		zone.runtimeAuthHints = [
 			{
@@ -1951,13 +2183,9 @@ describe('loadSystemConfig', () => {
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toMatchObject({
-			issues: expect.arrayContaining([
-				expect.objectContaining({
-					path: ['zones', 0, 'runtimeAuthHints', 0, 'secret'],
-				}),
-			]),
-		});
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/worker zones do not boot OpenClaw Tool VMs/u,
+		);
 	});
 
 	test('rejects zones that reference unknown tool VM profiles', async () => {
@@ -2683,6 +2911,48 @@ describe('loadSystemConfig', () => {
 			},
 			required: ['mode', 'scrubbing'],
 		});
+
+		const artifactProperties = requireRecordProperty(artifact, 'properties');
+		const zonesSchema = requireRecordProperty(artifactProperties, 'zones');
+		const zoneItemsSchema = requireRecordProperty(zonesSchema, 'items');
+		const zoneProperties = requireRecordProperty(zoneItemsSchema, 'properties');
+		const secretsSchema = requireRecordProperty(zoneProperties, 'secrets');
+		const secretAdditionalProperties = requireRecordProperty(secretsSchema, 'additionalProperties');
+		const secretVariants = requireArrayProperty(secretAdditionalProperties, 'anyOf');
+		const mediatedSecretVariants = secretVariants.filter(
+			(variant): variant is Record<string, unknown> => {
+				if (!isRecord(variant)) {
+					return false;
+				}
+				const variantProperties = requireRecordProperty(variant, 'properties');
+				const injectionSchema = requireRecordProperty(variantProperties, 'injection');
+				return readJsonSchemaStringConst(injectionSchema) === 'http-mediation';
+			},
+		);
+		const toolVmMediatedSecretVariants = mediatedSecretVariants.filter((variant) => {
+			const variantProperties = requireRecordProperty(variant, 'properties');
+			const audienceSchema = requireRecordProperty(variantProperties, 'audience');
+			return readJsonSchemaStringEnum(audienceSchema).join('|') === 'tool-vm|both';
+		});
+		const gatewayMediatedSecretVariants = mediatedSecretVariants.filter((variant) => {
+			const variantProperties = requireRecordProperty(variant, 'properties');
+			const audienceSchema = requireRecordProperty(variantProperties, 'audience');
+			return readJsonSchemaStringConst(audienceSchema) === 'gateway';
+		});
+		expect(toolVmMediatedSecretVariants).toHaveLength(3);
+		expect(gatewayMediatedSecretVariants).toHaveLength(3);
+		for (const variant of toolVmMediatedSecretVariants) {
+			const requiredProperties = requireArrayProperty(variant, 'required');
+			const variantProperties = requireRecordProperty(variant, 'properties');
+			expect(requiredProperties).toContain('agentAccess');
+			expect(variantProperties.agentAccess).toBeDefined();
+		}
+		for (const variant of gatewayMediatedSecretVariants) {
+			const requiredProperties = requireArrayProperty(variant, 'required');
+			const variantProperties = requireRecordProperty(variant, 'properties');
+			expect(requiredProperties).not.toContain('agentAccess');
+			expect(variantProperties.agentAccess).toBeUndefined();
+		}
 	});
 
 	test('rejects enabled host observability without dataDir', async () => {

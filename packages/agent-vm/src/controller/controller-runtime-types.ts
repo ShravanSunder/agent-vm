@@ -45,6 +45,7 @@ export interface ControllerRuntimeDependencies {
 	readonly resolveControllerTelemetryServiceVersion?: () => Promise<string>;
 	readonly startControllerTelemetry?: typeof startControllerTelemetry;
 	readonly createManagedToolVm?: (options: {
+		readonly agentId: string;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;
