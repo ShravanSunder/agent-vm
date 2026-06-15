@@ -123,6 +123,48 @@ describe('HealthEventStore', () => {
 		});
 	});
 
+	it('fans events out to telemetry sinks without making sink writes part of health recording', async () => {
+		const record = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			eventHistoryLimit: 10,
+			healthEventSinks: [{ record }],
+			staleAfterMs: 30_000,
+		});
+		const event = gatewayControlLinkEvent({ observedAtMs: 5_500 });
+
+		store.record(event);
+
+		expect(store.listHistory()).toEqual([event]);
+		expect(record).not.toHaveBeenCalled();
+
+		await store.flushHealthEventSinks();
+
+		expect(record).toHaveBeenCalledWith(event);
+	});
+
+	it('keeps health recording available when telemetry sinks fail', async () => {
+		const store = new HealthEventStore({
+			eventHistoryLimit: 10,
+			healthEventSinks: [
+				{
+					record: vi.fn(async () => {
+						throw new Error('collector unavailable');
+					}),
+				},
+			],
+			staleAfterMs: 30_000,
+		});
+		const event = gatewayControlLinkEvent({ observedAtMs: 5_700, result: 'failed' });
+
+		store.record(event);
+		await expect(store.flushHealthEventSinks()).resolves.toBeUndefined();
+
+		expect(store.listHistory()).toEqual([event]);
+		expect(store.deriveSnapshot({ nowMs: 5_900, zoneId: 'beta' })).toMatchObject({
+			kind: 'failed',
+		});
+	});
+
 	it('persists recovery action and failure class through the durable log boundary', async () => {
 		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
 		const store = new HealthEventStore({

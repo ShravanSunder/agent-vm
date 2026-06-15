@@ -20,7 +20,7 @@ export interface CheckObservabilityStackReadinessOptions {
 
 const DEFAULT_OBSERVABILITY_READINESS_PROBE_TIMEOUT_MS = 1_000;
 
-function formatHttpHost(host: '127.0.0.1' | '::1'): string {
+export function formatHttpHost(host: '127.0.0.1' | '::1'): string {
 	return host === '::1' ? '[::1]' : host;
 }
 

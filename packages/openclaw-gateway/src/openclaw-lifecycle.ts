@@ -41,6 +41,10 @@ const openClawCommandVmPath = '/usr/local/bin/openclaw';
 const openClawGatewayGuestPath =
 	'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const diagnosticsOtelPluginId = 'diagnostics-otel';
+const diagnosticsOtelPackageName = '@openclaw/diagnostics-otel';
+const diagnosticsOtelGlobalPackageVmPath = '/pnpm/global/5/node_modules/@openclaw/diagnostics-otel';
+const openClawInstalledPluginDirectoryName = 'plugins';
+const openClawInstalledPluginIndexFileName = 'installs.json';
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -162,6 +166,8 @@ function buildOpenClawBootstrapCommand(
 		'chown -R openclaw:openclaw /home/openclaw/.ssh && ' +
 		'chmod 700 /root/.ssh /home/openclaw/.ssh && ' +
 		'chmod 600 /root/.ssh/config /home/openclaw/.ssh/config && ';
+	const diagnosticsOtelRegistryCommand =
+		zone.observability?.mode === 'collector' ? 'openclaw plugins registry --refresh && ' : '';
 
 	return (
 		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
@@ -173,6 +179,7 @@ function buildOpenClawBootstrapCommand(
 		gatewayTokenFileCommand +
 		`chmod 600 ${openClawGatewayTokenEnvFilePath} && ` +
 		sshConfigCommand +
+		diagnosticsOtelRegistryCommand +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
 		'touch /root/.bash_profile && ' +
@@ -182,6 +189,129 @@ function buildOpenClawBootstrapCommand(
 
 function getEffectiveOpenClawConfigHostPath(zone: GatewayZoneConfig): string {
 	return path.join(zone.gateway.stateDir, effectiveOpenClawConfigFileName);
+}
+
+function getOpenClawInstalledPluginIndexHostPath(zone: GatewayZoneConfig): string {
+	return path.join(
+		zone.gateway.stateDir,
+		openClawInstalledPluginDirectoryName,
+		openClawInstalledPluginIndexFileName,
+	);
+}
+
+async function lstatIfExists(
+	filePath: string,
+): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+	return await lstat(filePath).catch((error: unknown) => {
+		if (isObjectRecord(error) && error.code === 'ENOENT') {
+			return undefined;
+		}
+		throw error;
+	});
+}
+
+async function assertOpenClawPluginIndexPathSafe(zone: GatewayZoneConfig): Promise<void> {
+	const indexPath = getOpenClawInstalledPluginIndexHostPath(zone);
+	const pluginsDirectory = path.dirname(indexPath);
+	const existingPluginsDirectory = await lstatIfExists(pluginsDirectory);
+	if (existingPluginsDirectory?.isSymbolicLink()) {
+		throw new Error(`OpenClaw plugin registry directory '${pluginsDirectory}' is a symlink.`);
+	}
+	if (existingPluginsDirectory !== undefined && !existingPluginsDirectory.isDirectory()) {
+		throw new Error(`OpenClaw plugin registry directory '${pluginsDirectory}' is not a directory.`);
+	}
+
+	await mkdir(pluginsDirectory, { recursive: true, mode: 0o700 });
+	const preparedPluginsDirectory = await lstat(pluginsDirectory);
+	if (preparedPluginsDirectory.isSymbolicLink()) {
+		throw new Error(`OpenClaw plugin registry directory '${pluginsDirectory}' is a symlink.`);
+	}
+	if (!preparedPluginsDirectory.isDirectory()) {
+		throw new Error(`OpenClaw plugin registry directory '${pluginsDirectory}' is not a directory.`);
+	}
+	await chmod(pluginsDirectory, 0o700);
+
+	const existingIndex = await lstatIfExists(indexPath);
+	if (existingIndex?.isSymbolicLink()) {
+		throw new Error(`OpenClaw plugin registry index '${indexPath}' is a symlink.`);
+	}
+	if (existingIndex?.isDirectory()) {
+		throw new Error(`OpenClaw plugin registry index '${indexPath}' is a directory.`);
+	}
+	if (existingIndex !== undefined && !existingIndex.isFile()) {
+		throw new Error(`OpenClaw plugin registry index '${indexPath}' is not a regular file.`);
+	}
+}
+
+async function buildOpenClawInstalledPluginIndexContent(zone: GatewayZoneConfig): Promise<string> {
+	const indexPath = getOpenClawInstalledPluginIndexHostPath(zone);
+	const existingContent = await readFile(indexPath, 'utf8').catch((error: unknown) => {
+		if (isObjectRecord(error) && error.code === 'ENOENT') {
+			return '{}';
+		}
+		throw error;
+	});
+	const parsedContent: unknown = JSON.parse(existingContent);
+	if (!isObjectRecord(parsedContent)) {
+		throw new Error(`OpenClaw plugin registry index '${indexPath}' must be a JSON object.`);
+	}
+	const existingInstallRecords = isObjectRecord(parsedContent.installRecords)
+		? parsedContent.installRecords
+		: {};
+	const installIndex = {
+		...parsedContent,
+		installRecords: {
+			...existingInstallRecords,
+			[diagnosticsOtelPluginId]: buildDiagnosticsOtelManagedInstallRecord(),
+		},
+	};
+	return `${JSON.stringify(installIndex, null, 2)}\n`;
+}
+
+async function writeManagedDiagnosticsOtelInstallRecord(zone: GatewayZoneConfig): Promise<void> {
+	if (zone.observability?.mode !== 'collector') {
+		return;
+	}
+	try {
+		await assertOpenClawPluginIndexPathSafe(zone);
+		const indexPath = getOpenClawInstalledPluginIndexHostPath(zone);
+		const content = await buildOpenClawInstalledPluginIndexContent(zone);
+		await writeFileAtomically(indexPath, content, { mode: 0o600 });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`Failed to write managed OpenClaw diagnostics plugin registry record for zone '${zone.id}': ${message}`,
+			{ cause: error },
+		);
+	}
+}
+
+async function preflightManagedDiagnosticsOtelInstallRecord(
+	zone: GatewayZoneConfig,
+): Promise<void> {
+	if (zone.observability?.mode !== 'collector') {
+		return;
+	}
+	try {
+		await assertOpenClawPluginIndexPathSafe(zone);
+		await buildOpenClawInstalledPluginIndexContent(zone);
+		const indexPath = getOpenClawInstalledPluginIndexHostPath(zone);
+		const preflightPath = path.join(
+			path.dirname(indexPath),
+			`.agent-vm-openclaw-plugin-registry-preflight-${process.pid}-${randomUUID()}.json`,
+		);
+		try {
+			await writeFileAtomically(preflightPath, '{}\n', { mode: 0o600 });
+		} finally {
+			await rm(preflightPath, { force: true });
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`Failed to preflight managed OpenClaw diagnostics plugin registry record for zone '${zone.id}': ${message}`,
+			{ cause: error },
+		);
+	}
 }
 
 async function assertEffectiveConfigPathWritable(
@@ -406,9 +536,18 @@ function appendUniqueStrings(
 	return values;
 }
 
+function buildDiagnosticsOtelManagedInstallRecord(): Record<string, unknown> {
+	return {
+		source: 'npm',
+		spec: diagnosticsOtelPackageName,
+		installPath: diagnosticsOtelGlobalPackageVmPath,
+	};
+}
+
 function buildEffectivePluginsConfig(
 	parsedBaseConfig: Record<string, unknown>,
 	runtimePluginConfigs: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
+	options: { readonly includeManagedDiagnosticsOtelInstall: boolean },
 ): Record<string, unknown> {
 	const existingPluginsConfig = isObjectRecord(parsedBaseConfig.plugins)
 		? parsedBaseConfig.plugins
@@ -419,6 +558,9 @@ function buildEffectivePluginsConfig(
 		: [];
 	const existingEntriesConfig = isObjectRecord(existingPluginsConfig.entries)
 		? existingPluginsConfig.entries
+		: {};
+	const existingInstallsConfig = isObjectRecord(existingPluginsConfig.installs)
+		? existingPluginsConfig.installs
 		: {};
 	const runtimeEntriesConfig: Record<string, unknown> = {};
 	for (const [pluginId, runtimeConfig] of Object.entries(runtimePluginConfigs ?? {})) {
@@ -451,6 +593,14 @@ function buildEffectivePluginsConfig(
 		...existingPluginsConfig,
 		...(runtimePluginIds.length > 0
 			? { allow: appendUniqueStrings(existingAllowConfig, runtimePluginIds) }
+			: {}),
+		...(options.includeManagedDiagnosticsOtelInstall
+			? {
+					installs: {
+						...existingInstallsConfig,
+						[diagnosticsOtelPluginId]: buildDiagnosticsOtelManagedInstallRecord(),
+					},
+				}
 			: {}),
 		entries: {
 			...existingEntriesConfig,
@@ -764,7 +914,9 @@ async function buildEffectiveOpenClawConfigContent(zone: GatewayZoneConfig): Pro
 				lastTouchedVersion: 'agent-vm',
 			},
 			mcp: buildEffectiveMcpConfig(parsedBaseConfig, zone.runtimeMcpServers),
-			plugins: buildEffectivePluginsConfig(parsedBaseConfig, runtimePluginConfigs),
+			plugins: buildEffectivePluginsConfig(parsedBaseConfig, runtimePluginConfigs, {
+				includeManagedDiagnosticsOtelInstall: zone.observability?.mode === 'collector',
+			}),
 			secrets: buildEffectiveSecretsConfig(parsedBaseConfig),
 		};
 		return `${JSON.stringify(effectiveConfig, null, 2)}\n`;
@@ -941,11 +1093,13 @@ export const openclawLifecycle: GatewayLifecycle = {
 
 	async prepareHostState(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void> {
 		await writeEffectiveOpenClawConfig(zone);
+		await writeManagedDiagnosticsOtelInstallRecord(zone);
 		await writeAuthProfilesIfConfigured(zone, secretResolver);
 	},
 
 	async preflightHostState(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void> {
 		await preflightEffectiveOpenClawConfig(zone);
+		await preflightManagedDiagnosticsOtelInstallRecord(zone);
 		await preflightAuthProfilesIfConfigured(zone, secretResolver);
 	},
 };

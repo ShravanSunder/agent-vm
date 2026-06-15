@@ -1,5 +1,15 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import {
+	access,
+	mkdir,
+	mkdtemp,
+	readFile,
+	readdir,
+	rm,
+	stat,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -698,6 +708,7 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).not.toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).not.toContain('/run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).not.toContain('openclaw()');
+			expect(processSpec.bootstrapCommand).not.toContain('diagnostics-otel.tgz');
 			expect(processSpec.bootstrapCommand).toContain(
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
@@ -722,6 +733,25 @@ describe('openclawLifecycle', () => {
 				path: '/readyz',
 			});
 			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
+		});
+
+		it('refreshes the managed diagnostics-otel registry before observable gateway startup', () => {
+			const processSpec = openclawLifecycle.buildProcessSpec(
+				createZone({
+					observability: createObservabilityConfig(),
+				}),
+				resolvedSecrets,
+			);
+
+			expect(processSpec.bootstrapCommand).toContain('openclaw plugins registry --refresh');
+			expect(processSpec.bootstrapCommand).not.toContain('node -e');
+			expect(processSpec.bootstrapCommand).not.toContain('const pluginId');
+			expect(processSpec.bootstrapCommand).not.toContain('installRecords');
+			expect(processSpec.bootstrapCommand).not.toContain(
+				'/home/openclaw/.openclaw/state/plugins/installs.json',
+			);
+			expect(processSpec.bootstrapCommand).not.toContain('npm-pack');
+			expect(processSpec.bootstrapCommand).not.toContain('openclaw plugins install');
 		});
 
 		it('rejects control bytes in env-injected secrets before building the bootstrap command', () => {
@@ -1388,6 +1418,14 @@ describe('openclawLifecycle', () => {
 			);
 			const effectiveOpenClawConfig = JSON.parse(effectiveOpenClawConfigContent);
 			expect(effectiveOpenClawConfig.plugins.allow).toEqual(['gondolin', 'diagnostics-otel']);
+			expect(effectiveOpenClawConfig.plugins.load).toBeUndefined();
+			expect(effectiveOpenClawConfig.plugins.installs).toEqual({
+				'diagnostics-otel': {
+					source: 'npm',
+					spec: '@openclaw/diagnostics-otel',
+					installPath: '/pnpm/global/5/node_modules/@openclaw/diagnostics-otel',
+				},
+			});
 			expect(effectiveOpenClawConfig.plugins.entries['diagnostics-otel']).toEqual({
 				enabled: true,
 			});
@@ -1420,6 +1458,164 @@ describe('openclawLifecycle', () => {
 			expect(effectiveOpenClawConfigContent).not.toContain('prompt');
 			expect(effectiveOpenClawConfigContent).not.toContain('payload');
 			expect(effectiveOpenClawConfigContent).not.toContain('resolved-gateway-token');
+
+			const pluginInstallIndexContent = await readFile(
+				path.join(zone.gateway.stateDir, 'plugins', 'installs.json'),
+				'utf8',
+			);
+			expect(JSON.parse(pluginInstallIndexContent)).toEqual({
+				installRecords: {
+					'diagnostics-otel': {
+						source: 'npm',
+						spec: '@openclaw/diagnostics-otel',
+						installPath: '/pnpm/global/5/node_modules/@openclaw/diagnostics-otel',
+					},
+				},
+			});
+			expect(
+				(await stat(path.join(zone.gateway.stateDir, 'plugins', 'installs.json'))).mode & 0o777,
+			).toBe(0o600);
+		});
+
+		it('preserves existing OpenClaw plugin install records when adding managed diagnostics', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-observability-registry-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify({ gateway: { auth: { mode: 'token' }, bind: 'loopback' } }, null, 2),
+				'utf8',
+			);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			await mkdir(path.join(stateDirectory, 'plugins'), { recursive: true });
+			await writeFile(
+				path.join(stateDirectory, 'plugins', 'installs.json'),
+				JSON.stringify(
+					{
+						installRecords: {
+							'user-plugin': {
+								source: 'npm',
+								spec: '@example/user-plugin',
+								installPath: '/home/openclaw/.openclaw/plugins/user-plugin',
+							},
+						},
+						version: 1,
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: stateDirectory,
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				observability: createObservabilityConfig(),
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async () => 'resolved-gateway-token',
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const pluginInstallIndex = JSON.parse(
+				await readFile(path.join(stateDirectory, 'plugins', 'installs.json'), 'utf8'),
+			);
+			expect(pluginInstallIndex).toMatchObject({
+				installRecords: {
+					'user-plugin': {
+						source: 'npm',
+						spec: '@example/user-plugin',
+					},
+					'diagnostics-otel': {
+						source: 'npm',
+						spec: '@openclaw/diagnostics-otel',
+						installPath: '/pnpm/global/5/node_modules/@openclaw/diagnostics-otel',
+					},
+				},
+				version: 1,
+			});
+		});
+
+		it('rejects a symlinked OpenClaw plugin registry directory before host preparation writes', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-registry-dir-symlink-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify({ gateway: { auth: { mode: 'token' }, bind: 'loopback' } }, null, 2),
+				'utf8',
+			);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			const sentinelDirectory = path.join(tempDirectory, 'sentinel');
+			await mkdir(stateDirectory, { recursive: true });
+			await mkdir(sentinelDirectory, { recursive: true });
+			await symlink(sentinelDirectory, path.join(stateDirectory, 'plugins'));
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: stateDirectory,
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				observability: createObservabilityConfig(),
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async () => 'resolved-gateway-token',
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				/plugin registry directory.*symlink/u,
+			);
+			await expect(pathExists(path.join(sentinelDirectory, 'installs.json'))).resolves.toBe(false);
+		});
+
+		it('rejects a symlinked OpenClaw plugin registry index before host preparation writes', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-registry-index-symlink-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify({ gateway: { auth: { mode: 'token' }, bind: 'loopback' } }, null, 2),
+				'utf8',
+			);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			const sentinelFilePath = path.join(tempDirectory, 'sentinel-installs.json');
+			await mkdir(path.join(stateDirectory, 'plugins'), { recursive: true });
+			await writeFile(sentinelFilePath, '{"sentinel":true}\n', 'utf8');
+			await symlink(sentinelFilePath, path.join(stateDirectory, 'plugins', 'installs.json'));
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: stateDirectory,
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				observability: createObservabilityConfig(),
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async () => 'resolved-gateway-token',
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				/plugin registry index.*symlink/u,
+			);
+			await expect(readFile(sentinelFilePath, 'utf8')).resolves.toBe('{"sentinel":true}\n');
 		});
 
 		it.each([false, 'off', 'OFF', ' off ', 'false', 0, 'disabled'])(
