@@ -90,16 +90,11 @@ function createDeferredPromise<TResult>(): DeferredPromise<TResult> {
 	};
 }
 
-async function flushNextPendingEventLoopWork(remainingCount: number): Promise<void> {
-	if (remainingCount === 0) {
-		return;
-	}
-	await new Promise<void>((resolve) => setImmediate(resolve));
-	await flushNextPendingEventLoopWork(remainingCount - 1);
-}
-
 async function flushPendingEventLoopWork(): Promise<void> {
-	await flushNextPendingEventLoopWork(20);
+	for (let iterationIndex = 0; iterationIndex < 20; iterationIndex += 1) {
+		// oxlint-disable-next-line no-await-in-loop -- sequential event-loop turns are intentional.
+		await new Promise<void>((resolve) => setImmediate(resolve));
+	}
 }
 
 afterEach(async () => {
