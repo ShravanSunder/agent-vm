@@ -55,7 +55,7 @@ describe('startControllerTelemetry', () => {
 			identity: {
 				branchName: 'main',
 				repositoryIdentity: 'https://github.com/ShravanSunder/shravan-claw.git',
-				serviceVersion: '0.0.98',
+				serviceVersion: '0.0.99',
 				worktreeIdentity: '/Users/shravansunder/Documents/dev/project-dev/shravan-claw-beta',
 			},
 			observabilityConfig: createObservabilityConfig(),
@@ -79,7 +79,7 @@ describe('startControllerTelemetry', () => {
 				'dev.release.channel': 'beta',
 				'dev.runtime.flavor': 'beta',
 				'service.name': 'agent-vm-controller',
-				'service.version': '0.0.98',
+				'service.version': '0.0.99',
 			},
 		});
 		expect(driverOptions[0]?.resourceAttributes['dev.repo.hash']).toMatch(/^[a-f0-9]{16}$/u);
@@ -125,7 +125,7 @@ describe('startControllerTelemetry', () => {
 			identity: {
 				branchName: 'main',
 				repositoryIdentity: 'repo',
-				serviceVersion: '0.0.98',
+				serviceVersion: '0.0.99',
 				worktreeIdentity: 'worktree',
 			},
 			observabilityConfig: createObservabilityConfig(),

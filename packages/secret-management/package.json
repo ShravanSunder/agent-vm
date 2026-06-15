@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/secret-management",
-	"version": "0.0.98",
+	"version": "0.0.99",
 	"description": "Shared secret reference contracts and resolvers for agent-vm packages.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

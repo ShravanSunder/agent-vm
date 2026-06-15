@@ -84,7 +84,7 @@ describe('createOtelControllerTelemetryDriver', () => {
 				'dev.runtime.flavor': 'beta',
 				'dev.worktree.hash': 'worktree-hash',
 				'service.name': 'agent-vm-controller',
-				'service.version': '0.0.98',
+				'service.version': '0.0.99',
 			},
 		};
 

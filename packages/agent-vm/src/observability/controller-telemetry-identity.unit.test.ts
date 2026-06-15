@@ -25,14 +25,14 @@ describe('resolveControllerTelemetryIdentity', () => {
 					AGENT_VM_OBSERVABILITY_RUNTIME_FLAVOR: 'beta',
 				},
 				git,
-				serviceVersion: '0.0.98',
+				serviceVersion: '0.0.99',
 			}),
 		).resolves.toEqual({
 			branchName: 'main',
 			releaseChannel: 'beta',
 			repositoryIdentity: 'https://github.com/ShravanSunder/shravan-claw.git',
 			runtimeFlavor: 'beta',
-			serviceVersion: '0.0.98',
+			serviceVersion: '0.0.99',
 			worktreeIdentity: '/Users/shravansunder/Documents/dev/project-dev/shravan-claw-beta',
 		});
 		expect(git).toHaveBeenCalledTimes(3);
@@ -43,12 +43,12 @@ describe('resolveControllerTelemetryIdentity', () => {
 			resolveControllerTelemetryIdentity({
 				cwd: '/tmp/no-git',
 				git: vi.fn(async () => undefined),
-				serviceVersion: '0.0.98',
+				serviceVersion: '0.0.99',
 			}),
 		).resolves.toEqual({
 			branchName: 'unknown',
 			repositoryIdentity: '/tmp/no-git',
-			serviceVersion: '0.0.98',
+			serviceVersion: '0.0.99',
 			worktreeIdentity: '/tmp/no-git',
 		});
 	});

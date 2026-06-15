@@ -1244,10 +1244,10 @@ describe('startControllerRuntime', () => {
 					releaseChannel: 'beta',
 					repositoryIdentity: 'repo',
 					runtimeFlavor: 'beta',
-					serviceVersion: '0.0.98',
+					serviceVersion: '0.0.99',
 					worktreeIdentity: 'worktree',
 				}),
-				resolveControllerTelemetryServiceVersion: async () => '0.0.98',
+				resolveControllerTelemetryServiceVersion: async () => '0.0.99',
 				runTask: async (_title, fn) => {
 					await fn();
 				},
