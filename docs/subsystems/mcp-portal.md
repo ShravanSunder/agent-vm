@@ -94,6 +94,21 @@ Remote MCP uses Streamable HTTP by default, supports legacy HTTP+SSE, and
 supports stdio for gateway-owned local servers. For SSE, auth headers must be
 applied to both the initial stream request and subsequent POST requests.
 
+Provider secret references describe storage separately from presentation.
+`source: "environment"` and `source: "1password"` always resolve to the raw
+secret value. Omit `format` when the upstream wants that raw value. Add
+`format: { "kind": "bearer" }` when the upstream wants `Bearer <token>`, or
+`format: { "kind": "prefix", "prefix": "Token" }` for a provider-specific
+scheme. Prefix presentation always inserts exactly one space after the prefix;
+the prefix itself must not contain whitespace.
+
+Managed OpenClaw effective-config generation preserves `format` on the generated
+provider environment reference, but keeps `runtimeEnvironment` and
+`runtimeMediatedSecrets` raw. The provider runtime applies presentation after
+resolving the current raw value or Gondolin placeholder. This avoids storing
+duplicate 1Password fields such as one raw Linear API token for CLI use and a
+second `Bearer ...` field for MCP use.
+
 ### Stdio Runtime Environment
 
 MCP Portal starts stdio providers with explicit provider secrets plus a narrow
@@ -115,9 +130,11 @@ when the stdio MCP server reads the env value and sends it in outbound HTTP
 headers or other Gondolin-supported request locations. The effective config
 rewrites the authored secret to a generated `AGENT_VM_MCP_*` env reference; the
 gateway process and stdio child receive a placeholder value, while Gondolin
-substitutes the raw secret only for configured hosts. Use raw `env` injection
-only as an explicit exception for providers that cannot operate with
-placeholders.
+substitutes the raw secret only for configured hosts. When a `format` is present,
+the stdio child receives the presented placeholder, such as
+`Bearer GONDOLIN_SECRET_...`; Gondolin substitutes the placeholder inside
+supported outbound HTTP headers. Use raw `env` injection only as an explicit
+exception for providers that cannot operate with placeholders.
 
 Do not rely on whole-process environment inheritance.
 
@@ -128,7 +145,9 @@ resolves the real secret on the host, gives the gateway VM only a generated
 placeholder environment value, and passes the real value to Gondolin as a
 host-restricted mediated secret. The stdio child process reads the placeholder
 from `transport.env`; Gondolin substitutes the real value only on outbound
-requests to the configured `hosts`.
+requests to the configured `hosts`. If the env ref has `format`, the provider
+runtime formats the placeholder before the child sees it; the host-side mediated
+secret state still stores the raw resolved value.
 
 Use `secretPolicies.<name>.injection: "env"` only when the provider cannot work
 with HTTP mediation, such as protocols that place credentials in request bodies,

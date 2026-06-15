@@ -1,24 +1,26 @@
 import {
+	formatSecretValue,
 	mcpConfigToResolvedProviders,
+	type FormattedSecretValue,
 	type McpConfig,
 	type ResolvedMcpProvider,
-	type SecretValue,
 } from '@agent-vm/config-contracts';
 
 import type { NormalizedUpstreamMcpServer } from '../upstream-mcp-client-runtime.js';
 
 export interface ResolveUpstreamServersProps {
 	readonly config: McpConfig;
-	readonly resolveSecret: (secret: SecretValue) => Promise<string>;
+	readonly resolveSecret: (secret: FormattedSecretValue) => Promise<string>;
 }
 
 async function resolveProviderSecretRecord(
-	secrets: Readonly<Record<string, SecretValue>>,
-	resolveSecret: (secret: SecretValue) => Promise<string>,
+	secrets: Readonly<Record<string, FormattedSecretValue>>,
+	resolveSecret: (secret: FormattedSecretValue) => Promise<string>,
 ): Promise<Readonly<Record<string, string>>> {
 	const resolvedEntries = await Promise.all(
 		Object.entries(secrets).map(
-			async ([name, secret]) => [name, await resolveSecret(secret)] as const,
+			async ([name, secret]) =>
+				[name, formatSecretValue(secret, await resolveSecret(secret))] as const,
 		),
 	);
 	return Object.fromEntries(resolvedEntries);
@@ -26,7 +28,7 @@ async function resolveProviderSecretRecord(
 
 async function resolveUpstreamServer(
 	provider: ResolvedMcpProvider,
-	resolveSecret: (secret: SecretValue) => Promise<string>,
+	resolveSecret: (secret: FormattedSecretValue) => Promise<string>,
 ): Promise<NormalizedUpstreamMcpServer> {
 	if (provider.transport === 'stdio') {
 		return {

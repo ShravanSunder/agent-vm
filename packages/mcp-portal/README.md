@@ -50,6 +50,11 @@ runtime environment variables for `injection: "env"` or into host-mediated
 runtime secret state for `injection: "http-mediation"`; they are not written to
 the generated config files.
 
+Provider secrets are raw by default. Add `format: { "kind": "bearer" }` for
+`Bearer <token>` presentation, or `format: { "kind": "prefix", "prefix": "Token" }`
+for provider-specific schemes. The prefix form always inserts exactly one space
+between the prefix and the resolved raw secret or mediated placeholder.
+
 Upstream MCP provider URLs are deployment-owned config. The schema rejects
 non-HTTP schemes, but it intentionally allows loopback and private-network HTTP
 targets because local sidecars and private service MCP providers are supported.

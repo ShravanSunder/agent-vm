@@ -47,6 +47,85 @@ describe('loadMcpConfig', () => {
 		]);
 	});
 
+	it('loads provider secret formats for bearer and prefix rendering', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"linear": {
+					"kind": "mcp",
+					"namespace": "linear",
+					"transport": {
+						"kind": "streamable-http",
+						"url": "https://mcp.linear.test/mcp",
+						"headers": {
+							"authorization": {
+								"source": "environment",
+								"name": "LINEAR_MCP_TOKEN",
+								"format": { "kind": "bearer" }
+							},
+							"x-vendor-token": {
+								"source": "1password",
+								"ref": "op://agent-vm/vendor/credential",
+								"format": { "kind": "prefix", "prefix": "Token" }
+							}
+						}
+					}
+				}
+			}
+		}`);
+
+		const config = await loadMcpConfig(configPath);
+
+		expect(mcpConfigToResolvedProviders(config)).toEqual([
+			{
+				headers: {
+					authorization: {
+						format: { kind: 'bearer' },
+						name: 'LINEAR_MCP_TOKEN',
+						source: 'environment',
+					},
+					'x-vendor-token': {
+						format: { kind: 'prefix', prefix: 'Token' },
+						ref: 'op://agent-vm/vendor/credential',
+						source: '1password',
+					},
+				},
+				namespace: 'linear',
+				transport: 'streamable-http',
+				url: 'https://mcp.linear.test/mcp',
+			},
+		]);
+	});
+
+	it('rejects unsafe provider secret prefixes', async () => {
+		await Promise.all(
+			['', ' ', 'Token ', 'Token\nValue'].map(async (prefix) => {
+				const configPath = await writeConfigFile(`{
+					"schemaVersion": 1,
+					"providers": {
+						"linear": {
+							"kind": "mcp",
+							"namespace": "linear",
+							"transport": {
+								"kind": "streamable-http",
+								"url": "https://mcp.linear.test/mcp",
+								"headers": {
+									"authorization": {
+										"source": "environment",
+										"name": "LINEAR_MCP_TOKEN",
+										"format": { "kind": "prefix", "prefix": ${JSON.stringify(prefix)} }
+									}
+								}
+							}
+						}
+					}
+				}`);
+
+				await expect(loadMcpConfig(configPath)).rejects.toThrow(/prefix/u);
+			}),
+		);
+	});
+
 	it('resolves stdio MCP providers with command, args, cwd, and env', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,

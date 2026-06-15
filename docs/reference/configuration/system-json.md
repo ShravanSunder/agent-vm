@@ -507,6 +507,17 @@ Important fields in `mcp.config.jsonc` provider entries:
   `transport.requiredEgressHosts`.
 - Every secret in `transport.env` or `transport.headers` needs a matching
   `secretPolicies.<name>` entry.
+- Provider secrets keep their stored value raw by default. Omit `format` for
+  API keys such as `TAVILY_API_KEY` that should be passed through unchanged.
+- Use `format: { "kind": "bearer" }` when an upstream MCP provider expects
+  `Bearer <token>` presentation, such as an `authorization` header. Store only
+  the raw token in 1Password or the host environment. The same `format` object
+  works on both `source: "1password"` and `source: "environment"` provider
+  secret refs.
+- Use `format: { "kind": "prefix", "prefix": "Token" }` for provider-specific
+  schemes. Agent-vm inserts exactly one ASCII space between the prefix and the
+  raw secret, so `prefix: "Bearer:"` becomes `Bearer: <token>`. Prefixes must
+  be non-empty and must not contain whitespace.
 - `secretPolicies.<name>.injection` is either `env` or `http-mediation`;
   mediated secrets must list allowed `hosts`.
 - For stdio MCP API keys, prefer `http-mediation` when the MCP server sends the
@@ -514,6 +525,59 @@ Important fields in `mcp.config.jsonc` provider entries:
   locations. The effective config rewrites the authored env ref to a generated
   `AGENT_VM_MCP_*` placeholder environment variable, while the raw value stays
   in host-side mediated secret state.
+
+Example provider-secret presentation:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "providers": {
+    "linear": {
+      "kind": "mcp",
+      "namespace": "linear",
+      "transport": {
+        "kind": "streamable-http",
+        "url": "https://mcp.linear.app/mcp",
+        "headers": {
+          "authorization": {
+            "source": "environment",
+            "name": "LINEAR_MCP_TOKEN",
+            "format": { "kind": "bearer" }
+          }
+        }
+      },
+      "secretPolicies": {
+        "authorization": {
+          "injection": "http-mediation",
+          "hosts": ["mcp.linear.app"]
+        }
+      }
+    },
+    "tavily": {
+      "kind": "mcp",
+      "namespace": "tavily",
+      "transport": {
+        "kind": "stdio",
+        "command": "tavily-mcp",
+        "env": {
+          "TAVILY_API_KEY": {
+            "source": "environment",
+            "name": "TAVILY_API_KEY"
+          }
+        },
+        "networkAccess": "declared",
+        "requiredEgressHosts": ["api.tavily.com"]
+      },
+      "secretPolicies": {
+        "TAVILY_API_KEY": {
+          "injection": "http-mediation",
+          "hosts": ["api.tavily.com"]
+        }
+      }
+    }
+  }
+}
+```
 
 Local OpenClaw e2e coverage uses a fake Streamable HTTP MCP provider and the
 controller e2e harness `tcpHostsOverride` path to make that host-side provider
