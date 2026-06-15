@@ -55,4 +55,25 @@ describe('mapHealthEventToTelemetry', () => {
 		expect(serialized).not.toContain('use-secret-canary');
 		expect(serialized).not.toContain('beta-agent-secret-canary');
 	});
+
+	it('ignores non-string error codes defensively', () => {
+		const event = {
+			elapsedMs: 12,
+			errorCode: null,
+			kind: 'gateway-control-link',
+			observedAtMs: 1_781_445_000_000,
+			operation: 'controller-health',
+			result: 'failed',
+			zoneId: 'beta',
+		} as unknown as AgentVmHealthEvent;
+
+		const telemetry = mapHealthEventToTelemetry(event);
+
+		expect(telemetry.log.attributes).not.toHaveProperty('error.type');
+		expect(telemetry.log.attributes).toMatchObject({
+			'agent_vm.gateway.operation': 'controller-health',
+			'agent_vm.health.kind': 'gateway-control-link',
+			'agent_vm.health.result': 'failed',
+		});
+	});
 });

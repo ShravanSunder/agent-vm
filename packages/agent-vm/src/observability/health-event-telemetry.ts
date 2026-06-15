@@ -38,7 +38,7 @@ export function mapHealthEventToTelemetry(event: AgentVmHealthEvent): HealthEven
 	if ('statusCode' in event && event.statusCode !== undefined) {
 		baseAttributes['http.response.status_code'] = event.statusCode;
 	}
-	if ('errorCode' in event && event.errorCode !== undefined) {
+	if ('errorCode' in event && typeof event.errorCode === 'string') {
 		addSafeErrorCode(baseAttributes, event.errorCode);
 	}
 

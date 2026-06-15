@@ -52,7 +52,15 @@ async function runGit(
 	const result = await execa('git', [...args], {
 		cwd: options.cwd,
 		reject: false,
+	}).catch((error: unknown) => {
+		if (isErrorWithCode(error) && error.code === 'ENOENT') {
+			return undefined;
+		}
+		throw error;
 	});
+	if (result === undefined) {
+		return undefined;
+	}
 	if (result.exitCode !== 0) {
 		return undefined;
 	}
@@ -63,4 +71,10 @@ async function runGit(
 function readEnv(env: NodeJS.ProcessEnv, key: string): string | undefined {
 	const value = env[key]?.trim();
 	return value && value.length > 0 ? value : undefined;
+}
+
+function isErrorWithCode(error: unknown): error is { readonly code: string } {
+	return (
+		typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+	);
 }

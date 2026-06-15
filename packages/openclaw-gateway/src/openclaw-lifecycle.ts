@@ -251,7 +251,8 @@ async function buildOpenClawInstalledPluginIndexContent(zone: GatewayZoneConfig)
 		}
 		throw error;
 	});
-	const parsedContent: unknown = JSON.parse(existingContent);
+	const trimmedContent = existingContent.trim();
+	const parsedContent: unknown = trimmedContent.length === 0 ? {} : JSON.parse(trimmedContent);
 	if (!isObjectRecord(parsedContent)) {
 		throw new Error(`OpenClaw plugin registry index '${indexPath}' must be a JSON object.`);
 	}
