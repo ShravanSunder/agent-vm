@@ -328,6 +328,8 @@ MCP Portal is a scoped tool facade over deployment-owned upstream MCP servers. M
 
 	Prefer http-mediation for MCP provider API keys, including stdio providers, when the provider sends the env value in outbound HTTP headers or other Gondolin-supported request locations. The MCP server sees a placeholder env value; Gondolin swaps it for the real secret only for configured hosts. Use raw env injection only as an explicit exception for providers that cannot operate with placeholders.
 
+	Store MCP provider secrets as raw values. Omit format when the upstream expects the raw value. Use format: { "kind": "bearer" } when an upstream expects Bearer presentation, or format: { "kind": "prefix", "prefix": "Token" } for provider-specific schemes. Prefix presentation inserts exactly one ASCII space between the prefix and the raw secret or mediated placeholder, and the prefix itself must not contain whitespace.
+
 	Run agent-vm validate --mcp-live after editing MCP providers or MCP Portal profiles. Static validate checks schema and materialization. Live validate starts each configured MCP provider, runs tools/list, and reports namespace, transport, phase, and hints for failures.
 
 	Read-only/destructive annotations are trusted only for configured namespaces. Untrusted upstream tools require approval unless explicitly allowlisted by policy. Managed OpenClaw uses the in-process before_tool_call approval boundary.

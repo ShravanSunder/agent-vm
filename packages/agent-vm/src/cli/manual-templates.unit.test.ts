@@ -235,6 +235,18 @@ describe('manual templates', () => {
 			'Prefer http-mediation for MCP provider API keys, including stdio providers',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Store MCP provider secrets as raw values',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'format: { "kind": "bearer" }',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'format: { "kind": "prefix", "prefix": "Token" }',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'raw secret or mediated placeholder',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Use raw env injection only as an explicit exception',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
