@@ -140,11 +140,17 @@ export function classifyLifecycleAwareToolVmStatus(
 	);
 	const planes: GatewayToolVmPlane[] = [];
 	let expiredActiveUseCount = 0;
+	let currentActiveUseCount = 0;
 	for (const activeUse of options.activeUses) {
-		if (currentLeaseIdSet.has(activeUse.leaseId) && activeUse.expiresAt < options.nowMs) {
+		if (!currentLeaseIdSet.has(activeUse.leaseId)) {
+			continue;
+		}
+		if (activeUse.expiresAt < options.nowMs) {
 			expiredActiveUseCount += 1;
 			planes.push('degraded');
+			continue;
 		}
+		currentActiveUseCount += 1;
 	}
 	for (const event of latestEventsByBucket(options.events.filter(isToolVmPlaneHealthEvent))) {
 		if (!currentLeaseIdSet.has(event.leaseId)) {
@@ -175,9 +181,6 @@ export function classifyLifecycleAwareToolVmStatus(
 		}
 		planes.push(toolVmPlaneForResult(event.result));
 	}
-	const currentActiveUseCount = options.activeUses.filter(
-		(activeUse) => currentLeaseIdSet.has(activeUse.leaseId) && activeUse.expiresAt >= options.nowMs,
-	).length;
 	const idleExpiredLeaseCount = options.leases.length - currentLeaseIdSet.size;
 	const leaseState: GatewayToolVmLeaseState =
 		expiredActiveUseCount > 0 || idleExpiredLeaseCount > 0
