@@ -3,6 +3,7 @@ import type {
 	GatewayDiagnosisSnapshot,
 	GatewayLifecycleErrorCode,
 	GatewaySelectedZoneReadiness,
+	GatewayToolVmLeaseState,
 } from '../controller/zone-runtimes/gateway-zone-state-machine.js';
 
 export type ControllerZoneLifecycleState = 'running' | 'failed' | 'stopped';
@@ -42,6 +43,7 @@ export interface ControllerZoneStatusSummary {
 	readonly diagnosis: ControllerZoneDiagnosisStatus;
 	readonly readiness: GatewaySelectedZoneReadiness;
 	readonly running: boolean;
+	readonly toolVmLeaseState: GatewayToolVmLeaseState;
 	readonly defaultToolVmProfile?: string;
 	readonly vmId?: string;
 }
@@ -75,6 +77,7 @@ function buildZoneStatus(
 		diagnosis,
 		readiness: diagnosis.selectedZoneReadiness,
 		running,
+		toolVmLeaseState: diagnosis.toolVmLeaseState,
 		...(running && zoneRuntimeStatus.bootedAt
 			? {
 					bootedAt: zoneRuntimeStatus.bootedAt,
@@ -106,6 +109,7 @@ function deriveFallbackDiagnosis(
 		lastOperation: 'none',
 		originalOutageCause: { kind: 'unknown' },
 		selectedZoneReadiness,
+		toolVmLeaseState: 'not-applicable',
 		toolVmPlane: 'unknown',
 	};
 }

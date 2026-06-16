@@ -138,6 +138,7 @@ describe('buildControllerStatus', () => {
 					ingressPort: 18791,
 					lifecycleState: 'stopped',
 					running: false,
+					toolVmLeaseState: 'not-applicable',
 					defaultToolVmProfile: 'standard',
 				},
 				{
@@ -147,6 +148,7 @@ describe('buildControllerStatus', () => {
 					ingressPort: 18792,
 					lifecycleState: 'stopped',
 					running: false,
+					toolVmLeaseState: 'not-applicable',
 					defaultToolVmProfile: 'standard',
 				},
 				{
@@ -156,6 +158,7 @@ describe('buildControllerStatus', () => {
 					ingressPort: 18793,
 					lifecycleState: 'stopped',
 					running: false,
+					toolVmLeaseState: 'not-applicable',
 				},
 			],
 		});
@@ -201,6 +204,7 @@ describe('buildControllerStatus', () => {
 					ingressPort: 18791,
 					lifecycleState: 'running',
 					running: true,
+					toolVmLeaseState: 'not-applicable',
 					defaultToolVmProfile: 'standard',
 					vmId: 'vm-shravan',
 				},
@@ -212,6 +216,7 @@ describe('buildControllerStatus', () => {
 					lastError: 'gateway boot failed',
 					lifecycleState: 'failed',
 					running: false,
+					toolVmLeaseState: 'not-applicable',
 					defaultToolVmProfile: 'standard',
 				},
 				{
@@ -221,6 +226,7 @@ describe('buildControllerStatus', () => {
 					ingressPort: 18793,
 					lifecycleState: 'stopped',
 					running: false,
+					toolVmLeaseState: 'not-applicable',
 				},
 			],
 		});
@@ -263,6 +269,7 @@ describe('buildControllerStatus', () => {
 
 		expect(status.diagnosis).toEqual(diagnosis);
 		expect(status.readiness).toBe('running');
+		expect(status.toolVmLeaseState).toBe('none');
 	});
 
 	it('reports selected-zone readiness failed when controller liveness is ok but the zone failed', () => {
@@ -341,6 +348,7 @@ function runningDiagnosis(): ControllerZoneDiagnosisStatus {
 		lastOperation: 'none',
 		originalOutageCause: { kind: 'unknown' },
 		selectedZoneReadiness: 'running',
+		toolVmLeaseState: 'none',
 		toolVmPlane: 'unknown',
 	};
 }

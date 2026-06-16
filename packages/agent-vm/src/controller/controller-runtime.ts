@@ -49,6 +49,11 @@ import type {
 } from './health/gateway-vm-recovery-policy.js';
 import { createGatewayVmRecoveryRunner } from './health/gateway-vm-recovery-runner.js';
 import { HealthEventStore } from './health/health-event-store.js';
+import {
+	classifyLifecycleAwareToolVmStatus,
+	type ToolVmStatusActiveUseView,
+	type ToolVmStatusLeaseView,
+} from './health/tool-vm-status-aggregation.js';
 import { createMutableControllerRuntimeReadiness } from './http/controller-http-route-support.js';
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
@@ -277,76 +282,12 @@ function isHealthEventStale(
 	return options.nowMs - event.observedAtMs > options.staleAfterMs;
 }
 
-type ToolVmPlaneHealthEvent = Extract<
-	AgentVmHealthEvent,
-	{ readonly kind: 'lease-heartbeat' | 'lease-renew' | 'tool-vm-ssh' }
->;
-
-function isToolVmPlaneHealthEvent(event: AgentVmHealthEvent): event is ToolVmPlaneHealthEvent {
-	return (
-		event.kind === 'lease-heartbeat' || event.kind === 'lease-renew' || event.kind === 'tool-vm-ssh'
-	);
-}
-
-function toolVmPlaneForResult(result: ToolVmPlaneHealthEvent['result']): GatewayToolVmPlane {
-	switch (result) {
-		case 'ok':
-			return 'ok';
-		case 'failed':
-			return 'failed';
-		case 'stale':
-		case 'timeout':
-			return 'degraded';
-	}
-	return assertNeverToolVmHealthResult(result);
-}
-
-function toolVmPlaneRank(plane: GatewayToolVmPlane): number {
-	switch (plane) {
-		case 'failed':
-			return 3;
-		case 'degraded':
-			return 2;
-		case 'ok':
-			return 1;
-		case 'unknown':
-			return 0;
-	}
-	return assertNeverToolVmPlane(plane);
-}
-
-function aggregateToolVmPlane(
-	events: readonly ToolVmPlaneHealthEvent[],
-	options: { readonly nowMs: number; readonly staleAfterMs: number },
-): GatewayToolVmPlane {
-	if (events.length === 0) {
-		return 'unknown';
-	}
-	return (
-		events
-			.map((event) =>
-				isHealthEventStale(event, options) ? 'degraded' : toolVmPlaneForResult(event.result),
-			)
-			.toSorted(
-				(leftPlane, rightPlane) => toolVmPlaneRank(rightPlane) - toolVmPlaneRank(leftPlane),
-			)[0] ?? 'unknown'
-	);
-}
-
 function assertNeverChannelProviderHealth(health: never): never {
 	throw new Error(`Unhandled channel provider health: ${String(health)}`);
 }
 
 function assertNeverChannelProviderPlane(plane: never): never {
 	throw new Error(`Unhandled channel provider plane: ${String(plane)}`);
-}
-
-function assertNeverToolVmHealthResult(result: never): never {
-	throw new Error(`Unhandled Tool VM health result: ${String(result)}`);
-}
-
-function assertNeverToolVmPlane(plane: never): never {
-	throw new Error(`Unhandled Tool VM plane: ${String(plane)}`);
 }
 
 function readinessWithHealthPlanes(options: {
@@ -752,6 +693,29 @@ export async function startControllerRuntime(
 				return Object.fromEntries(
 					Object.entries(diagnoses).map(([zoneId, diagnosis]) => {
 						const latestHealthEvents = healthEventStore.listLatestEventsForZone(zoneId);
+						const currentToolVmLeases: ToolVmStatusLeaseView[] = leaseManager
+							.listLeases()
+							.filter((lease) => lease.zoneId === zoneId)
+							.map(
+								(lease) =>
+									({
+										effectiveIdleTtlMs: lease.effectiveIdleTtlMs,
+										id: lease.id,
+										lastUsedAt: lease.lastUsedAt,
+										zoneId: lease.zoneId,
+									}) satisfies ToolVmStatusLeaseView,
+							);
+						const currentToolVmActiveUses: ToolVmStatusActiveUseView[] =
+							currentToolVmLeases.flatMap((lease) =>
+								leaseManager.getActiveUses(lease.id).map(
+									(activeUse) =>
+										({
+											expiresAt: activeUse.expiresAt,
+											leaseId: activeUse.leaseId,
+											useId: activeUse.useId,
+										}) satisfies ToolVmStatusActiveUseView,
+								),
+							);
 						const latestChannelProviderEvents = latestHealthEvents.filter(
 							(
 								event,
@@ -760,18 +724,10 @@ export async function startControllerRuntime(
 								{ readonly kind: 'agent-channel-provider-health' }
 							> => event.kind === 'agent-channel-provider-health',
 						);
-						const latestToolVmPlaneEvents = latestHealthEvents.filter(isToolVmPlaneHealthEvent);
 						const latestGatewayRuntimeHealthEvents = latestHealthEvents.filter(
 							(event) =>
 								event.kind === 'gateway-control-link' || event.kind === 'gateway-service-health',
 						);
-						if (
-							latestChannelProviderEvents.length === 0 &&
-							latestToolVmPlaneEvents.length === 0 &&
-							latestGatewayRuntimeHealthEvents.length === 0
-						) {
-							return [zoneId, diagnosis];
-						}
 						const channelProviderPlane =
 							latestChannelProviderEvents.length === 0
 								? diagnosis.channelProviderPlane
@@ -779,13 +735,13 @@ export async function startControllerRuntime(
 										nowMs,
 										staleAfterMs: controllerHealthConfig.staleAfterMs,
 									});
-						const toolVmPlane =
-							latestToolVmPlaneEvents.length === 0
-								? diagnosis.toolVmPlane
-								: aggregateToolVmPlane(latestToolVmPlaneEvents, {
-										nowMs,
-										staleAfterMs: controllerHealthConfig.staleAfterMs,
-									});
+						const toolVmStatus = classifyLifecycleAwareToolVmStatus({
+							activeUses: currentToolVmActiveUses,
+							events: latestHealthEvents,
+							leases: currentToolVmLeases,
+							nowMs,
+							staleAfterMs: controllerHealthConfig.staleAfterMs,
+						});
 						const gatewayRuntimeHealthDegraded = hasGatewayRuntimeHealthIssue(
 							latestGatewayRuntimeHealthEvents,
 							{
@@ -802,9 +758,10 @@ export async function startControllerRuntime(
 									channelProviderPlane,
 									gatewayRuntimeHealthDegraded,
 									readiness: diagnosis.selectedZoneReadiness,
-									toolVmPlane,
+									toolVmPlane: toolVmStatus.plane,
 								}),
-								toolVmPlane,
+								toolVmLeaseState: toolVmStatus.leaseState,
+								toolVmPlane: toolVmStatus.plane,
 							} satisfies GatewayDiagnosisSnapshot,
 						];
 					}),
@@ -890,6 +847,7 @@ export async function startControllerRuntime(
 	const controllerApp = createControllerService({
 		healthEventStore,
 		leaseManager,
+		now,
 		...(dependencies.onLeaseCreateRequest
 			? { onLeaseCreateRequest: dependencies.onLeaseCreateRequest }
 			: {}),

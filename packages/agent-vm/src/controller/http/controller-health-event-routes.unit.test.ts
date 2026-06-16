@@ -278,6 +278,48 @@ describe('controller health event routes', () => {
 		);
 	});
 
+	it('records accepted external health events with controller receive time', async () => {
+		const getLeaseOwner = vi.fn(() => ({ agentId: 'agent-a', zoneId: 'beta' }));
+		const { app, store } = createTestHarness({ getLeaseOwner });
+
+		const futureDatedResponse = await app.request('/zones/beta/health-events', {
+			body: JSON.stringify({
+				agentId: 'agent-a',
+				elapsedMs: 12,
+				kind: 'tool-vm-ssh',
+				leaseId: 'lease-a',
+				observedAtMs: 999_999,
+				operation: 'probe',
+				result: 'ok',
+				zoneId: 'beta',
+			} satisfies AgentVmHealthEvent),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+		const oldResponse = await app.request('/zones/beta/health-events', {
+			body: JSON.stringify(gatewayControlLinkEvent({ observedAtMs: 1 })),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(futureDatedResponse.status).toBe(200);
+		expect(oldResponse.status).toBe(200);
+		expect(store.listLatestEventsForZone('beta')).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					kind: 'tool-vm-ssh',
+					leaseId: 'lease-a',
+					observedAtMs: 10_000,
+					operation: 'probe',
+				}),
+				expect.objectContaining({
+					kind: 'gateway-control-link',
+					observedAtMs: 10_000,
+				}),
+			]),
+		);
+	});
+
 	it('does not record Tool VM SSH failure unless the lease belongs to the event zone', async () => {
 		const getLeaseOwner = vi.fn(() => ({ agentId: 'agent-a', zoneId: 'sunfam' }));
 		const { app, store } = createTestHarness({ getLeaseOwner });
