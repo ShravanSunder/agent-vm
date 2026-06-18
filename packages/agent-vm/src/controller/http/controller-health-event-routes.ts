@@ -132,7 +132,7 @@ export function registerControllerHealthEventRoutes(
 		if (!shouldRecordToolVmLeaseHealthEvent(options, body)) {
 			return context.json({ ignored: true, ok: true });
 		}
-		options.store.record(body);
+		options.store.record({ ...body, observedAtMs: options.now() });
 		return context.json({ ok: true });
 	});
 

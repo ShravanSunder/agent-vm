@@ -65,6 +65,7 @@ export type GatewayChannelProviderPlane =
 	| 'unknown';
 
 export type GatewayToolVmPlane = 'ok' | 'degraded' | 'failed' | 'unknown';
+export type GatewayToolVmLeaseState = 'none' | 'idle' | 'active' | 'expired' | 'not-applicable';
 
 export type GatewayLifecycleOperation =
 	| 'start'
@@ -90,6 +91,7 @@ export interface GatewayDiagnosisSnapshot {
 				readonly kind: 'proven';
 		  };
 	readonly selectedZoneReadiness: GatewaySelectedZoneReadiness;
+	readonly toolVmLeaseState: GatewayToolVmLeaseState;
 	readonly toolVmPlane: GatewayToolVmPlane;
 }
 
@@ -99,6 +101,7 @@ export interface DeriveGatewayDiagnosisSnapshotInput {
 	readonly lastOperation?: GatewayLifecycleOperation | undefined;
 	readonly originalOutageCause?: GatewayDiagnosisSnapshot['originalOutageCause'] | undefined;
 	readonly state: GatewayZoneLifecycleState;
+	readonly toolVmLeaseState?: GatewayToolVmLeaseState | undefined;
 	readonly toolVmPlane: GatewayToolVmPlane;
 }
 
@@ -226,6 +229,7 @@ export function deriveGatewayDiagnosisSnapshot(
 		lastOperation: input.lastOperation ?? 'none',
 		originalOutageCause: input.originalOutageCause ?? { kind: 'unknown' },
 		selectedZoneReadiness: selectedZoneReadinessForState(input.state),
+		toolVmLeaseState: input.toolVmLeaseState ?? 'not-applicable',
 		toolVmPlane: input.toolVmPlane,
 	};
 }

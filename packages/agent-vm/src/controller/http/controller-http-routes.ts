@@ -323,6 +323,7 @@ export function createControllerApp(options: {
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly healthEventStore?: HealthEventStore;
 	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
+	readonly now?: () => number;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly leaseIdleTtlPolicy?: ToolVmLeaseIdleTtlPolicy;
 	readonly operations?: Partial<ControllerRouteOperations>;
@@ -342,6 +343,7 @@ export function createControllerApp(options: {
 			eventHistoryLimit: defaultHealthEventHistoryLimit,
 			staleAfterMs: defaultHealthEventStaleAfterMs,
 		});
+	const now = options.now ?? Date.now;
 	const getRuntimeReadiness = (): ControllerRuntimeReadiness =>
 		options.runtimeReadiness?.() ?? { ready: true, state: 'ready' };
 	const rejectIfRuntimeNotReady = (): Response | null => {
@@ -376,7 +378,7 @@ export function createControllerApp(options: {
 				return lease === undefined ? undefined : { agentId: lease.agentId, zoneId: lease.zoneId };
 			},
 		},
-		now: () => Date.now(),
+		now,
 		store: healthEventStore,
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
@@ -842,7 +844,7 @@ export function createControllerApp(options: {
 			},
 			{
 				healthEventStore,
-				now: () => Date.now(),
+				now,
 				runtimeReadiness: getRuntimeReadiness,
 			},
 		);
@@ -854,6 +856,7 @@ export function createControllerApp(options: {
 export function createControllerService(options: {
 	readonly healthEventStore?: HealthEventStore;
 	readonly leaseManager: ControllerLeaseManager;
+	readonly now?: () => number;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
@@ -873,6 +876,7 @@ export function createControllerService(options: {
 				staleAfterMs: controllerHealthConfig.staleAfterMs,
 			}),
 		leaseManager: options.leaseManager,
+		...(options.now ? { now: options.now } : {}),
 		...(options.onLeaseCreateRequest ? { onLeaseCreateRequest: options.onLeaseCreateRequest } : {}),
 		...(options.readIdentityPem ? { readIdentityPem: options.readIdentityPem } : {}),
 		...(options.runtimeReadiness ? { runtimeReadiness: options.runtimeReadiness } : {}),

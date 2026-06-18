@@ -88,6 +88,7 @@ describe('deriveGatewayDiagnosisSnapshot', () => {
 			lastOperation: 'credentials-refresh',
 			originalOutageCause: { kind: 'unknown' },
 			selectedZoneReadiness: 'failed',
+			toolVmLeaseState: 'not-applicable',
 			toolVmPlane: 'unknown',
 		});
 	});

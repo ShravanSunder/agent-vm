@@ -818,6 +818,10 @@ describe('startControllerRuntime', () => {
 		expect(zoneStatusResponse.status).toBe(200);
 		await expect(zoneStatusResponse.json()).resolves.toMatchObject({
 			bootedAt: expect.any(String),
+			diagnosis: {
+				toolVmLeaseState: 'none',
+				toolVmPlane: 'ok',
+			},
 			id: 'shravan',
 			running: true,
 			vmId: 'gateway-vm-1',
@@ -860,7 +864,7 @@ describe('startControllerRuntime', () => {
 			}),
 		);
 		const leaseId = readStringProperty(leasePayload, 'leaseId');
-		const toolVmHealthResponse = await startHttpServerArgs.app.request(
+		const diagnosticToolVmHealthResponse = await startHttpServerArgs.app.request(
 			'/zones/shravan/health-events',
 			{
 				body: JSON.stringify({
@@ -871,6 +875,39 @@ describe('startControllerRuntime', () => {
 					leaseId,
 					observedAtMs: 9_500,
 					operation: 'command',
+					result: 'failed',
+					zoneId: 'shravan',
+				}),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			},
+		);
+		expect(diagnosticToolVmHealthResponse.status).toBe(200);
+		statusNowMs = 10_000;
+		const diagnosticToolVmZoneStatusResponse =
+			await startHttpServerArgs.app.request('/zones/shravan/status');
+		expect(diagnosticToolVmZoneStatusResponse.status).toBe(200);
+		await expect(diagnosticToolVmZoneStatusResponse.json()).resolves.toMatchObject({
+			diagnosis: {
+				gatewayInfrastructure: 'running',
+				selectedZoneReadiness: 'running',
+				toolVmLeaseState: 'idle',
+				toolVmPlane: 'ok',
+			},
+			readiness: 'running',
+			running: true,
+		});
+		const toolVmHealthResponse = await startHttpServerArgs.app.request(
+			'/zones/shravan/health-events',
+			{
+				body: JSON.stringify({
+					agentId: 'shravan-agent',
+					elapsedMs: 25,
+					errorCode: 'ssh-connection-reset',
+					kind: 'tool-vm-ssh',
+					leaseId,
+					observedAtMs: 9_500,
+					operation: 'probe',
 					result: 'failed',
 					zoneId: 'shravan',
 				}),
@@ -1398,7 +1435,7 @@ describe('startControllerRuntime', () => {
 					port: number;
 			  }
 			| undefined;
-		const nowMs = 1_780_164_850_000;
+		let nowMs = 1_780_164_850_000;
 		const runtime = await startControllerRuntime(
 			{ systemConfig, zoneIds: ['shravan'] },
 			{
@@ -1461,6 +1498,7 @@ describe('startControllerRuntime', () => {
 				},
 			);
 			expect(staleControlLinkResponse.status).toBe(200);
+			nowMs += 30_001;
 			const staleControlLinkStatusResponse =
 				await startHttpServerArgs.app.request('/zones/shravan/status');
 			expect(staleControlLinkStatusResponse.status).toBe(200);
@@ -1520,6 +1558,7 @@ describe('startControllerRuntime', () => {
 				},
 			);
 			expect(healthyChannelResponse.status).toBe(200);
+			nowMs += 30_001;
 			const staleProviderStatusResponse =
 				await startHttpServerArgs.app.request('/zones/shravan/status');
 			expect(staleProviderStatusResponse.status).toBe(200);
