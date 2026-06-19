@@ -81,6 +81,13 @@ Controls the OpenClaw agent platform: model selection, sandbox mode, plugin regi
 managed base image tags. Deployment overlays own extra runtime packages such as
 `openclaw@...` or `@openclaw/discord@...`.
 
+OpenClaw transitive runtime dependency fixes are agent-vm-managed release
+decisions, not deployment overlay fields. When a managed release carries one,
+`agent-vm build` prints it in the generated Dockerfile plan, for example
+`overrides undici@8.5.0[managed-images.json]`. Rebuild the managed image and
+verify the generated image resolves the managed patch from `openclaw` and any
+installed `@openclaw/*` packages.
+
 During `agent-vm build`, the generated Dockerfile is written under the
 configured cache directory and the build output prints the resolved base image,
 agent-vm OpenClaw plugin package, OpenClaw runtime packages, and the source of
@@ -90,7 +97,7 @@ versions in `package.json` and runtime image additions in the overlay.
 For host-side validation, install the same OpenClaw version in the catalog:
 
 ```bash
-pnpm add -D openclaw@2026.6.5
+pnpm add -D openclaw@2026.6.8
 ```
 
 `agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`

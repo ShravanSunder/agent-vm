@@ -147,7 +147,6 @@ describe('openclaw gateway overlay rendering', () => {
 
 		expect(overlay).toEqual({
 			extraAptPackages: ['ffmpeg'],
-			openClawPackageOverrides: [],
 			runAfterBase: ['echo ok'],
 		});
 		expect(overlay.extraOpenClawPackages).toBeUndefined();
@@ -212,6 +211,101 @@ describe('openclaw gateway overlay rendering', () => {
 
 		expect(overlay.openClawPackageOverrides).toEqual(['openclaw@2026.5.21']);
 		expect(overlay.extraOpenClawPackages).toBeUndefined();
+	});
+
+	it('removes redundant core managed-default OpenClaw pins and stale pnpm overrides', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const overlay = renderOpenClawGatewayOverlay({
+			existingOverlay: {
+				extraAptPackages: ['ffmpeg'],
+				openClawPackageOverrides: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
+				pnpmOverrides: { undici: '8.5.0' },
+			},
+			managedOpenClawVersion: '2026.6.8',
+			plan,
+		});
+
+		expect(overlay.pnpmOverrides).toBeUndefined();
+		expect(overlay.openClawPackageOverrides).toBeUndefined();
+	});
+
+	it('preserves Discord pins because Discord is a conditional package, not an unconditional managed default', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const overlay = renderOpenClawGatewayOverlay({
+			existingOverlay: {
+				extraAptPackages: ['ffmpeg'],
+				openClawPackageOverrides: [
+					'openclaw@2026.6.8',
+					'@openclaw/codex@2026.6.8',
+					'@openclaw/discord@2026.6.8',
+				],
+				pnpmOverrides: { undici: '8.5.0' },
+			},
+			managedOpenClawVersion: '2026.6.8',
+			plan,
+		});
+
+		expect(overlay.pnpmOverrides).toBeUndefined();
+		expect(overlay.openClawPackageOverrides).toEqual([
+			'openclaw@2026.6.8',
+			'@openclaw/codex@2026.6.8',
+			'@openclaw/discord@2026.6.8',
+		]);
+	});
+
+	it('preserves non-default OpenClaw package pins while removing stale pnpm overrides', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const overlay = renderOpenClawGatewayOverlay({
+			existingOverlay: {
+				extraAptPackages: ['ffmpeg'],
+				openClawPackageOverrides: ['openclaw@2026.5.20', '@openclaw/discord@2026.6.8'],
+				pnpmOverrides: { undici: '8.5.0' },
+			},
+			managedOpenClawVersion: '2026.6.8',
+			plan,
+		});
+
+		expect(overlay.pnpmOverrides).toBeUndefined();
+		expect(overlay.openClawPackageOverrides).toEqual([
+			'openclaw@2026.5.20',
+			'@openclaw/discord@2026.6.8',
+		]);
+	});
+
+	it('preserves partial OpenClaw package pins even when the pinned version matches the managed default', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const overlay = renderOpenClawGatewayOverlay({
+			existingOverlay: {
+				extraAptPackages: ['ffmpeg'],
+				openClawPackageOverrides: ['@openclaw/discord@2026.6.8'],
+				pnpmOverrides: { undici: '8.5.0' },
+			},
+			managedOpenClawVersion: '2026.6.8',
+			plan,
+		});
+
+		expect(overlay.pnpmOverrides).toBeUndefined();
+		expect(overlay.openClawPackageOverrides).toEqual(['@openclaw/discord@2026.6.8']);
 	});
 
 	it('installs local Tool VM packages and keeps the mcp-portal executable on PATH', () => {

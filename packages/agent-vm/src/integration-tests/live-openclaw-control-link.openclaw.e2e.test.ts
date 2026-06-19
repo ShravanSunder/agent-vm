@@ -50,7 +50,7 @@ const smokeGatewayServiceAutoRestart = {
 		transitioningTimeoutMs: 120_000,
 	},
 	cooldownMs: 61 * 60 * 1000,
-	consecutiveFailureThreshold: 2,
+	consecutiveFailureThreshold: 10,
 	enabled: true,
 	failedRecoveryResetMs: 24 * 60 * 60 * 1000,
 	maxConsecutiveFailedRecoveries: 3,
@@ -358,7 +358,13 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 				PERPLEXITY_API_KEY: 'unused-control-link-smoke-perplexity-token',
 			},
 			startGatewayZone: async (startGatewayOptions) => {
-				const result = await startGatewayZone(startGatewayOptions);
+				const result = await startGatewayZone({
+					...startGatewayOptions,
+					environmentOverride: {
+						...startGatewayOptions.environmentOverride,
+						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS: '0',
+					},
+				});
 				gatewayStarts.push(result.vm);
 				gatewayVm = result.vm;
 				result.vm.setIngressRoutes([
@@ -486,6 +492,49 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control li
 		expect(boundedProbe.errorCode).toBe('controller-request-timeout');
 		expect(boundedProbe.elapsedMs).toBeLessThan(5_000);
 		expect(boundedProbe.logLines.join('\n')).toContain('gateway-control-link publish failed');
+	});
+
+	it('restarts the OpenClaw gateway process in the same VM after child process exit', async () => {
+		if (gatewayVm === undefined) {
+			throw new Error('Expected OpenClaw control-link smoke harness to be initialized.');
+		}
+		const initialGatewayVmId = gatewayVm.id;
+		const gatewayStartCountBeforeCrash = gatewayStarts.length;
+		const crashResult = await gatewayVm.exec(`
+set -eu
+port_hex="$(printf '%04X' 18789)"
+socket_inode="$(awk -v port=":$port_hex" '$2 ~ port && $4 == "0A" { print $10; exit }' /proc/net/tcp /proc/net/tcp6 2>/dev/null || true)"
+gateway_pid=""
+if [ -n "$socket_inode" ]; then
+  for fd in /proc/[0-9]*/fd/*; do
+    target="$(readlink "$fd" 2>/dev/null || true)"
+    if [ "$target" = "socket:[$socket_inode]" ]; then
+      gateway_pid="$(echo "$fd" | cut -d / -f 3)"
+      break
+    fi
+  done
+fi
+if [ -z "$gateway_pid" ]; then
+  echo "no openclaw gateway process found" >&2
+  exit 1
+fi
+kill -KILL "$gateway_pid"
+for _attempt in $(seq 1 90); do
+  readyz_code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/readyz 2>/dev/null || true)"
+  if [ "$readyz_code" = "200" ] && grep -q 'gateway-supervisor: starting openclaw gateway attempt=2' /agent-vm/logs/gateway-boot-latest.log; then
+    echo "supervisor restarted openclaw gateway after pid $gateway_pid"
+    exit 0
+  fi
+  sleep 1
+done
+echo "openclaw gateway did not restart after killing pid $gateway_pid" >&2
+tail -n 80 /agent-vm/logs/gateway-boot-latest.log >&2 || true
+exit 1
+`);
+		expect(crashResult.exitCode, crashResult.stderr).toBe(0);
+		expect(crashResult.stdout).toContain('supervisor restarted openclaw gateway');
+		expect(gatewayVm.id).toBe(initialGatewayVmId);
+		expect(gatewayStarts).toHaveLength(gatewayStartCountBeforeCrash);
 	});
 
 	it('auto restarts the live OpenClaw gateway VM after repeated gateway-service failures', async () => {

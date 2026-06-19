@@ -18,6 +18,10 @@ const successfulOpenClawValidationCommand: TestCommandRunner = async () => ({
 	stdout: '{"ok":true}\\n',
 });
 
+const missingOpenClawCommand: TestCommandRunner = async () => {
+	throw Object.assign(new Error('spawn openclaw ENOENT'), { code: 'ENOENT' });
+};
+
 async function writeJson(filePath: string, value: unknown): Promise<void> {
 	await mkdir(path.dirname(filePath), { recursive: true });
 	await writeFile(filePath, `${JSON.stringify(value, null, '\t')}\n`, 'utf8');
@@ -813,6 +817,62 @@ describe('runConfigValidation', () => {
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('rejects managed image overlays with deployment pnpm overrides during validation', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await writeJson(
+			path.join(temporaryDirectoryPath, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+			{
+				pnpmOverrides: { undici: '8.5.0' },
+				schemaVersion: 1,
+			},
+		);
+		await updateJsonFile(systemConfigPath, (systemConfig) => {
+			const imageProfiles = systemConfig.imageProfiles;
+			if (
+				typeof imageProfiles !== 'object' ||
+				imageProfiles === null ||
+				Array.isArray(imageProfiles)
+			) {
+				throw new Error('Expected imageProfiles object.');
+			}
+			const gateways = (imageProfiles as Record<string, unknown>).gateways;
+			if (typeof gateways !== 'object' || gateways === null || Array.isArray(gateways)) {
+				throw new Error('Expected gateways object.');
+			}
+			const openClawProfile = (gateways as Record<string, unknown>).openclaw;
+			if (
+				typeof openClawProfile !== 'object' ||
+				openClawProfile === null ||
+				Array.isArray(openClawProfile)
+			) {
+				throw new Error('Expected openclaw profile object.');
+			}
+			(openClawProfile as Record<string, unknown>).source = {
+				base: 'openclaw-gateway',
+				kind: 'managedBase',
+				overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+			};
+		});
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.checks).toContainEqual(
+			expect.objectContaining({
+				hint: expect.stringContaining('pnpmOverrides is not supported in deployment overlays'),
+				name: 'gateway-openclaw-overlay',
+				ok: false,
+			}),
+		);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('reports missing vm-host-system for container checkout paths', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
@@ -940,6 +1000,22 @@ describe('runConfigValidation', () => {
 				},
 			},
 		]);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('reports the managed OpenClaw install hint when the OpenClaw CLI is missing', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({ runCommand: missingOpenClawCommand, systemConfig });
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'openclaw-config-shravan')).toMatchObject({
+			ok: false,
+			hint: 'OpenClaw CLI not found. Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.8.',
+		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

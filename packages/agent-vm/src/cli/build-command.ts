@@ -580,6 +580,12 @@ function formatManagedPackagePlanEntry(packageEntry: ManagedDockerfilePackagePla
 	return `${packageNameFromSpec(packageEntry.spec)}@${packageVersionFromSpec(packageEntry.spec) ?? 'unversioned'}[${packageEntry.source}]`;
 }
 
+function formatManagedDependencyOverridePlanEntry(
+	packageEntry: ManagedDockerfilePlan['openClawDependencyOverrides'][number],
+): string {
+	return `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`;
+}
+
 function formatDockerBaseDetail(options: {
 	readonly dockerfilePath: string;
 	readonly imageTarget: ImageTarget;
@@ -589,6 +595,13 @@ function formatDockerBaseDetail(options: {
 	const plan = options.managedDockerfilePlan;
 	if (!plan) {
 		return shortenBuildDetail(`dockerfile ${path.basename(options.dockerfilePath)}`);
+	}
+	if (plan.openClawDependencyOverrides.length > 0) {
+		details.push(
+			`overrides ${plan.openClawDependencyOverrides
+				.map((packageEntry) => formatManagedDependencyOverridePlanEntry(packageEntry))
+				.join(',')}`,
+		);
 	}
 	details.push(`base ${plan.base}:${plan.baseImage.tag}`);
 	if (options.imageTarget.source?.overlay) {
