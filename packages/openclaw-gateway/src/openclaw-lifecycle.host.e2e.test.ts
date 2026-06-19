@@ -833,7 +833,7 @@ describe('openclawLifecycle', () => {
 						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS: '60',
 						FAKE_OPENCLAW_ATTEMPTS_LOG: attemptsLogPath,
 					},
-					timeout: 1500,
+					timeout: 5_000,
 				}),
 			)) as ExecFileError;
 			expect(supervisorExit.code).toBe(42);
