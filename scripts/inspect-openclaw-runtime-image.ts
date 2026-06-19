@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { stripJsonComments } from './jsonc-comments.ts';
+
 const execFileAsync = promisify(execFile);
 
 const packagesToInspect = ['openclaw', '@openclaw/discord', '@openclaw/codex'] as const;
@@ -34,10 +36,6 @@ type JsonRecord = Record<string, unknown>;
 
 function isJsonRecord(value: unknown): value is JsonRecord {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function stripJsonComments(jsoncText: string): string {
-	return jsoncText.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:])\/\/.*$/gmu, '$1');
 }
 
 export function parseInspectOpenClawRuntimeImageArgs(

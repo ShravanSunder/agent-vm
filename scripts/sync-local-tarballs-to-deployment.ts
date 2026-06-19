@@ -3,6 +3,8 @@ import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { stripJsonComments } from './jsonc-comments.ts';
+
 const execFileAsync = promisify(execFile);
 
 export const AGENT_VM_PACKAGE_NAMES = [
@@ -425,10 +427,6 @@ export function renderToolVmOverlay(
 		copy: copyEntries,
 		runAfterBase,
 	};
-}
-
-function stripJsonComments(jsoncText: string): string {
-	return jsoncText.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:])\/\/.*$/gmu, '$1');
 }
 
 async function readJsonFile(filePath: string): Promise<JsonRecord> {

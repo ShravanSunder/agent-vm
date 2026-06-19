@@ -5,6 +5,7 @@ import {
 	parseInspectOpenClawRuntimeImageArgs,
 	parseOpenClawRuntimeImageInspection,
 } from './inspect-openclaw-runtime-image.ts';
+import { stripJsonComments } from './jsonc-comments.ts';
 
 describe('OpenClaw runtime image inspection script', () => {
 	it('resolves image tag input from a build config path', () => {
@@ -15,6 +16,34 @@ describe('OpenClaw runtime image inspection script', () => {
 			]),
 		).toEqual({
 			buildConfigPath: '../shravan-claw-beta/vm-images/gateways/openclaw/build-config.jsonc',
+		});
+	});
+
+	it('strips JSONC comments without corrupting URL or comment-like string values', () => {
+		const parsedConfig = JSON.parse(
+			stripJsonComments(`{
+				// leading comment
+				"oci": {
+					"image": "registry.example/openclaw:latest", // trailing comment
+					"url": "https://example.test/a//b",
+					"lineLiteral": "//not-a-comment",
+					"blockLiteral": "/*not-a-comment*/",
+					"escapedQuote": "value with \\" quote"
+				},
+				/* block comment */
+				"ok": true
+			}`),
+		);
+
+		expect(parsedConfig).toMatchObject({
+			oci: {
+				blockLiteral: '/*not-a-comment*/',
+				escapedQuote: 'value with " quote',
+				image: 'registry.example/openclaw:latest',
+				lineLiteral: '//not-a-comment',
+				url: 'https://example.test/a//b',
+			},
+			ok: true,
 		});
 	});
 
