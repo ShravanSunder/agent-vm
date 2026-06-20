@@ -287,7 +287,8 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.sandbox.backend is gondolin, mode is all, and scope is agent. Agent-vm rejects OpenClaw Tool VM leases that are not agent-scoped.
 	agents.defaults.sandbox.workspaceAccess is rw so agents can write their workspace.
 	agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
-	agents.defaults.model.primary is openai-codex/gpt-5.5 with thinkingDefault low.
+	agents.defaults.model.primary is openai/gpt-5.5.
+	agents.defaults.models["openai/gpt-5.5"].agentRuntime.id is openclaw so OpenAI API-key models use the OpenClaw runtime rather than native Codex OAuth.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
 	approvals.plugin.enabled is true with approvals.plugin.mode=session so MCP Portal plugin approval prompts route back to the originating session by default. Exec approval forwarding remains deployment-owned.
 	tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
@@ -370,8 +371,8 @@ Zones scaffold controller SSH adminAccess as mode: "none" because secret-backed 
 Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw admin commands source the token named by gateway.controlAuth.secret.
 Use agent-vm controller ssh --zone <zoneId> --all-secrets only when the shell must inspect or debug every raw gateway environment secret.
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
-For OpenClaw provider auth flows, prefer agent-vm auth openclaw <provider> --zone <zoneId>. Add --agent <agentId> for one agent or --all-agents to repeat the same provider login for every configured zone agent.
-For native Codex harness auth, use agent-vm auth codex-harness --zone <zoneId> --agent <agentId>.
+For OpenClaw provider auth flows, including the scaffolded openai/gpt-5.5 OpenClaw runtime default, prefer agent-vm auth openclaw <provider> --zone <zoneId>. Add --agent <agentId> for one agent or --all-agents to repeat the same provider login for every configured zone agent.
+Native Codex-runtime agents use agent-vm auth codex-harness --zone <zoneId> --agent <agentId>.
 Managed OpenClaw gateway builds install the native Codex CLI version pinned by managed-images.json so codex-harness auth can run inside the gateway VM. If a deployment overrides the generated Dockerfile, install @openai/codex in that image before running codex-harness auth.
 Tool VMs and agent sandboxes do not receive gateway SSH secrets.
 `,
@@ -470,9 +471,9 @@ When gateway.zoneGit is configured:
 				`
 A single OpenClaw gateway can host multiple agents. Use scope=agent so OpenClaw resolves each agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
 
-Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
+Per-agent auth isolation works by using gateway.authProfilesByAgent for OpenClaw auth profiles, agent-vm auth codex-harness for native Codex CLI auth, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
 agent-vm auth openclaw <provider> --all-agents repeats the same OpenClaw provider login once per configured zone agent.
-agent-vm auth codex-harness --all-agents runs one device-auth session per agent listed in the zone's system config. Use --agent <agentId> for a one-off login outside that configured list.
+Native Codex-runtime agents use codex-harness --all-agents to run one device-auth session per agent listed in the zone's system config. Use --agent <agentId> for a one-off login outside that configured list.
 
 OpenClaw tool allowlists are a policy layer. They do not remove binaries from the Tool VM image if a broad shell tool can still run them.
 

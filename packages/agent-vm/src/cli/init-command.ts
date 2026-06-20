@@ -718,8 +718,12 @@ function defaultOpenClawPortalToolDenyList(
 function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): object {
 	return {
 		defaults: {
-			model: { primary: 'openai-codex/gpt-5.5' },
-			thinkingDefault: 'low',
+			model: { primary: 'openai/gpt-5.5' },
+			models: {
+				'openai/gpt-5.5': {
+					agentRuntime: { id: 'openclaw' },
+				},
+			},
 			sandbox: {
 				backend: 'gondolin',
 				mode: 'all',
