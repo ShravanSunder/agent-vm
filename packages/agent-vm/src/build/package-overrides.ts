@@ -38,7 +38,7 @@ export interface EffectivePackageOverrides {
 
 export const exactPackageVersionPattern = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u;
 
-const plainPackageNamePattern = /^[a-z0-9][a-z0-9._-]*$/u;
+const plainPackageNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u;
 const protocolPattern = /^(?:npm|git|file|link|workspace|http|https):/u;
 
 export const packageOverridesSchema: z.ZodType<PackageOverrides> = z

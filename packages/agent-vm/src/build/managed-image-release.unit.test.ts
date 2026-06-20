@@ -532,6 +532,48 @@ describe('managed image release', () => {
 		]);
 	});
 
+	it('accepts legacy uppercase direct npm package override names', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-legacy-uppercase-npm-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "npm": ["JSONStream@1.3.5"]',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'tool-vm',
+			imageTargetFamily: 'toolVm',
+			imageTargetName: 'default',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+			requiredOpenClawPackageNames: [],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g --ignore-scripts "JSONStream@1.3.5"');
+		expect(result.plan.directNpmPackages).toEqual([
+			{
+				name: 'JSONStream',
+				source: 'overlay.jsonc/packageOverrides.npm',
+				spec: 'JSONStream@1.3.5',
+				version: '1.3.5',
+			},
+		]);
+	});
+
 	it('renders direct npm package overrides for worker gateway images', async () => {
 		const temporaryDirectory = await fs.mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-managed-direct-npm-worker-'),

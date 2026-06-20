@@ -181,7 +181,9 @@ describe('workerLifecycle', () => {
 		expect(processSpec.bootstrapCommand).toContain('mkdir -p /work/repos /work/tmp');
 		expect(processSpec.bootstrapCommand).toContain('/work/cache/pnpm/store');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker.tgz');
-		expect(processSpec.bootstrapCommand).toContain('worker_package_root="$(pnpm root -g)"');
+		expect(processSpec.bootstrapCommand).toContain(
+			'worker_package_root="$(pnpm root -g --silent)"',
+		);
 		expect(processSpec.bootstrapCommand).toContain(
 			'ln -sfn "$worker_bin_target" /pnpm/agent-vm-worker',
 		);
