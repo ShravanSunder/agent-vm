@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	createVitestEvidenceObservabilityEnvironment,
 	formatVitestEvidenceSummary,
 	normalizeVitestFilters,
 	parseVitestJsonResults,
@@ -16,6 +17,33 @@ describe('resolveVitestJsonOutputFilePath', () => {
 		expect(firstPath).toBe('/repo/agent-vm/tmp/vitest-results/e2e-vm-first/results.json');
 		expect(secondPath).toBe('/repo/agent-vm/tmp/vitest-results/e2e-vm-second/results.json');
 		expect(firstPath).not.toBe(secondPath);
+	});
+});
+
+describe('createVitestEvidenceObservabilityEnvironment', () => {
+	it('creates stable proof marker environment for a Vitest evidence run', () => {
+		const result = createVitestEvidenceObservabilityEnvironment({
+			now: () => new Date('2026-06-20T13:25:00.000Z'),
+			projectName: 'e2e-openclaw',
+			runDirectory: '/repo/tmp/vitest-results/e2e-openclaw-1234-abcd',
+			runId: '1234-abcd',
+		});
+
+		expect(result.env).toEqual({
+			AGENT_VM_OBSERVABILITY_MARKER: 'agent-vm-e2e-openclaw-1234-abcd',
+			AGENT_VM_OBSERVABILITY_QUERY_START: '2026-06-20T13:25:00.000Z',
+			AGENT_VM_OBSERVABILITY_RELEASE_CHANNEL: 'local',
+			AGENT_VM_OBSERVABILITY_RUNTIME_FLAVOR: 'e2e',
+			AGENT_VM_OBSERVABILITY_STATE_FILE:
+				'/repo/tmp/vitest-results/e2e-openclaw-1234-abcd/observability-state.json',
+		});
+		expect(result.state).toEqual({
+			marker: 'agent-vm-e2e-openclaw-1234-abcd',
+			projectName: 'e2e-openclaw',
+			queryStart: '2026-06-20T13:25:00.000Z',
+			runId: '1234-abcd',
+			stateFilePath: '/repo/tmp/vitest-results/e2e-openclaw-1234-abcd/observability-state.json',
+		});
 	});
 });
 
