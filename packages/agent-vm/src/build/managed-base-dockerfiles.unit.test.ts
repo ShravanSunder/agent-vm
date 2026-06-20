@@ -56,12 +56,36 @@ describe('managed base Dockerfiles', () => {
 		expect(dockerfile).toContain('pnpm --version');
 		expect(dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/');
 		expect(dockerfile).toContain('uv python install 3.13 --install-dir /opt/python');
-		expect(dockerfile).toContain('gh \\');
 		expect(dockerfile).toContain('ripgrep \\');
 		expect(dockerfile).toContain('fd-find \\');
 		expect(dockerfile).toContain('micro \\');
 		expect(dockerfile).not.toContain('python3 \\');
 		expect(dockerfile).not.toContain('nano \\');
 		expect(dockerfile).not.toContain('vim-tiny');
+	});
+
+	it('installs GitHub CLI from GitHub stable apt instead of Debian apt', async () => {
+		const dockerfile = await fs.readFile(
+			path.join(process.cwd(), 'docker', 'base-images', 'tool-vm', 'Dockerfile'),
+			'utf8',
+		);
+		const githubCliKeyringPath = '/usr/share/keyrings/githubcli-archive-keyring.gpg';
+		const githubCliSourcePath = '/etc/apt/sources.list.d/github-cli.list';
+		const githubCliSource = 'https://cli.github.com/packages stable main';
+		const sourceIndex = dockerfile.indexOf(githubCliSource);
+		const installIndex = dockerfile.indexOf('apt-get install -y --no-install-recommends gh');
+
+		expect(dockerfile).toContain('https://cli.github.com/packages/githubcli-archive-keyring.gpg');
+		expect(dockerfile).toContain(githubCliKeyringPath);
+		expect(dockerfile).toContain('chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg');
+		expect(dockerfile).toContain(`signed-by=${githubCliKeyringPath}`);
+		expect(dockerfile).toContain(githubCliSource);
+		expect(dockerfile).toContain(githubCliSourcePath);
+		expect(sourceIndex).toBeGreaterThan(-1);
+		expect(installIndex).toBeGreaterThan(sourceIndex);
+		expect(dockerfile).toMatch(/apt-get update && \\\n\s+apt-get install -y --no-install-recommends gh/u);
+		expect(dockerfile).not.toMatch(/^\s+gh \\/mu);
+		expect(dockerfile).not.toContain('apt-key');
+		expect(dockerfile).not.toMatch(/token|password|secret|_authToken|_password|_secret/iu);
 	});
 });
