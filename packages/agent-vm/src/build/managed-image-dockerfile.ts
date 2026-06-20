@@ -354,6 +354,18 @@ function renderOpenClawPackageInstallLines(
 	];
 }
 
+function renderGitHubCliStableAptInstallCommand(): string {
+	const githubCliKeyringPath = '/usr/share/keyrings/githubcli-archive-keyring.gpg';
+	return [
+		'RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \\',
+		`    chmod go+r ${githubCliKeyringPath} && \\`,
+		`    echo "deb [arch=$(dpkg --print-architecture) signed-by=${githubCliKeyringPath}] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && \\`,
+		'    apt-get update && \\',
+		'    apt-get install -y --no-install-recommends gh && \\',
+		'    rm -rf /var/lib/apt/lists/*',
+	].join('\n');
+}
+
 function renderManagedDockerfile(props: {
 	readonly base: ManagedImageBase;
 	readonly baseImage: ManagedBaseImageReference;
@@ -379,6 +391,9 @@ function renderManagedDockerfile(props: {
 				shellJoin(props.overlay.extraAptPackages) +
 				' && rm -rf /var/lib/apt/lists/*',
 		);
+	}
+	if (props.base === 'tool-vm') {
+		lines.push(renderGitHubCliStableAptInstallCommand());
 	}
 	if (
 		props.base === 'openclaw-gateway' ||

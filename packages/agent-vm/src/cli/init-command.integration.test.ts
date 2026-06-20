@@ -596,6 +596,41 @@ describe('scaffoldAgentVmProject', () => {
 		});
 	});
 
+	it('scaffolds an isolated macOS Keychain account when configured', async () => {
+		const targetDir = await createTestDirectory();
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'test-zone',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				onePasswordKeychainAccountName: 'shravan-claw-beta',
+				writeLocalEnvironmentFile: true,
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+		const config = z
+			.object({
+				host: z.object({
+					secretsProvider: z.object({
+						tokenSource: z.object({
+							type: z.string(),
+							service: z.string(),
+							account: z.string(),
+						}),
+					}),
+				}),
+			})
+			.parse(await readGeneratedSystemConfig(targetDir));
+
+		expect(config.host.secretsProvider.tokenSource).toEqual({
+			type: 'keychain',
+			service: 'agent-vm',
+			account: '1p-service-account--shravan-claw-beta',
+		});
+	});
+
 	it('does not append an unused age identity to .env.local', async () => {
 		const targetDir = await createTestDirectory();
 
@@ -858,7 +893,7 @@ describe('scaffoldAgentVmProject', () => {
 			readonly agents: {
 				readonly defaults: {
 					readonly model: { readonly primary: string };
-					readonly models?: Record<string, unknown>;
+					readonly models?: Record<string, { readonly agentRuntime?: { readonly id?: string } }>;
 					readonly thinkingDefault?: string;
 					readonly workspace: string;
 				};
@@ -916,10 +951,14 @@ describe('scaffoldAgentVmProject', () => {
 			'/pnpm/global/5/node_modules/@agent-vm',
 		]);
 		expect(openClawConfig.gateway.http.endpoints.chatCompletions.enabled).toBe(true);
-		expect(openClawConfig.agents.defaults.model.primary).toBe('openai-codex/gpt-5.5');
-		expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
+		expect(openClawConfig.agents.defaults.model.primary).toBe('openai/gpt-5.5');
+		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
-		expect(openClawConfig.agents.defaults.models).toBeUndefined();
+		expect(openClawConfig.agents.defaults.models).toEqual({
+			'openai/gpt-5.5': {
+				agentRuntime: { id: 'openclaw' },
+			},
+		});
 		expect(openClawConfig.approvals).toEqual({
 			plugin: {
 				enabled: true,

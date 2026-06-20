@@ -332,6 +332,107 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('')).toContain('"config/system.json"');
 	});
 
+	it('routes init Keychain account names to the scaffolder and token prompt', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json'],
+			keychainStored: false,
+			skipped: [],
+		}));
+		const promptAndStoreServiceAccountToken = vi.fn(async () => true);
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'shravan-claw',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				promptAndStoreServiceAccountToken,
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				onePasswordKeychainAccountName: 'shravan-claw',
+			}),
+		);
+		expect(promptAndStoreServiceAccountToken).toHaveBeenCalledWith({
+			accountName: 'shravan-claw',
+		});
+	});
+
+	it('routes init token prompt through the effective skipped config Keychain account', async () => {
+		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-keychain-'));
+		const promptAndStoreServiceAccountToken = vi.fn(async () => true);
+		const dependencies = {
+			...defaultCliDependencies,
+			getCurrentWorkingDirectory: () => targetDir,
+			promptAndStoreServiceAccountToken,
+			resolveGondolinMinimumZigVersion: async () => '0.15.2',
+		} satisfies CliDependencies;
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'configured-account',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			dependencies,
+		);
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'ignored-new-account',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			dependencies,
+		);
+
+		expect(promptAndStoreServiceAccountToken).toHaveBeenNthCalledWith(2, {
+			account: '1p-service-account--configured-account',
+			service: 'agent-vm',
+		});
+
+		await fs.rm(targetDir, { recursive: true, force: true });
+	});
+
 	it('passes comma-separated init agent ids to the project scaffolder', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json'],
@@ -1170,6 +1271,65 @@ describe('runAgentVmCli', () => {
 			'root@127.0.0.1',
 			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 		]);
+	});
+
+	it('routes auth 1password to configured Keychain storage', async () => {
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'service-account-token\n',
+		}));
+		const storeServiceAccountToken = vi.fn();
+		const outputs: string[] = [];
+		const systemConfig: LoadedSystemConfig = {
+			...createCliBuildSystemConfig(),
+			host: {
+				...createCliBuildSystemConfig().host,
+				secretsProvider: {
+					type: '1password',
+					tokenSource: {
+						type: 'keychain',
+						service: 'agent-vm',
+						account: '1p-service-account--shravan-claw',
+					},
+				},
+			},
+		};
+
+		await runAgentVmCli(
+			[
+				'auth',
+				'1password',
+				'op://agent-vm/1p-service-account-shravan-claw/credential',
+				'--config',
+				'config/system.jsonc',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(async () => systemConfig),
+				runCommand,
+				storeServiceAccountToken,
+			},
+		);
+
+		expect(runCommand).toHaveBeenCalledWith('op', [
+			'read',
+			'op://agent-vm/1p-service-account-shravan-claw/credential',
+		]);
+		expect(storeServiceAccountToken).toHaveBeenCalledWith('service-account-token', {
+			service: 'agent-vm',
+			account: '1p-service-account--shravan-claw',
+		});
+		expect(outputs.join('')).not.toContain('service-account-token');
 	});
 
 	it('passes auth openclaw device-code and set-default flags to the login command', async () => {

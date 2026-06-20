@@ -287,7 +287,8 @@ agent-vm controller logs --zone my-openclaw
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Doctor reports `openclaw-agent-auth-profile-*` failing | Auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
+| Doctor reports `openclaw-agent-auth-profile-*` failing for scaffolded `openai/gpt-5.5` | OpenClaw provider auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or run `agent-vm auth openclaw openai --zone <id> --agent <agentId>` |
+| Doctor reports native Codex-runtime auth failing | Codex harness auth material missing | Run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
 | Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, broad Discord egress hosts, and exact Discord Gateway `websocketBypass` hosts |
