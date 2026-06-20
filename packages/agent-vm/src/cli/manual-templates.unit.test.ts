@@ -153,6 +153,12 @@ describe('manual templates', () => {
 			'Do not use it as a one-shot command runner',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'agent-vm auth 1password <op-ref-or-url>',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'configured macOS Keychain service/account',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'agent-vm auth openclaw <provider> --zone <zoneId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(

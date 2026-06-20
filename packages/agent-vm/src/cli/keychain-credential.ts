@@ -5,8 +5,10 @@ const KEYCHAIN_ACCOUNT = '1p-service-account';
 const safeKeychainIdentifierPattern = /^[\w.@-]+$/u;
 
 export interface KeychainCredentialDependencies {
+	readonly account?: string;
 	readonly accountName?: string;
 	readonly execFileSync?: (command: string, args: readonly string[]) => string;
+	readonly service?: string;
 }
 
 interface KeychainCredentialTarget {
@@ -18,7 +20,7 @@ function defaultExecFileSync(command: string, args: readonly string[]): string {
 	return execFileSync(command, [...args], { encoding: 'utf8' });
 }
 
-function assertSafeKeychainIdentifier(value: string, label: string): void {
+export function assertSafeKeychainIdentifier(value: string, label: string): void {
 	if (!safeKeychainIdentifierPattern.test(value)) {
 		throw new Error(
 			`Invalid 1Password Keychain ${label} '${value}'. Expected only letters, digits, underscore, dot, at-sign, or dash.`,
@@ -26,9 +28,16 @@ function assertSafeKeychainIdentifier(value: string, label: string): void {
 	}
 }
 
-function resolveServiceAccountKeychainTarget(
-	options: Pick<KeychainCredentialDependencies, 'accountName'> = {},
+export function resolveServiceAccountKeychainTarget(
+	options: Pick<KeychainCredentialDependencies, 'account' | 'accountName' | 'service'> = {},
 ): KeychainCredentialTarget {
+	if (options.account !== undefined || options.service !== undefined) {
+		const service = options.service ?? KEYCHAIN_SERVICE;
+		const account = options.account ?? KEYCHAIN_ACCOUNT;
+		assertSafeKeychainIdentifier(service, 'service');
+		assertSafeKeychainIdentifier(account, 'account');
+		return { account, service };
+	}
 	const account =
 		options.accountName === undefined
 			? KEYCHAIN_ACCOUNT

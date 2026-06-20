@@ -371,6 +371,7 @@ Zones scaffold controller SSH adminAccess as mode: "none" because secret-backed 
 Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw admin commands source the token named by gateway.controlAuth.secret.
 Use agent-vm controller ssh --zone <zoneId> --all-secrets only when the shell must inspect or debug every raw gateway environment secret.
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
+Use agent-vm auth 1password <op-ref-or-url> --config ${options.systemConfigPath} to read a 1Password service-account token with op read and store it in the configured macOS Keychain service/account. Omit the ref/url only when pasting the token interactively.
 For OpenClaw provider auth flows, including the scaffolded openai/gpt-5.5 OpenClaw runtime default, prefer agent-vm auth openclaw <provider> --zone <zoneId>. Add --agent <agentId> for one agent or --all-agents to repeat the same provider login for every configured zone agent.
 Native Codex-runtime agents use agent-vm auth codex-harness --zone <zoneId> --agent <agentId>.
 Managed OpenClaw gateway builds install the native Codex CLI version pinned by managed-images.json so codex-harness auth can run inside the gateway VM. If a deployment overrides the generated Dockerfile, install @openai/codex in that image before running codex-harness auth.

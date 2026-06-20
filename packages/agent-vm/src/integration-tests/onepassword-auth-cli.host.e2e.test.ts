@@ -40,6 +40,11 @@ async function readSystemConfig(targetDir: string): Promise<Record<string, unkno
 	return parsed;
 }
 
+async function writeExecutable(filePath: string, content: string): Promise<void> {
+	await fs.writeFile(filePath, content, 'utf8');
+	await fs.chmod(filePath, 0o755);
+}
+
 describe('smoke: agent-vm 1Password auth CLI', () => {
 	it('scaffolds a configured Keychain account through the built init command', async () => {
 		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-1password-cli-'));
@@ -72,5 +77,82 @@ describe('smoke: agent-vm 1Password auth CLI', () => {
 			service: 'agent-vm',
 			account: '1p-service-account--shravan-claw',
 		});
+	});
+
+	it('reads a token ref and stores it through the configured Keychain account', async () => {
+		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-1password-cli-'));
+		const fakeBinDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-1password-bin-'));
+		const securityArgsPath = path.join(targetDir, 'security-args.json');
+
+		await writeExecutable(
+			path.join(fakeBinDir, 'op'),
+			`#!/usr/bin/env sh
+set -eu
+if [ "$1" = "read" ] && [ "$2" = "op://agent-vm/1p-service-account-shravan-claw/credential" ]; then
+  printf 'service-account-token\\n'
+  exit 0
+fi
+echo "unexpected op args: $*" >&2
+exit 1
+`,
+		);
+		await writeExecutable(
+			path.join(fakeBinDir, 'security'),
+			`#!/usr/bin/env node
+const fs = require('node:fs');
+fs.writeFileSync(process.env.AGENT_VM_SECURITY_ARGS_PATH, JSON.stringify(process.argv.slice(2)));
+`,
+		);
+		await execa(
+			'node',
+			[
+				agentVmCliPath,
+				'init',
+				'claw-beta',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'shravan-claw',
+			],
+			{ cwd: targetDir, reject: true, timeout: 30_000 },
+		);
+
+		const result = await execa(
+			'node',
+			[
+				agentVmCliPath,
+				'auth',
+				'1password',
+				'op://agent-vm/1p-service-account-shravan-claw/credential',
+				'--config',
+				path.join(targetDir, 'config', 'system.jsonc'),
+			],
+			{
+				env: {
+					AGENT_VM_SECURITY_ARGS_PATH: securityArgsPath,
+					PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
+				},
+				reject: true,
+				timeout: 30_000,
+			},
+		);
+		const securityArgs = JSON.parse(await fs.readFile(securityArgsPath, 'utf8')) as unknown;
+
+		expect(securityArgs).toEqual([
+			'add-generic-password',
+			'-s',
+			'agent-vm',
+			'-a',
+			'1p-service-account--shravan-claw',
+			'-w',
+			'service-account-token',
+			'-U',
+		]);
+		expect(result.stdout).not.toContain('service-account-token');
+		expect(result.stderr).not.toContain('service-account-token');
 	});
 });

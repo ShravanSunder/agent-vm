@@ -38,6 +38,7 @@ import {
 	type ScaffoldAgentVmProjectOptions,
 	type ScaffoldAgentVmProjectResult,
 } from './init-command.js';
+import { storeServiceAccountToken } from './keychain-credential.js';
 import { updateAgentVmManual, type UpdateAgentVmManualResult } from './manual-commands.js';
 import {
 	initRepoResources,
@@ -106,6 +107,7 @@ export interface CliDependencies {
 	readonly scaffoldAgentVmProject?: (
 		options: ScaffoldAgentVmProjectOptions,
 	) => Promise<ScaffoldAgentVmProjectResult>;
+	readonly storeServiceAccountToken?: typeof storeServiceAccountToken;
 	readonly startControllerRuntime: (
 		options: {
 			readonly systemConfig: LoadedSystemConfig;
@@ -140,6 +142,7 @@ export const defaultCliDependencies: CliDependencies = {
 	resetWorkerInstructions,
 	resolveCliVersion,
 	scaffoldAgentVmProject,
+	storeServiceAccountToken,
 	updateAgentVmManual,
 	initRepoResources,
 	updateRepoResources,

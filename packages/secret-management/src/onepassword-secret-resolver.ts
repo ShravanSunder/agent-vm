@@ -223,7 +223,7 @@ async function resolveSecretWithOpCli(
 	});
 }
 
-function stripOpReadStdoutTerminator(stdout: string): string {
+export function stripOpReadStdoutTerminator(stdout: string): string {
 	if (stdout.endsWith('\r\n')) {
 		return stdout.slice(0, -2);
 	}
