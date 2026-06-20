@@ -75,8 +75,10 @@ interface ScaffoldAgentVmProjectDependencies {
 }
 
 export interface PromptAndStoreTokenDependencies {
+	readonly account?: string;
 	readonly accountName?: string;
 	readonly hasKeychainToken?: () => boolean;
+	readonly service?: string;
 	readonly storeKeychainToken?: (token: string) => void;
 	readonly createReadlineInterface?: () => readline.Interface;
 }
@@ -919,7 +921,7 @@ function formatAuthoredConfig(filePath: string, comment: string, value: unknown)
 	return `${JSON.stringify(value, null, '\t')}\n`;
 }
 
-async function resolveScaffoldSystemConfigPath(configDir: string): Promise<string> {
+export async function resolveScaffoldSystemConfigPath(configDir: string): Promise<string> {
 	const legacyJsonPath = path.join(configDir, 'system.json');
 	try {
 		await access(legacyJsonPath);
@@ -1352,19 +1354,19 @@ async function scaffoldAgentVmProjectInternal(
 export async function promptAndStoreServiceAccountToken(
 	dependencies: PromptAndStoreTokenDependencies = {},
 ): Promise<boolean> {
-	const hasToken =
-		dependencies.hasKeychainToken ??
-		(() =>
-			hasServiceAccountToken(
-				dependencies.accountName === undefined ? {} : { accountName: dependencies.accountName },
-			));
+	const keychainTarget =
+		dependencies.account !== undefined || dependencies.service !== undefined
+			? {
+					...(dependencies.account === undefined ? {} : { account: dependencies.account }),
+					...(dependencies.service === undefined ? {} : { service: dependencies.service }),
+				}
+			: dependencies.accountName === undefined
+				? {}
+				: { accountName: dependencies.accountName };
+	const hasToken = dependencies.hasKeychainToken ?? (() => hasServiceAccountToken(keychainTarget));
 	const storeToken =
 		dependencies.storeKeychainToken ??
-		((token: string) =>
-			storeServiceAccountToken(
-				token,
-				dependencies.accountName === undefined ? {} : { accountName: dependencies.accountName },
-			));
+		((token: string) => storeServiceAccountToken(token, keychainTarget));
 
 	if (hasToken()) {
 		return false;

@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
@@ -91,6 +95,29 @@ describe('runOnePasswordAuthCommand', () => {
 		expect(stdoutChunks.join('')).not.toContain('service-account-token');
 	});
 
+	it('preserves op read token bytes except the stdout terminator', async () => {
+		const storeServiceAccountToken = vi.fn();
+
+		await runOnePasswordAuthCommand({
+			dependencies: {
+				runCommand: vi.fn(async () => ({
+					exitCode: 0,
+					stderr: '',
+					stdout: ' leading-space-token ',
+				})),
+				storeServiceAccountToken,
+			},
+			io: createIo().io,
+			systemConfig: createSystemConfig(),
+			tokenReference: 'op://agent-vm/service-account/credential',
+		});
+
+		expect(storeServiceAccountToken).toHaveBeenCalledWith(' leading-space-token ', {
+			service: 'agent-vm',
+			account: '1p-service-account--shravan-claw',
+		});
+	});
+
 	it('rejects missing 1Password host provider config', async () => {
 		await expect(
 			runOnePasswordAuthCommand({
@@ -148,6 +175,42 @@ describe('runOnePasswordAuthCommand', () => {
 		).rejects.toThrow('1Password service account token is empty.');
 	});
 
+	it('redacts default op read failures', async () => {
+		const originalPath = process.env.PATH;
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-op-read-failure-'));
+		const opPath = path.join(temporaryDirectory, 'op');
+		await writeFile(
+			opPath,
+			`#!/usr/bin/env sh
+echo "LEAKED-SERVICE-TOKEN" >&2
+exit 7
+`,
+			{ mode: 0o755 },
+		);
+		process.env.PATH = `${temporaryDirectory}:${originalPath ?? ''}`;
+		try {
+			await expect(
+				runOnePasswordAuthCommand({
+					dependencies: { storeServiceAccountToken: vi.fn() },
+					io: createIo().io,
+					systemConfig: createSystemConfig(),
+					tokenReference: 'op://agent-vm/service-account/credential',
+				}),
+			).rejects.toThrow('Failed to read 1Password service account token with op read.');
+			await expect(
+				runOnePasswordAuthCommand({
+					dependencies: { storeServiceAccountToken: vi.fn() },
+					io: createIo().io,
+					systemConfig: createSystemConfig(),
+					tokenReference: 'op://agent-vm/service-account/credential',
+				}),
+			).rejects.not.toThrow('LEAKED-SERVICE-TOKEN');
+		} finally {
+			process.env.PATH = originalPath;
+			await rm(temporaryDirectory, { recursive: true, force: true });
+		}
+	});
+
 	it('fails clearly without a ref in non-interactive mode', async () => {
 		await expect(
 			runOnePasswordAuthCommand({
@@ -175,7 +238,7 @@ describe('runOnePasswordAuthCommand', () => {
 			systemConfig: createSystemConfig(),
 		});
 
-		expect(storeServiceAccountToken).toHaveBeenCalledWith('pasted-token', {
+		expect(storeServiceAccountToken).toHaveBeenCalledWith(' pasted-token ', {
 			service: 'agent-vm',
 			account: '1p-service-account--shravan-claw',
 		});

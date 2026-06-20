@@ -37,11 +37,13 @@ describe('Tool VM GitHub CLI package provenance', () => {
 				'sh',
 				'-lc',
 				'gh --version && apt-get update >/dev/null && apt-cache policy gh',
-			]);
+				]);
 
-			expect(result.stdout).toContain('gh version');
-			expect(result.stdout).toContain('https://cli.github.com/packages');
-		} finally {
+				expect(result.stdout).toContain('gh version');
+				expect(result.stdout).toMatch(
+					/\*\*\* [^\n]+\n(?:\s+\d+ [^\n]+\n)*\s+\d+ https:\/\/cli\.github\.com\/packages/u,
+				);
+			} finally {
 			await runCommand('docker', ['image', 'rm', '--force', imageTag]).catch(() => undefined);
 		}
 	});

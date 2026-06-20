@@ -1,14 +1,21 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync, type SpawnSyncReturns } from 'node:child_process';
 
 const KEYCHAIN_SERVICE = 'agent-vm';
 const KEYCHAIN_ACCOUNT = '1p-service-account';
+const SECURITY_COMMAND = '/usr/bin/security';
 const safeKeychainIdentifierPattern = /^[\w.@-]+$/u;
 
 export interface KeychainCredentialDependencies {
 	readonly account?: string;
 	readonly accountName?: string;
 	readonly execFileSync?: (command: string, args: readonly string[]) => string;
+	readonly securityCommand?: string;
 	readonly service?: string;
+	readonly spawnSync?: (
+		command: string,
+		args: readonly string[],
+		options: { readonly encoding: 'utf8'; readonly input: string },
+	) => Pick<SpawnSyncReturns<string>, 'error' | 'status' | 'stderr' | 'stdout'>;
 }
 
 interface KeychainCredentialTarget {
@@ -18,6 +25,24 @@ interface KeychainCredentialTarget {
 
 function defaultExecFileSync(command: string, args: readonly string[]): string {
 	return execFileSync(command, [...args], { encoding: 'utf8' });
+}
+
+function defaultSpawnSync(
+	command: string,
+	args: readonly string[],
+	options: { readonly encoding: 'utf8'; readonly input: string },
+): Pick<SpawnSyncReturns<string>, 'error' | 'status' | 'stderr' | 'stdout'> {
+	return spawnSync(command, [...args], options);
+}
+
+function resolveSecurityCommand(dependencies: KeychainCredentialDependencies): string {
+	if (dependencies.securityCommand !== undefined) {
+		return dependencies.securityCommand;
+	}
+	if (process.env.NODE_ENV === 'test' && process.env.AGENT_VM_TEST_SECURITY_COMMAND) {
+		return process.env.AGENT_VM_TEST_SECURITY_COMMAND;
+	}
+	return SECURITY_COMMAND;
 }
 
 export function assertSafeKeychainIdentifier(value: string, label: string): void {
@@ -62,20 +87,14 @@ export function storeServiceAccountToken(
 	token: string,
 	dependencies: KeychainCredentialDependencies = {},
 ): void {
-	const exec = dependencies.execFileSync ?? defaultExecFileSync;
+	const runSecurity = dependencies.spawnSync ?? defaultSpawnSync;
 	const target = resolveServiceAccountKeychainTarget(dependencies);
-	try {
-		exec('security', [
-			'add-generic-password',
-			'-s',
-			target.service,
-			'-a',
-			target.account,
-			'-w',
-			token,
-			'-U',
-		]);
-	} catch {
+	const result = runSecurity(
+		resolveSecurityCommand(dependencies),
+		['add-generic-password', '-s', target.service, '-a', target.account, '-U', '-w'],
+		{ encoding: 'utf8', input: token },
+	);
+	if (result.error !== undefined || result.status !== 0) {
 		throw new Error('Failed to store 1Password service account token in macOS Keychain.');
 	}
 }
@@ -87,7 +106,14 @@ export function hasServiceAccountToken(dependencies: KeychainCredentialDependenc
 	const exec = dependencies.execFileSync ?? defaultExecFileSync;
 	const target = resolveServiceAccountKeychainTarget(dependencies);
 	try {
-		exec('security', ['find-generic-password', '-s', target.service, '-a', target.account, '-w']);
+		exec(resolveSecurityCommand(dependencies), [
+			'find-generic-password',
+			'-s',
+			target.service,
+			'-a',
+			target.account,
+			'-w',
+		]);
 		return true;
 	} catch {
 		return false;

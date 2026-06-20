@@ -1020,7 +1020,69 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		);
 	});
 
-	it('does not emit auth profile checks when agents.list is missing or empty', () => {
+	it('flags missing default OpenClaw provider auth when agents.list is missing or empty', () => {
+		for (const list of [undefined, []] as const) {
+			const checks = buildOpenClawDeploymentDoctorChecks([
+				{
+					zoneId: 'shravan',
+					config: {
+						agents: {
+							defaults: {
+								model: { primary: 'openai/gpt-5.5' },
+								models: {
+									'openai/gpt-5.5': { agentRuntime: { id: 'openclaw' } },
+								},
+								sandbox: openClawToolVmSandbox,
+								workspace: '/zone/agents/default',
+							},
+							...(list === undefined ? {} : { list }),
+						},
+					},
+				},
+			]);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-default'),
+			).toMatchObject({
+				ok: false,
+				hint: 'Run agent-vm auth openclaw openai --zone shravan for the default OpenClaw auth profile.',
+			});
+		}
+	});
+
+	it('uses provider-level OpenClaw runtime fallback for auth profile checks', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'shravan' }],
+					},
+					models: {
+						providers: {
+							openai: {
+								agentRuntime: { id: 'openclaw' },
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Run agent-vm auth openclaw openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+		});
+	});
+
+	it('does not emit auth profile checks for Codex harness defaults when agents.list is missing or empty', () => {
 		for (const list of [undefined, []] as const) {
 			const checks = buildOpenClawDeploymentDoctorChecks([
 				{

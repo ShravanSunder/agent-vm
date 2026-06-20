@@ -1,7 +1,7 @@
 import readline from 'node:readline/promises';
 import { Writable } from 'node:stream';
 
-import { stripOpReadStdoutTerminator, type ExecFileResult } from '@agent-vm/secret-management';
+import { stripOpReadStdoutTerminator } from '@agent-vm/secret-management';
 import { execa } from 'execa';
 
 import type { SystemConfig } from '../config/system-config.js';
@@ -48,8 +48,8 @@ async function runOpRead(
 			command: string,
 			arguments_: readonly string[],
 		): Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }> => {
-			const result: ExecFileResult = await execa(command, [...arguments_]);
-			return { exitCode: 0, stderr: result.stderr, stdout: result.stdout };
+			const result = await execa(command, [...arguments_], { reject: false });
+			return { exitCode: result.exitCode ?? 1, stderr: result.stderr, stdout: result.stdout };
 		});
 	const result = await runCommand('op', ['read', tokenReference]);
 	if (result.exitCode !== 0) {
@@ -99,13 +99,12 @@ export async function runOnePasswordAuthCommand(options: {
 		options.tokenReference === undefined
 			? await readInteractiveToken(options.io, dependencies)
 			: await runOpRead(options.tokenReference, dependencies);
-	const trimmedToken = token.trim();
-	if (trimmedToken.length === 0) {
+	if (token.trim().length === 0) {
 		throw new Error('1Password service account token is empty.');
 	}
 
 	const storeToken = dependencies.storeServiceAccountToken ?? storeServiceAccountToken;
-	storeToken(trimmedToken, {
+	storeToken(token, {
 		account: target.account,
 		service: target.service,
 	});

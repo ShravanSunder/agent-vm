@@ -99,9 +99,13 @@ exit 1
 		await writeExecutable(
 			path.join(fakeBinDir, 'security'),
 			`#!/usr/bin/env node
-const fs = require('node:fs');
-fs.writeFileSync(process.env.AGENT_VM_SECURITY_ARGS_PATH, JSON.stringify(process.argv.slice(2)));
-`,
+	const fs = require('node:fs');
+	const stdin = fs.readFileSync(0, 'utf8');
+	fs.writeFileSync(process.env.AGENT_VM_SECURITY_ARGS_PATH, JSON.stringify({
+	  args: process.argv.slice(2),
+	  stdin,
+	}));
+	`,
 		);
 		await execa(
 			'node',
@@ -134,6 +138,7 @@ fs.writeFileSync(process.env.AGENT_VM_SECURITY_ARGS_PATH, JSON.stringify(process
 			{
 				env: {
 					AGENT_VM_SECURITY_ARGS_PATH: securityArgsPath,
+					AGENT_VM_TEST_SECURITY_COMMAND: path.join(fakeBinDir, 'security'),
 					PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
 				},
 				reject: true,
@@ -142,16 +147,19 @@ fs.writeFileSync(process.env.AGENT_VM_SECURITY_ARGS_PATH, JSON.stringify(process
 		);
 		const securityArgs = JSON.parse(await fs.readFile(securityArgsPath, 'utf8')) as unknown;
 
-		expect(securityArgs).toEqual([
-			'add-generic-password',
-			'-s',
-			'agent-vm',
-			'-a',
-			'1p-service-account--shravan-claw',
-			'-w',
-			'service-account-token',
-			'-U',
-		]);
+		expect(securityArgs).toEqual({
+			args: [
+				'add-generic-password',
+				'-s',
+				'agent-vm',
+				'-a',
+				'1p-service-account--shravan-claw',
+				'-U',
+				'-w',
+			],
+			stdin: 'service-account-token',
+		});
+		expect(JSON.stringify(securityArgs)).not.toContain('service-account-token","-U');
 		expect(result.stdout).not.toContain('service-account-token');
 		expect(result.stderr).not.toContain('service-account-token');
 	});

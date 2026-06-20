@@ -375,6 +375,64 @@ describe('runAgentVmCli', () => {
 		});
 	});
 
+	it('routes init token prompt through the effective skipped config Keychain account', async () => {
+		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-keychain-'));
+		const promptAndStoreServiceAccountToken = vi.fn(async () => true);
+		const dependencies = {
+			...defaultCliDependencies,
+			getCurrentWorkingDirectory: () => targetDir,
+			promptAndStoreServiceAccountToken,
+			resolveGondolinMinimumZigVersion: async () => '0.15.2',
+		} satisfies CliDependencies;
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'configured-account',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			dependencies,
+		);
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'ignored-new-account',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			dependencies,
+		);
+
+		expect(promptAndStoreServiceAccountToken).toHaveBeenNthCalledWith(2, {
+			account: '1p-service-account--configured-account',
+			service: 'agent-vm',
+		});
+
+		await fs.rm(targetDir, { recursive: true, force: true });
+	});
+
 	it('passes comma-separated init agent ids to the project scaffolder', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json'],
