@@ -730,7 +730,7 @@ function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): o
 			model: { primary: 'openai/gpt-5.5' },
 			models: {
 				'openai/gpt-5.5': {
-					agentRuntime: { id: 'openclaw' },
+					agentRuntime: { id: 'pi' },
 				},
 			},
 			sandbox: {
