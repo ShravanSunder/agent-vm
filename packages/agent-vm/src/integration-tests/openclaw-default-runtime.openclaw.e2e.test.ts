@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 describe('e2e: OpenClaw default runtime scaffold', () => {
-	it('pins scaffolded OpenAI defaults to the OpenClaw runtime', async () => {
+	it('pins scaffolded OpenAI defaults to the PI runtime', async () => {
 		const project = await scaffoldOpenClawE2eProject({
 			agents: ['sun', 'shravan'],
 			architecture: currentE2eArchitecture(),
@@ -55,7 +55,7 @@ describe('e2e: OpenClaw default runtime scaffold', () => {
 		const agentRuntime = readObjectField(defaultRuntimeModel, 'agentRuntime');
 
 		expect(defaultModel.primary).toBe('openai/gpt-5.5');
-		expect(agentRuntime.id).toBe('openclaw');
+		expect(agentRuntime.id).toBe('pi');
 		expect(defaults).not.toHaveProperty('thinkingDefault');
 	});
 });

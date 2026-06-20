@@ -386,7 +386,7 @@ describe('manual templates', () => {
 		).toContain('agents.defaults.model.primary is openai/gpt-5.5');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
-		).toContain('agents.defaults.models["openai/gpt-5.5"].agentRuntime.id is openclaw');
+		).toContain('agents.defaults.models["openai/gpt-5.5"].agentRuntime.id is pi');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).not.toContain('openai-codex/gpt-5.5 with thinkingDefault low');

@@ -956,7 +956,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
 		expect(openClawConfig.agents.defaults.models).toEqual({
 			'openai/gpt-5.5': {
-				agentRuntime: { id: 'openclaw' },
+				agentRuntime: { id: 'pi' },
 			},
 		});
 		expect(openClawConfig.approvals).toEqual({

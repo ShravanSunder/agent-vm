@@ -288,7 +288,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.sandbox.workspaceAccess is rw so agents can write their workspace.
 	agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
 	agents.defaults.model.primary is openai/gpt-5.5.
-	agents.defaults.models["openai/gpt-5.5"].agentRuntime.id is openclaw so OpenAI API-key models use the OpenClaw runtime rather than native Codex OAuth.
+	agents.defaults.models["openai/gpt-5.5"].agentRuntime.id is pi so GPT-5.5 runs through the PI harness.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
 	approvals.plugin.enabled is true with approvals.plugin.mode=session so MCP Portal plugin approval prompts route back to the originating session by default. Exec approval forwarding remains deployment-owned.
 	tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
@@ -372,7 +372,7 @@ Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw 
 Use agent-vm controller ssh --zone <zoneId> --all-secrets only when the shell must inspect or debug every raw gateway environment secret.
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
 Use agent-vm auth 1password <op-ref-or-url> --config ${options.systemConfigPath} to read a 1Password service-account token with op read and store it in the configured macOS Keychain service/account. Omit the ref/url only when pasting the token interactively.
-For OpenClaw provider auth flows, including the scaffolded openai/gpt-5.5 OpenClaw runtime default, prefer agent-vm auth openclaw <provider> --zone <zoneId>. Add --agent <agentId> for one agent or --all-agents to repeat the same provider login for every configured zone agent.
+For OpenClaw provider auth flows, prefer agent-vm auth openclaw <provider> --zone <zoneId>. Add --agent <agentId> for one agent or --all-agents to repeat the same provider login for every configured zone agent.
 Native Codex-runtime agents use agent-vm auth codex-harness --zone <zoneId> --agent <agentId>.
 Managed OpenClaw gateway builds install the native Codex CLI version pinned by managed-images.json so codex-harness auth can run inside the gateway VM. If a deployment overrides the generated Dockerfile, install @openai/codex in that image before running codex-harness auth.
 Tool VMs and agent sandboxes do not receive gateway SSH secrets.
