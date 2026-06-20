@@ -62,7 +62,7 @@ async function readInteractiveToken(
 	io: CliIo,
 	dependencies: Pick<OnePasswordAuthCommandDependencies, 'createReadlineInterface' | 'stdinIsTty'>,
 ): Promise<string> {
-	const stdinIsTty = dependencies.stdinIsTty ?? (() => process.stdin.isTTY === true);
+	const stdinIsTty = dependencies.stdinIsTty ?? (() => process.stdin.isTTY ?? false);
 	if (!stdinIsTty()) {
 		throw new Error(
 			'agent-vm auth 1password requires a token ref/url argument when stdin is not interactive.',
