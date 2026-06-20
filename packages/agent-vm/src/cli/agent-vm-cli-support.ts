@@ -97,7 +97,9 @@ export interface CliDependencies {
 	readonly runControllerDoctor: typeof runControllerDoctor;
 	readonly runControllerOfflineCleanup?: typeof runControllerOfflineCleanup;
 	readonly runConfigValidation?: typeof runConfigValidation;
-	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
+	readonly promptAndStoreServiceAccountToken?: (options?: {
+		readonly accountName?: string;
+	}) => Promise<boolean>;
 	readonly probeOnePasswordServiceAccountHeadlessAuth: typeof probeOnePasswordServiceAccountHeadlessAuth;
 	readonly resetWorkerInstructions?: typeof resetWorkerInstructions;
 	readonly resolveCliVersion?: typeof resolveCliVersion;

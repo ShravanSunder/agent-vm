@@ -2,13 +2,46 @@ import { execFileSync } from 'node:child_process';
 
 const KEYCHAIN_SERVICE = 'agent-vm';
 const KEYCHAIN_ACCOUNT = '1p-service-account';
+const safeKeychainIdentifierPattern = /^[\w.@-]+$/u;
 
 export interface KeychainCredentialDependencies {
+	readonly accountName?: string;
 	readonly execFileSync?: (command: string, args: readonly string[]) => string;
+}
+
+interface KeychainCredentialTarget {
+	readonly account: string;
+	readonly service: string;
 }
 
 function defaultExecFileSync(command: string, args: readonly string[]): string {
 	return execFileSync(command, [...args], { encoding: 'utf8' });
+}
+
+function assertSafeKeychainIdentifier(value: string, label: string): void {
+	if (!safeKeychainIdentifierPattern.test(value)) {
+		throw new Error(
+			`Invalid 1Password Keychain ${label} '${value}'. Expected only letters, digits, underscore, dot, at-sign, or dash.`,
+		);
+	}
+}
+
+function resolveServiceAccountKeychainTarget(
+	options: Pick<KeychainCredentialDependencies, 'accountName'> = {},
+): KeychainCredentialTarget {
+	const account =
+		options.accountName === undefined
+			? KEYCHAIN_ACCOUNT
+			: `${KEYCHAIN_ACCOUNT}--${options.accountName}`;
+	assertSafeKeychainIdentifier(KEYCHAIN_SERVICE, 'service');
+	if (options.accountName !== undefined) {
+		assertSafeKeychainIdentifier(options.accountName, 'account name');
+	}
+	assertSafeKeychainIdentifier(account, 'account');
+	return {
+		account,
+		service: KEYCHAIN_SERVICE,
+	};
 }
 
 /**
@@ -21,16 +54,21 @@ export function storeServiceAccountToken(
 	dependencies: KeychainCredentialDependencies = {},
 ): void {
 	const exec = dependencies.execFileSync ?? defaultExecFileSync;
-	exec('security', [
-		'add-generic-password',
-		'-s',
-		KEYCHAIN_SERVICE,
-		'-a',
-		KEYCHAIN_ACCOUNT,
-		'-w',
-		token,
-		'-U',
-	]);
+	const target = resolveServiceAccountKeychainTarget(dependencies);
+	try {
+		exec('security', [
+			'add-generic-password',
+			'-s',
+			target.service,
+			'-a',
+			target.account,
+			'-w',
+			token,
+			'-U',
+		]);
+	} catch {
+		throw new Error('Failed to store 1Password service account token in macOS Keychain.');
+	}
 }
 
 /**
@@ -38,29 +76,26 @@ export function storeServiceAccountToken(
  */
 export function hasServiceAccountToken(dependencies: KeychainCredentialDependencies = {}): boolean {
 	const exec = dependencies.execFileSync ?? defaultExecFileSync;
+	const target = resolveServiceAccountKeychainTarget(dependencies);
 	try {
-		exec('security', [
-			'find-generic-password',
-			'-s',
-			KEYCHAIN_SERVICE,
-			'-a',
-			KEYCHAIN_ACCOUNT,
-			'-w',
-		]);
+		exec('security', ['find-generic-password', '-s', target.service, '-a', target.account, '-w']);
 		return true;
 	} catch {
 		return false;
 	}
 }
 
-export function getKeychainTokenSource(): {
+export function getKeychainTokenSource(
+	options?: Pick<KeychainCredentialDependencies, 'accountName'>,
+): {
 	readonly type: 'keychain';
 	readonly service: string;
 	readonly account: string;
 } {
+	const target = resolveServiceAccountKeychainTarget(options);
 	return {
 		type: 'keychain',
-		service: KEYCHAIN_SERVICE,
-		account: KEYCHAIN_ACCOUNT,
+		service: target.service,
+		account: target.account,
 	};
 }

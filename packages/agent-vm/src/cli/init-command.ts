@@ -49,6 +49,7 @@ export interface ScaffoldAgentVmProjectOptions {
 	readonly architecture: ImageArchitecture;
 	readonly gatewayType: GatewayType;
 	readonly hostSystemType?: HostSystemType;
+	readonly onePasswordKeychainAccountName?: string;
 	readonly secretsProvider: SecretsProvider;
 	readonly paths?: ScaffoldPathMode;
 	readonly projectNamespace?: string;
@@ -74,6 +75,7 @@ interface ScaffoldAgentVmProjectDependencies {
 }
 
 export interface PromptAndStoreTokenDependencies {
+	readonly accountName?: string;
 	readonly hasKeychainToken?: () => boolean;
 	readonly storeKeychainToken?: (token: string) => void;
 	readonly createReadlineInterface?: () => readline.Interface;
@@ -355,6 +357,7 @@ const defaultSystemConfig = (
 	projectNamespace: string,
 	secretsProvider: SecretsProvider,
 	pathProfile: ScaffoldPathProfile,
+	onePasswordKeychainAccountName: string | undefined,
 	agentIds?: readonly string[],
 ): object => ({
 	$schema: './schemas/system.schema.json',
@@ -367,7 +370,11 @@ const defaultSystemConfig = (
 			? {
 					secretsProvider: {
 						type: '1password',
-						tokenSource: getKeychainTokenSource(),
+						tokenSource: getKeychainTokenSource(
+							onePasswordKeychainAccountName === undefined
+								? {}
+								: { accountName: onePasswordKeychainAccountName },
+						),
 					},
 				}
 			: {}),
@@ -1089,6 +1096,7 @@ async function scaffoldAgentVmProjectInternal(
 				projectNamespace,
 				options.secretsProvider,
 				configWritablePathProfile,
+				options.onePasswordKeychainAccountName,
 				options.agents,
 			),
 		),
@@ -1344,8 +1352,19 @@ async function scaffoldAgentVmProjectInternal(
 export async function promptAndStoreServiceAccountToken(
 	dependencies: PromptAndStoreTokenDependencies = {},
 ): Promise<boolean> {
-	const hasToken = dependencies.hasKeychainToken ?? hasServiceAccountToken;
-	const storeToken = dependencies.storeKeychainToken ?? storeServiceAccountToken;
+	const hasToken =
+		dependencies.hasKeychainToken ??
+		(() =>
+			hasServiceAccountToken(
+				dependencies.accountName === undefined ? {} : { accountName: dependencies.accountName },
+			));
+	const storeToken =
+		dependencies.storeKeychainToken ??
+		((token: string) =>
+			storeServiceAccountToken(
+				token,
+				dependencies.accountName === undefined ? {} : { accountName: dependencies.accountName },
+			));
 
 	if (hasToken()) {
 		return false;

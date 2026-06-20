@@ -332,6 +332,49 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('')).toContain('"config/system.json"');
 	});
 
+	it('routes init Keychain account names to the scaffolder and token prompt', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json'],
+			keychainStored: false,
+			skipped: [],
+		}));
+		const promptAndStoreServiceAccountToken = vi.fn(async () => true);
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'shravan-claw',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				promptAndStoreServiceAccountToken,
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				onePasswordKeychainAccountName: 'shravan-claw',
+			}),
+		);
+		expect(promptAndStoreServiceAccountToken).toHaveBeenCalledWith({
+			accountName: 'shravan-claw',
+		});
+	});
+
 	it('passes comma-separated init agent ids to the project scaffolder', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json'],

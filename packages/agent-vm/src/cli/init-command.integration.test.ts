@@ -596,6 +596,41 @@ describe('scaffoldAgentVmProject', () => {
 		});
 	});
 
+	it('scaffolds an isolated macOS Keychain account when configured', async () => {
+		const targetDir = await createTestDirectory();
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'test-zone',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				onePasswordKeychainAccountName: 'shravan-claw-beta',
+				writeLocalEnvironmentFile: true,
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+		const config = z
+			.object({
+				host: z.object({
+					secretsProvider: z.object({
+						tokenSource: z.object({
+							type: z.string(),
+							service: z.string(),
+							account: z.string(),
+						}),
+					}),
+				}),
+			})
+			.parse(await readGeneratedSystemConfig(targetDir));
+
+		expect(config.host.secretsProvider.tokenSource).toEqual({
+			type: 'keychain',
+			service: 'agent-vm',
+			account: '1p-service-account--shravan-claw-beta',
+		});
+	});
+
 	it('does not append an unused age identity to .env.local', async () => {
 		const targetDir = await createTestDirectory();
 

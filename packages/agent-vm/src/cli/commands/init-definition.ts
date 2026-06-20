@@ -195,11 +195,18 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 				description:
 					'Comma-separated OpenClaw agent ids to scaffold, for example: sun,shravan,alevtina.',
 			}),
+			onePasswordKeychainAccountName: option({
+				type: optional(string),
+				long: 'onepassword-keychain-account-name',
+				description:
+					'Keychain account suffix for the 1Password service account token, stored as 1p-service-account--<name>.',
+			}),
 		},
 		handler: async ({
 			agents,
 			arch,
 			namespace,
+			onePasswordKeychainAccountName,
 			overwrite,
 			paths,
 			preset,
@@ -218,6 +225,7 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 				architecture,
 				gatewayType,
 				hostSystemType,
+				...(onePasswordKeychainAccountName === undefined ? {} : { onePasswordKeychainAccountName }),
 				overwrite,
 				paths: pathMode,
 				...(namespace === undefined ? {} : { projectNamespace: namespace }),
@@ -230,7 +238,11 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 				secretsProvider === '1password'
 					? await (
 							dependencies.promptAndStoreServiceAccountToken ?? promptAndStoreServiceAccountToken
-						)()
+						)(
+							onePasswordKeychainAccountName === undefined
+								? {}
+								: { accountName: onePasswordKeychainAccountName },
+						)
 					: false;
 			io.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
 		},
