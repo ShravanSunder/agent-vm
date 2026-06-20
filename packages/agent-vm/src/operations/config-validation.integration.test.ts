@@ -864,9 +864,64 @@ describe('runConfigValidation', () => {
 		expect(result.ok).toBe(false);
 		expect(result.checks).toContainEqual(
 			expect.objectContaining({
-				hint: expect.stringContaining('pnpmOverrides is not supported in deployment overlays'),
+				hint: expect.stringContaining('move pnpmOverrides to packageOverrides.pnpm'),
 				name: 'gateway-openclaw-overlay',
 				ok: false,
+			}),
+		);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('accepts managed image overlays with packageOverrides pnpm during validation', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await writeJson(
+			path.join(temporaryDirectoryPath, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+			{
+				packageOverrides: { pnpm: { undici: '8.5.0' } },
+				schemaVersion: 1,
+			},
+		);
+		await updateJsonFile(systemConfigPath, (systemConfig) => {
+			const imageProfiles = systemConfig.imageProfiles;
+			if (
+				typeof imageProfiles !== 'object' ||
+				imageProfiles === null ||
+				Array.isArray(imageProfiles)
+			) {
+				throw new Error('Expected imageProfiles object.');
+			}
+			const gateways = (imageProfiles as Record<string, unknown>).gateways;
+			if (typeof gateways !== 'object' || gateways === null || Array.isArray(gateways)) {
+				throw new Error('Expected gateways object.');
+			}
+			const openClawProfile = (gateways as Record<string, unknown>).openclaw;
+			if (
+				typeof openClawProfile !== 'object' ||
+				openClawProfile === null ||
+				Array.isArray(openClawProfile)
+			) {
+				throw new Error('Expected openclaw profile object.');
+			}
+			(openClawProfile as Record<string, unknown>).source = {
+				base: 'openclaw-gateway',
+				kind: 'managedBase',
+				overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+			};
+		});
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.checks).toContainEqual(
+			expect.objectContaining({
+				name: 'gateway-openclaw-overlay',
+				ok: true,
 			}),
 		);
 

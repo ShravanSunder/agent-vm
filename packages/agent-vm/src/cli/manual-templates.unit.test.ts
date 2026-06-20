@@ -122,13 +122,15 @@ describe('manual templates', () => {
 		expect(imageVersioningManual).toContain('There is one owner for each version decision');
 		expect(imageVersioningManual).toContain('package.json owns which installed @agent-vm/*');
 		expect(imageVersioningManual).toContain('managed-images.json');
-		expect(imageVersioningManual).toContain('openClawPackageOverrides');
+		expect(imageVersioningManual).toContain('packageOverrides');
+		expect(imageVersioningManual).toContain('packageOverrides.pnpm');
+		expect(imageVersioningManual).toContain('Do not restate the managed default package set');
+		expect(imageVersioningManual).toContain('Managed package defaults');
 		expect(imageVersioningManual).toContain(
-			'Do not restate the managed default OpenClaw package set',
+			'overrides undici@8.5.0[managed-images.json/packageOverrides.pnpm]',
 		);
-		expect(imageVersioningManual).toContain('Managed OpenClaw runtime dependency patches');
-		expect(imageVersioningManual).toContain('overrides undici@8.5.0[managed-images.json]');
 		expect(imageVersioningManual).not.toContain('openclaw@2026.6.8 or @openclaw/discord@2026.6.8');
+		expect(imageVersioningManual).not.toContain('openClawPackageOverrides');
 		expect(imageVersioningManual).not.toContain('pnpmOverrides');
 		expect(imageVersioningManual).toContain('cacheDir/generated-dockerfiles');
 		expect(imageVersioningManual).toContain('validation tool mirror');

@@ -3,6 +3,11 @@ import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import {
+	type PackageOverrides,
+	emptyPackageOverrides,
+	packageOverridesSchema,
+} from '../packages/agent-vm/src/build/package-overrides.ts';
 import { stripJsonComments } from './jsonc-comments.ts';
 
 const execFileAsync = promisify(execFile);
@@ -83,13 +88,15 @@ interface OpenClawGatewayOverlay {
 	readonly extraAptPackages?: readonly string[];
 	readonly extraOpenClawPackages?: readonly string[];
 	readonly openClawPackageOverrides?: readonly string[];
+	readonly packageOverrides?: PackageOverrides;
+	readonly pnpmOverrides?: Record<string, string>;
 	readonly runAfterBase?: readonly string[];
 	readonly [key: string]: unknown;
 }
 
 interface RenderOpenClawGatewayOverlayOptions {
 	readonly existingOverlay: OpenClawGatewayOverlay;
-	readonly managedOpenClawVersion?: string;
+	readonly managedPackageOverrides?: PackageOverrides;
 	readonly plan: BetaTarballSyncPlan;
 }
 
@@ -275,18 +282,12 @@ function renderLocalPackageCleanupCommand(
 	return `rm -f ${renderLocalPackageTarballPaths(packageEntries).join(' ')}`;
 }
 
-function resolveOpenClawPackageOverrides(
-	existingOverlay: OpenClawGatewayOverlay,
-): readonly string[] | undefined {
-	return existingOverlay.openClawPackageOverrides ?? existingOverlay.extraOpenClawPackages;
-}
-
-interface ParsedOpenClawPackageOverride {
+interface ParsedPackageSpec {
 	readonly name: string;
 	readonly version?: string;
 }
 
-function parseOpenClawPackageOverride(packageSpec: string): ParsedOpenClawPackageOverride {
+function parsePackageSpec(packageSpec: string): ParsedPackageSpec {
 	if (packageSpec.startsWith('@')) {
 		const scopeSeparatorIndex = packageSpec.indexOf('/');
 		if (scopeSeparatorIndex === -1) {
@@ -312,70 +313,85 @@ function parseOpenClawPackageOverride(packageSpec: string): ParsedOpenClawPackag
 	};
 }
 
-const managedDefaultOpenClawPackageNames = new Set(['openclaw', '@openclaw/codex']);
+function specName(packageSpec: string): string {
+	return parsePackageSpec(packageSpec).name;
+}
 
-function isFullManagedDefaultOpenClawOverrideSet(props: {
-	readonly managedOpenClawVersion: string | undefined;
-	readonly packageOverrides: readonly string[];
-}): boolean {
-	if (props.managedOpenClawVersion === undefined) {
-		return false;
-	}
-	const packageNames = new Set<string>();
-	for (const packageOverride of props.packageOverrides) {
-		const parsedOverride = parseOpenClawPackageOverride(packageOverride);
-		if (
-			parsedOverride.version !== props.managedOpenClawVersion ||
-			!managedDefaultOpenClawPackageNames.has(parsedOverride.name)
-		) {
-			return false;
-		}
-		packageNames.add(parsedOverride.name);
-	}
-	return (
-		packageNames.size === managedDefaultOpenClawPackageNames.size &&
-		[...managedDefaultOpenClawPackageNames].every((packageName) => packageNames.has(packageName))
+function pruneSpecBucket(
+	overlaySpecs: readonly string[],
+	managedSpecs: readonly string[],
+): readonly string[] {
+	const managedByName = new Map(
+		managedSpecs.map((packageSpec) => [specName(packageSpec), packageSpec]),
+	);
+	return overlaySpecs.filter(
+		(packageSpec) => managedByName.get(specName(packageSpec)) !== packageSpec,
 	);
 }
 
-function normalizeOpenClawPackageOverrides(props: {
-	readonly managedOpenClawVersion: string | undefined;
-	readonly packageOverrides: readonly string[] | undefined;
-}): readonly string[] | undefined {
-	if (props.packageOverrides === undefined) {
-		return undefined;
-	}
-	if (props.packageOverrides.length === 0) {
-		return undefined;
-	}
+function prunePnpmBucket(
+	overlayPnpm: Readonly<Record<string, string>>,
+	managedPnpm: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+	return Object.fromEntries(
+		Object.entries(overlayPnpm).filter(
+			([packageName, version]) => managedPnpm[packageName] !== version,
+		),
+	);
+}
+
+function compactPackageOverrides(packageOverrides: PackageOverrides): PackageOverrides | undefined {
+	const compacted: PackageOverrides = {
+		npm: packageOverrides.npm,
+		openclaw: packageOverrides.openclaw,
+		pnpm: packageOverrides.pnpm,
+	};
 	if (
-		isFullManagedDefaultOpenClawOverrideSet({
-			managedOpenClawVersion: props.managedOpenClawVersion,
-			packageOverrides: props.packageOverrides,
-		})
+		compacted.npm.length === 0 &&
+		compacted.openclaw.length === 0 &&
+		Object.keys(compacted.pnpm).length === 0
 	) {
 		return undefined;
 	}
-	return props.packageOverrides;
+	return compacted;
+}
+
+function assertNoLegacyPackageOverrideKeys(existingOverlay: OpenClawGatewayOverlay): void {
+	if (existingOverlay.extraOpenClawPackages !== undefined) {
+		throw new Error('move extraOpenClawPackages to packageOverrides.openclaw');
+	}
+	if (existingOverlay.openClawPackageOverrides !== undefined) {
+		throw new Error('move openClawPackageOverrides to packageOverrides.openclaw');
+	}
+	if (existingOverlay.pnpmOverrides !== undefined) {
+		throw new Error('move pnpmOverrides to packageOverrides.pnpm');
+	}
 }
 
 export function migrateLegacyOpenClawPackageOverrides(
 	existingOverlay: OpenClawGatewayOverlay,
-	options: { readonly managedOpenClawVersion?: string } = {},
+	options: { readonly managedPackageOverrides?: PackageOverrides } = {},
 ): OpenClawGatewayOverlay {
+	assertNoLegacyPackageOverrideKeys(existingOverlay);
 	const {
 		extraOpenClawPackages: _legacyOpenClawPackageOverrides,
 		openClawPackageOverrides: _openClawPackageOverrides,
 		pnpmOverrides: _stalePnpmOverrides,
+		packageOverrides: _packageOverrides,
 		...baseOverlay
 	} = existingOverlay;
-	const openClawPackageOverrides = normalizeOpenClawPackageOverrides({
-		managedOpenClawVersion: options.managedOpenClawVersion,
-		packageOverrides: resolveOpenClawPackageOverrides(existingOverlay),
+	const parsedPackageOverrides = packageOverridesSchema.parse(
+		existingOverlay.packageOverrides ?? emptyPackageOverrides(),
+	);
+	const managedPackageOverrides = options.managedPackageOverrides ?? emptyPackageOverrides();
+	const packageOverrides = compactPackageOverrides({
+		npm: pruneSpecBucket(parsedPackageOverrides.npm, managedPackageOverrides.npm),
+		openclaw: pruneSpecBucket(parsedPackageOverrides.openclaw, managedPackageOverrides.openclaw),
+		pnpm: prunePnpmBucket(parsedPackageOverrides.pnpm, managedPackageOverrides.pnpm),
 	});
 	return {
 		...baseOverlay,
-		...(openClawPackageOverrides ? { openClawPackageOverrides } : {}),
+		...(packageOverrides ? { packageOverrides } : {}),
 	};
 }
 
@@ -383,7 +399,7 @@ export function renderOpenClawGatewayOverlay(
 	options: RenderOpenClawGatewayOverlayOptions,
 ): OpenClawGatewayOverlay {
 	const baseOverlay = migrateLegacyOpenClawPackageOverrides(options.existingOverlay, {
-		managedOpenClawVersion: options.managedOpenClawVersion,
+		managedPackageOverrides: options.managedPackageOverrides,
 	});
 	const copyEntries = renderLocalPackageCopyEntries(
 		options.existingOverlay.copy,
@@ -408,7 +424,7 @@ export function renderToolVmOverlay(
 	options: RenderOpenClawGatewayOverlayOptions,
 ): OpenClawGatewayOverlay {
 	const baseOverlay = migrateLegacyOpenClawPackageOverrides(options.existingOverlay, {
-		managedOpenClawVersion: options.managedOpenClawVersion,
+		managedPackageOverrides: options.managedPackageOverrides,
 	});
 	const copyEntries = renderLocalPackageCopyEntries(
 		options.existingOverlay.copy,
@@ -510,17 +526,35 @@ async function readWorkspacePackageVersion(repositoryDirectory: string): Promise
 	return version;
 }
 
-async function readManagedOpenClawVersion(repositoryDirectory: string): Promise<string> {
+async function readManagedOpenClawGatewayPackageOverrides(
+	repositoryDirectory: string,
+): Promise<PackageOverrides> {
 	const manifest = await readJsonFile(
 		path.join(repositoryDirectory, 'packages', 'agent-vm', 'managed-images.json'),
 	);
-	const openClawVersion = manifest.openClawVersion;
-	if (typeof openClawVersion !== 'string' || openClawVersion.length === 0) {
+	const baseImages = manifest.baseImages;
+	if (typeof baseImages !== 'object' || baseImages === null || Array.isArray(baseImages)) {
+		throw new Error('packages/agent-vm/managed-images.json must contain baseImages.');
+	}
+	const openClawGateway = (baseImages as JsonRecord)['openclaw-gateway'];
+	if (
+		typeof openClawGateway !== 'object' ||
+		openClawGateway === null ||
+		Array.isArray(openClawGateway)
+	) {
 		throw new Error(
-			'packages/agent-vm/managed-images.json must contain a non-empty openClawVersion.',
+			'packages/agent-vm/managed-images.json must contain baseImages.openclaw-gateway.',
 		);
 	}
-	return openClawVersion;
+	const parsedPackageOverrides = packageOverridesSchema.safeParse(
+		(openClawGateway as JsonRecord).packageOverrides,
+	);
+	if (!parsedPackageOverrides.success) {
+		throw new Error(
+			'packages/agent-vm/managed-images.json must contain baseImages.openclaw-gateway.packageOverrides.',
+		);
+	}
+	return parsedPackageOverrides.data;
 }
 
 async function runCommand(
@@ -586,7 +620,9 @@ async function copyOverlayPackageTarballs(options: {
 async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void> {
 	const hash = options.hash ?? (await getGitShortHash(options.repositoryDirectory));
 	const version = await readWorkspacePackageVersion(options.repositoryDirectory);
-	const managedOpenClawVersion = await readManagedOpenClawVersion(options.repositoryDirectory);
+	const managedOpenClawGatewayPackageOverrides = await readManagedOpenClawGatewayPackageOverrides(
+		options.repositoryDirectory,
+	);
 	const tarballDirectory = path.join(options.repositoryDirectory, 'tmp', `beta-tarballs-${hash}`);
 	const tarballDirectoryReference = path.relative(options.deploymentDirectory, tarballDirectory);
 	const plan = createBetaTarballSyncPlan({ cacheKey: hash, tarballDirectoryReference, version });
@@ -634,7 +670,11 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 	const overlay = (await readJsonFile(overlayPath)) as OpenClawGatewayOverlay;
 	await writeJsonFile(
 		overlayPath,
-		renderOpenClawGatewayOverlay({ existingOverlay: overlay, managedOpenClawVersion, plan }),
+		renderOpenClawGatewayOverlay({
+			existingOverlay: overlay,
+			managedPackageOverrides: managedOpenClawGatewayPackageOverrides,
+			plan,
+		}),
 	);
 
 	const toolVmOverlayDirectory = path.join(
@@ -652,7 +692,11 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 	const toolVmOverlay = (await readJsonFile(toolVmOverlayPath)) as OpenClawGatewayOverlay;
 	await writeJsonFile(
 		toolVmOverlayPath,
-		renderToolVmOverlay({ existingOverlay: toolVmOverlay, managedOpenClawVersion, plan }),
+		renderToolVmOverlay({
+			existingOverlay: toolVmOverlay,
+			managedPackageOverrides: emptyPackageOverrides(),
+			plan,
+		}),
 	);
 }
 

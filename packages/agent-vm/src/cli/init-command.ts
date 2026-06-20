@@ -155,7 +155,6 @@ interface RuntimeAuthHint {
 interface DefaultManagedImageOverlay {
 	readonly schemaVersion: 1;
 	readonly extraAptPackages: readonly string[];
-	readonly openClawPackageOverrides: readonly string[];
 	readonly copy: readonly [];
 	readonly runAfterBase: readonly string[];
 }
@@ -323,7 +322,6 @@ function defaultManagedImageOverlay(): DefaultManagedImageOverlay {
 	return {
 		schemaVersion: 1,
 		extraAptPackages: [],
-		openClawPackageOverrides: [],
 		copy: [],
 		runAfterBase: [],
 	} satisfies DefaultManagedImageOverlay;
