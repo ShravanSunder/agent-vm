@@ -14,6 +14,15 @@
 			"tag": "2026.05.27.1"
 		}
 	},
-	"openClawVersion": "2026.5.20",
-	"openAiCodexCliVersion": "0.134.0"
+	"openClawVersion": "2026.6.8",
+	"openAiCodexCliVersion": "0.139.0",
+	"openClawRuntimeDependencyPatches": [
+		{
+			"packageName": "undici",
+			"version": "8.5.0",
+			"appliesToOpenClawVersions": ["2026.6.8"],
+			"reason": "Avoid the reproduced Node/undici assert(!this.paused) hard crash in OpenClaw 2026.6.8 runtime packages.",
+			"removeWhen": "Fresh package evidence shows OpenClaw runtime packages no longer resolve vulnerable undici@8.3.0."
+		}
+	]
 }

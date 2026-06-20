@@ -480,9 +480,12 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
 		expect(dockerfile).toContain('@agent-vm/mcp-portal');
 		expect(dockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
-		expect(dockerfile).toContain('RUN pnpm add -g "openclaw@');
-		expect(dockerfile).toContain('"@openclaw/codex@');
+		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
+		expect(dockerfile).toContain('"openclaw": "2026.6.8"');
+		expect(dockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(dockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
 		expect(dockerfile).toContain('"@openai/codex@');
+		expect(dockerfile).not.toContain('RUN pnpm add -g "openclaw@');
 		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-agent-vm-plugin@/u);
 		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-mcp-portal-plugin@/u);
 		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/mcp-portal@/u);
@@ -576,9 +579,12 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).toContain(
 			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
 		);
-		expect(dockerfile).toContain('RUN pnpm add -g "openclaw@');
-		expect(dockerfile).toContain('"@openclaw/codex@');
+		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
+		expect(dockerfile).toContain('"openclaw": "2026.6.8"');
+		expect(dockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(dockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
 		expect(dockerfile).toContain('"@openai/codex@');
+		expect(dockerfile).not.toContain('RUN pnpm add -g "openclaw@');
 		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-agent-vm-plugin@/u);
 		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-mcp-portal-plugin@/u);
 		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/mcp-portal@/u);

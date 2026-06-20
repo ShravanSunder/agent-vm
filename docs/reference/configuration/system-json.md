@@ -666,14 +666,35 @@ tag pinned by that package's `managed-images.json` manifest. Managed image tags
 use their own release line and are intentionally separate from npm package
 versions.
 The deployment overlay is intentionally small; use it for extra apt packages,
-copy steps, post-base commands, and runtime OpenClaw packages. `agent-vm build`
-regenerates Dockerfiles under `cacheDir/generated-dockerfiles/...`; do not edit
-generated Dockerfiles by hand. OpenClaw gateway deployments that need specific
-OpenClaw package versions should pin them in the overlay's
-`openClawPackageOverrides`. Overlay package pins override managed default companion
-packages during Dockerfile generation. If the overlay pins `openclaw@X` and an
-`@openclaw/*@Y` package with a different version, build output warns before
-Docker and Gondolin work begin.
+copy steps, post-base commands, and explicit runtime OpenClaw package pins.
+`agent-vm build` regenerates Dockerfiles under
+`cacheDir/generated-dockerfiles/...`; do not edit generated Dockerfiles by hand.
+OpenClaw gateway deployments should omit `openClawPackageOverrides` when the
+managed default package set is acceptable. Use `openClawPackageOverrides` only
+for deliberate non-default runtime package pins, such as a temporary rollback or
+forward test of a specific `@openclaw/*` package. Overlay package pins override
+managed default companion packages during Dockerfile generation. If the overlay
+pins `openclaw@X` and an `@openclaw/*@Y` package with a different version, build
+output warns before Docker and Gondolin work begin.
+
+Transitive OpenClaw runtime dependency patches are not deployment overlay
+fields. They are agent-vm-managed release decisions recorded in the installed
+package's `managed-images.json`, scoped to a specific managed OpenClaw version,
+and exposed in the generated Dockerfile plan as managed overrides such as
+`overrides undici@8.5.0[managed-images.json]`. Remove those managed patches only
+after fresh package evidence shows OpenClaw and required `@openclaw/*` packages
+no longer resolve the vulnerable dependency.
+
+Example non-default OpenClaw runtime package pin:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "openClawPackageOverrides": [
+    "@openclaw/discord@2026.5.20"
+  ]
+}
+```
 
 Legacy `dockerfile` profiles are reported by `agent-vm doctor`; migrate them
 with `agent-vm migrate images`.

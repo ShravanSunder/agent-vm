@@ -10,6 +10,7 @@ import {
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { execa } from 'execa';
 
+import { validateManagedImageOverlay } from '../build/managed-image-dockerfile.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { planMcpPortalEffectiveConfig } from '../gateway/mcp-portal-effective-config.js';
 import { buildOpenClawAgentSecretAccessChecks } from './agent-secret-access-checks.js';
@@ -274,7 +275,7 @@ async function collectOpenClawConfigCheck(
 	} catch (error) {
 		const installHint =
 			getErrorCode(error) === 'ENOENT'
-				? 'OpenClaw CLI not found. Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.5.'
+				? 'OpenClaw CLI not found. Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.8.'
 				: getErrorMessage(error);
 		return {
 			name: `openclaw-config-${zone.id}`,
@@ -305,6 +306,12 @@ async function collectGatewayImageProfileChecks(
 		pendingChecks.push(
 			collectReadableFileCheck(`gateway-${profileName}-build-config`, buildConfigPath),
 		);
+		if (profile.source?.kind === 'managedBase' && profile.source.overlay) {
+			const overlayPath = resolveProjectCheckoutPath(systemConfig, profile.source.overlay);
+			pendingChecks.push(
+				collectManagedImageOverlayCheck(`gateway-${profileName}-overlay`, overlayPath),
+			);
+		}
 		if (profile.dockerfile) {
 			pendingChecks.push(
 				collectReadableFileCheck(
@@ -318,6 +325,26 @@ async function collectGatewayImageProfileChecks(
 	return checks;
 }
 
+async function collectManagedImageOverlayCheck(
+	checkName: string,
+	overlayPath: string,
+): Promise<ConfigValidationCheck> {
+	try {
+		await validateManagedImageOverlay(overlayPath);
+		return {
+			name: checkName,
+			ok: true,
+			hint: overlayPath,
+		};
+	} catch (error) {
+		return {
+			name: checkName,
+			ok: false,
+			hint: getErrorMessage(error),
+		};
+	}
+}
+
 async function collectToolImageProfileChecks(
 	systemConfig: LoadedSystemConfig,
 ): Promise<readonly ConfigValidationCheck[]> {
@@ -327,6 +354,12 @@ async function collectToolImageProfileChecks(
 		pendingChecks.push(
 			collectReadableFileCheck(`tool-vm-${profileName}-build-config`, buildConfigPath),
 		);
+		if (profile.source?.kind === 'managedBase' && profile.source.overlay) {
+			const overlayPath = resolveProjectCheckoutPath(systemConfig, profile.source.overlay);
+			pendingChecks.push(
+				collectManagedImageOverlayCheck(`tool-vm-${profileName}-overlay`, overlayPath),
+			);
+		}
 		if (profile.dockerfile) {
 			pendingChecks.push(
 				collectReadableFileCheck(

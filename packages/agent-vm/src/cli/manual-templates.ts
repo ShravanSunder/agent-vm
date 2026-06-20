@@ -115,7 +115,9 @@ package.json owns which installed @agent-vm/* package version this deployment us
 
 The installed @agent-vm/agent-vm package owns managed-images.json. That manifest selects the managed GHCR base image tags and managed OpenClaw default version tested with that package. Deployment repos should not copy or edit managed-images.json.
 
-vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and openClawPackageOverrides for OpenClaw runtime package pins such as openclaw@2026.6.5 or @openclaw/discord@2026.6.5.
+vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and openClawPackageOverrides only for deliberate non-default OpenClaw runtime package pins such as a temporary @openclaw/discord rollback. Do not restate the managed default OpenClaw package set in deployment overlays.
+
+Managed OpenClaw runtime dependency patches belong in the installed agent-vm package's managed-images.json, not deployment overlays. For example, an agent-vm-managed OpenClaw 2026.6.8 image may print overrides undici@8.5.0[managed-images.json] while the upstream OpenClaw package line still carries the older transitive dependency. Remove that managed patch only after fresh package evidence shows OpenClaw and required @openclaw/* packages no longer resolve the vulnerable dependency.
 
 Do not edit cacheDir/generated-dockerfiles/... by hand. Generated Dockerfiles are build output. If a generated Dockerfile contains the wrong package version, change package.json or the overlay that produced it, then rebuild.
 
@@ -123,7 +125,8 @@ For OpenClaw gateway images, agent-vm build resolves packages in this order:
 1. @agent-vm/openclaw-agent-vm-plugin comes from the installed agent-vm package.
 2. managed default OpenClaw companion packages come from managed-images.json.
 3. overlay openClawPackageOverrides override managed companion defaults by package name.
-4. generated Dockerfiles receive the resolved package specs only as disposable output.
+4. managed runtime dependency patches from managed-images.json apply exact transitive package workarounds and relink matching bundled OpenClaw package copies.
+5. generated Dockerfiles receive the resolved package specs only as disposable output.
 
 If the deployment installs openclaw in package.json for host-side validation, keep it aligned with the runtime version chosen by the overlay. Treat package.json's openclaw entry as the validation tool mirror, not the runtime image owner.
 
@@ -297,7 +300,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension.
 		Managed OpenClaw gateway images install @agent-vm/openclaw-mcp-portal-plugin and @agent-vm/mcp-portal. The plugin registers native MCP Portal tools and calls the portal core library directly inside the gateway VM.
 		plugins.entries.mcp-portal.hooks.allowPromptInjection must stay true when promptContext is enabled.
-	Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in openClawPackageOverrides.
+	Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in openClawPackageOverrides. Managed runtime dependency patches come from managed-images.json, and the rebuilt image must be inspected before calling that workaround active.
 
 	Use agent-vm init --openclaw-agents sun,shravan,alevtina to scaffold agents.list entries with per-agent /zone/agents/<id> workspaces.
 
