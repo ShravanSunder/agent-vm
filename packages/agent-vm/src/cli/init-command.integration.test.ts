@@ -248,7 +248,13 @@ const generatedOpenClawToolVmSystemConfigSchema = generatedSystemConfigSchema.ex
 const generatedManagedImageOverlaySchema = z.object({
 	schemaVersion: z.literal(1),
 	extraAptPackages: z.array(z.string()),
-	openClawPackageOverrides: z.array(z.string()),
+	packageOverrides: z
+		.object({
+			npm: z.array(z.string()).optional(),
+			openclaw: z.array(z.string()).optional(),
+			pnpm: z.record(z.string(), z.string()).optional(),
+		})
+		.optional(),
 	copy: z.array(z.unknown()),
 	runAfterBase: z.array(z.string()),
 });
@@ -488,7 +494,6 @@ describe('scaffoldAgentVmProject', () => {
 		expect(overlay).toEqual({
 			schemaVersion: 1,
 			extraAptPackages: [],
-			openClawPackageOverrides: [],
 			copy: [],
 			runAfterBase: [],
 		});
@@ -1390,7 +1395,6 @@ describe('scaffoldAgentVmProject', () => {
 		).toEqual({
 			schemaVersion: 1,
 			extraAptPackages: [],
-			openClawPackageOverrides: [],
 			copy: [],
 			runAfterBase: [],
 		});

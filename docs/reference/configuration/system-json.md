@@ -666,33 +666,41 @@ tag pinned by that package's `managed-images.json` manifest. Managed image tags
 use their own release line and are intentionally separate from npm package
 versions.
 The deployment overlay is intentionally small; use it for extra apt packages,
-copy steps, post-base commands, and explicit runtime OpenClaw package pins.
+copy steps, post-base commands, and explicit per-image package overrides.
 `agent-vm build` regenerates Dockerfiles under
 `cacheDir/generated-dockerfiles/...`; do not edit generated Dockerfiles by hand.
-OpenClaw gateway deployments should omit `openClawPackageOverrides` when the
-managed default package set is acceptable. Use `openClawPackageOverrides` only
-for deliberate non-default runtime package pins, such as a temporary rollback or
-forward test of a specific `@openclaw/*` package. Overlay package pins override
-managed default companion packages during Dockerfile generation. If the overlay
-pins `openclaw@X` and an `@openclaw/*@Y` package with a different version, build
+OpenClaw gateway deployments should omit `packageOverrides` when the managed
+default package set is acceptable. Use `packageOverrides.openclaw` only for
+deliberate non-default runtime package pins, such as a temporary rollback or
+forward test of a specific `@openclaw/*` package. Use
+`packageOverrides.npm` for direct non-OpenClaw npm packages such as
+`@openai/codex` on the OpenClaw and worker gateway images, and
+`packageOverrides.pnpm` for exact transitive override
+floors such as `undici`. Overlay package pins override managed default package
+entries by package name during Dockerfile generation. If the overlay pins
+`openclaw@X` and an `@openclaw/*@Y` package with a different version, build
 output warns before Docker and Gondolin work begin.
 
-Transitive OpenClaw runtime dependency patches are not deployment overlay
-fields. They are agent-vm-managed release decisions recorded in the installed
-package's `managed-images.json`, scoped to a specific managed OpenClaw version,
-and exposed in the generated Dockerfile plan as managed overrides such as
-`overrides undici@8.5.0[managed-images.json]`. Remove those managed patches only
-after fresh package evidence shows OpenClaw and required `@openclaw/*` packages
-no longer resolve the vulnerable dependency.
+Managed package defaults are recorded under each base image in the installed
+package's `managed-images.json`, then exposed in the generated Dockerfile plan
+with source labels such as
+`overrides undici@8.5.0[managed-images.json/packageOverrides.pnpm]`.
+Remove those managed defaults only after fresh package evidence shows OpenClaw
+and required `@openclaw/*` packages no longer resolve the vulnerable dependency.
 
 Example non-default OpenClaw runtime package pin:
 
 ```jsonc
 {
   "schemaVersion": 1,
-  "openClawPackageOverrides": [
-    "@openclaw/discord@2026.5.20"
-  ]
+  "packageOverrides": {
+    "openclaw": [
+      "@openclaw/discord@2026.5.20"
+    ],
+    "pnpm": {
+      "undici": "8.5.0"
+    }
+  }
 }
 ```
 

@@ -2,27 +2,27 @@
 	"schemaVersion": 1,
 	"baseImages": {
 		"openclaw-gateway": {
+			"packageOverrides": {
+				"openclaw": ["openclaw@2026.6.8", "@openclaw/codex@2026.6.8"],
+				"npm": ["@openai/codex@0.139.0"],
+				"pnpm": {
+					"undici": "8.5.0"
+				}
+			},
 			"repository": "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base",
 			"tag": "2026.05.27.1"
 		},
 		"worker-gateway": {
+			"packageOverrides": {
+				"npm": ["@openai/codex@0.139.0"]
+			},
 			"repository": "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base",
 			"tag": "2026.05.27.1"
 		},
 		"tool-vm": {
+			"packageOverrides": {},
 			"repository": "ghcr.io/shravansunder/agent-vm-managed-tool-vm-base",
 			"tag": "2026.05.27.1"
 		}
-	},
-	"openClawVersion": "2026.6.8",
-	"openAiCodexCliVersion": "0.139.0",
-	"openClawRuntimeDependencyPatches": [
-		{
-			"packageName": "undici",
-			"version": "8.5.0",
-			"appliesToOpenClawVersions": ["2026.6.8"],
-			"reason": "Avoid the reproduced Node/undici assert(!this.paused) hard crash in OpenClaw 2026.6.8 runtime packages.",
-			"removeWhen": "Fresh package evidence shows OpenClaw runtime packages no longer resolve vulnerable undici@8.3.0."
-		}
-	]
+	}
 }

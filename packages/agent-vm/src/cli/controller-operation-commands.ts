@@ -7,7 +7,10 @@ import { redactOnePasswordReferences } from '@agent-vm/secret-management';
 import { dim, green, red } from 'ansis';
 import { execa } from 'execa';
 
-import type { ManagedImageSource } from '../build/managed-image-dockerfile.js';
+import {
+	resolveManagedImageRelease,
+	type ManagedImageSource,
+} from '../build/managed-image-dockerfile.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { resolveControllerGithubToken } from '../controller/controller-runtime-support.js';
@@ -18,7 +21,11 @@ import {
 	type ConfigValidationCheck,
 	resolveProjectCheckoutPath,
 } from '../operations/config-validation.js';
-import { collectVmHostSystemDoctorCheck, type DoctorCheck } from '../operations/doctor.js';
+import {
+	collectManagedImagePackageOverrideDoctorChecks,
+	collectVmHostSystemDoctorCheck,
+	type DoctorCheck,
+} from '../operations/doctor.js';
 import { collectOpenClawDeploymentDoctorChecks } from '../operations/openclaw-deployment-doctor.js';
 import { collectZoneGitDoctorChecks } from '../operations/zone-git-doctor.js';
 import {
@@ -347,10 +354,15 @@ export async function collectDynamicDoctorChecks(
 		options.systemConfig,
 		options.availableBinaries.has('docker') && options.dockerDaemonReady,
 	);
+	const managedImagePackageOverrideChecks = await collectManagedImagePackageOverrideDoctorChecks({
+		managedImageRelease: await resolveManagedImageRelease(),
+		systemConfig: options.systemConfig,
+	});
 	const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(options.systemConfig);
 	return [
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...imageProfileDockerfileChecks,
+		...managedImagePackageOverrideChecks,
 		...workerGatewayConfigChecks,
 		...openClawConfigChecks,
 		...openClawDeploymentChecks,

@@ -119,7 +119,7 @@ const ociImageTagSchema = z.object({
 const RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE = 2;
 const DOCKER_BUILD_CONCURRENCY = 2;
 const GONDOLIN_BUILD_CONCURRENCY = 2;
-const BUILD_DETAIL_MAX_LENGTH = 180;
+const BUILD_DETAIL_MAX_LENGTH = 512;
 const GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE_ENV = 'GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE';
 const TASK_OUTPUT_BUFFER_MAX_LENGTH = 4_096;
 const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
@@ -621,6 +621,11 @@ function formatDockerBaseDetail(options: {
 	if (plan.openClawPackages.length > 0) {
 		details.push(
 			`packages ${plan.openClawPackages.map((packageEntry) => formatManagedPackagePlanEntry(packageEntry)).join(',')}`,
+		);
+	}
+	if (plan.directNpmPackages.length > 0) {
+		details.push(
+			`npm ${plan.directNpmPackages.map((packageEntry) => formatManagedPackagePlanEntry(packageEntry)).join(',')}`,
 		);
 	}
 	if (plan.warnings.length > 0) {

@@ -12,6 +12,8 @@ import {
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
 
+const workerGatewayGuestPath = '/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
 export const workerLifecycle: GatewayLifecycle = {
 	buildVmSpec({
 		controllerPort,
@@ -34,6 +36,8 @@ export const workerLifecycle: GatewayLifecycle = {
 				CONTROLLER_BASE_URL: 'http://controller.vm.host:18800',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 				AGENT_VM_ZONE_ID: zone.id,
+				PATH: workerGatewayGuestPath,
+				PNPM_HOME: '/pnpm',
 				STATE_DIR: '/state',
 				WORKER_CONFIG_PATH: '/state/effective-worker.json',
 				WORK_DIR: '/work',
@@ -73,11 +77,11 @@ export const workerLifecycle: GatewayLifecycle = {
 	buildProcessSpec(): GatewayProcessSpec {
 		return {
 			bootstrapCommand:
-				'mkdir -p /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker.tgz ]; then npm install -g --force @openai/codex /state/agent-vm-worker.tgz; fi',
+				'export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && mkdir -p /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker.tgz ]; then pnpm add -g --ignore-scripts /state/agent-vm-worker.tgz && worker_package_root="$(pnpm root -g)" && worker_bin_target="$worker_package_root/@agent-vm/agent-vm-worker/dist/main.js" && test -f "$worker_bin_target" && chmod 755 "$worker_bin_target" && ln -sfn "$worker_bin_target" /pnpm/agent-vm-worker; fi',
 			// printf NODE_OPTIONS into the boot log so an env-loss regression
 			// is visible in the log stream without SSHing into the VM.
 			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
-			startCommand: `{ printf 'worker-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > /tmp/agent-vm-worker.log; } && cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state >> /tmp/agent-vm-worker.log 2>&1 &`,
+			startCommand: `export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && { printf 'worker-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > /tmp/agent-vm-worker.log; } && cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state >> /tmp/agent-vm-worker.log 2>&1 &`,
 			healthCheck: { type: 'http', port: 18789, path: '/health' },
 			serviceHealthCheck: { type: 'http', port: 18789, path: '/health' },
 			guestListenPort: 18789,

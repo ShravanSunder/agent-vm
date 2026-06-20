@@ -118,31 +118,33 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 	return {
 		baseImages: {
 			'openclaw-gateway': {
+				packageOverrides: {
+					npm: ['@openai/codex@0.139.0'],
+					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
+					pnpm: { undici: '8.5.0' },
+				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
 				tag: '2026.05.27.1',
 			},
 			'worker-gateway': {
+				packageOverrides: {
+					npm: ['@openai/codex@0.139.0'],
+					openclaw: [],
+					pnpm: {},
+				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
 				tag: '2026.05.27.1',
 			},
 			'tool-vm': {
+				packageOverrides: {
+					npm: [],
+					openclaw: [],
+					pnpm: {},
+				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
 				tag: '2026.05.27.1',
 			},
 		},
-		openAiCodexCliVersion: '0.139.0',
-		openClawVersion: '2026.6.8',
-		openClawRuntimeDependencyPatches: [
-			{
-				appliesToOpenClawVersions: ['2026.6.8'],
-				packageName: 'undici',
-				reason:
-					'Avoid the reproduced Node/undici assert(!this.paused) hard crash in OpenClaw 2026.6.8 runtime packages.',
-				removeWhen:
-					'Fresh package evidence shows OpenClaw runtime packages no longer resolve vulnerable undici@8.3.0.',
-				version: '8.5.0',
-			},
-		],
 	};
 }
 
@@ -518,7 +520,9 @@ describe('runBuildCommand', () => {
 			JSON.stringify({
 				schemaVersion: 1,
 				extraAptPackages: ['ca-certificates'],
-				openClawPackageOverrides: ['@openclaw/discord@2026.5.7'],
+				packageOverrides: {
+					openclaw: ['@openclaw/discord@2026.5.7'],
+				},
 				copy: [{ from: 'certs/strip-nonascii-certs.py', to: '/tmp/strip-nonascii-certs.py' }],
 				runAfterBase: ['python3 /tmp/strip-nonascii-certs.py'],
 			}),
@@ -696,8 +700,13 @@ describe('runBuildCommand', () => {
 		expect(outputLines).toHaveLength(1);
 		expect(outputLines[0]).not.toContain('\n');
 		expect(outputLines[0]).toContain('base openclaw-gateway:2026.05.27.1');
-		expect(outputLines[0]).toContain('overrides undici@8.5.0[managed-images.json]');
+		expect(outputLines[0]).toContain(
+			'overrides undici@8.5.0[managed-images.json/packageOverrides.pnpm]',
+		);
 		expect(outputLines[0]).toContain('discord@2026.6.8[managed-default]');
+		expect(outputLines[0]).toContain(
+			'npm @openai/codex@0.139.0[managed-images.json/packageOverrides.npm]',
+		);
 	});
 
 	it('prints OpenClaw package-version mismatch warnings in the managed Dockerfile plan', async () => {
@@ -713,7 +722,9 @@ describe('runBuildCommand', () => {
 			JSON.stringify({
 				schemaVersion: 1,
 				extraAptPackages: [],
-				openClawPackageOverrides: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.2'],
+				packageOverrides: {
+					openclaw: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.2'],
+				},
 				runAfterBase: [],
 			}),
 			'utf8',
@@ -774,8 +785,8 @@ describe('runBuildCommand', () => {
 
 		expect(outputLines).toHaveLength(1);
 		expect(outputLines[0]).not.toContain('\n');
-		expect(outputLines[0]).toContain('warnings 1');
-		expect(outputLines[0]).toContain('discord@2026.5.2[overlay]');
+		expect(outputLines[0]).toContain('warnings 2');
+		expect(outputLines[0]).toContain('discord@2026.5.2[overlay.jsonc/packageOverrides.openclaw]');
 		expect(outputLines[0]).not.toContain('OpenClaw package versions differ');
 	});
 

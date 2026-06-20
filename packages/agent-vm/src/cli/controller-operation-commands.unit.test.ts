@@ -251,7 +251,14 @@ function createManagedBaseOpenClawSystemConfig(
 						source: {
 							kind: 'managedBase',
 							base: 'openclaw-gateway',
-							overlay: './vm-images/gateways/openclaw/overlay.jsonc',
+							overlay: path.join(
+								path.dirname(systemConfigPath),
+								'..',
+								'vm-images',
+								'gateways',
+								'openclaw',
+								'overlay.jsonc',
+							),
 						},
 					},
 				},
@@ -262,7 +269,14 @@ function createManagedBaseOpenClawSystemConfig(
 						source: {
 							kind: 'managedBase',
 							base: 'tool-vm',
-							overlay: './vm-images/tool-vms/default/overlay.jsonc',
+							overlay: path.join(
+								path.dirname(systemConfigPath),
+								'..',
+								'vm-images',
+								'tool-vms',
+								'default',
+								'overlay.jsonc',
+							),
 						},
 					},
 				},
@@ -708,6 +722,7 @@ describe('runControllerOperationCommand', () => {
 			}[];
 		};
 
+		expect(result.checks.filter((check) => !check.ok)).toEqual([]);
 		expect(result.ok).toBe(true);
 		expect(result.checks.find((check) => check.name === 'worker-config-worker')?.ok).toBe(true);
 
@@ -1666,6 +1681,16 @@ printf '{"ok":true}\\n'
 			JSON.stringify({ oci: { image: 'agent-vm-tool:latest', pullPolicy: 'never' } }),
 			'utf8',
 		);
+		await fs.writeFile(
+			path.join(path.dirname(gatewayBuildConfigPath), 'overlay.jsonc'),
+			JSON.stringify({ schemaVersion: 1 }),
+			'utf8',
+		);
+		await fs.writeFile(
+			path.join(path.dirname(toolVmBuildConfigPath), 'overlay.jsonc'),
+			JSON.stringify({ schemaVersion: 1 }),
+			'utf8',
+		);
 		const outputs: string[] = [];
 
 		await runControllerOperationCommand({
@@ -1703,6 +1728,7 @@ printf '{"ok":true}\\n'
 			}[];
 		};
 
+		expect(result.checks.filter((check) => !check.ok)).toEqual([]);
 		expect(result.ok).toBe(true);
 		expect(
 			result.checks.find((check) => check.name === 'gateway-image-profile-openclaw-dockerfile'),
