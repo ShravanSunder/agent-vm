@@ -1,6 +1,6 @@
 # agent-vm
 
-Sandboxed VM infrastructure for autonomous coding agents.
+Sandboxed VM infrastructure for autonomous coding agents. See [agent-vm deepwiki](https://deepwiki.com/ShravanSunder/agent-vm)
 
 The primary path is the Worker gateway: a caller submits a coding task, the
 controller boots a fresh Gondolin micro-VM, `agent-vm-worker` plans, edits,
