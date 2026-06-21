@@ -110,6 +110,42 @@ Auth profiles (OAuth tokens for model providers) are resolved per agent from
 `gateway.authProfilesByAgent` and written to that agent's host-side state
 directory before the VM boots. The VM accesses them via VFS mount.
 
+For interactive OpenClaw provider login, configure the profile ids the helper
+should refresh:
+
+```jsonc
+{
+  "gateway": {
+    "type": "openclaw",
+    "authLogin": {
+      "defaultAgent": "main",
+      "providers": {
+        "openai": {
+          "profileIds": [
+            "openai-codex:work@example.com",
+            "openai-codex:personal@example.com"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+Then run:
+
+```bash
+agent-vm auth openclaw login openai \
+  --zone my-openclaw \
+  --all-configured-profiles \
+  --device-code
+```
+
+The helper logs in each configured profile for `gateway.authLogin.defaultAgent`
+and verifies the profile ids afterward. Use `--agent <agentId>` with one or more
+`--profile-id <profileId>` values for one-off profile creation, and `--dry-run`
+to inspect the resolved plan without opening SSH.
+
 See [subsystems/secrets-and-credentials.md](../subsystems/secrets-and-credentials.md#auth-profiles) for the full flow.
 
 ---
@@ -287,7 +323,7 @@ agent-vm controller logs --zone my-openclaw
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Doctor reports `openclaw-agent-auth-profile-*` failing for scaffolded `openai/gpt-5.5` | OpenClaw provider auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or run `agent-vm auth openclaw openai --zone <id> --agent <agentId>` |
+| Doctor reports `openclaw-agent-auth-profile-*` failing for scaffolded `openai/gpt-5.5` | OpenClaw provider auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or refresh configured OpenClaw profiles with `agent-vm auth openclaw login openai --zone <id> --all-configured-profiles` |
 | Doctor reports native Codex-runtime auth failing | Codex harness auth material missing | Run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |

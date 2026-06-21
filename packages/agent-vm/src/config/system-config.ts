@@ -309,6 +309,19 @@ const openClawGatewayControlAuthSchema = z.discriminatedUnion('mode', [
 		.strict(),
 ]);
 
+const openClawAuthLoginProviderSchema = z
+	.object({
+		profileIds: z.array(z.string().min(1)).min(1),
+	})
+	.strict();
+
+const openClawAuthLoginSchema = z
+	.object({
+		defaultAgent: agentIdSchema.optional(),
+		providers: z.record(z.string().min(1), openClawAuthLoginProviderSchema),
+	})
+	.strict();
+
 const zoneGatewayBaseSchema = z.object({
 	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
@@ -335,6 +348,7 @@ const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 		controlAuth: openClawGatewayControlAuthSchema,
 		zoneFilesDir: z.string().min(1),
 		authProfilesByAgent: z.record(agentIdSchema, authProfilesSecretSchema).optional(),
+		authLogin: openClawAuthLoginSchema.optional(),
 		rawEnvSecrets: z.array(secretNameSchema).optional(),
 		zoneGit: zoneGitSchema.optional(),
 	})

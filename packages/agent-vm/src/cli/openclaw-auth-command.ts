@@ -12,39 +12,50 @@ import { formatZodError } from './format-zod-error.js';
 import { wrapWithOpenClawShellEnvironment } from './openclaw-shell-prefix.js';
 import { resolveZoneAdminToken, zoneSshAccessResponseSchema } from './ssh-commands.js';
 
-type OpenClawAuthTarget =
-	| {
-			readonly kind: 'default';
-	  }
-	| {
-			readonly agentId: string;
-			readonly kind: 'agent';
-	  };
-
-function resolveOpenClawAuthTargets(options: {
-	readonly agentId: string | undefined;
-	readonly allAgents: boolean;
-	readonly zone: SystemConfig['zones'][number];
-}): readonly OpenClawAuthTarget[] {
-	if (options.agentId && options.allAgents) {
-		throw new Error('Use either --agent or --all-agents, not both.');
+function resolveOpenClawProfileIds(options: {
+	readonly allConfiguredProfiles: boolean;
+	readonly configuredProfileIds: readonly string[] | undefined;
+	readonly explicitProfileIds: readonly string[] | undefined;
+	readonly provider: string;
+	readonly zoneId: string;
+}): readonly string[] {
+	const explicitProfileIds = options.explicitProfileIds ?? [];
+	if (explicitProfileIds.length > 0 && options.allConfiguredProfiles) {
+		throw new Error('Use either --profile-id or --all-configured-profiles, not both.');
 	}
-	if (options.agentId) {
-		return [{ agentId: agentIdSchema.parse(options.agentId), kind: 'agent' }];
+	if (explicitProfileIds.some((profileId) => profileId.trim().length === 0)) {
+		throw new Error('OpenClaw auth profile ids must not be empty.');
 	}
-	if (!options.allAgents) {
-		return [{ kind: 'default' }];
+	if (explicitProfileIds.length > 0) {
+		return explicitProfileIds;
 	}
-
-	const agentTargets = (options.zone.agents ?? []).map(
-		(agent): OpenClawAuthTarget => ({ agentId: agent.id, kind: 'agent' }),
-	);
-	if (agentTargets.length === 0) {
+	if (!options.allConfiguredProfiles) {
 		throw new Error(
-			`Zone '${options.zone.id}' has no configured agents; use --agent <agentId> for a one-off login.`,
+			'No profile ids provided. Pass --profile-id or --all-configured-profiles. For custom auth, use agent-vm controller ssh.',
 		);
 	}
-	return agentTargets;
+	if (!options.configuredProfileIds || options.configuredProfileIds.length === 0) {
+		throw new Error(
+			`No configured OpenClaw auth profiles for provider '${options.provider}' in zone '${options.zoneId}'. Expected gateway.authLogin.providers.${options.provider}.profileIds.`,
+		);
+	}
+	return options.configuredProfileIds;
+}
+
+function resolveOpenClawAuthAgentId(options: {
+	readonly agentId: string | undefined;
+	readonly defaultAgent: string | undefined;
+	readonly zoneId: string;
+}): string {
+	if (options.agentId) {
+		return agentIdSchema.parse(options.agentId);
+	}
+	if (options.defaultAgent) {
+		return options.defaultAgent;
+	}
+	throw new Error(
+		`No gateway.authLogin.defaultAgent configured for zone '${options.zoneId}'. Set it, pass --agent, or use controller ssh and run OpenClaw auth manually.`,
+	);
 }
 
 function formatOpenClawAuthFailureContext(options: {
@@ -57,36 +68,75 @@ function formatOpenClawAuthFailureContext(options: {
 		: `${options.provider} in zone '${options.zoneId}'`;
 }
 
+function writeOpenClawAuthDryRun(options: {
+	readonly agentId: string;
+	readonly io: CliIo;
+	readonly profileIds: readonly string[];
+	readonly provider: string;
+	readonly zoneId: string;
+}): void {
+	options.io.stdout.write(
+		`OpenClaw auth login plan for zone '${options.zoneId}' provider '${options.provider}' agent '${options.agentId}'.\n`,
+	);
+	options.io.stdout.write(`Profiles (${options.profileIds.length}):\n`);
+	for (const profileId of options.profileIds) {
+		options.io.stdout.write(`  - ${profileId}\n`);
+	}
+	options.io.stdout.write('Verification: enabled\n');
+}
+
 export async function runOpenClawAuthCommand(options: {
 	readonly agentId?: string;
-	readonly allAgents?: boolean;
+	readonly allConfiguredProfiles?: boolean;
 	readonly authConfig: GatewayAuthConfig | undefined;
 	readonly dependencies: Pick<
 		CliDependencies,
 		| 'createControllerClient'
 		| 'createSecretResolver'
 		| 'resolveServiceAccountToken'
+		| 'runCommand'
 		| 'runInteractiveProcess'
 	>;
 	readonly deviceCode?: boolean;
+	readonly dryRun?: boolean;
 	readonly io: CliIo;
+	readonly profileIds?: readonly string[];
 	readonly provider: string;
 	readonly systemConfig: SystemConfig;
-	readonly setDefault?: boolean;
 	readonly zoneId: string;
 }): Promise<void> {
 	if (!options.authConfig) {
 		throw new Error(`Zone '${options.zoneId}' does not support interactive auth.`);
 	}
 
+	const zone = requireZone(options.systemConfig, options.zoneId);
+	if (zone.gateway.type !== 'openclaw') {
+		throw new Error(`Zone '${options.zoneId}' does not support OpenClaw auth login.`);
+	}
+	const profileIds = resolveOpenClawProfileIds({
+		allConfiguredProfiles: options.allConfiguredProfiles === true,
+		configuredProfileIds: zone.gateway.authLogin?.providers[options.provider]?.profileIds,
+		explicitProfileIds: options.profileIds,
+		provider: options.provider,
+		zoneId: options.zoneId,
+	});
+	const authAgentId = resolveOpenClawAuthAgentId({
+		agentId: options.agentId,
+		defaultAgent: zone.gateway.authLogin?.defaultAgent,
+		zoneId: options.zoneId,
+	});
+	if (options.dryRun === true) {
+		writeOpenClawAuthDryRun({
+			agentId: authAgentId,
+			io: options.io,
+			profileIds,
+			provider: options.provider,
+			zoneId: options.zoneId,
+		});
+		return;
+	}
 	const controllerClient = options.dependencies.createControllerClient({
 		baseUrl: resolveControllerBaseUrl(options.systemConfig),
-	});
-	const zone = requireZone(options.systemConfig, options.zoneId);
-	const targets = resolveOpenClawAuthTargets({
-		agentId: options.agentId,
-		allAgents: options.allAgents === true,
-		zone,
 	});
 	const adminToken = await resolveZoneAdminToken({
 		dependencies: options.dependencies,
@@ -120,14 +170,24 @@ export async function runOpenClawAuthCommand(options: {
 				stdio: 'inherit',
 			});
 		});
+	const runCommand =
+		options.dependencies.runCommand ??
+		(async (
+			command: string,
+			arguments_: readonly string[],
+		): Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }> => {
+			const result = await execa(command, [...arguments_], { reject: false });
+			return {
+				exitCode: result.exitCode ?? 1,
+				stderr: result.stderr,
+				stdout: result.stdout,
+			};
+		});
 
-	for (const target of targets) {
-		const targetAgentId = target.kind === 'agent' ? target.agentId : undefined;
-		if (targetAgentId) {
-			options.io.stdout.write(
-				`Opening OpenClaw ${options.provider} login for zone '${options.zoneId}' agent '${targetAgentId}'.\n`,
-			);
-		}
+	for (const profileId of profileIds) {
+		options.io.stdout.write(
+			`Opening OpenClaw ${options.provider} login for zone '${options.zoneId}' agent '${authAgentId}' profile '${profileId}'.\n`,
+		);
 		const sshArguments = [
 			'-t',
 			'-o',
@@ -140,9 +200,9 @@ export async function runOpenClawAuthCommand(options: {
 			`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
 			wrapWithOpenClawShellEnvironment(
 				options.authConfig.buildLoginCommand(options.provider, {
-					...(targetAgentId ? { agentId: targetAgentId } : {}),
+					agentId: authAgentId,
 					deviceCode: options.deviceCode === true,
-					setDefault: options.setDefault === true,
+					profileId,
 				}),
 			),
 		];
@@ -153,12 +213,48 @@ export async function runOpenClawAuthCommand(options: {
 		} catch (error) {
 			throw new Error(
 				`Auth failed for ${formatOpenClawAuthFailureContext({
-					agentId: targetAgentId,
+					agentId: authAgentId,
 					provider: options.provider,
 					zoneId: options.zoneId,
 				})}: ${error instanceof Error ? error.message : String(error)}`,
 				{ cause: error },
 			);
 		}
+	}
+
+	const verifyArguments = [
+		'-o',
+		'StrictHostKeyChecking=no',
+		'-o',
+		'UserKnownHostsFile=/dev/null',
+		...(sshResponse.identityFile ? ['-i', sshResponse.identityFile] : []),
+		'-p',
+		String(sshResponse.port),
+		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
+		wrapWithOpenClawShellEnvironment(
+			options.authConfig.buildProfileListCommand(options.provider, { agentId: authAgentId }),
+		),
+	];
+	const verificationResult = await runCommand('ssh', verifyArguments);
+	if (verificationResult.exitCode !== 0) {
+		throw new Error(
+			`OpenClaw auth verification failed for ${formatOpenClawAuthFailureContext({
+				agentId: authAgentId,
+				provider: options.provider,
+				zoneId: options.zoneId,
+			})}: ${verificationResult.stderr || `ssh exited with code ${verificationResult.exitCode}`}`,
+		);
+	}
+	const missingProfileIds = profileIds.filter(
+		(profileId) => !verificationResult.stdout.includes(profileId),
+	);
+	if (missingProfileIds.length > 0) {
+		throw new Error(
+			`OpenClaw auth verification for ${formatOpenClawAuthFailureContext({
+				agentId: authAgentId,
+				provider: options.provider,
+				zoneId: options.zoneId,
+			})} did not list profile id(s): ${missingProfileIds.join(', ')}`,
+		);
 	}
 }
