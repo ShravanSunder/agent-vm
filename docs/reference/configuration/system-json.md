@@ -477,6 +477,12 @@ authored files. In managed OpenClaw mode, `externalAuth` and `mcpProxy` are
 stripped from the gateway effective config; they are only used by the external
 `mcp-portal mcp-proxy serve` adapter.
 
+Tool Portal config is separate from `zones[].mcpPortal`. The package-level
+`tool-portal.config.jsonc` schema exists for cross-backend capability policy,
+but controller startup and `agent-vm validate` do not yet load it as deployment
+config. Do not put Tool Portal policy in `mcp-portal.config.jsonc`; MCP Portal
+profiles remain scoped to upstream MCP providers only.
+
 Important fields in `mcp-portal.config.jsonc`:
 
 - `agents.<agentId>.profile` selects a profile.

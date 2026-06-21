@@ -77,6 +77,31 @@ The gateway VM runs long-term. When the agent needs tool execution, it requests 
 → Full gateway: [openclaw-gateway.md](openclaw-gateway.md)
 → Lease manager: [subsystems/controller.md](../subsystems/controller.md#lease-manager)
 
+### Capability Portals
+
+Agent-facing capability calls are separate from VM execution. MCP Portal is the
+current MCP-specific capability facade. Managed OpenClaw exposes the four
+native `mcp_portal_*` tools inside the gateway VM, and those tools call
+`@agent-vm/mcp-portal/core` directly. External MCP clients use the separate
+`mcp-portal mcp-proxy serve` adapter.
+
+Tool Portal is the cross-backend contract layer for capabilities that may come
+from MCP providers, controller-owned host actions, or future credentialed runner
+execution. It uses portal-neutral Zod v4 contracts from
+`@agent-vm/agent-portal-sdk` and composes MCP-backed capabilities through
+`@agent-vm/mcp-portal/mcp-provider-backend`. It does not reuse the
+model-visible `mcp_portal_*` tool names.
+
+Today, Tool Portal is package-level contract and in-process composition
+infrastructure. `agent-vm validate` and controller startup do not yet load
+`tool-portal.config.jsonc`, and there is no live Tool Portal CLI, HTTP API, MCP
+server, or OpenClaw adapter surface. When those surfaces are added, Tool Portal
+should own the cross-backend model-visible policy for those capabilities so MCP
+Portal remains the MCP provider/runtime backend instead of a second policy
+authority.
+
+→ Deep dive: [subsystems/mcp-portal.md](../subsystems/mcp-portal.md)
+
 ### Secrets Flow
 
 Secrets are resolved on the host and split into two channels:
@@ -168,63 +193,59 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Eleven workspace packages compose the system. Dependencies flow downward.
+Fourteen workspace packages compose the system. Dependencies flow downward.
 
 ```
-                @earendil-works/gondolin
-                (external SDK — QEMU micro-VMs,
-                 VFS, HTTP mediation, image builds)
-                          |
-                          v
-                gondolin-adapter
-                (VM adapter, secret resolver,
-                 image build pipeline, VFS helpers)
-                          |
-          +---------------+---------------+
-          |                               |
-          v                               v
-  gateway-interface             openclaw-agent-vm-plugin
-  (GatewayLifecycle contract,   (OpenClaw sandbox backend,
-   VmSpec, ProcessSpec,          lease client, SSH/file bridge)
-   splitResolvedSecrets)
-          |
-     +----+----+
-     |         |
-     v         v
-  openclaw-  worker-
-  gateway    gateway
-  (OpenClaw  (Worker
-   lifecycle) lifecycle)
-     |         |
-     +----+----+
-          |
-          v
-      agent-vm
-      (CLI + Controller runtime,
-       HTTP API :18800, lease manager,
-       gateway orchestrator,
-       worker task runner,
-       git push from host)
-          |
-          | (imports workerConfigSchema)
-          v
-    agent-vm-worker
-    (Runs INSIDE the VM.
-     6-phase pipeline, coordinator,
-     executors, event sourcing,
-     MCP tools, HTTP API :18789)
+  @earendil-works/gondolin
+        |
+        v
+  gondolin-adapter
+        |
+        v
+  gateway-interface --------------+
+        |                          |
+        v                          v
+  openclaw-gateway          worker-gateway
+        |                          |
+        +------------+-------------+
+                     |
+                     v
+                 agent-vm
+                     |
+                     v
+              agent-vm-worker
+
+  agent-portal-sdk ---> mcp-portal ---> openclaw-mcp-portal-plugin
+            |              |
+            |              v
+            +---------> tool-portal
+                            ^
+                            |
+             controller-execution-contracts
+
+  config-contracts and secret-management provide shared contracts used by the
+  controller, gateways, MCP Portal, Tool Portal, and plugins.
+
+  openclaw-agent-vm-plugin bridges OpenClaw sandbox execution to controller
+  leases and SSH/file access for named Tool VMs.
 ```
 
 | Package | Responsibility |
 |---------|----------------|
-| **secrets** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
+| **secret-management** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
+| **config-contracts** | Zod-owned configuration contracts and generated schema sources for system, worker, MCP Portal, and Tool Portal config. |
 | **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
 | **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
 | **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
 | **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, TCP to controller only, no auth, no `prepareHostState`. |
+| **agent-portal-sdk** | Portal-neutral Zod v4 contracts for list/search/describe/call results, capability descriptions, approvals, artifacts, diagnostics, and adapter envelopes. |
+| **mcp-portal** | MCP-specific capability facade, upstream MCP client runtime, scoped catalog/search, schema validation, approval evaluation, external MCP proxy, and MCP provider backend for Tool Portal composition. |
+| **tool-portal** | Cross-backend capability portal contracts, CLI allowance validation, and in-process entrypoint that dispatches MCP-backed capabilities through the MCP Portal backend. |
+| **controller-execution-contracts** | Zod contracts for future controller host-action and credentialed runner dispatch boundaries. |
 | **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
 | **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and controller tools such as `git-push` and `git-pull-default`. |
 | **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox system. Registers Gondolin VMs as an OpenClaw sandbox backend. File bridge + shell execution via SSH into tool VMs. |
+| **openclaw-mcp-portal-plugin** | Managed OpenClaw plugin that registers native `mcp_portal_*` tools, injects MCP Portal prompt context, and forwards approved calls to MCP Portal core. |
 
 ---
 

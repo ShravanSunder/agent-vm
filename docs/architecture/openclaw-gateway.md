@@ -290,6 +290,13 @@ Managed OpenClaw gateway images install the MCP Portal plugin and the
 `mcp_portal_call`. Those tools call `@agent-vm/mcp-portal/core` directly inside
 the gateway VM.
 
+This is the current model-visible MCP capability surface for managed OpenClaw.
+Tool Portal is a separate cross-backend facade, not a replacement name for MCP
+Portal's native tools. A future OpenClaw Tool Portal adapter can call
+`@agent-vm/tool-portal` in process and compose MCP-backed capabilities through
+`@agent-vm/mcp-portal/mcp-provider-backend`, but it must not make the same
+capability visible through both Tool Portal policy and `mcp_portal_*` policy.
+
 At gateway startup, agent-vm materializes effective MCP Portal configs under the
 gateway cache directory and points the plugin at that effective config
 directory. The authored config stays in the deployment repo; the gateway VM
