@@ -2405,6 +2405,48 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
+	test('loads OpenClaw auth login profile configuration', async () => {
+		const config = createValidSystemConfigInput();
+		if (config.zones[0].gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw fixture zone');
+		}
+		config.zones[0].gateway.authLogin = {
+			defaultAgent: 'main',
+			providers: {
+				openai: {
+					profileIds: [
+						'openai-codex:matches_copse_0i@icloud.com',
+						'openai-codex:shravan.sunder.dev@gmail.com',
+					],
+				},
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-auth-login-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				{
+					gateway: {
+						authLogin: {
+							defaultAgent: 'main',
+							providers: {
+								openai: {
+									profileIds: [
+										'openai-codex:matches_copse_0i@icloud.com',
+										'openai-codex:shravan.sunder.dev@gmail.com',
+									],
+								},
+							},
+						},
+					},
+				},
+			],
+		});
+	});
+
 	test('rejects path-unsafe agent identifiers in per-agent maps', async () => {
 		const config = createValidSystemConfigInput();
 		if (config.zones[0].gateway.type !== 'openclaw') {

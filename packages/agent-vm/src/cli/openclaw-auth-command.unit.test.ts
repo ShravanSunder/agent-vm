@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import type { ControllerClient } from '../controller/http/controller-client.js';
-import { defaultCliDependencies } from './agent-vm-cli-support.js';
+import { type CliDependencies, defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runOpenClawAuthCommand } from './openclaw-auth-command.js';
 
 function createControllerClientStub(overrides?: {
@@ -38,7 +38,9 @@ function createControllerClientStub(overrides?: {
 
 const authConfig: GatewayAuthConfig = {
 	buildLoginCommand: (provider: string, options = {}): string =>
-		`login --provider ${provider}${options.deviceCode ? ' --device-code' : ''}${options.setDefault ? ' --set-default' : ''}`,
+		`login --provider ${provider}${options.agentId ? ` --agent ${options.agentId}` : ''}${options.profileId ? ` --profile-id ${options.profileId}` : ''}${options.deviceCode ? ' --device-code' : ''}`,
+	buildProfileListCommand: (provider: string, options: { readonly agentId: string }): string =>
+		`list --provider ${provider} --agent ${options.agentId}`,
 	listProvidersCommand: 'list-cmd',
 };
 
@@ -91,9 +93,270 @@ const systemConfig = {
 	],
 } satisfies SystemConfig;
 
+function createSuccessfulProfileListCommand(
+	stdout = 'openai-codex:test@example.com\n',
+): NonNullable<CliDependencies['runCommand']> {
+	return vi.fn(async () => ({
+		exitCode: 0,
+		stderr: '',
+		stdout,
+	}));
+}
+
 describe('runOpenClawAuthCommand', () => {
+	it('logs in configured profile ids for the configured default auth agent and verifies them', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'openai-codex:first@example.com\nopenai-codex:second@example.com\n',
+		}));
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw fixture zone.');
+		}
+
+		await runOpenClawAuthCommand({
+			allConfiguredProfiles: true,
+			authConfig,
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: vi.fn(() =>
+					createControllerClientStub({
+						enableZoneSsh: async () => ({
+							host: '127.0.0.1',
+							port: 2222,
+							user: 'root',
+						}),
+					}),
+				),
+				runCommand,
+				runInteractiveProcess,
+			},
+			deviceCode: true,
+			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			provider: 'openai',
+			systemConfig: {
+				...systemConfig,
+				zones: [
+					{
+						...zone,
+						gateway: {
+							...zone.gateway,
+							authLogin: {
+								defaultAgent: 'main',
+								providers: {
+									openai: {
+										profileIds: [
+											'openai-codex:first@example.com',
+											'openai-codex:second@example.com',
+										],
+									},
+								},
+							},
+						},
+					},
+				],
+			},
+			zoneId: 'shravan',
+		});
+
+		expect(runInteractiveProcess).toHaveBeenCalledTimes(2);
+		expect(runInteractiveProcess).toHaveBeenNthCalledWith(
+			1,
+			'ssh',
+			expect.arrayContaining([
+				expect.stringContaining(
+					'login --provider openai --agent main --profile-id openai-codex:first@example.com --device-code',
+				),
+			]),
+		);
+		expect(runInteractiveProcess).toHaveBeenNthCalledWith(
+			2,
+			'ssh',
+			expect.arrayContaining([
+				expect.stringContaining(
+					'login --provider openai --agent main --profile-id openai-codex:second@example.com --device-code',
+				),
+			]),
+		);
+		expect(runCommand).toHaveBeenCalledWith(
+			'ssh',
+			expect.arrayContaining([expect.stringContaining('list --provider openai --agent main')]),
+		);
+	});
+
+	it('logs in explicit profile ids for an explicit auth agent and verifies them', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'openai-codex:new@example.com\n',
+		}));
+
+		await runOpenClawAuthCommand({
+			agentId: 'main',
+			authConfig,
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: vi.fn(() =>
+					createControllerClientStub({
+						enableZoneSsh: async () => ({
+							host: '127.0.0.1',
+							port: 2222,
+							user: 'root',
+						}),
+					}),
+				),
+				runCommand,
+				runInteractiveProcess,
+			},
+			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			profileIds: ['openai-codex:new@example.com'],
+			provider: 'openai',
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		expect(runInteractiveProcess).toHaveBeenCalledTimes(1);
+		expect(runInteractiveProcess).toHaveBeenNthCalledWith(
+			1,
+			'ssh',
+			expect.arrayContaining([
+				expect.stringContaining(
+					'login --provider openai --agent main --profile-id openai-codex:new@example.com',
+				),
+			]),
+		);
+		expect(runCommand).toHaveBeenCalledWith(
+			'ssh',
+			expect.arrayContaining([expect.stringContaining('list --provider openai --agent main')]),
+		);
+	});
+
+	it('dry-runs configured profile login without opening SSH', async () => {
+		const stdoutWrite = vi.fn(() => true);
+		const createControllerClient = vi.fn();
+		const runCommand = vi.fn();
+		const runInteractiveProcess = vi.fn();
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw fixture zone.');
+		}
+
+		await runOpenClawAuthCommand({
+			allConfiguredProfiles: true,
+			authConfig,
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient,
+				runCommand,
+				runInteractiveProcess,
+			},
+			dryRun: true,
+			io: { stdout: { write: stdoutWrite }, stderr: { write: vi.fn(() => true) } },
+			provider: 'openai',
+			systemConfig: {
+				...systemConfig,
+				zones: [
+					{
+						...zone,
+						gateway: {
+							...zone.gateway,
+							authLogin: {
+								defaultAgent: 'main',
+								providers: {
+									openai: {
+										profileIds: [
+											'openai-codex:first@example.com',
+											'openai-codex:second@example.com',
+										],
+									},
+								},
+							},
+						},
+					},
+				],
+			},
+			zoneId: 'shravan',
+		});
+
+		expect(createControllerClient).not.toHaveBeenCalled();
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+		expect(runCommand).not.toHaveBeenCalled();
+		expect(stdoutWrite).toHaveBeenCalledWith(
+			expect.stringContaining("OpenClaw auth login plan for zone 'shravan'"),
+		);
+		expect(stdoutWrite).toHaveBeenCalledWith(expect.stringContaining("agent 'main'"));
+		expect(stdoutWrite).toHaveBeenCalledWith(
+			expect.stringContaining('openai-codex:first@example.com'),
+		);
+		expect(stdoutWrite).toHaveBeenCalledWith(
+			expect.stringContaining('openai-codex:second@example.com'),
+		);
+		expect(stdoutWrite).toHaveBeenCalledWith(expect.stringContaining('Verification: enabled'));
+	});
+
+	it('rejects configured-profile login when no default auth agent can be resolved', async () => {
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw fixture zone.');
+		}
+
+		await expect(
+			runOpenClawAuthCommand({
+				allConfiguredProfiles: true,
+				authConfig,
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: vi.fn(),
+					runInteractiveProcess: vi.fn(),
+				},
+				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+				provider: 'openai',
+				systemConfig: {
+					...systemConfig,
+					zones: [
+						{
+							...zone,
+							gateway: {
+								...zone.gateway,
+								authLogin: {
+									providers: {
+										openai: {
+											profileIds: ['openai-codex:first@example.com'],
+										},
+									},
+								},
+							},
+						},
+					],
+				},
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(/No gateway\.authLogin\.defaultAgent configured/u);
+	});
+
+	it('rejects login when no profile ids are provided', async () => {
+		await expect(
+			runOpenClawAuthCommand({
+				authConfig,
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: vi.fn(),
+					runInteractiveProcess: vi.fn(),
+				},
+				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+				provider: 'openai',
+				systemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(/No profile ids provided/u);
+	});
+
 	it('runs OpenClaw provider login for openai-codex when requested', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = createSuccessfulProfileListCommand();
 
 		await runOpenClawAuthCommand({
 			authConfig,
@@ -108,9 +371,12 @@ describe('runOpenClawAuthCommand', () => {
 						}),
 					}),
 				),
+				runCommand,
 				runInteractiveProcess,
 			},
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			agentId: 'main',
+			profileIds: ['openai-codex:test@example.com'],
 			provider: 'openai-codex',
 			systemConfig,
 			zoneId: 'shravan',
@@ -143,6 +409,7 @@ describe('runOpenClawAuthCommand', () => {
 
 	it('runs interactive SSH with the login command when provider is given', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = createSuccessfulProfileListCommand();
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -159,9 +426,12 @@ describe('runOpenClawAuthCommand', () => {
 						enableZoneSsh,
 					}),
 				),
+				runCommand,
 				runInteractiveProcess,
 			},
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			agentId: 'main',
+			profileIds: ['openai-codex:test@example.com'],
 			provider: 'codex',
 			systemConfig,
 			zoneId: 'shravan',
@@ -189,6 +459,7 @@ describe('runOpenClawAuthCommand', () => {
 			resolveAll: vi.fn(async () => ({})),
 		}));
 		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = createSuccessfulProfileListCommand();
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -201,9 +472,12 @@ describe('runOpenClawAuthCommand', () => {
 				createControllerClient: vi.fn(() => createControllerClientStub({ enableZoneSsh })),
 				createSecretResolver,
 				resolveServiceAccountToken: vi.fn(async () => 'op-service-account-token'),
+				runCommand,
 				runInteractiveProcess,
 			},
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			agentId: 'main',
+			profileIds: ['openai-codex:test@example.com'],
 			provider: 'codex',
 			systemConfig: {
 				...systemConfig,
@@ -237,8 +511,9 @@ describe('runOpenClawAuthCommand', () => {
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', expect.any(Array));
 	});
 
-	it('passes device-code and set-default options into the login command', async () => {
+	it('passes device-code into the login command', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = createSuccessfulProfileListCommand();
 
 		await runOpenClawAuthCommand({
 			authConfig,
@@ -254,11 +529,13 @@ describe('runOpenClawAuthCommand', () => {
 						}),
 					}),
 				),
+				runCommand,
 				runInteractiveProcess,
 			},
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			agentId: 'main',
+			profileIds: ['openai-codex:test@example.com'],
 			provider: 'openai',
-			setDefault: true,
 			systemConfig,
 			zoneId: 'shravan',
 		});
@@ -266,7 +543,9 @@ describe('runOpenClawAuthCommand', () => {
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
 			expect.arrayContaining([
-				expect.stringContaining('login --provider openai --device-code --set-default'),
+				expect.stringContaining(
+					'login --provider openai --agent main --profile-id openai-codex:test@example.com --device-code',
+				),
 			]),
 		);
 	});
@@ -275,6 +554,7 @@ describe('runOpenClawAuthCommand', () => {
 		const runInteractiveProcess = vi.fn(async () => {
 			throw new Error('connect ECONNREFUSED');
 		});
+		const runCommand = createSuccessfulProfileListCommand();
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			port: 2222,
@@ -291,13 +571,16 @@ describe('runOpenClawAuthCommand', () => {
 							enableZoneSsh,
 						}),
 					),
+					runCommand,
 					runInteractiveProcess,
 				},
 				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+				agentId: 'main',
+				profileIds: ['openai-codex:test@example.com'],
 				provider: 'codex',
 				systemConfig,
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow("Auth failed for codex in zone 'shravan': connect ECONNREFUSED");
+		).rejects.toThrow("Auth failed for codex in zone 'shravan' agent 'main': connect ECONNREFUSED");
 	});
 });

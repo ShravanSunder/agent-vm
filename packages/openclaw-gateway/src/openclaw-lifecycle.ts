@@ -1008,15 +1008,26 @@ export const openclawLifecycle: GatewayLifecycle = {
 			options: {
 				readonly agentId?: string;
 				readonly deviceCode?: boolean;
-				readonly setDefault?: boolean;
+				readonly profileId?: string;
 			} = {},
 		): string =>
 			[
 				'openclaw models auth',
 				...(options.agentId ? [`--agent ${shellQuote(options.agentId)}`] : []),
 				`login --provider ${shellQuote(provider)}`,
+				...(options.profileId ? [`--profile-id ${shellQuote(options.profileId)}`] : []),
 				...(options.deviceCode === true ? ['--device-code'] : []),
-				...(options.setDefault === true ? ['--set-default'] : []),
+			].join(' '),
+		buildProfileListCommand: (
+			provider: string,
+			options: {
+				readonly agentId: string;
+			},
+		): string =>
+			[
+				'openclaw models auth',
+				`--agent ${shellQuote(options.agentId)}`,
+				`list --provider ${shellQuote(provider)}`,
 			].join(' '),
 	},
 

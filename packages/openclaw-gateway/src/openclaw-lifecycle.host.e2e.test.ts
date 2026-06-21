@@ -417,12 +417,24 @@ describe('openclawLifecycle', () => {
 			expect(
 				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
 					agentId: 'shravan',
-					deviceCode: true,
-					setDefault: true,
+					profileId: 'openai-codex:shravan@example.com',
 				}),
 			).toBe(
-				"openclaw models auth --agent 'shravan' login --provider 'openai-codex' --device-code --set-default",
+				"openclaw models auth --agent 'shravan' login --provider 'openai-codex' --profile-id 'openai-codex:shravan@example.com'",
 			);
+			expect(
+				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
+					agentId: 'shravan',
+					deviceCode: true,
+				}),
+			).toBe(
+				"openclaw models auth --agent 'shravan' login --provider 'openai-codex' --device-code",
+			);
+			expect(
+				openclawLifecycle.authConfig?.buildProfileListCommand('openai-codex', {
+					agentId: 'shravan',
+				}),
+			).toBe("openclaw models auth --agent 'shravan' list --provider 'openai-codex'");
 		});
 
 		it('shell-quotes provider values safely', () => {

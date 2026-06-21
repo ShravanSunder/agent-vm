@@ -25,7 +25,18 @@ export interface GatewayAuthConfig {
 		options?: {
 			readonly deviceCode?: boolean;
 			readonly agentId?: string;
-			readonly setDefault?: boolean;
+			readonly profileId?: string;
+		},
+	) => string;
+
+	/**
+	 * Build the shell command for listing provider auth profiles for one agent.
+	 * The CLI uses this after login to verify requested profile IDs exist.
+	 */
+	readonly buildProfileListCommand: (
+		provider: string,
+		options: {
+			readonly agentId: string;
 		},
 	) => string;
 }
@@ -65,6 +76,15 @@ export interface OpenClawGatewayControlAuthConfig {
 	readonly secret: string;
 }
 
+interface OpenClawAuthLoginProviderConfig {
+	readonly profileIds: readonly string[];
+}
+
+interface OpenClawAuthLoginConfig {
+	readonly defaultAgent?: string;
+	readonly providers: Readonly<Record<string, OpenClawAuthLoginProviderConfig>>;
+}
+
 interface GatewayZoneBaseGatewayConfig {
 	readonly type: GatewayType;
 	readonly memory: string;
@@ -94,6 +114,7 @@ interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig 
 			| EnvironmentGatewayAuthProfilesRef
 		>
 	>;
+	readonly authLogin?: OpenClawAuthLoginConfig;
 	readonly rawEnvSecrets?: readonly string[];
 }
 

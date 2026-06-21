@@ -777,6 +777,18 @@ files:
     "runtimeRootfsSize": "12G",
     "stateDir": "../state/shravan",
     "zoneFilesDir": "../zone-files/shravan",
+    "authLogin": {
+      "defaultAgent": "main",
+      "providers": {
+        "openai": {
+          "profileIds": [
+            "openai-codex:work@example.com",
+            "openai-codex:personal@example.com",
+            "openai-codex:admin@example.com"
+          ]
+        }
+      }
+    },
     "authProfilesByAgent": {
       "shravan": { "source": "environment", "envVar": "SHRAVAN_AUTH_PROFILES" }
     }
@@ -866,6 +878,29 @@ auth profile. `gateway.authProfilesRef` and `gateway.authProfilesByAgent`
 support `environment`, `1password`, and `config` sources. Inline `config`
 values here are plaintext OpenClaw auth profiles and should be limited to local
 or test deployments.
+
+`gateway.authLogin` is separate from auth material. It stores only the operator
+profile ids used by `agent-vm auth openclaw login <provider>`:
+
+- `defaultAgent` is the OpenClaw agent whose isolated auth store receives
+  configured profile logins when the CLI does not pass `--agent`.
+- `providers.<provider>.profileIds` is the ordered list of profile ids that
+  `--all-configured-profiles` should refresh for that provider.
+
+For the common refresh path, run:
+
+```bash
+agent-vm auth openclaw login openai \
+  --zone shravan \
+  --all-configured-profiles \
+  --device-code
+```
+
+The helper opens one OpenClaw login per configured profile id and then verifies
+the ids are listed by OpenClaw for the target agent. For one-off profile
+creation or testing, pass `--agent <agentId>` and one or more
+`--profile-id <profileId>` values. Use `--dry-run` to print the resolved plan
+without opening SSH.
 
 `gateway.controlAuth` is required for OpenClaw gateways and names the
 gateway env secret OpenClaw uses to authenticate controller API calls. The

@@ -153,10 +153,13 @@ describe('manual templates', () => {
 			'Do not use it as a one-shot command runner',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'agent-vm auth openclaw <provider> --zone <zoneId>',
+			'agent-vm auth openclaw login <provider> --zone <zoneId> --all-configured-profiles',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'--all-agents to repeat the same provider login',
+			'Use --dry-run to print the resolved plan without opening SSH.',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'gateway.authLogin.providers.<provider>.profileIds',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'agent-vm auth codex-harness --zone <zoneId> --agent <agentId>',
@@ -383,7 +386,10 @@ describe('manual templates', () => {
 		).toContain('gateway.authProfilesByAgent');
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
-		).toContain('auth openclaw <provider> --all-agents repeats');
+		).toContain('auth openclaw login <provider> --all-configured-profiles logs in');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).toContain('Use --dry-run before a refresh');
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('codex-harness --all-agents runs one device-auth session per agent');
