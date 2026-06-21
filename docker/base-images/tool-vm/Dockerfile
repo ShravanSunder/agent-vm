@@ -7,7 +7,6 @@ RUN apt-get update && \
       openssh-server \
       ca-certificates \
       git \
-      gh \
       curl \
       jq \
       ripgrep \
@@ -22,7 +21,16 @@ RUN apt-get update && \
       unzip \
       zip && \
     rm -rf /var/lib/apt/lists/* && \
-    update-ca-certificates && \
+    update-ca-certificates
+
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends gh && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN \
     npm install -g pnpm@10.33.0 && \
     pnpm --version && \
     uv python install 3.13 --install-dir /opt/python --no-progress --compile-bytecode && \

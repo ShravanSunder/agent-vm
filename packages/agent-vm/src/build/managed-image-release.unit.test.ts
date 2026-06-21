@@ -20,6 +20,21 @@ function expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile: strin
 	expect(generatedDockerfile).not.toMatch(managedDockerfileForbiddenSecretPattern);
 }
 
+function expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile: string): void {
+	const githubCliKeyringPath = '/usr/share/keyrings/githubcli-archive-keyring.gpg';
+	const githubCliSource = 'https://cli.github.com/packages stable main';
+	const sourceIndex = generatedDockerfile.indexOf(githubCliSource);
+	const installIndex = generatedDockerfile.indexOf('apt-get install -y --no-install-recommends gh');
+
+	expect(generatedDockerfile).toContain(
+		'https://cli.github.com/packages/githubcli-archive-keyring.gpg',
+	);
+	expect(generatedDockerfile).toContain(`signed-by=${githubCliKeyringPath}`);
+	expect(generatedDockerfile).toContain(githubCliSource);
+	expect(sourceIndex).toBeGreaterThan(-1);
+	expect(installIndex).toBeGreaterThan(sourceIndex);
+}
+
 function createTestManagedImageRelease(): ManagedImageRelease {
 	return {
 		baseImages: {
@@ -972,6 +987,7 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
 		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
 		expect(generatedDockerfile).toContain(
@@ -1024,6 +1040,7 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).not.toContain('RUN pnpm add -g "@agent-vm/mcp-portal@');
 		expect(generatedDockerfile).toContain(
 			'COPY overlay/local-agent-vm/agent-vm-mcp-portal-0.0.93-local.tgz /tmp/agent-vm-mcp-portal-0.0.93-local.tgz',

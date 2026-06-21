@@ -14,6 +14,7 @@ import {
 import { loadGatewayLifecycle } from '../../gateway/gateway-lifecycle-loader.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { runCodexHarnessAuthCommand } from '../codex-harness-auth-command.js';
+import { runOnePasswordAuthCommand } from '../onepassword-auth-command.js';
 import { runOpenClawAuthCommand } from '../openclaw-auth-command.js';
 import {
 	createConfigOption,
@@ -26,6 +27,27 @@ export function createAuthSubcommands(io: CliIo, dependencies: CliDependencies) 
 		name: 'auth',
 		description: 'Manage gateway auth.',
 		cmds: {
+			'1password': command({
+				name: '1password',
+				description: 'Store the configured 1Password service-account token in macOS Keychain.',
+				args: {
+					config: createConfigOption(),
+					tokenReference: positional({
+						displayName: 'token-ref-or-url',
+						type: optional(string),
+						description: '1Password ref or URL to read with `op read`; omit to paste token.',
+					}),
+				},
+				handler: async ({ config, tokenReference }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					await runOnePasswordAuthCommand({
+						dependencies,
+						io,
+						systemConfig,
+						...(tokenReference === undefined ? {} : { tokenReference }),
+					});
+				},
+			}),
 			openclaw: subcommands({
 				name: 'openclaw',
 				description: 'Run OpenClaw-managed provider auth for a gateway zone.',

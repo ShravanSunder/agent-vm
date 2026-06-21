@@ -442,6 +442,45 @@ describe('runConfigValidation', () => {
 		});
 	});
 
+	it('validates the OpenClaw default OpenAI runtime shape', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await updateJsonFile(
+			path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+			(openClawConfig) => {
+				openClawConfig.agents = {
+					defaults: {
+						model: { primary: 'openai/gpt-5.5' },
+						models: {
+							'openai/gpt-5.5': { agentRuntime: { id: 'openclaw' } },
+						},
+						sandbox: {
+							backend: 'gondolin',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
+						workspace: '/zone/agents/default',
+					},
+				};
+			},
+		);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.checks).toContainEqual({
+			name: 'openclaw-config-shravan',
+			ok: true,
+			hint: path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+		});
+		expect(result.ok).toBe(true);
+		await rm(temporaryDirectoryPath, { recursive: true, force: true });
+	});
+
 	it('reports Tool VM mediated secret agent access', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);

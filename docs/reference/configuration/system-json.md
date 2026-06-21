@@ -96,6 +96,14 @@ intentionally checked-in test deployments.
 | `env` | Read 1Password service account token from an env var. Defaults to `OP_SERVICE_ACCOUNT_TOKEN`. |
 | `keychain` | Read the service account token from macOS Keychain. |
 
+For `keychain`, `service` and `account` are the macOS Keychain lookup target.
+New local scaffolds use service `agent-vm`. The default account is
+`1p-service-account`; `agent-vm init --onepassword-keychain-account-name <name>`
+uses `1p-service-account--<name>` for controller isolation. Store or rotate the
+token with `agent-vm auth 1password <op-ref-or-url> --config config/system.jsonc`.
+When the ref/url is omitted, the command prompts for a token paste and still
+stores it in the configured Keychain target.
+
 For 1Password-backed configs, `agent-vm doctor` also runs a headless fallback
 probe with the resolved service-account token: `op whoami` under an isolated
 `OP_CONFIG_DIR`, `OP_BIOMETRIC_UNLOCK_ENABLED=false`, and `OP_CACHE=false`.

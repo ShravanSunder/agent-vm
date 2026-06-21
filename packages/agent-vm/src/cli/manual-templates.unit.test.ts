@@ -153,6 +153,12 @@ describe('manual templates', () => {
 			'Do not use it as a one-shot command runner',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'agent-vm auth 1password <op-ref-or-url>',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'configured macOS Keychain service/account',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'agent-vm auth openclaw login <provider> --zone <zoneId> --all-configured-profiles',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
@@ -162,7 +168,7 @@ describe('manual templates', () => {
 			'gateway.authLogin.providers.<provider>.profileIds',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'agent-vm auth codex-harness --zone <zoneId> --agent <agentId>',
+			'Native Codex-runtime agents use agent-vm auth codex-harness --zone <zoneId> --agent <agentId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'Managed OpenClaw gateway builds install the native Codex CLI version pinned by managed-images.json',
@@ -378,6 +384,15 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
 			'The controller branches only on generic channel-provider health',
 		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('agents.defaults.model.primary is openai/gpt-5.5');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('agents.defaults.models["openai/gpt-5.5"].agentRuntime.id is pi');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).not.toContain('openai-codex/gpt-5.5 with thinkingDefault low');
 		expect(files.find((file) => file.relativePath.endsWith('tool-access.md'))?.content).toContain(
 			'agentToolVmProfiles',
 		);
@@ -392,7 +407,7 @@ describe('manual templates', () => {
 		).toContain('Use --dry-run before a refresh');
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
-		).toContain('codex-harness --all-agents runs one device-auth session per agent');
+		).toContain('Native Codex-runtime agents use codex-harness --all-agents');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfile');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfiles');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('/home/openclaw/zone-files');
