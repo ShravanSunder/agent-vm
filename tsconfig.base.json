@@ -26,8 +26,43 @@
 		"skipLibCheck": true,
 		"types": ["node"],
 		"paths": {
+			"@agent-vm/agent-portal-sdk": ["./packages/agent-portal-sdk/src/index.ts"],
+			"@agent-vm/agent-portal-sdk/adapter-boundary": [
+				"./packages/agent-portal-sdk/src/adapter-boundary/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/approval-surface": [
+				"./packages/agent-portal-sdk/src/approval-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/artifact-surface": [
+				"./packages/agent-portal-sdk/src/artifact-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/capability-description-surface": [
+				"./packages/agent-portal-sdk/src/capability-description-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/portal-call-surface": [
+				"./packages/agent-portal-sdk/src/portal-call-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/portal-event-surface": [
+				"./packages/agent-portal-sdk/src/portal-event-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/testing": ["./packages/agent-portal-sdk/src/testing/index.ts"],
 			"@agent-vm/agent-vm": ["./packages/agent-vm/src/index.ts"],
 			"@agent-vm/config-contracts": ["./packages/config-contracts/src/index.ts"],
+			"@agent-vm/controller-execution-contracts": [
+				"./packages/controller-execution-contracts/src/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/controller-dispatch-boundary": [
+				"./packages/controller-execution-contracts/src/controller-dispatch-boundary/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/controller-host-action-boundary": [
+				"./packages/controller-execution-contracts/src/controller-host-action-boundary/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/credentialed-runner-boundary": [
+				"./packages/controller-execution-contracts/src/credentialed-runner-boundary/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/testing": [
+				"./packages/controller-execution-contracts/src/testing/index.ts"
+			],
 			"@agent-vm/gondolin-adapter": ["./packages/gondolin-adapter/src/index.ts"],
 			"@agent-vm/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
 			"@agent-vm/gateway-interface": ["./packages/gateway-interface/src/index.ts"],
@@ -35,6 +70,9 @@
 			"@agent-vm/mcp-portal": ["./packages/mcp-portal/src/index.ts"],
 			"@agent-vm/mcp-portal/core": ["./packages/mcp-portal/src/core/index.ts"],
 			"@agent-vm/mcp-portal/mcp-proxy": ["./packages/mcp-portal/src/mcp-proxy/index.ts"],
+			"@agent-vm/mcp-portal/mcp-provider-backend": [
+				"./packages/mcp-portal/src/mcp-provider-backend/index.ts"
+			],
 			"@agent-vm/mcp-portal/cli": ["./packages/mcp-portal/src/cli/index.ts"],
 			"@agent-vm/mcp-portal/portal-config": ["./packages/mcp-portal/src/portal-config/index.ts"],
 			"@agent-vm/mcp-portal/portal-auth/agent-bearer-token": [
@@ -54,6 +92,11 @@
 			],
 			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
 			"@agent-vm/secret-management": ["./packages/secret-management/src/index.ts"],
+			"@agent-vm/tool-portal": ["./packages/tool-portal/src/index.ts"],
+			"@agent-vm/tool-portal/in-process-entrypoint": [
+				"./packages/tool-portal/src/in-process-entrypoint/index.ts"
+			],
+			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"],
 			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
 		}
 	}

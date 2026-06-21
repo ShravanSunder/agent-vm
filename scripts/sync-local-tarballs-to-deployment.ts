@@ -7,8 +7,10 @@ const execFileAsync = promisify(execFile);
 
 export const AGENT_VM_PACKAGE_NAMES = [
 	'@agent-vm/agent-vm',
+	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/agent-vm-worker',
 	'@agent-vm/config-contracts',
+	'@agent-vm/controller-execution-contracts',
 	'@agent-vm/gateway-interface',
 	'@agent-vm/gondolin-adapter',
 	'@agent-vm/mcp-portal',
@@ -16,10 +18,12 @@ export const AGENT_VM_PACKAGE_NAMES = [
 	'@agent-vm/openclaw-gateway',
 	'@agent-vm/openclaw-mcp-portal-plugin',
 	'@agent-vm/secret-management',
+	'@agent-vm/tool-portal',
 	'@agent-vm/worker-gateway',
 ] as const;
 
 export const OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES = [
+	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/config-contracts',
 	'@agent-vm/secret-management',
 	'@agent-vm/gondolin-adapter',
@@ -30,6 +34,7 @@ export const OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES = [
 ] as const;
 
 export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
+	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/config-contracts',
 	'@agent-vm/secret-management',
 	'@agent-vm/mcp-portal',

@@ -1,0 +1,23 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"rootDir": "./src",
+		"outDir": "./dist",
+		"declaration": true,
+		"declarationMap": true,
+		"sourceMap": true,
+		"noEmit": false,
+		"paths": {
+			"@agent-vm/agent-portal-sdk": ["../agent-portal-sdk/dist/index.d.ts"],
+			"@agent-vm/config-contracts": ["../config-contracts/dist/index.d.ts"],
+			"@agent-vm/controller-execution-contracts": [
+				"../controller-execution-contracts/dist/index.d.ts"
+			],
+			"@agent-vm/mcp-portal": ["../mcp-portal/dist/index.d.ts"],
+			"@agent-vm/mcp-portal/mcp-provider-backend": [
+				"../mcp-portal/dist/mcp-provider-backend/index.d.ts"
+			]
+		}
+	},
+	"exclude": ["src/**/*.test.ts"]
+}

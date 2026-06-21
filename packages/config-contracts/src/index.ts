@@ -5,3 +5,4 @@ export * from './mcp-portal-approval-policy.js';
 export * from './mcp-portal-config.js';
 export * from './schema-artifacts.js';
 export * from './secret-value.js';
+export * from './tool-portal-config.js';

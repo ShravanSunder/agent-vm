@@ -35,6 +35,10 @@
 			"types": "./dist/mcp-proxy/index.d.ts",
 			"import": "./dist/mcp-proxy/index.js"
 		},
+		"./mcp-provider-backend": {
+			"types": "./dist/mcp-provider-backend/index.d.ts",
+			"import": "./dist/mcp-provider-backend/index.js"
+		},
 		"./cli": {
 			"types": "./dist/cli/index.d.ts",
 			"import": "./dist/cli/index.js"
@@ -71,6 +75,7 @@
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/mcp-portal/src"
 	},
 	"dependencies": {
+		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/secret-management": "workspace:*",
 		"@hono/mcp": "^0.3.0",

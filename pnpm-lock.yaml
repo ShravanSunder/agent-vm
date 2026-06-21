@@ -39,6 +39,16 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
+  packages/agent-portal-sdk:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+
   packages/agent-vm:
     dependencies:
       '@agent-vm/agent-vm-worker':
@@ -176,6 +186,19 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
+  packages/controller-execution-contracts:
+    dependencies:
+      '@agent-vm/agent-portal-sdk':
+        specifier: workspace:*
+        version: link:../agent-portal-sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+
   packages/gateway-interface:
     dependencies:
       '@agent-vm/gondolin-adapter':
@@ -202,6 +225,9 @@ importers:
 
   packages/mcp-portal:
     dependencies:
+      '@agent-vm/agent-portal-sdk':
+        specifier: workspace:*
+        version: link:../agent-portal-sdk
       '@agent-vm/config-contracts':
         specifier: workspace:*
         version: link:../config-contracts
@@ -276,6 +302,28 @@ importers:
       '@1password/sdk':
         specifier: ^0.4.0
         version: 0.4.0
+
+  packages/tool-portal:
+    dependencies:
+      '@agent-vm/agent-portal-sdk':
+        specifier: workspace:*
+        version: link:../agent-portal-sdk
+      '@agent-vm/config-contracts':
+        specifier: workspace:*
+        version: link:../config-contracts
+      '@agent-vm/controller-execution-contracts':
+        specifier: workspace:*
+        version: link:../controller-execution-contracts
+      '@agent-vm/mcp-portal':
+        specifier: workspace:*
+        version: link:../mcp-portal
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/worker-gateway:
     dependencies:

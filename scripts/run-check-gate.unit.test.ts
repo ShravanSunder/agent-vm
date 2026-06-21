@@ -54,6 +54,7 @@ describe('check gate plan', () => {
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
+			'portal-architecture',
 			'format',
 		]);
 		expect(plan[1]?.commands.map((command) => command.id)).toEqual([
@@ -93,16 +94,18 @@ describe('check gate runner', () => {
 		});
 
 		expect(summary.ok).toBe(true);
-		expect(startedCommandIds.slice(0, 4)).toEqual([
+		expect(startedCommandIds.slice(0, 5)).toEqual([
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
+			'portal-architecture',
 			'format',
 		]);
-		expect(completedCommandIds.slice(0, 4)).toEqual([
+		expect(completedCommandIds.slice(0, 5)).toEqual([
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
+			'portal-architecture',
 			'format',
 		]);
 		expect(heavyPhaseStartOrder).toEqual(['type-aware-lint', 'typecheck']);
@@ -125,7 +128,13 @@ describe('check gate runner', () => {
 		});
 
 		expect(summary.ok).toBe(false);
-		expect(runCommandIds).toEqual(['package-versions', 'zod-version', 'test-taxonomy', 'format']);
+		expect(runCommandIds).toEqual([
+			'package-versions',
+			'zod-version',
+			'test-taxonomy',
+			'portal-architecture',
+			'format',
+		]);
 	});
 
 	it('formats durations for stable evidence summaries', () => {

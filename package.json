@@ -11,6 +11,8 @@
 		"check:package-versions": "bash scripts/check-package-version-sync.sh",
 		"check:zod": "node scripts/check-zod-version.ts",
 		"test:taxonomy": "tsx scripts/audit-test-taxonomy.ts",
+		"test:portal-architecture": "tsx scripts/audit-portal-architecture.ts",
+		"test:portal-exports": "tsx scripts/verify-portal-package-exports.ts",
 		"lint": "oxlint .",
 		"lint:fix": "oxlint --fix",
 		"lint:types": "oxlint --type-aware .",

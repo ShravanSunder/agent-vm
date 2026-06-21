@@ -36,8 +36,45 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'@agent-vm/agent-portal-sdk': repoPath('packages/agent-portal-sdk/src/index.ts'),
+			'@agent-vm/agent-portal-sdk/adapter-boundary': repoPath(
+				'packages/agent-portal-sdk/src/adapter-boundary/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/approval-surface': repoPath(
+				'packages/agent-portal-sdk/src/approval-surface/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/artifact-surface': repoPath(
+				'packages/agent-portal-sdk/src/artifact-surface/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/capability-description-surface': repoPath(
+				'packages/agent-portal-sdk/src/capability-description-surface/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/portal-call-surface': repoPath(
+				'packages/agent-portal-sdk/src/portal-call-surface/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/portal-event-surface': repoPath(
+				'packages/agent-portal-sdk/src/portal-event-surface/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/testing': repoPath(
+				'packages/agent-portal-sdk/src/testing/index.ts',
+			),
 			'@agent-vm/agent-vm': repoPath('packages/agent-vm/src/index.ts'),
 			'@agent-vm/config-contracts': repoPath('packages/config-contracts/src/index.ts'),
+			'@agent-vm/controller-execution-contracts': repoPath(
+				'packages/controller-execution-contracts/src/index.ts',
+			),
+			'@agent-vm/controller-execution-contracts/controller-dispatch-boundary': repoPath(
+				'packages/controller-execution-contracts/src/controller-dispatch-boundary/index.ts',
+			),
+			'@agent-vm/controller-execution-contracts/controller-host-action-boundary': repoPath(
+				'packages/controller-execution-contracts/src/controller-host-action-boundary/index.ts',
+			),
+			'@agent-vm/controller-execution-contracts/credentialed-runner-boundary': repoPath(
+				'packages/controller-execution-contracts/src/credentialed-runner-boundary/index.ts',
+			),
+			'@agent-vm/controller-execution-contracts/testing': repoPath(
+				'packages/controller-execution-contracts/src/testing/index.ts',
+			),
 			'@agent-vm/gondolin-adapter': repoPath('packages/gondolin-adapter/src/index.ts'),
 			'@agent-vm/agent-vm-worker': repoPath('packages/agent-vm-worker/src/index.ts'),
 			'@agent-vm/gateway-interface': repoPath('packages/gateway-interface/src/index.ts'),
@@ -49,6 +86,9 @@ export default defineConfig({
 				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
 			),
 			'@agent-vm/mcp-portal/core': repoPath('packages/mcp-portal/src/core/index.ts'),
+			'@agent-vm/mcp-portal/mcp-provider-backend': repoPath(
+				'packages/mcp-portal/src/mcp-provider-backend/index.ts',
+			),
 			'@agent-vm/mcp-portal/mcp-proxy': repoPath('packages/mcp-portal/src/mcp-proxy/index.ts'),
 			'@agent-vm/mcp-portal/cli': repoPath('packages/mcp-portal/src/cli/index.ts'),
 			'@agent-vm/mcp-portal/portal-config': repoPath(
@@ -69,6 +109,11 @@ export default defineConfig({
 			),
 			'@agent-vm/openclaw-gateway': repoPath('packages/openclaw-gateway/src/index.ts'),
 			'@agent-vm/worker-gateway': repoPath('packages/worker-gateway/src/index.ts'),
+			'@agent-vm/tool-portal': repoPath('packages/tool-portal/src/index.ts'),
+			'@agent-vm/tool-portal/in-process-entrypoint': repoPath(
+				'packages/tool-portal/src/in-process-entrypoint/index.ts',
+			),
+			'@agent-vm/tool-portal/testing': repoPath('packages/tool-portal/src/testing/index.ts'),
 		},
 	},
 	test: {

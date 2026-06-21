@@ -36,6 +36,15 @@ describe('beta tarball sync planning', () => {
 			plan.packages.find((packageEntry) => packageEntry.name === '@agent-vm/gateway-interface')
 				?.specifier,
 		).toBe('file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-gateway-interface-0.0.82.tgz');
+		expect(plan.packages.map((packageEntry) => packageEntry.name)).toContain(
+			'@agent-vm/agent-portal-sdk',
+		);
+		expect(plan.packages.map((packageEntry) => packageEntry.name)).toContain(
+			'@agent-vm/controller-execution-contracts',
+		);
+		expect(plan.packages.map((packageEntry) => packageEntry.name)).toContain(
+			'@agent-vm/tool-portal',
+		);
 	});
 
 	it('renders pnpm-workspace.yaml with overrides in the pnpm v10 location', () => {
@@ -184,8 +193,16 @@ describe('openclaw gateway overlay rendering', () => {
 			expect.stringContaining(
 				'ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin',
 			),
-			expect.stringContaining('rm -f /tmp/agent-vm-config-contracts-0.0.82-abc123ef.tgz'),
+			expect.any(String),
 		]);
+		expect(overlay.runAfterBase.at(-1)).toContain(
+			'/tmp/agent-vm-config-contracts-0.0.82-abc123ef.tgz',
+		);
+		expect(overlay.runAfterBase.at(-1)).toContain(
+			'/tmp/agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz',
+		);
+		expect(overlayJson).toContain('@agent-vm/agent-portal-sdk');
+		expect(overlayJson).toContain('file:/tmp/agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz');
 		expect(overlayJson).not.toContain('npm install --prefix');
 		expect(overlayJson).not.toContain('pnpm add -g');
 		expect(overlayJson).not.toContain('rm -rf');
@@ -248,8 +265,16 @@ describe('openclaw gateway overlay rendering', () => {
 			expect.stringContaining(
 				'ln -sfn /opt/agent-vm/local-packages/node_modules/.bin/mcp-portal /pnpm/mcp-portal',
 			),
-			expect.stringContaining('rm -f /tmp/agent-vm-config-contracts-0.0.82-abc123ef.tgz'),
+			expect.any(String),
 		]);
+		expect(overlay.runAfterBase.at(-1)).toContain(
+			'/tmp/agent-vm-config-contracts-0.0.82-abc123ef.tgz',
+		);
+		expect(overlay.runAfterBase.at(-1)).toContain(
+			'/tmp/agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz',
+		);
+		expect(overlayJson).toContain('@agent-vm/agent-portal-sdk');
+		expect(overlayJson).toContain('file:/tmp/agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz');
 		expect(overlayJson).not.toContain('0.0.81-oldhash');
 	});
 });

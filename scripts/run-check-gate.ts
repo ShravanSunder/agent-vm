@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export type CheckGateCommandId =
 	| 'package-versions'
+	| 'portal-architecture'
 	| 'zod-version'
 	| 'test-taxonomy'
 	| 'format'
@@ -76,6 +77,12 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					command: 'pnpm',
 					id: 'test-taxonomy',
 					label: 'test taxonomy audit',
+				},
+				{
+					args: ['run', 'test:portal-architecture'],
+					command: 'pnpm',
+					id: 'portal-architecture',
+					label: 'portal architecture audit',
 				},
 				{
 					args: ['run', 'fmt:check'],

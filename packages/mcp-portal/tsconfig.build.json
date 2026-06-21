@@ -8,6 +8,7 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
+			"@agent-vm/agent-portal-sdk": ["../agent-portal-sdk/dist/index.d.ts"],
 			"@agent-vm/config-contracts": ["../config-contracts/dist/index.d.ts"],
 			"@agent-vm/secret-management": ["../secret-management/dist/index.d.ts"]
 		}

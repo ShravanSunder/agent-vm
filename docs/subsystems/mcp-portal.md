@@ -2,10 +2,17 @@
 
 [Overview](../README.md) > Subsystems > MCP Portal
 
-MCP Portal is an agent-facing tool facade and an upstream MCP client aggregator.
-Managed OpenClaw uses native OpenClaw tools that call `@agent-vm/mcp-portal/core`
-inside the gateway VM. External MCP clients use the separate
-`mcp-portal mcp-proxy serve` adapter.
+MCP Portal is an agent-facing MCP-specific tool facade and an upstream MCP
+client aggregator. Managed OpenClaw uses native OpenClaw tools that call
+`@agent-vm/mcp-portal/core` inside the gateway VM. External MCP clients use the
+separate `mcp-portal mcp-proxy serve` adapter.
+
+Tool Portal is a separate cross-backend facade. It can expose MCP-backed
+capabilities, controller-owned host actions, and future credentialed runner
+capabilities through the same portal-neutral list/search/describe/call
+vocabulary. When Tool Portal exposes MCP-backed capabilities, it composes MCP
+Portal through `@agent-vm/mcp-portal/mcp-provider-backend`; it does not call or
+register the native `mcp_portal_*` model tool names.
 
 ## Model
 
@@ -26,6 +33,30 @@ through portal tool inputs.
 The OpenClaw plugin injects prompt context through OpenClaw hooks and gates
 portal calls before native tool execution. OpenClaw's hook-approved params are
 the in-process approval boundary for managed native tools.
+
+## MCP Portal And Tool Portal Modes
+
+Only one model-visible policy authority should own a capability for a given
+agent/profile.
+
+- Standalone MCP Portal mode exposes `mcp_portal_list`,
+  `mcp_portal_search`, `mcp_portal_describe`, and `mcp_portal_call`.
+  `mcp-portal.config.jsonc` owns the visible MCP namespace/tool policy.
+- Tool Portal mode exposes portal-neutral list/search/describe/call adapters.
+  `tool-portal.config.jsonc` owns the cross-backend policy. MCP-backed
+  capabilities are projected into an effective MCP projection and executed by
+  MCP Portal's MCP provider backend.
+
+MCP Portal still owns upstream MCP provider sessions, upstream MCP transport
+handling, provider secret resolution, upstream MCP JSON Schema validation, and
+MCP-specific redaction. Tool Portal owns whether a capability is model-visible,
+the cross-backend approval decision, the catalog-static backend binding, and
+the portal-neutral result contract.
+
+The first Tool Portal slice currently ships package contracts and in-process
+composition helpers. Its config schema and JSON Schema artifact are available
+from `@agent-vm/config-contracts`, but `tool-portal.config.jsonc` is not yet a
+live deployment-loaded `agent-vm validate` surface.
 
 ## Agent-Facing Tools
 
@@ -68,15 +99,22 @@ visible catalog. `calls.withoutApproval` and `calls.requiresApproval` use the
 same selector shape. A visible tool that is not matched by either call selector
 is listed for discovery but blocked at execution time.
 
-## Schema Contract
+## Schema Contracts
 
-MCP JSON Schema is canonical. Zod is derived from JSON Schema for validation and
+Upstream MCP tool JSON Schema is canonical for MCP provider calls. MCP Portal
+derives Zod validators from upstream JSON Schema for argument validation and
 optional TypeScript helper generation. `mcp_portal_call` validates arguments
 before calling upstream and returns per-call Zod-style validation issues when
 input is invalid. If Zod cannot reconstruct a validator from the upstream schema,
 the portal returns
 `schema_validation_unavailable` for that call and does not call that upstream
 tool.
+
+Portal-neutral contracts are different. `@agent-vm/agent-portal-sdk`,
+`@agent-vm/controller-execution-contracts`, Tool Portal config contracts, and
+the MCP provider backend seam use explicit Zod v4 schemas as the source of
+truth. JSON Schema artifacts for these portal contracts are generated from Zod
+with `z.toJSONSchema()`, not hand-written separately.
 
 Tool VMs receive TypeScript/Zod helper packages and generated helper artifacts.
 They do not receive upstream MCP credentials.
@@ -252,6 +290,14 @@ tool names.
 Intent verification is future work. A future draft-confirm-commit flow should
 remain server-side and must not turn model-visible fields into proof of
 approval.
+
+## Deferred Tool Portal Surfaces
+
+The current Tool Portal slice does not expose shell CLIs, a Tool Portal MCP
+proxy, an HTTP API, an OpenClaw Tool Portal adapter, credentialed runner
+execution, controller host-action execution, or broad VM artifact publication.
+CLI allowance schemas and validators are contract-only: they parse and validate
+argv-shaped intent but do not execute subprocesses or mount credentials.
 
 ## Local E2E Verification
 
