@@ -59,7 +59,7 @@ zones[]
   secrets
   runtimeAuthHints
   egressHosts
-  websocketBypass
+  websocketUpgrades
   mcpPortal
   defaultToolVmProfile
   agentToolVmProfiles
@@ -413,7 +413,8 @@ does not enable Discord or any other channel-specific surface by default.
 
 Channel config is deployment-owned. Enable channels in
 `config/gateways/<zone>/openclaw.json`, then declare the matching secrets,
-`egressHosts`, and `websocketBypass` entries in `config/system.jsonc`.
+`egressHosts`, and any required `websocketUpgrades` entries in
+`config/system.jsonc`.
 Managed OpenClaw image profiles install known extracted channel packages, such
 as `@openclaw/discord`, from the OpenClaw channel config.
 
@@ -627,6 +628,36 @@ is accepted by OpenClaw when `allowRfc2544BenchmarkRange` is true. Do not use
 `browser.ssrfPolicy.allowedHostnames` as the first fix for Discord media; that
 exact-host bypass skips private-IP checks for the named host and is broader
 than the adapter-level synthetic DNS fix.
+
+## WebSocket egress
+
+`zones[].websocketUpgrades` allows selected WebSocket upgrade URLs through
+Gondolin's normal HTTP egress path. It is narrower than `egressHosts`, not a
+replacement for it: every `websocketUpgrades[].host` must also be declared in
+`egressHosts` for the same audience.
+
+Each rule has:
+
+```json
+{
+  "audience": "gateway",
+  "scheme": "wss",
+  "host": "gateway-*.discord.gg",
+  "port": 443,
+  "path": "/"
+}
+```
+
+`scheme` is the WebSocket scheme (`ws` or `wss`). Gondolin presents the upgrade
+handshake to request hooks as `http` or `https`; agent-vm maps those back to
+`ws` or `wss` for policy matching. `host` supports `*` wildcards, `port` is
+optional and defaults to 80 for `ws` and 443 for `wss`, and `path` is optional
+but must start with `/` when present. Query strings are not matched.
+
+Use `websocketUpgrades` for native WebSocket clients that can work through
+Gondolin's HTTP upgrade bridge. The legacy raw WebSocket TCP passthrough config has been
+removed; stale configs should delete it and declare explicit WebSocket upgrade
+policy plus matching `egressHosts`.
 
 Gondolin `allowedInternalHosts` is also not the first fix for this symptom. It
 relaxes Gondolin HTTP hook internal-IP blocking for matching hostnames, while
@@ -1205,6 +1236,7 @@ The schema rejects:
 - Worker zones declaring `agentAccess`, because worker zones do not boot
   OpenClaw Tool VMs.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
+- WebSocket upgrade hosts not declared in `egressHosts` for the same audience.
 - OpenClaw zones without `gateway.controlAuth` or without the referenced
   gateway-only env secret.
 - Zones referencing missing gateway image profiles.

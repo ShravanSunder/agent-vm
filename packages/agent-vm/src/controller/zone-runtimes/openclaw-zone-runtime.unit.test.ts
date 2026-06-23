@@ -70,7 +70,6 @@ const systemConfig = {
 				},
 			},
 			egressHosts: [],
-			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 		},

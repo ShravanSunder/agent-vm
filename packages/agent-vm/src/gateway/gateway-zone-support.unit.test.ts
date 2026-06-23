@@ -24,7 +24,7 @@ function createGatewayZone(ingress?: GatewayZone['gateway']['ingress']): Gateway
 		egressHosts: [],
 		defaultToolVmProfile: 'standard',
 		agentToolVmProfiles: {},
-		websocketBypass: [],
+		websocketUpgrades: [],
 	};
 }
 
@@ -44,6 +44,25 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 			ingress: { upstreamResponseTimeoutMs: 120_000 },
 		});
 		expect(lifecycleZone.gateway.ingress).not.toHaveProperty('upstreamHeaderTimeoutMs');
+	});
+
+	it('preserves websocket upgrade URL policy', () => {
+		const websocketUpgrades = [
+			{
+				audience: 'gateway' as const,
+				scheme: 'wss' as const,
+				host: 'gateway.discord.gg',
+				port: 443,
+				path: '/',
+			},
+		];
+
+		const lifecycleZone = mapSystemGatewayZoneToLifecycleZone({
+			...createGatewayZone(),
+			websocketUpgrades,
+		});
+
+		expect(lifecycleZone.websocketUpgrades).toEqual(websocketUpgrades);
 	});
 
 	it('maps OpenClaw observability to collector runtime endpoints', () => {

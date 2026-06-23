@@ -54,7 +54,6 @@ const baseConfig = {
 				},
 			},
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 		},

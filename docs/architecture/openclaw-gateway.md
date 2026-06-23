@@ -49,7 +49,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
 | Output | Pull requests | Tool execution results in chat |
 | Tool execution | Agent runs commands directly in gateway VM | Agent requests tool VM lease, runs code there |
 | VFS mounts | `/state` plus task `/gitdirs`; `/work/repos` is rootfs/COW target | `/config`, `/cache`, `/state`, zone files at `/zone` |
-| TCP hosts | Controller only | Controller + all tool VM SSH ports + WebSocket bypass |
+| TCP hosts | Controller only | Controller + all tool VM SSH ports |
 | Auth | None | Auth profiles (1Password → disk → VFS) |
 | prepareHostState | None | Writes effective config + auth profiles |
 | Startup service check | `GET /health` | `GET /health` |
@@ -406,40 +406,41 @@ For the full auth profile flow, see [subsystems/secrets-and-credentials.md](../s
 
 ---
 
-## WebSocket Bypass
+## WebSocket Upgrades
 
-Discord and WhatsApp use WebSocket connections that can't go through HTTP mediation. These are configured as TCP pass-through:
+Discord and other channel clients use normal WebSocket connections through
+Gondolin's HTTP upgrade bridge. Deployment config grants that path with
+`egressHosts` plus `websocketUpgrades`; it does not create raw TCP pass-through
+entries for public WebSocket gateways.
 
 ```json
-"websocketBypass": [
-  "gateway.discord.gg:443",
-  "gateway-us-east1-b.discord.gg:443",
-  "gateway-us-east1-c.discord.gg:443",
-  "gateway-us-east1-d.discord.gg:443",
-  "web.whatsapp.com:443"
+"websocketUpgrades": [
+  {
+    "audience": "gateway",
+    "scheme": "wss",
+    "host": "gateway.discord.gg",
+    "port": 443,
+    "path": "/"
+  },
+  {
+    "audience": "gateway",
+    "scheme": "wss",
+    "host": "gateway-*.discord.gg",
+    "port": 443,
+    "path": "/"
+  }
 ]
 ```
 
-Bypass hosts get direct TCP forwarding via `tcpHosts` — no HTTP interception, no secret injection.
-
-Wildcard Discord policy belongs in `egressHosts` (`*.discord.gg`,
+Wildcard destination authority still belongs in `egressHosts` (`*.discord.gg`,
 `*.discord.com`, `*.discord.media`, `*.discordapp.com`,
-`*.discordapp.net`). Do not put wildcard entries such as
-`*.discord.gg:443` in `websocketBypass` unless the raw TCP bypass layer grows
-wildcard support; today the OpenClaw lifecycle compiles each `websocketBypass`
-entry into an exact Gondolin `tcpHosts` key.
+`*.discordapp.net`). `websocketUpgrades` is narrower: it authorizes selected
+upgrade URLs for the gateway or Tool VM audience, and every upgrade host must
+also be declared in `egressHosts`.
 
-Because bypass hosts use raw `tcpHosts`, they rely on Gondolin's per-host
-synthetic IPv4 mapping. The adapter also emits an IPv4-mapped RFC2544 synthetic
-AAAA answer for OpenClaw SSRF compatibility, but that AAAA answer is not the
-identity-bearing route for raw TCP. After changing synthetic DNS behavior,
-verify that Discord stays online through the normal WebSocket client path and
-that forced IPv6 attempts do not delay reconnects.
-
-The OpenClaw gateway VM receives forced IPv4-preference `NODE_OPTIONS`, but
-raw `tcpHosts` upstream sockets are opened by the host-side Node process that
-creates the Gondolin VM. The Gondolin adapter therefore also sets host Node DNS
-and family-autoselection defaults before constructing Gondolin network state.
+Raw `tcpHosts` remain internal plumbing for controller communication, Tool VM
+SSH slots, and explicit host services such as observability collector routes.
+They are not a deployment-level WebSocket escape hatch.
 
 ---
 

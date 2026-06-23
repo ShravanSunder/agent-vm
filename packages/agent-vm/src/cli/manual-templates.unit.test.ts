@@ -69,10 +69,13 @@ describe('manual templates', () => {
 			'*.discord.media',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
-			'gateway-us-east1-c.discord.gg:443',
+			'wss://gateway-*.discord.gg/',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
-			'wildcard websocketBypass',
+			'Run agent-vm validate',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).not.toContain(
+			'websocketBypass',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).not.toContain(
 			'Add runtimeAuthHints',
@@ -116,6 +119,14 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('troubleshooting.md'))?.content,
 		).toContain('allowedInternalHosts');
+		const discordMigrationManual = files.find((file) =>
+			file.relativePath.endsWith('migration-discord.md'),
+		)?.content;
+		expect(discordMigrationManual).toContain(
+			'Delete any stale raw WebSocket TCP passthrough field',
+		);
+		expect(discordMigrationManual).toContain('Run agent-vm validate before rebuilding');
+		expect(discordMigrationManual).not.toContain('websocketBypass');
 		const imageVersioningManual = files.find((file) =>
 			file.relativePath.endsWith('image-versioning.md'),
 		)?.content;

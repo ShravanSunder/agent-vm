@@ -49,7 +49,6 @@ function makeSystemConfig(): SystemConfig {
 				},
 				secrets: {},
 				egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
-				websocketBypass: [],
 			},
 		],
 		toolVmProfiles: {

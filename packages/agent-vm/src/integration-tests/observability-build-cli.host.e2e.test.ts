@@ -270,7 +270,6 @@ async function createSmokeDeployment(
 				egressHosts: [{ host: 'example.com', audience: 'gateway' }],
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
-				websocketBypass: [],
 				observability: {
 					enabled: true,
 					openclaw: {

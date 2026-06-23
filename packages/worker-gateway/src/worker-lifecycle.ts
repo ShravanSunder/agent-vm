@@ -65,6 +65,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			tcpHosts: {
 				[`${controllerVmHost}:18800`]: `127.0.0.1:${controllerPort}`,
 			},
+			websocketUpgrades: zone.websocketUpgrades ?? [],
 			vfsMounts: {
 				'/state': {
 					hostPath: zone.gateway.stateDir,

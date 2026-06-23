@@ -149,6 +149,7 @@ function createZone(overrides?: {
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly withoutAuthProfilesRef?: boolean;
 	readonly secrets?: GatewayZoneConfig['secrets'];
+	readonly websocketUpgrades?: GatewayZoneConfig['websocketUpgrades'];
 }): GatewayZoneConfig {
 	const baseGateway: OpenClawGatewayConfig = {
 		controlAuth: {
@@ -216,7 +217,7 @@ function createZone(overrides?: {
 			? { runtimePluginConfigs: overrides.runtimePluginConfigs }
 			: {}),
 		...(overrides?.runtimeMcpServers ? { runtimeMcpServers: overrides.runtimeMcpServers } : {}),
-		websocketBypass: ['gateway.discord.gg:443'],
+		websocketUpgrades: overrides?.websocketUpgrades ?? [],
 	};
 }
 
@@ -661,7 +662,6 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.vfsMounts['/var/lib/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
 				'controller.vm.host:18800': '127.0.0.1:18800',
-				'gateway.discord.gg:443': 'gateway.discord.gg:443',
 				'tool-0.vm.host:22': '127.0.0.1:19000',
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
@@ -693,6 +693,40 @@ describe('openclawLifecycle', () => {
 				'api.openai.com',
 				'api.perplexity.ai',
 			]);
+		});
+
+		it('carries websocket upgrade URL policy into the gateway VM spec', () => {
+			const websocketUpgrades = [
+				{
+					audience: 'gateway' as const,
+					scheme: 'wss' as const,
+					host: 'gateway.discord.gg',
+					port: 443,
+					path: '/',
+				},
+				{
+					audience: 'gateway' as const,
+					scheme: 'wss' as const,
+					host: 'gateway-*.discord.gg',
+					port: 443,
+					path: '/',
+				},
+			];
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone({ websocketUpgrades }),
+			});
+
+			expect(vmSpec.websocketUpgrades).toEqual(websocketUpgrades);
 		});
 
 		it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {

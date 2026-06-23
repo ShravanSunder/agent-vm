@@ -82,10 +82,6 @@ function buildGatewayTcpHosts(
 		setTcpHost(tcpHosts, `tool-${slot}.vm.host:22`, `127.0.0.1:${tcpPool.basePort + slot}`);
 	}
 
-	for (const websocketHost of zone.websocketBypass) {
-		setTcpHost(tcpHosts, websocketHost, websocketHost);
-	}
-
 	if (zone.observability?.mode === 'collector') {
 		const { collector } = zone.observability;
 		setTcpHost(
@@ -1091,6 +1087,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				: {}),
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
 			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),
+			websocketUpgrades: zone.websocketUpgrades ?? [],
 			vfsMounts: {
 				'/home/openclaw/.openclaw/config': {
 					hostPath: configDirectory,

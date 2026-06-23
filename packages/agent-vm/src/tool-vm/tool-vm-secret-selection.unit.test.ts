@@ -66,7 +66,6 @@ function createZoneWithSecrets(secrets: Record<string, ZoneSecretConfig>): ZoneC
 		egressHosts: [],
 		defaultToolVmProfile: 'standard',
 		agentToolVmProfiles: {},
-		websocketBypass: [],
 	};
 }
 

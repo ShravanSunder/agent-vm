@@ -56,7 +56,6 @@ describe('resolveLeaseWorkMountDir', () => {
 			},
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
-			websocketBypass: [],
 		};
 	});
 

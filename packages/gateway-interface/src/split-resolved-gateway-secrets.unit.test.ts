@@ -213,7 +213,6 @@ describe('splitResolvedGatewaySecrets', () => {
 					},
 				},
 				egressHosts: [{ host: 'api.perplexity.ai', audience: 'gateway' }],
-				websocketBypass: [],
 			},
 			{
 				PERPLEXITY_API_KEY: 'perplexity-real-secret',

@@ -163,7 +163,6 @@ const gatewayVm = await VM.create({
 		hosts: {
 			'controller.vm.host:18800': '127.0.0.1:18800',
 			'tool-0.vm.host:22': '127.0.0.1:19000',
-			'gateway.discord.gg:443': 'gateway.discord.gg:443',
 			'web.whatsapp.com:443': 'web.whatsapp.com:443',
 			'g.whatsapp.net:443': 'g.whatsapp.net:443',
 			'mmg.whatsapp.net:443': 'mmg.whatsapp.net:443',

@@ -165,7 +165,6 @@ const systemConfig = {
 			},
 			runtimeAuthHints: [],
 			egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 		},

@@ -95,7 +95,6 @@ function createSystemConfig(options: {
 				secrets: {},
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
-				websocketBypass: [],
 			},
 		],
 	};

@@ -60,7 +60,6 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       { "host": "chatgpt.com", "audience": "both" },
       { "host": "generativelanguage.googleapis.com", "audience": "both" }
     ],
-    "websocketBypass": [],
     "defaultToolVmProfile": "standard",
     "agentToolVmProfiles": {}
   }]
@@ -260,7 +259,7 @@ reply delivery, and can see optional plugin-owned tools such as MCP Portal's
 
 Discord is a deployment recipe, not an agent-vm framework default. To enable
 Discord, configure `channels.discord` in OpenClaw config, then add
-`DISCORD_BOT_TOKEN`, Discord hosts, and the Discord gateway websocket bypass to
+`DISCORD_BOT_TOKEN`, Discord hosts, and Discord Gateway websocket upgrades to
 `system.jsonc`. Managed OpenClaw images install `@openclaw/discord`
 automatically when `channels.discord.enabled` is true.
 
@@ -285,18 +284,28 @@ automatically when `channels.discord.enabled` is true.
     { "host": "*.discordapp.com", "audience": "both" },
     { "host": "*.discordapp.net", "audience": "both" }
   ],
-  "websocketBypass": [
-    "gateway.discord.gg:443",
-    "gateway-us-east1-b.discord.gg:443",
-    "gateway-us-east1-c.discord.gg:443",
-    "gateway-us-east1-d.discord.gg:443"
+  "websocketUpgrades": [
+    {
+      "audience": "gateway",
+      "scheme": "wss",
+      "host": "gateway.discord.gg",
+      "port": 443,
+      "path": "/"
+    },
+    {
+      "audience": "gateway",
+      "scheme": "wss",
+      "host": "gateway-*.discord.gg",
+      "port": 443,
+      "path": "/"
+    }
   ]
 }
 ```
 
 Other channels follow the same deployment-owned pattern: install or bake the
 plugin, enable it in `openclaw.json`, add secrets, allow required HTTP hosts,
-and add websocket bypass hosts only when the channel needs raw WebSocket access.
+and add websocket upgrade rules when the channel opens WebSocket connections.
 
 ---
 
@@ -327,5 +336,5 @@ agent-vm controller logs --zone my-openclaw
 | Doctor reports native Codex-runtime auth failing | Codex harness auth material missing | Run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
-| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, broad Discord egress hosts, and exact Discord Gateway `websocketBypass` hosts |
+| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, broad Discord egress hosts, and Discord Gateway `websocketUpgrades` |
 | Can't reach external API | Host not allowlisted | Add to `zones[].egressHosts` with the needed audience |
