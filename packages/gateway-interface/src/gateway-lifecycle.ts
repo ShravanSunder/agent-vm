@@ -4,6 +4,7 @@ import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';
+import type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 
 /**
  * Describes how to run interactive auth for a gateway type.
@@ -194,7 +195,7 @@ export interface GatewayZoneConfig {
 	readonly observability?: GatewayZoneObservabilityConfig;
 	readonly secrets: Readonly<Record<string, GatewaySecretConfig>>;
 	readonly egressHosts: readonly EgressHostConfig[];
-	readonly websocketBypass: readonly string[];
+	readonly websocketUpgrades?: readonly WebSocketUpgradeConfig[];
 	readonly defaultToolVmProfile?: string;
 }
 

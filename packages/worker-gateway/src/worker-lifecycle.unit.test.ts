@@ -23,7 +23,6 @@ const zone: GatewayZoneConfig = {
 			ref: 'op://vault/item/openai',
 		},
 	},
-	websocketBypass: [],
 };
 
 describe('workerLifecycle', () => {

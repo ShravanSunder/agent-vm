@@ -32,7 +32,6 @@ const systemConfig = {
 			},
 			secrets: {},
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			websocketBypass: [],
 		},
 	],
 	toolVmProfiles: {},

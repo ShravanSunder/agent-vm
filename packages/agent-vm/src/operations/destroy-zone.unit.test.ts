@@ -89,7 +89,6 @@ describe('runControllerDestroy', () => {
 						host,
 						audience: 'gateway' as const,
 					})),
-					websocketBypass: [],
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
 				},
@@ -181,7 +180,6 @@ describe('runControllerDestroy', () => {
 					},
 					secrets: {},
 					egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
-					websocketBypass: [],
 				},
 			],
 			toolVmProfiles: {

@@ -273,7 +273,6 @@ function buildWorkerWorkRootfsChecks(
 				},
 				secrets: zone.secrets,
 				egressHosts: zone.egressHosts,
-				websocketBypass: zone.websocketBypass,
 			};
 			const vmSpec = buildWorkerVmSpec({
 				controllerPort: systemConfig.host.controllerPort,

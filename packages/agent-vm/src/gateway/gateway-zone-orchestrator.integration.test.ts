@@ -320,7 +320,6 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						host,
 						audience: 'gateway' as const,
 					})),
-					websocketBypass: ['gateway.discord.gg:443'],
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
 				},
@@ -560,7 +559,6 @@ describe('startGatewayZone', () => {
 				},
 				tcpHosts: expect.objectContaining({
 					'controller.vm.host:18800': '127.0.0.1:18800',
-					'gateway.discord.gg:443': 'gateway.discord.gg:443',
 				}),
 				vfsMounts: expect.objectContaining({
 					'/agent-vm/logs': {
@@ -1990,6 +1988,229 @@ describe('startGatewayZone', () => {
 		expect(vmOptions.allowedHosts.filter((host) => host === 'mcp.deepwiki.com')).toHaveLength(1);
 	});
 
+	it('passes websocket upgrade URL policy to the gateway VM request hook', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const managedVm: ManagedVm = {
+			id: 'vm-websocket-policy',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28291),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					egressHosts: [
+						...baseZone.egressHosts,
+						{ audience: 'both', host: 'discord.gg' },
+						{ audience: 'both', host: '*.discord.gg' },
+					],
+					websocketUpgrades: [
+						{
+							audience: 'gateway',
+							scheme: 'wss',
+							host: 'gateway.discord.gg',
+							port: 443,
+							path: '/',
+						},
+						{
+							audience: 'gateway',
+							scheme: 'wss',
+							host: 'gateway-*.discord.gg',
+							port: 443,
+							path: '/',
+						},
+					],
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		const createManagedVmCall = createManagedVm.mock.calls[0];
+		if (!createManagedVmCall) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		const [vmOptions] = createManagedVmCall as [
+			{
+				readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
+			},
+		];
+		expect(vmOptions.onRequest).toEqual(expect.any(Function));
+		const allowedResult = await vmOptions.onRequest?.(
+			new Request('https://gateway-us-east1-c.discord.gg/?v=10&encoding=json', {
+				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+			}),
+		);
+		expect(allowedResult).toBeUndefined();
+		const blockedResult = await vmOptions.onRequest?.(
+			new Request('https://unapproved.discord.gg/?v=10&encoding=json', {
+				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+			}),
+		);
+		expect(blockedResult).toBeInstanceOf(Response);
+		expect((blockedResult as Response).status).toBe(403);
+	});
+
+	it('blocks gateway websocket requests when only Tool VM websocket policy exists', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const managedVm: ManagedVm = {
+			id: 'vm-tool-websocket-policy',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28292),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28292)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					egressHosts: [
+						...baseZone.egressHosts,
+						{ audience: 'tool-vm', host: 'tool-websocket.example.com' },
+					],
+					websocketUpgrades: [
+						{
+							audience: 'tool-vm',
+							scheme: 'wss',
+							host: 'tool-websocket.example.com',
+						},
+					],
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		const createManagedVmCall = createManagedVm.mock.calls[0];
+		if (!createManagedVmCall) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		const [vmOptions] = createManagedVmCall as [
+			{
+				readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
+			},
+		];
+		expect(vmOptions.onRequest).toEqual(expect.any(Function));
+		const blockedResult = await vmOptions.onRequest?.(
+			new Request('https://tool-websocket.example.com/socket', {
+				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+			}),
+		);
+		expect(blockedResult).toBeInstanceOf(Response);
+		expect((blockedResult as Response).status).toBe(403);
+	});
+
+	it('blocks gateway websocket requests when no websocket policy exists', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const managedVm: ManagedVm = {
+			id: 'vm-no-websocket-policy',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28293),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28293)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					egressHosts: [
+						...baseZone.egressHosts,
+						{ audience: 'gateway', host: 'ordinary-websocket.example.com' },
+					],
+					websocketUpgrades: [],
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		const createManagedVmCall = createManagedVm.mock.calls[0];
+		if (!createManagedVmCall) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		const [vmOptions] = createManagedVmCall as [
+			{
+				readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
+			},
+		];
+		expect(vmOptions.onRequest).toEqual(expect.any(Function));
+		const blockedResult = await vmOptions.onRequest?.(
+			new Request('https://ordinary-websocket.example.com/socket', {
+				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+			}),
+		);
+		expect(blockedResult).toBeInstanceOf(Response);
+		expect((blockedResult as Response).status).toBe(403);
+	});
+
 	it('passes stdio MCP Portal http-mediation secrets to the gateway VM as generated mediated secrets', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
@@ -2423,7 +2644,7 @@ describe('startGatewayZone', () => {
 		expect(vmOptions.env).not.toHaveProperty('PERPLEXITY_API_KEY');
 	});
 
-	it('builds tcp hosts with controller and websocket bypass entries', async () => {
+	it('builds tcp hosts with controller and tool VM SSH entries only', async () => {
 		const closeMock = vi.fn(async () => {});
 		const execMock = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
 		const managedVm: ManagedVm = {
@@ -2472,7 +2693,6 @@ describe('startGatewayZone', () => {
 			'tool-2.vm.host:22': '127.0.0.1:19002',
 			'tool-3.vm.host:22': '127.0.0.1:19003',
 			'tool-4.vm.host:22': '127.0.0.1:19004',
-			'gateway.discord.gg:443': 'gateway.discord.gg:443',
 		});
 	});
 

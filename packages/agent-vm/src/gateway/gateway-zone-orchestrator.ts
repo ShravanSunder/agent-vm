@@ -6,6 +6,7 @@ import type {
 	GatewayLifecycle,
 	GatewayZoneConfig,
 } from '@agent-vm/gateway-interface';
+import { createWebSocketUpgradeRequestGuard } from '@agent-vm/gateway-interface';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
@@ -850,6 +851,10 @@ export async function startGatewayZone(
 				memory: zone.gateway.memory,
 				rootfsMode: vmSpec.rootfsMode,
 				...(vmSpec.runtimeRootfsSize ? { runtimeRootfsSize: vmSpec.runtimeRootfsSize } : {}),
+				onRequest: createWebSocketUpgradeRequestGuard({
+					rules: vmSpec.websocketUpgrades ?? [],
+					runtimeAudience: 'gateway',
+				}),
 				secrets: vmSpec.mediatedSecrets,
 				sessionLabel: vmSpec.sessionLabel,
 				tcpHosts,

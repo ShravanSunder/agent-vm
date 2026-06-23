@@ -101,7 +101,6 @@ function createSystemConfig(
 							source: 'environment',
 						},
 					},
-					websocketBypass: [],
 				},
 			],
 		},

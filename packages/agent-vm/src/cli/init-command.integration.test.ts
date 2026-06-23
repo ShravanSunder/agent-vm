@@ -200,7 +200,6 @@ const generatedSystemConfigSchema = z
 						.default({}),
 					agentToolVmProfiles: z.record(z.string(), z.string()).optional(),
 					defaultToolVmProfile: z.string().optional(),
-					websocketBypass: z.array(z.unknown()).optional(),
 				})
 				.passthrough(),
 		]),
@@ -1364,7 +1363,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(egressHosts).not.toContain('cdn.discordapp.com');
 		expect(zone).not.toHaveProperty('allowedHosts');
 		expect(zone).not.toHaveProperty('runtimeAuthHints');
-		expect(zone.websocketBypass).toEqual([]);
+		expect(zone).not.toHaveProperty('websocketBypass');
 	});
 
 	it('scaffolds tool VM support for openclaw gateways', async () => {
@@ -1597,7 +1596,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(egressHosts).toContain('api.openai.com');
 		expect(egressHosts).toContain('mcp.deepwiki.com');
 		expect(egressHosts).not.toContain('discord.com');
-		expect(zone.websocketBypass).toEqual([]);
+		expect(zone).not.toHaveProperty('websocketBypass');
 	});
 
 	it('scaffolds worker runtime auth hints for mediated GitHub operations', async () => {

@@ -149,7 +149,6 @@ describe('smoke: gateway startup secret resolution', () => {
 						},
 					},
 					egressHosts: [{ host: 'api.perplexity.ai', audience: 'gateway' }],
-					websocketBypass: [],
 				},
 			],
 			tcpPool: { basePort: 19000, size: 4 },

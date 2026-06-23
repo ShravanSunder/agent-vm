@@ -429,7 +429,6 @@ const defaultSystemConfig = (
 				? { runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType) }
 				: {}),
 			egressHosts: defaultEgressHostsForGatewayType(gatewayType),
-			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			...(gatewayType === 'openclaw'
 				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {}, agentSandboxSeeds: {} }
 				: {}),
@@ -623,14 +622,6 @@ function defaultEgressHostsForGatewayType(gatewayType: GatewayType): readonly Eg
 		'api.github.com',
 		'registry.npmjs.org',
 	].map((host) => ({ host, audience: 'gateway' }));
-}
-
-function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonly string[] {
-	if (gatewayType === 'worker') {
-		return [];
-	}
-
-	return [];
 }
 
 function envVarsForGatewayType(gatewayType: GatewayType, zoneId: string): readonly string[] {

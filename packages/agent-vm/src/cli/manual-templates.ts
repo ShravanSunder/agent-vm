@@ -42,7 +42,7 @@ Use docs/manual/runtime-paths.md before answering where files appear inside VMs 
 Use docs/manual/per-agent-setup.md before changing multi-agent layouts, OpenClaw scope=agent configuration, or per-agent tool/auth isolation.
 
 Do not assume Discord is enabled by the framework. Channels and channel secrets are deployment-owned.
-Do not silently edit privileged host/deployment config. Explain the proposed Dockerfile, secret, egressHosts, websocketBypass, or OpenClaw config change and wait for the human to ask you to apply it.
+Do not silently edit privileged host/deployment config. Explain the proposed Dockerfile, secret, egressHosts, websocketUpgrades, or OpenClaw config change and wait for the human to ask you to apply it.
 `,
 	);
 }
@@ -305,7 +305,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 
 	Use agent-vm init --openclaw-agents sun,shravan,alevtina to scaffold agents.list entries with per-agent /zone/agents/<id> workspaces.
 
-	Run agent-vm doctor after editing OpenClaw config. Doctor prints a pass/fail summary and warns about missing memory slots, missing plugin load paths, /zone used as an agent workspace, missing writable workspace access, hidden sandbox plugin tools, and configured agents without auth profile material.
+	Run agent-vm validate after editing OpenClaw config or system config. Validate owns static schema and policy shape, including removed fields and WebSocket upgrade policy. Run agent-vm doctor after rebuilding or starting the deployment to check runtime host readiness, plugin paths, memory slots, workspace access, sandbox plugin tools, and configured auth profile material.
 	`,
 			),
 		},
@@ -413,15 +413,15 @@ Discord is configured by the deployment, not by agent-vm defaults.
 To add a channel:
 1. Add the channel config in openclaw.json.
 2. Add required secrets in ${options.systemConfigPath}.
-3. Add egressHosts and websocketBypass entries for the channel endpoints.
-4. Rebuild the gateway image and run agent-vm doctor.
+3. Add egressHosts and any required websocketUpgrades entries for the channel endpoints.
+4. Run agent-vm validate, then rebuild the gateway image and run agent-vm doctor after the deployment is ready.
 
 Discord recipe:
 - Add DISCORD_BOT_TOKEN as a zone secret.
 - Add discord.com, *.discord.com, discord.gg, *.discord.gg, discord.media, *.discord.media, discordapp.com, *.discordapp.com, and *.discordapp.net to egressHosts with audience both.
 - Discord media downloads use OpenClaw's Discord media SSRF policy, not tools.web.fetch.ssrfPolicy. If media logs show blocked URL fetch for cdn.discordapp.com or media.discordapp.net, verify the installed agent-vm version emits ::ffff:198.18.0.1 synthetic AAAA for Gondolin TCP-host VMs before adding broader OpenClaw hostname bypasses.
-- Add exact Discord Gateway hosts such as gateway.discord.gg:443, gateway-us-east1-b.discord.gg:443, gateway-us-east1-c.discord.gg:443, and gateway-us-east1-d.discord.gg:443 to websocketBypass.
-- Do not use wildcard websocketBypass entries for Discord today. websocketBypass compiles to exact Gondolin tcpHosts entries; wildcard Discord coverage belongs in egressHosts until wildcard raw TCP bypass is implemented.
+- Add websocketUpgrades for Discord Gateway WebSockets: allow wss://gateway.discord.gg/ and wss://gateway-*.discord.gg/ for audience gateway.
+- Do not add raw TCP entries for Discord Gateway WebSockets. Use native Gondolin WebSocket upgrades.
 - Enable channels.discord in deployment-owned openclaw.json.
 - Do not add Discord under plugins.allow or plugins.entries.
 - agent-vm build installs @openclaw/discord for managed OpenClaw images when channels.discord is enabled.
@@ -499,7 +499,9 @@ Agent-vm defaults are channel-neutral. Existing Discord deployments keep Discord
 2. Keep Discord enabled under channels.discord in config/gateways/<zone>/openclaw.json.
 3. Keep DISCORD_BOT_TOKEN in ${options.systemConfigPath} zone secrets.
 4. Keep discord.com, *.discord.com, discord.gg, *.discord.gg, discord.media, *.discord.media, discordapp.com, *.discordapp.com, and *.discordapp.net in egressHosts with audience both.
-5. Keep exact Discord Gateway hosts such as gateway.discord.gg:443, gateway-us-east1-b.discord.gg:443, gateway-us-east1-c.discord.gg:443, and gateway-us-east1-d.discord.gg:443 in websocketBypass.
+5. Delete any stale raw WebSocket TCP passthrough field from ${options.systemConfigPath}.
+6. Use websocketUpgrades for wss://gateway.discord.gg/ and wss://gateway-*.discord.gg/. Do not add raw TCP entries for Discord Gateway WebSockets.
+7. Run agent-vm validate before rebuilding or restarting.
 
 Do not reintroduce Discord into agent-vm init defaults. Use this page as the deployment recipe.
 `,

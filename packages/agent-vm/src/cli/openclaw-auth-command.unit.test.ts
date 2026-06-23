@@ -86,7 +86,6 @@ const systemConfig = {
 					audience: 'gateway',
 				},
 			},
-			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 		},

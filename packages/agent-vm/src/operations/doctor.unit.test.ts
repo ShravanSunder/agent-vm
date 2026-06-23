@@ -74,7 +74,6 @@ const systemConfig = {
 				},
 			},
 			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 			agentSandboxSeeds: {
@@ -179,7 +178,6 @@ function createWorkerOnlySystemConfig(): SystemConfig {
 				},
 				secrets: {},
 				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-				websocketBypass: [],
 			},
 		],
 	};

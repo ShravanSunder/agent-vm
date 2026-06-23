@@ -201,7 +201,6 @@ function createTestSystemConfig(): LoadedSystemConfig {
 					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
-					websocketBypass: [],
 				},
 			],
 			toolVmProfiles: {

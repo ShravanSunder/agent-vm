@@ -78,7 +78,6 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
-					websocketBypass: [],
 				},
 			],
 		},

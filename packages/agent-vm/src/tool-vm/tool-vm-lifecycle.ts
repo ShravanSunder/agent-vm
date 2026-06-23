@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import {
 	buildToolSessionLabel,
+	createWebSocketUpgradeRequestGuard,
 	egressHostsForAudience,
 	FORCE_IPV4_EGRESS_NODE_OPTIONS,
 	splitResolvedSecretsByInjection,
@@ -341,6 +342,10 @@ export async function createToolVm(
 			...(options.profile.runtimeRootfsSize
 				? { runtimeRootfsSize: options.profile.runtimeRootfsSize }
 				: {}),
+			onRequest: createWebSocketUpgradeRequestGuard({
+				rules: zone.websocketUpgrades ?? [],
+				runtimeAudience: 'tool-vm',
+			}),
 			sessionLabel: buildToolSessionLabel(
 				options.systemConfig.host.projectNamespace,
 				options.zoneId,

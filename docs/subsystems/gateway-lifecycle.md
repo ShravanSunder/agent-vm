@@ -187,7 +187,6 @@ vfsMounts:
 tcpHosts:
   controller.vm.host:18800           -> 127.0.0.1:<controllerPort>
   tool-N.vm.host:22                  -> 127.0.0.1:<basePort+N>  (per tcpPool)
-  + websocketBypass entries           -> pass-through
 
 rootfsMode: cow
 ```
@@ -275,8 +274,7 @@ tcpHosts:
 rootfsMode: cow
 ```
 
-Worker does not use tcpPool slots or websocket bypass -- it only tunnels to
-the controller.
+Worker does not use tcpPool slots -- it only tunnels to the controller.
 
 ### buildProcessSpec
 

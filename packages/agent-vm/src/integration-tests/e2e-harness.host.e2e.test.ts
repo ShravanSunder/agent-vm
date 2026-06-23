@@ -1136,7 +1136,6 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 						source: 'environment',
 					},
 				},
-				websocketBypass: [],
 			},
 		],
 	};

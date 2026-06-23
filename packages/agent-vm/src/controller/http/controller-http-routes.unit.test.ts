@@ -143,7 +143,6 @@ function createPreparedWorkerTaskStub(
 		},
 		secrets: {},
 		egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
-		websocketBypass: [],
 	};
 	return {
 		taskId,
