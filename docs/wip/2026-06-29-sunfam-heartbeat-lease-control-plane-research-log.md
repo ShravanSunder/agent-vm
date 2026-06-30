@@ -339,6 +339,148 @@ Direct relevance:
    - That explains failed restarts, not every heartbeat/tool failure.
    - Treat it as a compounding recovery failure unless a specific heartbeat run starts during recovery and fails on secret resolution.
 
+## Fresh data pull - 2026-06-30T00:04Z / 2026-06-29T20:04-0400
+
+This pass was run from upstream `agent-vm` branch `sunfam-heartbeat-lease-investigation`.
+
+Stack/query status:
+
+```text
+collector health http://127.0.0.1:13133/ -> Server available
+VictoriaLogs health http://127.0.0.1:9428/health -> OK
+VictoriaMetrics health http://127.0.0.1:8428/health -> OK
+observability-stack status -> no compose rows printed
+```
+
+Interpretation: the local managed OTEL/Victoria endpoints were queryable, but the shared stack helper did not report running compose services. Use query results as data proof, not lifecycle proof.
+
+### VictoriaLogs corroboration
+
+Query window: `2026-06-29T15:15:00Z..2026-06-29T15:45:00Z`.
+
+```text
+agent_vm.zone.id:sunfam agent_vm.health.kind:gateway-control-link agent_vm.health.result:timeout -> 88 rows
+agent_vm.zone.id:sunfam agent_vm.health.kind:gateway-service-health agent_vm.health.result:ok -> 180 rows
+agent_vm.zone.id:sunfam agent_vm.health.kind:tool-vm-ssh agent_vm.health.result:ok -> 21 rows
+lease-use-start -> 0 rows
+```
+
+Direct conclusion: VictoriaLogs confirms the confusing health split. The same window had control-link timeouts, service-health OK rows, and Tool VM SSH OK rows, while `lease-use-start` was not present as a structured Victoria log event.
+
+### Raw controller-health JSONL windows
+
+Source: `~/.agent-vm/runtime/controller-health/events.jsonl`.
+
+```text
+window 2026-06-29T15:15:00Z..2026-06-29T15:45:00Z
+rows: 519
+gateway-control-link timeout controller-health: 88
+gateway-control-link ok controller-health: 228
+gateway-service-health ok: 180
+tool-vm-ssh ok file-bridge: 19
+tool-vm-ssh ok probe: 2
+lease-renew ok: 2
+
+gateway-control-link first line=624014 at 2026-06-29T15:15:04.478Z
+gateway-control-link last  line=624531 at 2026-06-29T15:44:51.870Z
+tool-vm-ssh first        line=624094 at 2026-06-29T15:19:40.109Z
+tool-vm-ssh last         line=624245 at 2026-06-29T15:26:46.753Z
+```
+
+```text
+window 2026-06-29T15:20:00Z..2026-06-29T16:24:00Z
+rows: 1108
+gateway-control-link timeout controller-health: 199
+gateway-control-link ok controller-health: 494
+gateway-service-health ok: 383
+tool-vm-ssh ok file-bridge: 22
+tool-vm-ssh ok finalize: 1
+tool-vm-ssh ok probe: 4
+lease-renew ok: 4
+gateway-recovery failed: 1
+```
+
+```text
+window 2026-06-29T23:30:00Z..2026-06-30T00:05:00Z
+rows: 852
+gateway-control-link timeout controller-health: 78
+gateway-control-link ok controller-health: 560
+gateway-service-health ok: 210
+tool-vm-ssh ok probe: 2
+lease-renew ok: 2
+```
+
+Direct conclusion: the behavior is still present later in the day. Control-link timeouts continue while service health remains OK and occasional SSH probe/renew rows still succeed.
+
+### OpenClaw failure log extraction
+
+Source: `~/.agent-vm/runtime/zones/sunfam/logs/openclaw-2026-06-29.log`.
+
+The daily log contains 15 `lease-use-start controller-request-timeout` rows and no `Controller active-use start API returned HTTP 404` rows for 2026-06-29.
+
+Clean run slice:
+
+```text
+2613  2026-06-29T15:26:04.123Z  session turn created runId=fcb7c3b4-ed07-4003-85fe-7340d3cca897 trigger=heartbeat
+2638  2026-06-29T15:26:11.704Z  embedded run tool start tool=read
+2644  2026-06-29T15:27:12.524Z  tools: read failed stack: lease-use-start controller-request-timeout
+2645  2026-06-29T15:27:12.547Z  read failed raw_params={"path":"memory/heartbeat-state.json"}
+2655  2026-06-29T15:27:17.213Z  embedded run tool start tool=exec
+2658  2026-06-29T15:27:37.507Z  tools: exec failed stack: lease-use-start controller-request-timeout
+2659  2026-06-29T15:27:37.525Z  exec failed raw_params={"command":{"omitted":true,"reason":"exec command may contain credentials"},"workdir":"/workspace","yieldMs":10000,"timeout":15}
+2673  2026-06-29T15:27:44.112Z  embedded run done durationMs=99920 aborted=false
+```
+
+Direct conclusion: for this run the tool requests existed, but both `read` and `exec` failed at active-use start before SSH-backed file/exec work could start.
+
+### Gateway lifecycle recovery data
+
+Source: `~/.agent-vm/runtime/zones/sunfam/gateway-lifecycle/events.jsonl`.
+
+```text
+2026-06-26T15:54:43.716Z line=510 restart-requested auto-recovery
+2026-06-26T15:54:45.713Z line=511 operation-failed auto-recovery errorCode=secret-resolution-failed
+2026-06-26T16:55:44.408Z line=512 restart-requested auto-recovery
+2026-06-26T16:55:46.447Z line=513 operation-failed auto-recovery errorCode=secret-resolution-failed
+2026-06-26T17:56:45.270Z line=514 restart-requested auto-recovery
+2026-06-26T17:57:03.247Z line=520 operation-finished auto-recovery currentGateway.hostPid=26856
+
+2026-06-29T16:16:19.888Z line=574 restart-requested auto-recovery
+2026-06-29T16:16:22.697Z line=575 operation-failed auto-recovery errorCode=secret-resolution-failed
+```
+
+Direct conclusion: secret resolution failure is real recovery evidence, but it is a recovery blocker, not the direct cause of the clean 15:26Z active-use timeout slice.
+
+### Source anchors from upstream agent-vm
+
+```text
+packages/gateway-interface/src/tool-vm-active-use.ts:130-137
+createToolVmActiveUseHandle creates a useId and awaits startActiveUse before scheduling heartbeats or returning the handle.
+
+packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts:462-505
+createActiveUseHandle wraps leaseClient.startActiveUse; runWithActiveUse awaits createActiveUseHandle before executing the SSH/file bridge callback.
+
+packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts:387-405
+startActiveUse POSTs /lease/:leaseId/uses with operation lease-use-start.
+
+packages/gateway-interface/src/health/controller-request-policy.ts:160-198
+fetchWithTimeout converts request timeout into ControllerRequestPolicyTransportError code controller-request-timeout.
+
+packages/gateway-interface/src/health/controller-request-policy.ts:329-336
+lease-use-start timeoutMs is 10000 with retries only for 429/503/504.
+
+packages/agent-vm/src/controller/http/controller-health-event-routes.ts:6-15 and 35-50
+controller-request is an accepted external health event kind, but lease-renew and lease-heartbeat are controller-managed dedicated events.
+
+packages/openclaw-agent-vm-plugin/src/gateway-control-link-monitor.ts:101-155
+gateway-control-link monitor publishes ok/timeout events for controller-health and can itself fail while publishing health events.
+
+packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.ts:79-149
+Tool VM SSH operations publish tool-vm-ssh health events only after SSH-backed work begins.
+```
+
+Direct conclusion: the code has types and routes capable of carrying generic `controller-request` events, and policies enumerate `lease-use-start`, but the current production evidence for `lease-use-start` failures is OpenClaw stack logs, not structured controller-health/Victoria events.
+
 ## Commands used for this appendix
 
 ```text
@@ -353,6 +495,18 @@ nl -ba node_modules/.pnpm/@agent-vm+gateway-interface@0.0.108/node_modules/@agen
 nl -ba node_modules/.pnpm/@agent-vm+openclaw-agent-vm-plugin@0.0.108/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist/index.js
 nl -ba node_modules/@agent-vm/agent-vm/dist/controller/http/controller-http-routes.js
 nl -ba node_modules/@agent-vm/agent-vm/dist/controller/leases/lease-manager.js
+~/dev/ai-tools/observability/observability-stack status
+curl http://127.0.0.1:13133/
+curl http://127.0.0.1:9428/health
+curl http://127.0.0.1:8428/health
+curl http://127.0.0.1:9428/select/logsql/query with bounded time and health-event queries
+python3 one-off read-only parsers for controller-health JSONL, gateway lifecycle JSONL, and OpenClaw daily log
+nl -ba packages/gateway-interface/src/tool-vm-active-use.ts
+nl -ba packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts
+nl -ba packages/gateway-interface/src/health/controller-request-policy.ts
+nl -ba packages/agent-vm/src/controller/http/controller-health-event-routes.ts
+nl -ba packages/openclaw-agent-vm-plugin/src/gateway-control-link-monitor.ts
+nl -ba packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.ts
 ```
 
-The Node snippets were one-off read-only parsers run from repo root. They did not edit runtime state.
+The Node/Python snippets were one-off read-only parsers run from repo root. They did not edit runtime state.
