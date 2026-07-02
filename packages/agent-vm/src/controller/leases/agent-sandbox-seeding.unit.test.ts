@@ -59,7 +59,6 @@ function createOpenClawZone(rootPath: string): SystemConfig['zones'][number] {
 			},
 		},
 		egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-		websocketBypass: [],
 		defaultToolVmProfile: 'standard',
 		agentToolVmProfiles: {},
 		agentSandboxSeeds: {

@@ -189,6 +189,6 @@ export function mapSystemGatewayZoneToLifecycleZone(
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
 		...(zone.mcpPortal === undefined ? {} : { mcpPortal: zone.mcpPortal }),
 		...(observability === undefined ? {} : { observability }),
-		websocketBypass: zone.websocketBypass,
+		...(zone.websocketUpgrades === undefined ? {} : { websocketUpgrades: zone.websocketUpgrades }),
 	};
 }

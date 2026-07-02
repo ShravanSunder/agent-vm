@@ -203,9 +203,10 @@ When `tcpHosts` is provided in `CreateVmOptions`, the adapter configures:
 
 The IPv4-mapped AAAA answer is an SSRF-validation compatibility value, not a
 promise of general guest IPv6 egress. Raw TCP mappings such as
-`controller.vm.host`, `tool-0.vm.host`, and WebSocket bypass hosts still depend
-on the per-host IPv4 answer because Gondolin derives mapped-TCP identity from
-the synthetic IPv4 host map.
+`controller.vm.host` and `tool-0.vm.host` still depend on the per-host IPv4
+answer because Gondolin derives mapped-TCP identity from the synthetic IPv4
+host map. WebSocket traffic uses Gondolin's HTTP upgrade bridge and the
+`websocketUpgrades` policy instead of raw TCP mappings.
 
 `allowedInternalHosts` is a Gondolin HTTP-hook escape hatch, not the fix for
 Discord media SSRF failures. It can relax Gondolin's host-side HTTP internal-IP

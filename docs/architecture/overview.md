@@ -360,7 +360,7 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
 | **authConfig** | Present: `openclaw models auth login` | Absent: no interactive auth |
 | **VFS mounts** | config, cache, state, zone files | state + task gitdirs; `/work/repos` is rootfs/COW |
 | **Environment** | `OPENCLAW_*` vars, `HOME=/home/openclaw` | `CONTROLLER_BASE_URL`, `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
-| **TCP hosts** | Controller + all tool VM slots + websocket bypass | Controller only |
+| **TCP hosts** | Controller + all tool VM slots | Controller only |
 | **Bootstrap** | Write shell/admin profiles, configure bashrc, write runtime secret env files | Conditionally install worker tarball from `/state/` |
 | **Start command** | Source runtime secrets, then run `openclaw gateway --port 18789` | `agent-vm-worker serve --port 18789 --config ...` |
 | **Readiness check** | HTTP GET `:18789/readyz` | HTTP GET `:18789/health` |
@@ -461,7 +461,7 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
        |-- ...up to tcpPool.size
 ```
 
-The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a lease-owned `/workspace` mount for non-zone-git RealFS work. The lease `workMountDir` is a gateway path under a concrete child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the controller resolves it to the host directory backing the Tool VM lease workdir. `/work` stays VM-local rootfs/COW scratch. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. Websocket bypass hosts get direct TCP passthrough (for Discord, etc.).
+The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a lease-owned `/workspace` mount for non-zone-git RealFS work. The lease `workMountDir` is a gateway path under a concrete child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the controller resolves it to the host directory backing the Tool VM lease workdir. `/work` stays VM-local rootfs/COW scratch. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. WebSocket channels use Gondolin's HTTP upgrade bridge and `websocketUpgrades` policy.
 
 ---
 

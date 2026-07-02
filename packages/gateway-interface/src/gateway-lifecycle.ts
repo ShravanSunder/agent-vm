@@ -4,6 +4,7 @@ import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';
+import type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 
 /**
  * Describes how to run interactive auth for a gateway type.
@@ -25,7 +26,18 @@ export interface GatewayAuthConfig {
 		options?: {
 			readonly deviceCode?: boolean;
 			readonly agentId?: string;
-			readonly setDefault?: boolean;
+			readonly profileId?: string;
+		},
+	) => string;
+
+	/**
+	 * Build the shell command for listing provider auth profiles for one agent.
+	 * The CLI uses this after login to verify requested profile IDs exist.
+	 */
+	readonly buildProfileListCommand: (
+		provider: string,
+		options: {
+			readonly agentId: string;
 		},
 	) => string;
 }
@@ -65,6 +77,15 @@ export interface OpenClawGatewayControlAuthConfig {
 	readonly secret: string;
 }
 
+interface OpenClawAuthLoginProviderConfig {
+	readonly profileIds: readonly string[];
+}
+
+interface OpenClawAuthLoginConfig {
+	readonly defaultAgent?: string;
+	readonly providers: Readonly<Record<string, OpenClawAuthLoginProviderConfig>>;
+}
+
 interface GatewayZoneBaseGatewayConfig {
 	readonly type: GatewayType;
 	readonly memory: string;
@@ -94,6 +115,7 @@ interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig 
 			| EnvironmentGatewayAuthProfilesRef
 		>
 	>;
+	readonly authLogin?: OpenClawAuthLoginConfig;
 	readonly rawEnvSecrets?: readonly string[];
 }
 
@@ -173,7 +195,7 @@ export interface GatewayZoneConfig {
 	readonly observability?: GatewayZoneObservabilityConfig;
 	readonly secrets: Readonly<Record<string, GatewaySecretConfig>>;
 	readonly egressHosts: readonly EgressHostConfig[];
-	readonly websocketBypass: readonly string[];
+	readonly websocketUpgrades?: readonly WebSocketUpgradeConfig[];
 	readonly defaultToolVmProfile?: string;
 }
 

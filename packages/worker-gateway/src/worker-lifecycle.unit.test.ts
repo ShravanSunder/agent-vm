@@ -23,7 +23,6 @@ const zone: GatewayZoneConfig = {
 			ref: 'op://vault/item/openai',
 		},
 	},
-	websocketBypass: [],
 };
 
 describe('workerLifecycle', () => {
@@ -54,6 +53,10 @@ describe('workerLifecycle', () => {
 		expect(vmSpec.environment.OPENAI_API_KEY).toBe('openai-token');
 		expect(vmSpec.environment.AGENT_VM_ZONE_ID).toBe('shravan');
 		expect(vmSpec.environment.CONTROLLER_BASE_URL).toBe('http://controller.vm.host:18800');
+		expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
+		expect(vmSpec.environment.PATH).toBe(
+			'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+		);
 		// IPv4-preference egress for the Node controller-client to defeat
 		// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
 		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
@@ -170,11 +173,22 @@ describe('workerLifecycle', () => {
 			OPENAI_API_KEY: 'openai-token',
 		});
 
-		expect(processSpec.bootstrapCommand).toContain('npm install -g --force @openai/codex');
+		expect(processSpec.bootstrapCommand).not.toContain('npm install -g --force @openai/codex');
+		expect(processSpec.bootstrapCommand).not.toContain('npm install');
+		expect(processSpec.bootstrapCommand).toContain('PNPM_HOME=/pnpm');
+		expect(processSpec.bootstrapCommand).toContain('PATH=/pnpm:$PATH');
 		expect(processSpec.bootstrapCommand).toContain('mkdir -p /work/repos /work/tmp');
 		expect(processSpec.bootstrapCommand).toContain('/work/cache/pnpm/store');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker.tgz');
+		expect(processSpec.bootstrapCommand).toContain(
+			'worker_package_root="$(pnpm root -g --silent)"',
+		);
+		expect(processSpec.bootstrapCommand).toContain(
+			'ln -sfn "$worker_bin_target" /pnpm/agent-vm-worker',
+		);
 		expect(processSpec.startCommand).toContain('agent-vm-worker');
+		expect(processSpec.startCommand).toContain('PNPM_HOME=/pnpm');
+		expect(processSpec.startCommand).toContain('PATH=/pnpm:$PATH');
 		expect(processSpec.startCommand).toContain('cd /work');
 		expect(processSpec.startCommand).toContain('serve --port 18789');
 		expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/health' });

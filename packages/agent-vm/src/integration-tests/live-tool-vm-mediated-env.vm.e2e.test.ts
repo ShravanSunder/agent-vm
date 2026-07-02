@@ -121,7 +121,6 @@ async function createMediatedEnvSystemConfig(
 							audience: 'gateway',
 						},
 					},
-					websocketBypass: [],
 				},
 			],
 		},

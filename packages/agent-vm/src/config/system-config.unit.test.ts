@@ -27,6 +27,7 @@ interface ValidSystemConfigZoneInput {
 	secrets: Record<string, unknown>;
 	runtimeAuthHints?: unknown;
 	egressHosts?: readonly { readonly host: string; readonly audience: string }[];
+	websocketUpgrades?: readonly Record<string, unknown>[];
 	allowedHosts?: unknown;
 	defaultToolVmProfile?: string;
 	agentToolVmProfiles?: Record<string, string>;
@@ -1522,6 +1523,89 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/audience/u);
 	});
 
+	test('loads websocket upgrade URL policy from zone config', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			{ host: 'discord.gg', audience: 'both' },
+			{ host: '*.discord.gg', audience: 'both' },
+		];
+		zone.websocketUpgrades = [
+			{
+				audience: 'gateway',
+				scheme: 'wss',
+				host: 'gateway.discord.gg',
+				port: 443,
+				path: '/',
+			},
+			{
+				audience: 'gateway',
+				scheme: 'wss',
+				host: 'gateway-*.discord.gg',
+				port: 443,
+				path: '/',
+			},
+		];
+
+		expect(parseSystemConfigInputForTest(config).zones[0]?.websocketUpgrades).toEqual(
+			zone.websocketUpgrades,
+		);
+	});
+
+	test('rejects websocket upgrade hosts missing from egress hosts', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		zone.websocketUpgrades = [
+			{
+				audience: 'gateway',
+				scheme: 'wss',
+				host: 'gateway.discord.gg',
+			},
+		];
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/websocket upgrade host 'gateway\.discord\.gg' must be declared in egressHosts/u,
+		);
+	});
+
+	test('rejects websocket upgrade hosts declared for the wrong egress audience', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'gateway.discord.gg', audience: 'tool-vm' }];
+		zone.websocketUpgrades = [
+			{
+				audience: 'gateway',
+				scheme: 'wss',
+				host: 'gateway.discord.gg',
+			},
+		];
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/audience 'gateway'/u);
+	});
+
+	test('rejects websocket upgrade hosts with audience both unless both runtime audiences have egress', () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'shared-websocket.example.com', audience: 'gateway' }];
+		zone.websocketUpgrades = [
+			{
+				audience: 'both',
+				scheme: 'wss',
+				host: 'shared-websocket.example.com',
+			},
+		];
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/audience 'both'/u);
+	});
+
+	test('rejects removed websocketBypass zone config', () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].websocketBypass = ['gateway.discord.gg:443'];
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/websocketBypass/u);
+	});
+
 	test('rejects zone secrets without audience', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
@@ -2399,6 +2483,48 @@ describe('loadSystemConfig', () => {
 								mode: 0o600,
 							},
 						],
+					},
+				},
+			],
+		});
+	});
+
+	test('loads OpenClaw auth login profile configuration', async () => {
+		const config = createValidSystemConfigInput();
+		if (config.zones[0].gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw fixture zone');
+		}
+		config.zones[0].gateway.authLogin = {
+			defaultAgent: 'main',
+			providers: {
+				openai: {
+					profileIds: [
+						'openai-codex:matches_copse_0i@icloud.com',
+						'openai-codex:shravan.sunder.dev@gmail.com',
+					],
+				},
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-auth-login-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				{
+					gateway: {
+						authLogin: {
+							defaultAgent: 'main',
+							providers: {
+								openai: {
+									profileIds: [
+										'openai-codex:matches_copse_0i@icloud.com',
+										'openai-codex:shravan.sunder.dev@gmail.com',
+									],
+								},
+							},
+						},
 					},
 				},
 			],

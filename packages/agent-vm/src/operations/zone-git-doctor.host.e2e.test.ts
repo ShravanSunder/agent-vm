@@ -76,7 +76,6 @@ function createSystemConfig(options: {
 				},
 				id: 'sunfam',
 				secrets: {},
-				websocketBypass: [],
 			},
 		],
 	};

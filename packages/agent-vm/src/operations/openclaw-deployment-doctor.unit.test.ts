@@ -101,7 +101,6 @@ function createSystemConfig(
 							source: 'environment',
 						},
 					},
-					websocketBypass: [],
 				},
 			],
 		},
@@ -222,13 +221,20 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		});
 	});
 
-	it('flags OpenAI provider configs that do not explicitly use pi runtime', () => {
+	it('flags OpenAI provider configs that do not pin the default model to OpenClaw runtime', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				configuredAuthProfileAgentIds: [],
 				runtimeMaterializesPortalEndpoints: true,
 				zoneId: 'shravan',
 				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+					},
 					models: {
 						providers: {
 							openai: {
@@ -262,23 +268,27 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-openai-provider-runtime-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Set models.providers.openai.agentRuntime.id="pi" so OpenAI API-key models do not get claimed by the Codex OAuth runtime.',
+			hint: 'Set agents.defaults.models["openai/gpt-5.5"].agentRuntime.id="openclaw" so OpenAI API-key models use the OpenClaw runtime.',
 		});
 	});
 
-	it('accepts OpenAI provider configs that explicitly use pi runtime', () => {
+	it('accepts OpenAI models pinned to OpenClaw runtime', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				configuredAuthProfileAgentIds: [],
 				runtimeMaterializesPortalEndpoints: true,
 				zoneId: 'shravan',
 				config: {
-					models: {
-						providers: {
-							openai: {
-								apiKey: { provider: 'default', id: 'OPENAI_API_KEY' },
-								agentRuntime: { id: 'pi' },
+					agents: {
+						defaults: {
+							model: { primary: 'openai/gpt-5.5' },
+							models: {
+								'openai/gpt-5.5': {
+									agentRuntime: { id: 'openclaw' },
+								},
 							},
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
 						},
 					},
 				},
@@ -873,6 +883,44 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		});
 	});
 
+	it('uses OpenClaw provider auth hints for OpenAI models pinned to OpenClaw runtime', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				configuredCodexHarnessAuthAgentIds: ['shravan'],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai/gpt-5.5' },
+							models: {
+								'openai/gpt-5.5': {
+									agentRuntime: { id: 'openclaw' },
+								},
+							},
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }, { id: 'shravan' }],
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
+			hint: 'OpenClaw auth profile configured for agent sun',
+		});
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Run agent-vm auth openclaw openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+		});
+	});
+
 	it('prefers OpenClaw auth profile hints when both auth profile and Codex harness auth exist', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
@@ -971,7 +1019,69 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		);
 	});
 
-	it('does not emit auth profile checks when agents.list is missing or empty', () => {
+	it('flags missing default OpenClaw provider auth when agents.list is missing or empty', () => {
+		for (const list of [undefined, []] as const) {
+			const checks = buildOpenClawDeploymentDoctorChecks([
+				{
+					zoneId: 'shravan',
+					config: {
+						agents: {
+							defaults: {
+								model: { primary: 'openai/gpt-5.5' },
+								models: {
+									'openai/gpt-5.5': { agentRuntime: { id: 'openclaw' } },
+								},
+								sandbox: openClawToolVmSandbox,
+								workspace: '/zone/agents/default',
+							},
+							...(list === undefined ? {} : { list }),
+						},
+					},
+				},
+			]);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-default'),
+			).toMatchObject({
+				ok: false,
+				hint: 'Run agent-vm auth openclaw openai --zone shravan for the default OpenClaw auth profile.',
+			});
+		}
+	});
+
+	it('uses provider-level OpenClaw runtime fallback for auth profile checks', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'shravan' }],
+					},
+					models: {
+						providers: {
+							openai: {
+								agentRuntime: { id: 'openclaw' },
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Run agent-vm auth openclaw openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+		});
+	});
+
+	it('does not emit auth profile checks for Codex harness defaults when agents.list is missing or empty', () => {
 		for (const list of [undefined, []] as const) {
 			const checks = buildOpenClawDeploymentDoctorChecks([
 				{

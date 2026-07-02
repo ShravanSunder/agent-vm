@@ -16,6 +16,9 @@ agent-vm validate --config config/system.jsonc
 It checks:
 
 - `system.jsonc` / `system.json` schema and cross-field validation.
+- Removed config fields fail at schema load time. Delete stale raw WebSocket
+  TCP passthrough config and declare native `websocketUpgrades` plus matching
+  `egressHosts` instead.
 - Gateway and tool VM image recipe files exist.
 - OpenClaw Tool VM profile mappings reference existing `toolVmProfiles`.
 - Schema load rejects OpenClaw Tool VM-reaching mediated secrets unless they
@@ -39,6 +42,11 @@ It checks:
 
 Use `validate` after editing config, prompts, scaffold files, or image recipe
 paths.
+
+For Discord and other WebSocket channels, `validate` owns static policy shape:
+the broad destination belongs in `egressHosts`, and the native upgrade policy
+belongs in `websocketUpgrades`. Runtime raw TCP slots are internal VM plumbing;
+deployment configs should not carry a raw WebSocket TCP passthrough field.
 
 Use `agent-vm validate --config config/system.jsonc --mcp-live` after changing
 MCP providers, provider secrets, or MCP Portal profile tool names. The live MCP
@@ -103,7 +111,7 @@ For OpenClaw-backed local configs, keep OpenClaw loosely coupled by installing
 it in the catalog rather than inside `@agent-vm/agent-vm`:
 
 ```bash
-pnpm add -D openclaw@2026.6.5
+pnpm add -D openclaw@2026.6.8
 ```
 
 When you run `pnpm doctor`, pnpm places `node_modules/.bin` on `PATH`, so

@@ -2,18 +2,27 @@
 	"schemaVersion": 1,
 	"baseImages": {
 		"openclaw-gateway": {
+			"packageOverrides": {
+				"openclaw": ["openclaw@2026.6.8", "@openclaw/codex@2026.6.8"],
+				"npm": ["@openai/codex@0.139.0"],
+				"pnpm": {
+					"undici": "8.5.0"
+				}
+			},
 			"repository": "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base",
 			"tag": "2026.05.27.1"
 		},
 		"worker-gateway": {
+			"packageOverrides": {
+				"npm": ["@openai/codex@0.139.0"]
+			},
 			"repository": "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base",
 			"tag": "2026.05.27.1"
 		},
 		"tool-vm": {
+			"packageOverrides": {},
 			"repository": "ghcr.io/shravansunder/agent-vm-managed-tool-vm-base",
 			"tag": "2026.05.27.1"
 		}
-	},
-	"openClawVersion": "2026.5.20",
-	"openAiCodexCliVersion": "0.134.0"
+	}
 }

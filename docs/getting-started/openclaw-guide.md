@@ -60,7 +60,6 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       { "host": "chatgpt.com", "audience": "both" },
       { "host": "generativelanguage.googleapis.com", "audience": "both" }
     ],
-    "websocketBypass": [],
     "defaultToolVmProfile": "standard",
     "agentToolVmProfiles": {}
   }]
@@ -81,6 +80,13 @@ Controls the OpenClaw agent platform: model selection, sandbox mode, plugin regi
 managed base image tags. Deployment overlays own extra runtime packages such as
 `openclaw@...` or `@openclaw/discord@...`.
 
+OpenClaw transitive runtime dependency fixes are agent-vm-managed release
+decisions, not deployment overlay fields. When a managed release carries one,
+`agent-vm build` prints it in the generated Dockerfile plan, for example
+`overrides undici@8.5.0[managed-images.json]`. Rebuild the managed image and
+verify the generated image resolves the managed patch from `openclaw` and any
+installed `@openclaw/*` packages.
+
 During `agent-vm build`, the generated Dockerfile is written under the
 configured cache directory and the build output prints the resolved base image,
 agent-vm OpenClaw plugin package, OpenClaw runtime packages, and the source of
@@ -90,7 +96,7 @@ versions in `package.json` and runtime image additions in the overlay.
 For host-side validation, install the same OpenClaw version in the catalog:
 
 ```bash
-pnpm add -D openclaw@2026.6.5
+pnpm add -D openclaw@2026.6.8
 ```
 
 `agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`
@@ -102,6 +108,42 @@ version for host-side validation, and agent-vm validates against that choice.
 Auth profiles (OAuth tokens for model providers) are resolved per agent from
 `gateway.authProfilesByAgent` and written to that agent's host-side state
 directory before the VM boots. The VM accesses them via VFS mount.
+
+For interactive OpenClaw provider login, configure the profile ids the helper
+should refresh:
+
+```jsonc
+{
+  "gateway": {
+    "type": "openclaw",
+    "authLogin": {
+      "defaultAgent": "main",
+      "providers": {
+        "openai": {
+          "profileIds": [
+            "openai-codex:work@example.com",
+            "openai-codex:personal@example.com"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+Then run:
+
+```bash
+agent-vm auth openclaw login openai \
+  --zone my-openclaw \
+  --all-configured-profiles \
+  --device-code
+```
+
+The helper logs in each configured profile for `gateway.authLogin.defaultAgent`
+and verifies the profile ids afterward. Use `--agent <agentId>` with one or more
+`--profile-id <profileId>` values for one-off profile creation, and `--dry-run`
+to inspect the resolved plan without opening SSH.
 
 See [subsystems/secrets-and-credentials.md](../subsystems/secrets-and-credentials.md#auth-profiles) for the full flow.
 
@@ -217,7 +259,7 @@ reply delivery, and can see optional plugin-owned tools such as MCP Portal's
 
 Discord is a deployment recipe, not an agent-vm framework default. To enable
 Discord, configure `channels.discord` in OpenClaw config, then add
-`DISCORD_BOT_TOKEN`, Discord hosts, and the Discord gateway websocket bypass to
+`DISCORD_BOT_TOKEN`, Discord hosts, and Discord Gateway websocket upgrades to
 `system.jsonc`. Managed OpenClaw images install `@openclaw/discord`
 automatically when `channels.discord.enabled` is true.
 
@@ -242,18 +284,28 @@ automatically when `channels.discord.enabled` is true.
     { "host": "*.discordapp.com", "audience": "both" },
     { "host": "*.discordapp.net", "audience": "both" }
   ],
-  "websocketBypass": [
-    "gateway.discord.gg:443",
-    "gateway-us-east1-b.discord.gg:443",
-    "gateway-us-east1-c.discord.gg:443",
-    "gateway-us-east1-d.discord.gg:443"
+  "websocketUpgrades": [
+    {
+      "audience": "gateway",
+      "scheme": "wss",
+      "host": "gateway.discord.gg",
+      "port": 443,
+      "path": "/"
+    },
+    {
+      "audience": "gateway",
+      "scheme": "wss",
+      "host": "gateway-*.discord.gg",
+      "port": 443,
+      "path": "/"
+    }
   ]
 }
 ```
 
 Other channels follow the same deployment-owned pattern: install or bake the
 plugin, enable it in `openclaw.json`, add secrets, allow required HTTP hosts,
-and add websocket bypass hosts only when the channel needs raw WebSocket access.
+and add websocket upgrade rules when the channel opens WebSocket connections.
 
 ---
 
@@ -280,8 +332,9 @@ agent-vm controller logs --zone my-openclaw
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Doctor reports `openclaw-agent-auth-profile-*` failing | Auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
+| Doctor reports `openclaw-agent-auth-profile-*` failing for scaffolded `openai/gpt-5.5` | OpenClaw provider auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or refresh configured OpenClaw profiles with `agent-vm auth openclaw login openai --zone <id> --all-configured-profiles` |
+| Doctor reports native Codex-runtime auth failing | Codex harness auth material missing | Run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
-| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, broad Discord egress hosts, and exact Discord Gateway `websocketBypass` hosts |
+| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, broad Discord egress hosts, and Discord Gateway `websocketUpgrades` |
 | Can't reach external API | Host not allowlisted | Add to `zones[].egressHosts` with the needed audience |

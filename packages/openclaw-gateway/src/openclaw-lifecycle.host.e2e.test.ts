@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import {
 	access,
+	chmod,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -23,6 +24,11 @@ import { openclawLifecycle } from './openclaw-lifecycle.js';
 const createdDirectories: string[] = [];
 const execFileAsync = promisify(execFile);
 type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
+type ExecFileError = Error & {
+	readonly code?: number | string;
+	readonly killed?: boolean;
+	readonly signal?: NodeJS.Signals | null;
+};
 
 async function pathExists(filePath: string): Promise<boolean> {
 	try {
@@ -47,8 +53,49 @@ async function renderBootstrapFiles(
 	await execFileAsync('sh', ['-lc', rootedCommand], { env });
 }
 
+function renderStartCommandForHost(
+	command: string,
+	props: {
+		readonly fakeOpenClawPath: string;
+		readonly rootDirectory: string;
+	},
+): string {
+	return command
+		.replaceAll('/usr/local/bin/openclaw', props.fakeOpenClawPath)
+		.replaceAll('/run/openclaw', path.join(props.rootDirectory, 'run', 'openclaw'))
+		.replaceAll('/agent-vm/logs', path.join(props.rootDirectory, 'agent-vm', 'logs'))
+		.replaceAll('/home/openclaw', path.join(props.rootDirectory, 'home', 'openclaw'))
+		.replace('nohup sh -c', 'sh -c')
+		.replace(/ &$/u, '');
+}
+
 function shellQuoteForTest(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
+function buildExpectedOpenClawGatewaySupervisorScriptForTest(): string {
+	return [
+		'restart_delay_seconds="${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS:-5}"',
+		'restart_window_seconds="${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS:-60}"',
+		'max_restarts="${AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS:-6}"',
+		'attempt=0',
+		'failure_count=0',
+		'first_failure_at=0',
+		'while true',
+		'do attempt=$((attempt + 1))',
+		'printf "gateway-supervisor: starting openclaw gateway attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
+		'set -a',
+		'if ! . /run/openclaw/secrets.env; then printf "gateway-supervisor: failed to source runtime secrets attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; exit 1; fi',
+		'set +a',
+		'/usr/local/bin/openclaw gateway --port 18789',
+		'exit_code=$?',
+		'now=$(date -u +%s)',
+		'if [ "$first_failure_at" -eq 0 ] || [ $((now - first_failure_at)) -gt "$restart_window_seconds" ]; then first_failure_at=$now; failure_count=1; else failure_count=$((failure_count + 1)); fi',
+		'printf "gateway-supervisor: openclaw gateway exited attempt=%s exit_code=%s failure_count=%s window_seconds=%s at=%s\\n" "$attempt" "$exit_code" "$failure_count" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
+		'if [ "$failure_count" -ge "$max_restarts" ]; then printf "gateway-supervisor: restart limit exceeded failure_count=%s max_restarts=%s window_seconds=%s at=%s\\n" "$failure_count" "$max_restarts" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if [ "$exit_code" -eq 0 ]; then exit 1; fi; exit "$exit_code"; fi',
+		'sleep "$restart_delay_seconds"',
+		'done',
+	].join('; ');
 }
 
 async function captureThrownError(promise: Promise<unknown> | undefined): Promise<Error> {
@@ -102,6 +149,7 @@ function createZone(overrides?: {
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly withoutAuthProfilesRef?: boolean;
 	readonly secrets?: GatewayZoneConfig['secrets'];
+	readonly websocketUpgrades?: GatewayZoneConfig['websocketUpgrades'];
 }): GatewayZoneConfig {
 	const baseGateway: OpenClawGatewayConfig = {
 		controlAuth: {
@@ -169,7 +217,7 @@ function createZone(overrides?: {
 			? { runtimePluginConfigs: overrides.runtimePluginConfigs }
 			: {}),
 		...(overrides?.runtimeMcpServers ? { runtimeMcpServers: overrides.runtimeMcpServers } : {}),
-		websocketBypass: ['gateway.discord.gg:443'],
+		websocketUpgrades: overrides?.websocketUpgrades ?? [],
 	};
 }
 
@@ -370,12 +418,24 @@ describe('openclawLifecycle', () => {
 			expect(
 				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
 					agentId: 'shravan',
-					deviceCode: true,
-					setDefault: true,
+					profileId: 'openai-codex:shravan@example.com',
 				}),
 			).toBe(
-				"openclaw models auth --agent 'shravan' login --provider 'openai-codex' --device-code --set-default",
+				"openclaw models auth --agent 'shravan' login --provider 'openai-codex' --profile-id 'openai-codex:shravan@example.com'",
 			);
+			expect(
+				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
+					agentId: 'shravan',
+					deviceCode: true,
+				}),
+			).toBe(
+				"openclaw models auth --agent 'shravan' login --provider 'openai-codex' --device-code",
+			);
+			expect(
+				openclawLifecycle.authConfig?.buildProfileListCommand('openai-codex', {
+					agentId: 'shravan',
+				}),
+			).toBe("openclaw models auth --agent 'shravan' list --provider 'openai-codex'");
 		});
 
 		it('shell-quotes provider values safely', () => {
@@ -602,7 +662,6 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.vfsMounts['/var/lib/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
 				'controller.vm.host:18800': '127.0.0.1:18800',
-				'gateway.discord.gg:443': 'gateway.discord.gg:443',
 				'tool-0.vm.host:22': '127.0.0.1:19000',
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
@@ -634,6 +693,40 @@ describe('openclawLifecycle', () => {
 				'api.openai.com',
 				'api.perplexity.ai',
 			]);
+		});
+
+		it('carries websocket upgrade URL policy into the gateway VM spec', () => {
+			const websocketUpgrades = [
+				{
+					audience: 'gateway' as const,
+					scheme: 'wss' as const,
+					host: 'gateway.discord.gg',
+					port: 443,
+					path: '/',
+				},
+				{
+					audience: 'gateway' as const,
+					scheme: 'wss' as const,
+					host: 'gateway-*.discord.gg',
+					port: 443,
+					path: '/',
+				},
+			];
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone({ websocketUpgrades }),
+			});
+
+			expect(vmSpec.websocketUpgrades).toEqual(websocketUpgrades);
 		});
 
 		it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
@@ -724,6 +817,19 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain(
+				`nohup sh -c ${shellQuoteForTest(buildExpectedOpenClawGatewaySupervisorScriptForTest())}`,
+			);
+			expect(processSpec.startCommand).toContain(
+				'gateway-supervisor: starting openclaw gateway attempt=',
+			);
+			expect(processSpec.startCommand).toContain(
+				'gateway-supervisor: openclaw gateway exited attempt=',
+			);
+			expect(processSpec.startCommand).toContain(
+				'gateway-supervisor: restart limit exceeded failure_count=',
+			);
+			expect(processSpec.startCommand).toContain('sleep "$restart_delay_seconds"');
+			expect(processSpec.startCommand).not.toContain(
 				'nohup /usr/local/bin/openclaw gateway --port 18789',
 			);
 			expect(processSpec.startCommand).toContain('> /agent-vm/logs/gateway-boot-latest.log 2>&1');
@@ -733,6 +839,62 @@ describe('openclawLifecycle', () => {
 				path: '/readyz',
 			});
 			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
+		});
+
+		it('fails hard after a bounded fast crash loop so controller recovery can escalate', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-supervisor-crash-loop-'),
+			);
+			createdDirectories.push(tempDirectory);
+			await mkdir(path.join(tempDirectory, 'run', 'openclaw'), { recursive: true });
+			await mkdir(path.join(tempDirectory, 'agent-vm', 'logs'), { recursive: true });
+			await mkdir(path.join(tempDirectory, 'home', 'openclaw'), { recursive: true });
+			const fakeOpenClawPath = path.join(tempDirectory, 'fake-openclaw');
+			const attemptsLogPath = path.join(tempDirectory, 'fake-openclaw-attempts.log');
+			await writeFile(
+				fakeOpenClawPath,
+				['#!/bin/sh', 'printf "attempt\\n" >> "$FAKE_OPENCLAW_ATTEMPTS_LOG"', 'exit 42'].join('\n'),
+				'utf8',
+			);
+			await chmod(fakeOpenClawPath, 0o700);
+			await writeFile(
+				path.join(tempDirectory, 'run', 'openclaw', 'secrets.env'),
+				['NODE_OPTIONS=--dns-result-order=ipv4first', 'OPENCLAW_GATEWAY_TOKEN=test-token'].join(
+					'\n',
+				),
+				'utf8',
+			);
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
+			const foregroundStartCommand = renderStartCommandForHost(processSpec.startCommand, {
+				fakeOpenClawPath,
+				rootDirectory: tempDirectory,
+			});
+
+			const supervisorExit = (await captureThrownError(
+				execFileAsync('sh', ['-lc', foregroundStartCommand], {
+					env: {
+						...process.env,
+						AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS: '3',
+						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS: '0',
+						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS: '60',
+						FAKE_OPENCLAW_ATTEMPTS_LOG: attemptsLogPath,
+					},
+					timeout: 5_000,
+				}),
+			)) as ExecFileError;
+			expect(supervisorExit.code).toBe(42);
+			expect(supervisorExit.killed).not.toBe(true);
+			expect(supervisorExit.signal).toBeNull();
+
+			const attemptsLog = await readFile(attemptsLogPath, 'utf8');
+			expect(attemptsLog.trim().split('\n')).toHaveLength(3);
+			const bootLog = await readFile(
+				path.join(tempDirectory, 'agent-vm', 'logs', 'gateway-boot-latest.log'),
+				'utf8',
+			);
+			expect(bootLog).toContain(
+				'gateway-supervisor: restart limit exceeded failure_count=3 max_restarts=3',
+			);
 		});
 
 		it('refreshes the managed diagnostics-otel registry before observable gateway startup', () => {

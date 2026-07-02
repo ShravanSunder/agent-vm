@@ -11,26 +11,64 @@ import {
 	resolveManagedOpenClawAgentVmPluginPackageSpec,
 } from './managed-image-dockerfile.js';
 
-const managedOpenClawVersion = '2026.5.20';
+const managedOpenClawVersion = '2026.6.8';
+const managedOpenAiCodexCliVersion = '0.139.0';
+const managedDockerfileForbiddenSecretPattern =
+	/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u;
+
+function expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile: string): void {
+	expect(generatedDockerfile).not.toMatch(managedDockerfileForbiddenSecretPattern);
+}
+
+function expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile: string): void {
+	const githubCliKeyringPath = '/usr/share/keyrings/githubcli-archive-keyring.gpg';
+	const githubCliSource = 'https://cli.github.com/packages stable main';
+	const sourceIndex = generatedDockerfile.indexOf(githubCliSource);
+	const installIndex = generatedDockerfile.indexOf('apt-get install -y --no-install-recommends gh');
+
+	expect(generatedDockerfile).toContain(
+		'https://cli.github.com/packages/githubcli-archive-keyring.gpg',
+	);
+	expect(generatedDockerfile).toContain(`signed-by=${githubCliKeyringPath}`);
+	expect(generatedDockerfile).toContain(githubCliSource);
+	expect(sourceIndex).toBeGreaterThan(-1);
+	expect(installIndex).toBeGreaterThan(sourceIndex);
+}
 
 function createTestManagedImageRelease(): ManagedImageRelease {
 	return {
 		baseImages: {
 			'openclaw-gateway': {
+				packageOverrides: {
+					npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
+					openclaw: [
+						`openclaw@${managedOpenClawVersion}`,
+						`@openclaw/codex@${managedOpenClawVersion}`,
+					],
+					pnpm: { undici: '8.5.0' },
+				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
 				tag: '2026.05.27.1',
 			},
 			'worker-gateway': {
+				packageOverrides: {
+					npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
+					openclaw: [],
+					pnpm: {},
+				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
 				tag: '2026.05.27.1',
 			},
 			'tool-vm': {
+				packageOverrides: {
+					npm: [],
+					openclaw: [],
+					pnpm: {},
+				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
 				tag: '2026.05.27.1',
 			},
 		},
-		openAiCodexCliVersion: '0.134.0',
-		openClawVersion: managedOpenClawVersion,
 	};
 }
 
@@ -38,21 +76,68 @@ describe('managed image release', () => {
 	it('keeps managed image tags separate from npm package versions', async () => {
 		const release = await resolveManagedImageRelease();
 
-		expect(release.baseImages['openclaw-gateway']).toEqual({
+		expect(release.baseImages['openclaw-gateway']).toMatchObject({
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
+			packageOverrides: {
+				npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
+				openclaw: [
+					`openclaw@${managedOpenClawVersion}`,
+					`@openclaw/codex@${managedOpenClawVersion}`,
+				],
+				pnpm: { undici: '8.5.0' },
+			},
 			tag: '2026.05.27.1',
 		});
-		expect(release.baseImages['worker-gateway']).toEqual({
+		expect(release.baseImages['worker-gateway']).toMatchObject({
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
+			packageOverrides: {
+				npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
+			},
 			tag: '2026.05.27.1',
 		});
-		expect(release.baseImages['tool-vm']).toEqual({
+		expect(release.baseImages['tool-vm']).toMatchObject({
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
 			tag: '2026.05.27.1',
 		});
-		expect(release.openClawVersion).toBe(managedOpenClawVersion);
-		expect(release.openAiCodexCliVersion).toBe('0.134.0');
+		expect(release).not.toHaveProperty('openClawVersion');
+		expect(release).not.toHaveProperty('openAiCodexCliVersion');
+		expect(release).not.toHaveProperty('openClawRuntimeDependencyPatches');
 		expect(release.baseImages['tool-vm'].tag).not.toMatch(/^0\.0\.\d+$/u);
+	});
+
+	it('keeps repo-local OpenClaw validation examples aligned with the managed release', async () => {
+		const release = await resolveManagedImageRelease();
+		const openClawPackageSpec = release.baseImages['openclaw-gateway'].packageOverrides.openclaw.find(
+			(packageSpecValue) => packageSpecValue.startsWith('openclaw@'),
+		);
+		expect(openClawPackageSpec).toBe(`openclaw@${managedOpenClawVersion}`);
+		const expectedOpenClawPackageSpec = openClawPackageSpec ?? '';
+		const pluginPackageJson = JSON.parse(
+			await fs.readFile(
+				new URL('../../../openclaw-mcp-portal-plugin/package.json', import.meta.url),
+				'utf8',
+			),
+		) as { readonly devDependencies?: Record<string, string> };
+		const gettingStartedGuide = await fs.readFile(
+			new URL('../../../../docs/getting-started/openclaw-guide.md', import.meta.url),
+			'utf8',
+		);
+		const validateAndDoctorReference = await fs.readFile(
+			new URL('../../../../docs/reference/validate-and-doctor.md', import.meta.url),
+			'utf8',
+		);
+		const manualTemplates = await fs.readFile(
+			new URL('../cli/manual-templates.ts', import.meta.url),
+			'utf8',
+		);
+
+		expect(pluginPackageJson.devDependencies?.openclaw).toBe(managedOpenClawVersion);
+		expect(gettingStartedGuide).toContain(`pnpm add -D ${expectedOpenClawPackageSpec}`);
+		expect(validateAndDoctorReference).toContain(`pnpm add -D ${expectedOpenClawPackageSpec}`);
+		expect(manualTemplates).toContain('Do not restate the managed default package set');
+		expect(manualTemplates).not.toContain(
+			`openClawPackageOverrides only for explicit OpenClaw runtime package pins such as ${expectedOpenClawPackageSpec}`,
+		);
 	});
 
 	it('does not carry the OpenClaw plugin npm version in the managed image release', async () => {
@@ -116,7 +201,7 @@ describe('managed image release', () => {
 			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.27.1 AS openclaw-runtime',
 		);
 		const openClawInstallIndex = generatedDockerfile.indexOf(
-			`RUN pnpm add -g "openclaw@${managedOpenClawVersion}" "@openclaw/codex@${managedOpenClawVersion}" "@openclaw/discord@${managedOpenClawVersion}" "@openclaw/diagnostics-otel@${managedOpenClawVersion}"`,
+			'WORKDIR /opt/openclaw-runtime-packages',
 		);
 		const openClawPostinstallIndex = generatedDockerfile.indexOf(
 			'(cd "$openclaw_package_root" && node scripts/postinstall-bundled-plugins.mjs)',
@@ -144,17 +229,18 @@ describe('managed image release', () => {
 				'{',
 				'  "schemaVersion": 1,',
 				'  "extraAptPackages": [],',
-				'  "openClawPackageOverrides": [',
-				'    "openclaw@2026.5.7",',
-				'    "@openclaw/discord@2026.5.7"',
-				'  ],',
+				'  "packageOverrides": {',
+				'    "openclaw": [',
+				'      "openclaw@2026.5.7",',
+				'      "@openclaw/discord@2026.5.7"',
+				'    ]',
+				'  },',
 				'  "runAfterBase": []',
 				'}',
 				'',
 			].join('\n'),
 			'utf8',
 		);
-
 		const result = await generateManagedDockerfile({
 			base: 'openclaw-gateway',
 			imageTargetFamily: 'gateway',
@@ -174,10 +260,10 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@');
 		expect(generatedDockerfile).toContain('"@agent-vm/openclaw-mcp-portal-plugin@');
 		expect(generatedDockerfile).toContain('"@agent-vm/mcp-portal@');
-		expect(generatedDockerfile).toContain(
-			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/discord@2026.5.7" "@openclaw/codex@2026.5.7"',
-		);
-		expect(generatedDockerfile).toContain('"@openai/codex@0.134.0"');
+		expect(generatedDockerfile).toContain('"openclaw": "2026.5.7"');
+		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.5.7"');
+		expect(generatedDockerfile).toContain(`"@openai/codex@${managedOpenAiCodexCliVersion}"`);
 		expect(generatedDockerfile).toContain('openclaw doctor --fix --non-interactive');
 		expect(generatedDockerfile).toContain('/opt/openclaw-sdk/sandbox.js');
 		expect(generatedDockerfile).toContain('package_root="$(pnpm root -g)"');
@@ -205,28 +291,93 @@ describe('managed image release', () => {
 				{
 					name: 'openclaw',
 					spec: 'openclaw@2026.5.7',
-					source: 'overlay',
-					version: '2026.5.7',
-				},
-				{
-					name: '@openclaw/discord',
-					spec: '@openclaw/discord@2026.5.7',
-					source: 'overlay',
+					source: 'overlay.jsonc/packageOverrides.openclaw',
 					version: '2026.5.7',
 				},
 				{
 					name: '@openclaw/codex',
-					spec: '@openclaw/codex@2026.5.7',
-					source: 'overlay',
+					spec: '@openclaw/codex@2026.6.8',
+					source: 'managed-images.json/packageOverrides.openclaw',
+					version: '2026.6.8',
+				},
+				{
+					name: '@openclaw/discord',
+					spec: '@openclaw/discord@2026.5.7',
+					source: 'overlay.jsonc/packageOverrides.openclaw',
 					version: '2026.5.7',
 				},
 			],
-			warnings: [],
+			warnings: [
+				{
+					message:
+						'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.6.8.',
+					type: 'openclaw-package-version-mismatch',
+				},
+			],
 		});
 	});
 
-	it('rejects unpinned OpenClaw package overrides', async () => {
-		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-unpinned-'));
+	it('renders managed OpenClaw runtime dependency patches as managed image graph overrides', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-runtime-patches-'),
+		);
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			requiredOpenClawPackageNames: ['@openclaw/discord'],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).not.toContain(
+			'RUN pnpm add -g "openclaw@2026.6.8" "@openclaw/discord@2026.6.8" "@openclaw/codex@2026.6.8"',
+		);
+		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
+		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
+		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.6.8"');
+		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(generatedDockerfile).toContain('"pnpm": {');
+		expect(generatedDockerfile).toContain('"overrides": {');
+		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
+		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
+		expect(generatedDockerfile).toContain(
+			'override_package_root="/opt/openclaw-runtime-packages/node_modules/undici"',
+		);
+		expect(generatedDockerfile).toContain(
+			'bundled_dependency_path="$package_root/node_modules/undici"',
+		);
+		expect(generatedDockerfile).toContain('mkdir -p "$(dirname "$bundled_dependency_path")"');
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$override_package_root" "$bundled_dependency_path"',
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn /opt/openclaw-runtime-packages/node_modules/openclaw "$global_package_root/openclaw"',
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/discord "$global_package_root/@openclaw/discord"',
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$openclaw_package_root/openclaw.mjs" /pnpm/openclaw',
+		);
+		expect(generatedDockerfile).toContain('WORKDIR /\nRUN package_root="$(pnpm root -g)"');
+		expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile);
+		expect(result.plan.openClawDependencyOverrides).toEqual([
+			{
+				name: 'undici',
+				source: 'managed-images.json/packageOverrides.pnpm',
+				version: '8.5.0',
+			},
+		]);
+	});
+
+	it('resets the OpenClaw final-stage workdir before deployment overlay commands', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-openclaw-workdir-'),
+		);
 		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
 		await fs.writeFile(
@@ -234,9 +385,48 @@ describe('managed image release', () => {
 			[
 				'{',
 				'  "schemaVersion": 1,',
-				'  "openClawPackageOverrides": [',
-				'    "@openclaw/discord"',
-				'  ]',
+				'  "copy": [{ "from": "relative-source.txt", "to": "relative-target.txt" }],',
+				'  "runAfterBase": ["test -f relative-target.txt"]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+		await fs.writeFile(path.join(temporaryDirectory, 'relative-source.txt'), 'overlay\n', 'utf8');
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+			requiredOpenClawPackageNames: [],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@',
+		);
+		expect(generatedDockerfile).toContain(
+			'WORKDIR /\nCOPY overlay/relative-source.txt relative-target.txt\nRUN test -f relative-target.txt',
+		);
+	});
+
+	it('rejects deployment overlay pnpm overrides', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-pnpm-overrides-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "pnpmOverrides": {',
+				'    "undici": "8.5.0"',
+				'  }',
 				'}',
 				'',
 			].join('\n'),
@@ -253,10 +443,365 @@ describe('managed image release', () => {
 				overlayPath,
 				requiredOpenClawPackageNames: [],
 			}),
-		).rejects.toThrow(/openClawPackageOverrides requires exact package versions/u);
+		).rejects.toThrow(/move pnpmOverrides to packageOverrides\.pnpm/u);
 	});
 
-	it('reports legacy OpenClaw package overlay keys with the new override name', async () => {
+	it('accepts per-overlay packageOverrides buckets with source-labeled output', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-package-overrides-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "openclaw": ["@openclaw/discord@2026.6.8"],',
+				'    "npm": ["@openai/codex@0.139.1"],',
+				'    "pnpm": { "undici": "8.6.0" }',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+			requiredOpenClawPackageNames: ['@openclaw/discord'],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.6.8"');
+		expect(generatedDockerfile).toContain('"undici": "8.6.0"');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g --ignore-scripts "@openai/codex@0.139.1"');
+		expect(result.plan.directNpmPackages).toContainEqual({
+			name: '@openai/codex',
+			source: 'overlay.jsonc/packageOverrides.npm',
+			spec: '@openai/codex@0.139.1',
+			version: '0.139.1',
+		});
+		expect(result.plan.openClawDependencyOverrides).toEqual([
+			{
+				name: 'undici',
+				source: 'overlay.jsonc/packageOverrides.pnpm',
+				version: '8.6.0',
+			},
+		]);
+	});
+
+	it('renders every direct npm package override for OpenClaw gateway images', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-direct-npm-openclaw-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "npm": ["left-pad@1.3.0"]',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+			requiredOpenClawPackageNames: [],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm add -g --ignore-scripts "@openai/codex@0.139.0" "left-pad@1.3.0"',
+		);
+		expect(result.plan.directNpmPackages).toEqual([
+			{
+				name: '@openai/codex',
+				source: 'managed-images.json/packageOverrides.npm',
+				spec: '@openai/codex@0.139.0',
+				version: '0.139.0',
+			},
+			{
+				name: 'left-pad',
+				source: 'overlay.jsonc/packageOverrides.npm',
+				spec: 'left-pad@1.3.0',
+				version: '1.3.0',
+			},
+		]);
+	});
+
+	it('accepts legacy uppercase direct npm package override names', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-legacy-uppercase-npm-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "npm": ["JSONStream@1.3.5"]',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'tool-vm',
+			imageTargetFamily: 'toolVm',
+			imageTargetName: 'default',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+			requiredOpenClawPackageNames: [],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g --ignore-scripts "JSONStream@1.3.5"');
+		expect(result.plan.directNpmPackages).toEqual([
+			{
+				name: 'JSONStream',
+				source: 'overlay.jsonc/packageOverrides.npm',
+				spec: 'JSONStream@1.3.5',
+				version: '1.3.5',
+			},
+		]);
+	});
+
+	it('renders direct npm package overrides for worker gateway images', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-direct-npm-worker-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "npm": ["zx@8.1.0"]',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'worker-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'worker',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+			requiredOpenClawPackageNames: [],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm add -g --ignore-scripts "@openai/codex@0.139.0" "zx@8.1.0"',
+		);
+		expect(result.plan.directNpmPackages.map((packageEntry) => packageEntry.name)).toEqual([
+			'@openai/codex',
+			'zx',
+		]);
+	});
+
+	it('renders direct npm package overrides for Tool VM images', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-direct-npm-tool-vm-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "npm": ["zx@8.1.0"]',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'tool-vm',
+			imageTargetFamily: 'toolVm',
+			imageTargetName: 'default',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+			requiredOpenClawPackageNames: [],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/mcp-portal@');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g --ignore-scripts "zx@8.1.0"');
+		expect(result.plan.directNpmPackages).toEqual([
+			{
+				name: 'zx',
+				source: 'overlay.jsonc/packageOverrides.npm',
+				spec: 'zx@8.1.0',
+				version: '8.1.0',
+			},
+		]);
+	});
+
+	it('fails closed when a managed runtime patch does not apply to the active OpenClaw version', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-runtime-patch-version-'),
+		);
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		const release = {
+			...createTestManagedImageRelease(),
+			baseImages: {
+				...createTestManagedImageRelease().baseImages,
+				'openclaw-gateway': {
+					...createTestManagedImageRelease().baseImages['openclaw-gateway'],
+					packageOverrides: {
+						...createTestManagedImageRelease().baseImages['openclaw-gateway'].packageOverrides,
+						openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
+						pnpm: { undici: '8.3.0' },
+					},
+				},
+			},
+		} satisfies ManagedImageRelease;
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: release,
+				outputDirectory,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/OpenClaw 2026\.6\.8 requires stable undici@8\.5\.0/u);
+	});
+
+	it('rejects non-stable undici versions for the OpenClaw crash-mitigation floor', async () => {
+		const blockedUndiciVersions = ['8.5.0-beta.1', '8.5.0-rc.0', '8.5.0+build'];
+		await Promise.all(blockedUndiciVersions.map(async (undiciVersion) => {
+			const temporaryDirectory = await fs.mkdtemp(
+				path.join(os.tmpdir(), 'agent-vm-managed-undici-floor-'),
+			);
+			const outputDirectory = path.join(temporaryDirectory, 'generated');
+			const release = {
+				...createTestManagedImageRelease(),
+				baseImages: {
+					...createTestManagedImageRelease().baseImages,
+					'openclaw-gateway': {
+						...createTestManagedImageRelease().baseImages['openclaw-gateway'],
+						packageOverrides: {
+							...createTestManagedImageRelease().baseImages['openclaw-gateway'].packageOverrides,
+							pnpm: { undici: undiciVersion },
+						},
+					},
+				},
+			} satisfies ManagedImageRelease;
+
+			await expect(
+				generateManagedDockerfile({
+					base: 'openclaw-gateway',
+					imageTargetFamily: 'gateway',
+					imageTargetName: 'openclaw',
+					managedImageRelease: release,
+					outputDirectory,
+					requiredOpenClawPackageNames: [],
+				}),
+			).rejects.toThrow(/requires stable undici@8\.5\.0/u);
+		}));
+	});
+
+	it('fails closed when OpenClaw 2026.6.8 omits the required undici runtime patch', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-runtime-patch-missing-'),
+		);
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		const release = {
+			...createTestManagedImageRelease(),
+			baseImages: {
+				...createTestManagedImageRelease().baseImages,
+				'openclaw-gateway': {
+					...createTestManagedImageRelease().baseImages['openclaw-gateway'],
+					packageOverrides: {
+						...createTestManagedImageRelease().baseImages['openclaw-gateway'].packageOverrides,
+						pnpm: {},
+					},
+				},
+			},
+		} satisfies ManagedImageRelease;
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: release,
+				outputDirectory,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/OpenClaw 2026\.6\.8 requires stable undici@8\.5\.0/u);
+	});
+
+	it('rejects unpinned OpenClaw package overrides', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-unpinned-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+				[
+					'{',
+					'  "schemaVersion": 1,',
+					'  "packageOverrides": {',
+					'    "openclaw": ["@openclaw/discord"]',
+					'  }',
+					'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/Package override specs require exact package versions/u);
+	});
+
+	it('reports legacy extra OpenClaw package overlay keys with the new override name', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-legacy-'));
 		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
@@ -284,11 +829,11 @@ describe('managed image release', () => {
 				overlayPath,
 				requiredOpenClawPackageNames: [],
 			}),
-		).rejects.toThrow(/rename extraOpenClawPackages to openClawPackageOverrides/u);
+		).rejects.toThrow(/move extraOpenClawPackages to packageOverrides\.openclaw/u);
 	});
 
-	it('rejects non-OpenClaw package overrides', async () => {
-		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-non-openclaw-'));
+	it('reports legacy OpenClaw package override keys with the new override name', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-legacy-override-'));
 		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
 		await fs.writeFile(
@@ -297,7 +842,7 @@ describe('managed image release', () => {
 				'{',
 				'  "schemaVersion": 1,',
 				'  "openClawPackageOverrides": [',
-				'    "@openai/codex@0.134.0"',
+				'    "@openclaw/discord@2026.5.7"',
 				'  ]',
 				'}',
 				'',
@@ -315,7 +860,104 @@ describe('managed image release', () => {
 				overlayPath,
 				requiredOpenClawPackageNames: [],
 			}),
+		).rejects.toThrow(/move openClawPackageOverrides to packageOverrides\.openclaw/u);
+	});
+
+	it('rejects non-OpenClaw package overrides', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-non-openclaw-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+				[
+					'{',
+					'  "schemaVersion": 1,',
+					'  "packageOverrides": {',
+					`    "openclaw": ["@openai/codex@${managedOpenAiCodexCliVersion}"]`,
+					'  }',
+					'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
 		).rejects.toThrow(/only accepts OpenClaw runtime package pins/u);
+	});
+
+	it('rejects malformed scoped direct npm package overrides before Docker generation', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-malformed-npm-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "npm": ["@scope/@1.2.3"]',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'tool-vm',
+				imageTargetFamily: 'toolVm',
+				imageTargetName: 'default',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/Package override specs require valid npm package names/u);
+	});
+
+	it('rejects malformed scoped OpenClaw package overrides before Docker generation', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-malformed-openclaw-'),
+		);
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "openclaw": ["@openclaw/@1.2.3"]',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await expect(
+			generateManagedDockerfile({
+				base: 'openclaw-gateway',
+				imageTargetFamily: 'gateway',
+				imageTargetName: 'openclaw',
+				managedImageRelease: createTestManagedImageRelease(),
+				outputDirectory,
+				overlayPath,
+				requiredOpenClawPackageNames: [],
+			}),
+		).rejects.toThrow(/Package override specs require valid npm package names/u);
 	});
 
 	it('installs MCP Portal in Tool VM Dockerfiles without credential literals', async () => {
@@ -345,15 +987,14 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
 		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
 		expect(generatedDockerfile).toContain(
 			'RUN pnpm config set global-dir /pnpm/global && pnpm config set global-bin-dir /pnpm',
 		);
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/mcp-portal@');
-		expect(generatedDockerfile).not.toMatch(
-			/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u,
-		);
+		expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile);
 		expect(result.plan.mcpPortalPackage).toMatchObject({
 			name: '@agent-vm/mcp-portal',
 			source: 'installed-package',
@@ -399,6 +1040,7 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).not.toContain('RUN pnpm add -g "@agent-vm/mcp-portal@');
 		expect(generatedDockerfile).toContain(
 			'COPY overlay/local-agent-vm/agent-vm-mcp-portal-0.0.93-local.tgz /tmp/agent-vm-mcp-portal-0.0.93-local.tgz',
@@ -460,7 +1102,9 @@ describe('managed image release', () => {
 			'@agent-vm/openclaw-agent-vm-plugin@0.0.93',
 		);
 		expect(generatedDockerfile).not.toContain('@agent-vm/mcp-portal@0.0.93');
-		expect(generatedDockerfile).toContain('RUN pnpm add -g "@openai/codex@0.134.0"');
+		expect(generatedDockerfile).toContain(
+			`RUN pnpm add -g --ignore-scripts "@openai/codex@${managedOpenAiCodexCliVersion}"`,
+		);
 		expect(generatedDockerfile).toContain(
 			'COPY overlay/local-agent-vm/agent-vm-openclaw-agent-vm-plugin-0.0.93-local.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.93-local.tgz',
 		);
@@ -474,15 +1118,17 @@ describe('managed image release', () => {
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
 		await fs.writeFile(
 			overlayPath,
-			[
-				'{',
-				'  "schemaVersion": 1,',
-				'  "extraAptPackages": [],',
-				'  "openClawPackageOverrides": [',
-				'    "openclaw@2026.5.7",',
-				'    "@openclaw/discord@2026.5.2"',
-				'  ],',
-				'  "runAfterBase": []',
+				[
+					'{',
+					'  "schemaVersion": 1,',
+					'  "extraAptPackages": [],',
+					'  "packageOverrides": {',
+					'    "openclaw": [',
+					'      "openclaw@2026.5.7",',
+					'      "@openclaw/discord@2026.5.2"',
+					'    ]',
+					'  },',
+					'  "runAfterBase": []',
 				'}',
 				'',
 			].join('\n'),
@@ -503,6 +1149,11 @@ describe('managed image release', () => {
 			{
 				type: 'openclaw-package-version-mismatch',
 				message:
+					'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.6.8.',
+			},
+			{
+				type: 'openclaw-package-version-mismatch',
+				message:
 					'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/discord uses 2026.5.2.',
 			},
 		]);
@@ -516,14 +1167,14 @@ describe('managed image release', () => {
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
 		await fs.writeFile(
 			overlayPath,
-			[
-				'{',
-				'  "schemaVersion": 1,',
-				'  "extraAptPackages": [],',
-				'  "openClawPackageOverrides": [',
-				'    "@agent-vm/mcp-portal@0.0.1"',
-				'  ],',
-				'  "runAfterBase": []',
+				[
+					'{',
+					'  "schemaVersion": 1,',
+					'  "extraAptPackages": [],',
+					'  "packageOverrides": {',
+					'    "openclaw": ["@agent-vm/mcp-portal@0.0.1"]',
+					'  },',
+					'  "runAfterBase": []',
 				'}',
 				'',
 			].join('\n'),
@@ -540,6 +1191,6 @@ describe('managed image release', () => {
 				overlayPath,
 				requiredOpenClawPackageNames: [],
 			}),
-		).rejects.toThrow(/cannot override managed package @agent-vm\/mcp-portal/u);
+		).rejects.toThrow(/packageOverrides\.openclaw only accepts OpenClaw runtime package pins/u);
 	});
 });

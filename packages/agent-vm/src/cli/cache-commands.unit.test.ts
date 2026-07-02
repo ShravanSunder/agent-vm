@@ -72,7 +72,6 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
-					websocketBypass: [],
 				},
 			],
 		},

@@ -111,7 +111,6 @@ describe('requireZone', () => {
 							},
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
-							websocketBypass: [],
 						},
 					],
 				},

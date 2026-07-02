@@ -147,16 +147,44 @@ describe('beta tarball sync planning', () => {
 });
 
 describe('openclaw gateway overlay rendering', () => {
-	it('migrates legacy OpenClaw package overrides on any managed image overlay', () => {
+	const managedPackageOverrides = {
+		npm: ['@openai/codex@0.139.0'],
+		openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
+		pnpm: { undici: '8.5.0' },
+	};
+
+	it('rejects legacy OpenClaw package overrides on managed image overlays', () => {
+		expect(() =>
+			migrateLegacyOpenClawPackageOverrides({
+				extraAptPackages: ['ffmpeg'],
+				extraOpenClawPackages: [],
+				runAfterBase: ['echo ok'],
+			}),
+		).toThrow(/move extraOpenClawPackages to packageOverrides\.openclaw/u);
+		expect(() =>
+			migrateLegacyOpenClawPackageOverrides({
+				extraAptPackages: ['ffmpeg'],
+				openClawPackageOverrides: ['openclaw@2026.6.8'],
+				runAfterBase: ['echo ok'],
+			}),
+		).toThrow(/move openClawPackageOverrides to packageOverrides\.openclaw/u);
+		expect(() =>
+			migrateLegacyOpenClawPackageOverrides({
+				extraAptPackages: ['ffmpeg'],
+				pnpmOverrides: { undici: '8.5.0' },
+				runAfterBase: ['echo ok'],
+			}),
+		).toThrow(/move pnpmOverrides to packageOverrides\.pnpm/u);
+	});
+
+	it('preserves clean managed image overlays without package overrides', () => {
 		const overlay = migrateLegacyOpenClawPackageOverrides({
 			extraAptPackages: ['ffmpeg'],
-			extraOpenClawPackages: [],
 			runAfterBase: ['echo ok'],
 		});
 
 		expect(overlay).toEqual({
 			extraAptPackages: ['ffmpeg'],
-			openClawPackageOverrides: [],
 			runAfterBase: ['echo ok'],
 		});
 		expect(overlay.extraOpenClawPackages).toBeUndefined();
@@ -172,7 +200,11 @@ describe('openclaw gateway overlay rendering', () => {
 		const overlay = renderOpenClawGatewayOverlay({
 			existingOverlay: {
 				extraAptPackages: ['ffmpeg'],
-				extraOpenClawPackages: ['openclaw@2026.5.20'],
+				packageOverrides: {
+					npm: [],
+					openclaw: ['openclaw@2026.5.20'],
+					pnpm: {},
+				},
 			},
 			plan,
 		});
@@ -207,11 +239,11 @@ describe('openclaw gateway overlay rendering', () => {
 		expect(overlayJson).not.toContain('pnpm add -g');
 		expect(overlayJson).not.toContain('rm -rf');
 		expect(overlayJson).not.toContain('cp -R');
-		expect(overlay.openClawPackageOverrides).toEqual(['openclaw@2026.5.20']);
+		expect(overlay.packageOverrides?.openclaw).toEqual(['openclaw@2026.5.20']);
 		expect(overlay.extraOpenClawPackages).toBeUndefined();
 	});
 
-	it('preserves the current OpenClaw package override field without writing the legacy name', () => {
+	it('preserves the current package override field without writing legacy names', () => {
 		const plan = createBetaTarballSyncPlan({
 			cacheKey: 'abc123ef',
 			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
@@ -221,14 +253,115 @@ describe('openclaw gateway overlay rendering', () => {
 		const overlay = renderOpenClawGatewayOverlay({
 			existingOverlay: {
 				extraAptPackages: ['ffmpeg'],
-				extraOpenClawPackages: ['openclaw@2026.5.20'],
-				openClawPackageOverrides: ['openclaw@2026.5.21'],
+				packageOverrides: {
+					npm: [],
+					openclaw: ['openclaw@2026.5.21'],
+					pnpm: {},
+				},
 			},
 			plan,
 		});
 
-		expect(overlay.openClawPackageOverrides).toEqual(['openclaw@2026.5.21']);
+		expect(overlay.packageOverrides?.openclaw).toEqual(['openclaw@2026.5.21']);
 		expect(overlay.extraOpenClawPackages).toBeUndefined();
+	});
+
+	it('removes redundant core managed-default package overrides', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const overlay = renderOpenClawGatewayOverlay({
+			existingOverlay: {
+				extraAptPackages: ['ffmpeg'],
+				packageOverrides: {
+					npm: ['@openai/codex@0.139.0'],
+					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
+					pnpm: { undici: '8.5.0' },
+				},
+			},
+			managedPackageOverrides,
+			plan,
+		});
+
+		expect(overlay.packageOverrides).toBeUndefined();
+	});
+
+	it('preserves Discord pins because Discord is a conditional package, not an unconditional managed default', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const overlay = renderOpenClawGatewayOverlay({
+			existingOverlay: {
+				extraAptPackages: ['ffmpeg'],
+				packageOverrides: {
+					npm: [],
+					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8', '@openclaw/discord@2026.6.8'],
+					pnpm: { undici: '8.5.0' },
+				},
+			},
+			managedPackageOverrides,
+			plan,
+		});
+
+		expect(overlay.packageOverrides?.pnpm).toEqual({});
+		expect(overlay.packageOverrides?.openclaw).toEqual(['@openclaw/discord@2026.6.8']);
+	});
+
+	it('preserves non-default OpenClaw package pins while removing stale pnpm overrides', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const overlay = renderOpenClawGatewayOverlay({
+			existingOverlay: {
+				extraAptPackages: ['ffmpeg'],
+				packageOverrides: {
+					npm: [],
+					openclaw: ['openclaw@2026.5.20', '@openclaw/discord@2026.6.8'],
+					pnpm: { undici: '8.5.0' },
+				},
+			},
+			managedPackageOverrides,
+			plan,
+		});
+
+		expect(overlay.packageOverrides?.pnpm).toEqual({});
+		expect(overlay.packageOverrides?.openclaw).toEqual([
+			'openclaw@2026.5.20',
+			'@openclaw/discord@2026.6.8',
+		]);
+	});
+
+	it('preserves partial OpenClaw package pins even when the pinned version matches the managed default', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const overlay = renderOpenClawGatewayOverlay({
+			existingOverlay: {
+				extraAptPackages: ['ffmpeg'],
+				packageOverrides: {
+					npm: [],
+					openclaw: ['@openclaw/discord@2026.6.8'],
+					pnpm: { undici: '8.5.0' },
+				},
+			},
+			managedPackageOverrides,
+			plan,
+		});
+
+		expect(overlay.packageOverrides?.pnpm).toEqual({});
+		expect(overlay.packageOverrides?.openclaw).toEqual(['@openclaw/discord@2026.6.8']);
 	});
 
 	it('installs local Tool VM packages and keeps the mcp-portal executable on PATH', () => {

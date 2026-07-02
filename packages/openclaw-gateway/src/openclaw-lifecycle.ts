@@ -38,6 +38,10 @@ const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
 const openClawCommandVmPath = '/usr/local/bin/openclaw';
+const openClawGatewayGuestPort = 18789;
+const openClawGatewaySupervisorRestartDelaySeconds = 5;
+const openClawGatewaySupervisorRestartWindowSeconds = 60;
+const openClawGatewaySupervisorMaxRestarts = 6;
 const openClawGatewayGuestPath =
 	'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const diagnosticsOtelPluginId = 'diagnostics-otel';
@@ -76,10 +80,6 @@ function buildGatewayTcpHosts(
 
 	for (let slot = 0; slot < tcpPool.size; slot += 1) {
 		setTcpHost(tcpHosts, `tool-${slot}.vm.host:22`, `127.0.0.1:${tcpPool.basePort + slot}`);
-	}
-
-	for (const websocketHost of zone.websocketBypass) {
-		setTcpHost(tcpHosts, websocketHost, websocketHost);
 	}
 
 	if (zone.observability?.mode === 'collector') {
@@ -343,6 +343,42 @@ async function assertEffectiveConfigPathWritable(
 
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
+function buildOpenClawGatewaySupervisorCommand(): string {
+	return [
+		`restart_delay_seconds="\${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS:-${openClawGatewaySupervisorRestartDelaySeconds}}"`,
+		`restart_window_seconds="\${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS:-${openClawGatewaySupervisorRestartWindowSeconds}}"`,
+		`max_restarts="\${AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS:-${openClawGatewaySupervisorMaxRestarts}}"`,
+		'attempt=0',
+		'failure_count=0',
+		'first_failure_at=0',
+		'while true',
+		'do attempt=$((attempt + 1))',
+		'printf "gateway-supervisor: starting openclaw gateway attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
+		'set -a',
+		`if ! . ${openClawRuntimeSecretsEnvFilePath}; then printf "gateway-supervisor: failed to source runtime secrets attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; exit 1; fi`,
+		'set +a',
+		`${openClawCommandVmPath} gateway --port ${openClawGatewayGuestPort}`,
+		'exit_code=$?',
+		'now=$(date -u +%s)',
+		'if [ "$first_failure_at" -eq 0 ] || [ $((now - first_failure_at)) -gt "$restart_window_seconds" ]; then first_failure_at=$now; failure_count=1; else failure_count=$((failure_count + 1)); fi',
+		'printf "gateway-supervisor: openclaw gateway exited attempt=%s exit_code=%s failure_count=%s window_seconds=%s at=%s\\n" "$attempt" "$exit_code" "$failure_count" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
+		'if [ "$failure_count" -ge "$max_restarts" ]; then printf "gateway-supervisor: restart limit exceeded failure_count=%s max_restarts=%s window_seconds=%s at=%s\\n" "$failure_count" "$max_restarts" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if [ "$exit_code" -eq 0 ]; then exit 1; fi; exit "$exit_code"; fi',
+		'sleep "$restart_delay_seconds"',
+		'done',
+	].join('; ');
+}
+
+function buildOpenClawGatewayStartCommand(): string {
+	return [
+		'set -a',
+		`. ${openClawRuntimeSecretsEnvFilePath}`,
+		'set +a',
+		`{ printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > ${openClawGatewayBootLogFileVmPath}; }`,
+		'cd /home/openclaw',
+		`nohup sh -c ${shellQuote(buildOpenClawGatewaySupervisorCommand())} >> ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
+	].join(' && ');
 }
 
 function includesShellUnsafeControlByte(value: string): boolean {
@@ -968,15 +1004,26 @@ export const openclawLifecycle: GatewayLifecycle = {
 			options: {
 				readonly agentId?: string;
 				readonly deviceCode?: boolean;
-				readonly setDefault?: boolean;
+				readonly profileId?: string;
 			} = {},
 		): string =>
 			[
 				'openclaw models auth',
 				...(options.agentId ? [`--agent ${shellQuote(options.agentId)}`] : []),
 				`login --provider ${shellQuote(provider)}`,
+				...(options.profileId ? [`--profile-id ${shellQuote(options.profileId)}`] : []),
 				...(options.deviceCode === true ? ['--device-code'] : []),
-				...(options.setDefault === true ? ['--set-default'] : []),
+			].join(' '),
+		buildProfileListCommand: (
+			provider: string,
+			options: {
+				readonly agentId: string;
+			},
+		): string =>
+			[
+				'openclaw models auth',
+				`--agent ${shellQuote(options.agentId)}`,
+				`list --provider ${shellQuote(provider)}`,
 			].join(' '),
 	},
 
@@ -1040,6 +1087,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				: {}),
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
 			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),
+			websocketUpgrades: zone.websocketUpgrades ?? [],
 			vfsMounts: {
 				'/home/openclaw/.openclaw/config': {
 					hostPath: configDirectory,
@@ -1076,18 +1124,18 @@ export const openclawLifecycle: GatewayLifecycle = {
 			// FORCE_IPV4_EGRESS_NODE_OPTIONS flags) is visible in the log
 			// stream without SSHing into the VM.  See
 			// FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
-			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && { printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > ${openClawGatewayBootLogFileVmPath}; } && cd /home/openclaw && nohup ${openClawCommandVmPath} gateway --port 18789 >> ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
+			startCommand: buildOpenClawGatewayStartCommand(),
 			healthCheck: {
 				type: 'http',
-				port: 18789,
+				port: openClawGatewayGuestPort,
 				path: '/readyz',
 			},
 			serviceHealthCheck: {
 				type: 'http',
-				port: 18789,
+				port: openClawGatewayGuestPort,
 				path: '/health',
 			},
-			guestListenPort: 18789,
+			guestListenPort: openClawGatewayGuestPort,
 			logPath: openClawGatewayBootLogFileVmPath,
 		};
 	},

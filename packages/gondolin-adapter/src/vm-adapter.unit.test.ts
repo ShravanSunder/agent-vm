@@ -321,7 +321,7 @@ describe('createManagedVm', () => {
 		).resolves.toBe(false);
 	});
 
-	it('does not turn public raw TCP bypass hosts into HTTP allowed hosts', async () => {
+	it('does not turn public raw TCP hosts into HTTP allowed hosts', async () => {
 		const createHttpHooksMock = vi.fn(() => ({
 			env: { HTTPS_PROXY: 'http://proxy.vm.host:8080' },
 			httpHooks: {} satisfies HttpHooks,
@@ -341,7 +341,7 @@ describe('createManagedVm', () => {
 				rootfsMode: 'memory',
 				secrets: {},
 				tcpHosts: {
-					'gateway.discord.gg:443': 'gateway.discord.gg:443',
+					'raw-tcp.example.test:443': 'public.example.test:9443',
 				},
 				vfsMounts: {},
 			},

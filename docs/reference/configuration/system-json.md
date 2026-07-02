@@ -59,7 +59,7 @@ zones[]
   secrets
   runtimeAuthHints
   egressHosts
-  websocketBypass
+  websocketUpgrades
   mcpPortal
   defaultToolVmProfile
   agentToolVmProfiles
@@ -95,6 +95,14 @@ intentionally checked-in test deployments.
 | --- | --- |
 | `env` | Read 1Password service account token from an env var. Defaults to `OP_SERVICE_ACCOUNT_TOKEN`. |
 | `keychain` | Read the service account token from macOS Keychain. |
+
+For `keychain`, `service` and `account` are the macOS Keychain lookup target.
+New local scaffolds use service `agent-vm`. The default account is
+`1p-service-account`; `agent-vm init --onepassword-keychain-account-name <name>`
+uses `1p-service-account--<name>` for controller isolation. Store or rotate the
+token with `agent-vm auth 1password <op-ref-or-url> --config config/system.jsonc`.
+When the ref/url is omitted, the command prompts for a token paste and still
+stores it in the configured Keychain target.
 
 For 1Password-backed configs, `agent-vm doctor` also runs a headless fallback
 probe with the resolved service-account token: `op whoami` under an isolated
@@ -405,7 +413,8 @@ does not enable Discord or any other channel-specific surface by default.
 
 Channel config is deployment-owned. Enable channels in
 `config/gateways/<zone>/openclaw.json`, then declare the matching secrets,
-`egressHosts`, and `websocketBypass` entries in `config/system.jsonc`.
+`egressHosts`, and any required `websocketUpgrades` entries in
+`config/system.jsonc`.
 Managed OpenClaw image profiles install known extracted channel packages, such
 as `@openclaw/discord`, from the OpenClaw channel config.
 
@@ -626,6 +635,36 @@ is accepted by OpenClaw when `allowRfc2544BenchmarkRange` is true. Do not use
 exact-host bypass skips private-IP checks for the named host and is broader
 than the adapter-level synthetic DNS fix.
 
+## WebSocket egress
+
+`zones[].websocketUpgrades` allows selected WebSocket upgrade URLs through
+Gondolin's normal HTTP egress path. It is narrower than `egressHosts`, not a
+replacement for it: every `websocketUpgrades[].host` must also be declared in
+`egressHosts` for the same audience.
+
+Each rule has:
+
+```json
+{
+  "audience": "gateway",
+  "scheme": "wss",
+  "host": "gateway-*.discord.gg",
+  "port": 443,
+  "path": "/"
+}
+```
+
+`scheme` is the WebSocket scheme (`ws` or `wss`). Gondolin presents the upgrade
+handshake to request hooks as `http` or `https`; agent-vm maps those back to
+`ws` or `wss` for policy matching. `host` supports `*` wildcards, `port` is
+optional and defaults to 80 for `ws` and 443 for `wss`, and `path` is optional
+but must start with `/` when present. Query strings are not matched.
+
+Use `websocketUpgrades` for native WebSocket clients that can work through
+Gondolin's HTTP upgrade bridge. The legacy raw WebSocket TCP passthrough config has been
+removed; stale configs should delete it and declare explicit WebSocket upgrade
+policy plus matching `egressHosts`.
+
 Gondolin `allowedInternalHosts` is also not the first fix for this symptom. It
 relaxes Gondolin HTTP hook internal-IP blocking for matching hostnames, while
 the observed Discord media failure happens earlier in OpenClaw's own SSRF guard
@@ -672,14 +711,43 @@ tag pinned by that package's `managed-images.json` manifest. Managed image tags
 use their own release line and are intentionally separate from npm package
 versions.
 The deployment overlay is intentionally small; use it for extra apt packages,
-copy steps, post-base commands, and runtime OpenClaw packages. `agent-vm build`
-regenerates Dockerfiles under `cacheDir/generated-dockerfiles/...`; do not edit
-generated Dockerfiles by hand. OpenClaw gateway deployments that need specific
-OpenClaw package versions should pin them in the overlay's
-`openClawPackageOverrides`. Overlay package pins override managed default companion
-packages during Dockerfile generation. If the overlay pins `openclaw@X` and an
-`@openclaw/*@Y` package with a different version, build output warns before
-Docker and Gondolin work begin.
+copy steps, post-base commands, and explicit per-image package overrides.
+`agent-vm build` regenerates Dockerfiles under
+`cacheDir/generated-dockerfiles/...`; do not edit generated Dockerfiles by hand.
+OpenClaw gateway deployments should omit `packageOverrides` when the managed
+default package set is acceptable. Use `packageOverrides.openclaw` only for
+deliberate non-default runtime package pins, such as a temporary rollback or
+forward test of a specific `@openclaw/*` package. Use
+`packageOverrides.npm` for direct non-OpenClaw npm packages such as
+`@openai/codex` on the OpenClaw and worker gateway images, and
+`packageOverrides.pnpm` for exact transitive override
+floors such as `undici`. Overlay package pins override managed default package
+entries by package name during Dockerfile generation. If the overlay pins
+`openclaw@X` and an `@openclaw/*@Y` package with a different version, build
+output warns before Docker and Gondolin work begin.
+
+Managed package defaults are recorded under each base image in the installed
+package's `managed-images.json`, then exposed in the generated Dockerfile plan
+with source labels such as
+`overrides undici@8.5.0[managed-images.json/packageOverrides.pnpm]`.
+Remove those managed defaults only after fresh package evidence shows OpenClaw
+and required `@openclaw/*` packages no longer resolve the vulnerable dependency.
+
+Example non-default OpenClaw runtime package pin:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "packageOverrides": {
+    "openclaw": [
+      "@openclaw/discord@2026.5.20"
+    ],
+    "pnpm": {
+      "undici": "8.5.0"
+    }
+  }
+}
+```
 
 Legacy `dockerfile` profiles are reported by `agent-vm doctor`; migrate them
 with `agent-vm migrate images`.
@@ -754,6 +822,18 @@ files:
     "runtimeRootfsSize": "12G",
     "stateDir": "../state/shravan",
     "zoneFilesDir": "../zone-files/shravan",
+    "authLogin": {
+      "defaultAgent": "main",
+      "providers": {
+        "openai": {
+          "profileIds": [
+            "openai-codex:work@example.com",
+            "openai-codex:personal@example.com",
+            "openai-codex:admin@example.com"
+          ]
+        }
+      }
+    },
     "authProfilesByAgent": {
       "shravan": { "source": "environment", "envVar": "SHRAVAN_AUTH_PROFILES" }
     }
@@ -843,6 +923,29 @@ auth profile. `gateway.authProfilesRef` and `gateway.authProfilesByAgent`
 support `environment`, `1password`, and `config` sources. Inline `config`
 values here are plaintext OpenClaw auth profiles and should be limited to local
 or test deployments.
+
+`gateway.authLogin` is separate from auth material. It stores only the operator
+profile ids used by `agent-vm auth openclaw login <provider>`:
+
+- `defaultAgent` is the OpenClaw agent whose isolated auth store receives
+  configured profile logins when the CLI does not pass `--agent`.
+- `providers.<provider>.profileIds` is the ordered list of profile ids that
+  `--all-configured-profiles` should refresh for that provider.
+
+For the common refresh path, run:
+
+```bash
+agent-vm auth openclaw login openai \
+  --zone shravan \
+  --all-configured-profiles \
+  --device-code
+```
+
+The helper opens one OpenClaw login per configured profile id and then verifies
+the ids are listed by OpenClaw for the target agent. For one-off profile
+creation or testing, pass `--agent <agentId>` and one or more
+`--profile-id <profileId>` values. Use `--dry-run` to print the resolved plan
+without opening SSH.
 
 `gateway.controlAuth` is required for OpenClaw gateways and names the
 gateway env secret OpenClaw uses to authenticate controller API calls. The
@@ -1139,6 +1242,7 @@ The schema rejects:
 - Worker zones declaring `agentAccess`, because worker zones do not boot
   OpenClaw Tool VMs.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
+- WebSocket upgrade hosts not declared in `egressHosts` for the same audience.
 - OpenClaw zones without `gateway.controlAuth` or without the referenced
   gateway-only env secret.
 - Zones referencing missing gateway image profiles.

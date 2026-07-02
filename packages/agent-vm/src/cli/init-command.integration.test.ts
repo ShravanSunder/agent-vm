@@ -200,7 +200,6 @@ const generatedSystemConfigSchema = z
 						.default({}),
 					agentToolVmProfiles: z.record(z.string(), z.string()).optional(),
 					defaultToolVmProfile: z.string().optional(),
-					websocketBypass: z.array(z.unknown()).optional(),
 				})
 				.passthrough(),
 		]),
@@ -248,7 +247,13 @@ const generatedOpenClawToolVmSystemConfigSchema = generatedSystemConfigSchema.ex
 const generatedManagedImageOverlaySchema = z.object({
 	schemaVersion: z.literal(1),
 	extraAptPackages: z.array(z.string()),
-	openClawPackageOverrides: z.array(z.string()),
+	packageOverrides: z
+		.object({
+			npm: z.array(z.string()).optional(),
+			openclaw: z.array(z.string()).optional(),
+			pnpm: z.record(z.string(), z.string()).optional(),
+		})
+		.optional(),
 	copy: z.array(z.unknown()),
 	runAfterBase: z.array(z.string()),
 });
@@ -488,7 +493,6 @@ describe('scaffoldAgentVmProject', () => {
 		expect(overlay).toEqual({
 			schemaVersion: 1,
 			extraAptPackages: [],
-			openClawPackageOverrides: [],
 			copy: [],
 			runAfterBase: [],
 		});
@@ -588,6 +592,41 @@ describe('scaffoldAgentVmProject', () => {
 			type: 'keychain',
 			service: 'agent-vm',
 			account: '1p-service-account',
+		});
+	});
+
+	it('scaffolds an isolated macOS Keychain account when configured', async () => {
+		const targetDir = await createTestDirectory();
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'test-zone',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				onePasswordKeychainAccountName: 'shravan-claw-beta',
+				writeLocalEnvironmentFile: true,
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+		const config = z
+			.object({
+				host: z.object({
+					secretsProvider: z.object({
+						tokenSource: z.object({
+							type: z.string(),
+							service: z.string(),
+							account: z.string(),
+						}),
+					}),
+				}),
+			})
+			.parse(await readGeneratedSystemConfig(targetDir));
+
+		expect(config.host.secretsProvider.tokenSource).toEqual({
+			type: 'keychain',
+			service: 'agent-vm',
+			account: '1p-service-account--shravan-claw-beta',
 		});
 	});
 
@@ -853,7 +892,7 @@ describe('scaffoldAgentVmProject', () => {
 			readonly agents: {
 				readonly defaults: {
 					readonly model: { readonly primary: string };
-					readonly models?: Record<string, unknown>;
+					readonly models?: Record<string, { readonly agentRuntime?: { readonly id?: string } }>;
 					readonly thinkingDefault?: string;
 					readonly workspace: string;
 				};
@@ -911,10 +950,14 @@ describe('scaffoldAgentVmProject', () => {
 			'/pnpm/global/5/node_modules/@agent-vm',
 		]);
 		expect(openClawConfig.gateway.http.endpoints.chatCompletions.enabled).toBe(true);
-		expect(openClawConfig.agents.defaults.model.primary).toBe('openai-codex/gpt-5.5');
-		expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
+		expect(openClawConfig.agents.defaults.model.primary).toBe('openai/gpt-5.5');
+		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
-		expect(openClawConfig.agents.defaults.models).toBeUndefined();
+		expect(openClawConfig.agents.defaults.models).toEqual({
+			'openai/gpt-5.5': {
+				agentRuntime: { id: 'pi' },
+			},
+		});
 		expect(openClawConfig.approvals).toEqual({
 			plugin: {
 				enabled: true,
@@ -1320,7 +1363,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(egressHosts).not.toContain('cdn.discordapp.com');
 		expect(zone).not.toHaveProperty('allowedHosts');
 		expect(zone).not.toHaveProperty('runtimeAuthHints');
-		expect(zone.websocketBypass).toEqual([]);
+		expect(zone).not.toHaveProperty('websocketBypass');
 	});
 
 	it('scaffolds tool VM support for openclaw gateways', async () => {
@@ -1390,7 +1433,6 @@ describe('scaffoldAgentVmProject', () => {
 		).toEqual({
 			schemaVersion: 1,
 			extraAptPackages: [],
-			openClawPackageOverrides: [],
 			copy: [],
 			runAfterBase: [],
 		});
@@ -1554,7 +1596,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(egressHosts).toContain('api.openai.com');
 		expect(egressHosts).toContain('mcp.deepwiki.com');
 		expect(egressHosts).not.toContain('discord.com');
-		expect(zone.websocketBypass).toEqual([]);
+		expect(zone).not.toHaveProperty('websocketBypass');
 	});
 
 	it('scaffolds worker runtime auth hints for mediated GitHub operations', async () => {

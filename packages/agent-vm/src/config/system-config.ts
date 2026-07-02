@@ -2,7 +2,11 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import { targetsAudience, vmAudienceValues } from '@agent-vm/gateway-interface';
-import type { EgressHostConfig, VmAudience } from '@agent-vm/gateway-interface';
+import type {
+	EgressHostConfig,
+	VmAudience,
+	WebSocketUpgradeConfig,
+} from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import { loadJsonConfigFile } from './json-config-file.js';
@@ -67,6 +71,16 @@ const egressHostSchema = z
 		audience: vmAudienceSchema,
 	})
 	.strict();
+
+const websocketUpgradeSchema = z
+	.object({
+		audience: vmAudienceSchema,
+		scheme: z.enum(['ws', 'wss']),
+		host: z.string().min(1),
+		port: z.number().int().positive().max(65535).optional(),
+		path: z.string().min(1).regex(/^\//u, 'websocket upgrade path must start with /').optional(),
+	})
+	.strict() satisfies z.ZodType<WebSocketUpgradeConfig>;
 
 const onePasswordEnvSecretSchema = z
 	.object({
@@ -309,6 +323,19 @@ const openClawGatewayControlAuthSchema = z.discriminatedUnion('mode', [
 		.strict(),
 ]);
 
+const openClawAuthLoginProviderSchema = z
+	.object({
+		profileIds: z.array(z.string().min(1)).min(1),
+	})
+	.strict();
+
+const openClawAuthLoginSchema = z
+	.object({
+		defaultAgent: agentIdSchema.optional(),
+		providers: z.record(z.string().min(1), openClawAuthLoginProviderSchema),
+	})
+	.strict();
+
 const zoneGatewayBaseSchema = z.object({
 	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
@@ -335,6 +362,7 @@ const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 		controlAuth: openClawGatewayControlAuthSchema,
 		zoneFilesDir: z.string().min(1),
 		authProfilesByAgent: z.record(agentIdSchema, authProfilesSecretSchema).optional(),
+		authLogin: openClawAuthLoginSchema.optional(),
 		rawEnvSecrets: z.array(secretNameSchema).optional(),
 		zoneGit: zoneGitSchema.optional(),
 	})
@@ -800,7 +828,7 @@ const systemConfigSchema = z
 						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
 						observability: zoneObservabilitySchema.optional(),
 						egressHosts: z.array(egressHostSchema).min(1),
-						websocketBypass: z.array(z.string().min(1)).default([]),
+						websocketUpgrades: z.array(websocketUpgradeSchema).optional(),
 						defaultToolVmProfile: z.string().min(1).optional(),
 						agentToolVmProfiles: z.record(agentIdSchema, z.string().min(1)).optional(),
 						agentSandboxSeeds: z.record(agentIdSchema, z.array(agentSandboxSeedSchema)).optional(),
@@ -1018,6 +1046,17 @@ const systemConfigSchema = z
 						path: ['zones', zoneIndex, 'secrets', secretName, 'hosts', hostIndex],
 					});
 				}
+			}
+
+			for (const [upgradeIndex, upgrade] of (zone.websocketUpgrades ?? []).entries()) {
+				if (egressHostTargetsAudience(zone.egressHosts, upgrade.host, upgrade.audience)) {
+					continue;
+				}
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' websocket upgrade host '${upgrade.host}' must be declared in egressHosts for audience '${upgrade.audience}'.`,
+					path: ['zones', zoneIndex, 'websocketUpgrades', upgradeIndex, 'host'],
+				});
 			}
 
 			for (const [secretName, secret] of Object.entries(zone.secrets)) {

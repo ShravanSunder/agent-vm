@@ -77,8 +77,8 @@ Static property describing how interactive auth works for the gateway type.
 Contains `listProvidersCommand` (shell command that lists auth providers,
 one per line on stdout) and `buildLoginCommand(provider, options)` (shell
 command the CLI runs via SSH with TTY).  The options object carries
-provider-login flags such as device-code and set-default.  Only OpenClaw
-defines this; Worker has no interactive auth.
+provider-login target details such as agent id, profile id, and device-code.
+Only OpenClaw defines this; Worker has no interactive auth.
 
 ---
 
@@ -187,7 +187,6 @@ vfsMounts:
 tcpHosts:
   controller.vm.host:18800           -> 127.0.0.1:<controllerPort>
   tool-N.vm.host:22                  -> 127.0.0.1:<basePort+N>  (per tcpPool)
-  + websocketBypass entries           -> pass-through
 
 rootfsMode: cow
 ```
@@ -275,8 +274,7 @@ tcpHosts:
 rootfsMode: cow
 ```
 
-Worker does not use tcpPool slots or websocket bypass -- it only tunnels to
-the controller.
+Worker does not use tcpPool slots -- it only tunnels to the controller.
 
 ### buildProcessSpec
 

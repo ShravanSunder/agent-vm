@@ -71,7 +71,6 @@ const systemConfig = {
 			},
 			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			defaultToolVmProfile: 'standard',
-			websocketBypass: [],
 			agentToolVmProfiles: {},
 		},
 	],
@@ -415,7 +414,6 @@ describe('resolveZoneSecrets', () => {
 					},
 					defaultToolVmProfile: baseZone.defaultToolVmProfile,
 					agentToolVmProfiles: baseZone.agentToolVmProfiles,
-					websocketBypass: baseZone.websocketBypass,
 				},
 			],
 		};
@@ -467,7 +465,6 @@ describe('resolveZoneSecrets', () => {
 					},
 					defaultToolVmProfile: baseZone.defaultToolVmProfile,
 					agentToolVmProfiles: baseZone.agentToolVmProfiles,
-					websocketBypass: baseZone.websocketBypass,
 				},
 			],
 		};

@@ -4,8 +4,13 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
 import { createLoadedSystemConfig, type SystemConfig } from '../config/system-config.js';
-import { collectVmHostSystemDoctorCheck, runControllerDoctor } from './doctor.js';
+import {
+	collectManagedImagePackageOverrideDoctorChecks,
+	collectVmHostSystemDoctorCheck,
+	runControllerDoctor,
+} from './doctor.js';
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -69,7 +74,6 @@ const systemConfig = {
 				},
 			},
 			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 			agentSandboxSeeds: {
@@ -109,6 +113,40 @@ const allBinaries = new Set([
 	'security',
 ]);
 
+function createManagedImageReleaseFixture(): ManagedImageRelease {
+	return {
+		baseImages: {
+			'openclaw-gateway': {
+				packageOverrides: {
+					npm: ['@openai/codex@0.139.0'],
+					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
+					pnpm: { undici: '8.5.0' },
+				},
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
+				tag: '2026.05.27.1',
+			},
+			'worker-gateway': {
+				packageOverrides: {
+					npm: ['@openai/codex@0.139.0'],
+					openclaw: [],
+					pnpm: {},
+				},
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
+				tag: '2026.05.27.1',
+			},
+			'tool-vm': {
+				packageOverrides: {
+					npm: [],
+					openclaw: [],
+					pnpm: {},
+				},
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
+				tag: '2026.05.27.1',
+			},
+		},
+	};
+}
+
 interface RuntimePathOverlapCase {
 	readonly cacheDir?: string;
 	readonly expectedHint: string;
@@ -140,7 +178,6 @@ function createWorkerOnlySystemConfig(): SystemConfig {
 				},
 				secrets: {},
 				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-				websocketBypass: [],
 			},
 		],
 	};
@@ -490,6 +527,115 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
+	it('reports managed and overlay package override ownership for managed image profiles', async () => {
+		const temporaryDirectoryPath = await mkdtemp(
+			path.join(os.tmpdir(), 'doctor-package-overrides-'),
+		);
+		const overlayPath = path.join(temporaryDirectoryPath, 'overlay.jsonc');
+		await writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "packageOverrides": {',
+				'    "openclaw": ["@openclaw/discord@2026.6.8"],',
+				'    "npm": ["left-pad@1.3.0"],',
+				'    "pnpm": { "undici": "8.6.0" }',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+		const managedBaseConfig = {
+			...systemConfig,
+			imageProfiles: {
+				...systemConfig.imageProfiles,
+				gateways: {
+					openclaw: {
+						...systemConfig.imageProfiles.gateways.openclaw,
+						source: {
+							kind: 'managedBase',
+							base: 'openclaw-gateway',
+							overlay: overlayPath,
+						},
+					},
+					worker: systemConfig.imageProfiles.gateways.worker,
+				},
+			},
+		} satisfies SystemConfig;
+
+		const checks = await collectManagedImagePackageOverrideDoctorChecks({
+			managedImageRelease: createManagedImageReleaseFixture(),
+			systemConfig: managedBaseConfig,
+		});
+
+		expect(checks).toHaveLength(1);
+		expect(checks[0]).toMatchObject({
+			name: 'gateway-package-overrides-openclaw',
+			ok: true,
+		});
+		expect(checks[0]?.hint).toContain(
+			'openclaw@2026.6.8[managed-images.json/packageOverrides.openclaw]',
+		);
+		expect(checks[0]?.hint).toContain(
+			'@openclaw/discord@2026.6.8[overlay.jsonc/packageOverrides.openclaw]',
+		);
+		expect(checks[0]?.hint).toContain(
+			'@openai/codex@0.139.0[managed-images.json/packageOverrides.npm]',
+		);
+		expect(checks[0]?.hint).toContain('left-pad@1.3.0[overlay.jsonc/packageOverrides.npm]');
+		expect(checks[0]?.hint).toContain('undici@8.6.0[overlay.jsonc/packageOverrides.pnpm]');
+		expect(checks[0]?.hint).toContain(`overlay ${overlayPath}`);
+	});
+
+	it('reports the exact overlay path when package override parsing fails in doctor', async () => {
+		const temporaryDirectoryPath = await mkdtemp(
+			path.join(os.tmpdir(), 'doctor-package-overrides-invalid-'),
+		);
+		const overlayPath = path.join(temporaryDirectoryPath, 'overlay.jsonc');
+		await writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "openClawPackageOverrides": ["@openclaw/discord@2026.6.8"]',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+		const managedBaseConfig = {
+			...systemConfig,
+			imageProfiles: {
+				...systemConfig.imageProfiles,
+				gateways: {
+					openclaw: {
+						...systemConfig.imageProfiles.gateways.openclaw,
+						source: {
+							kind: 'managedBase',
+							base: 'openclaw-gateway',
+							overlay: overlayPath,
+						},
+					},
+					worker: systemConfig.imageProfiles.gateways.worker,
+				},
+			},
+		} satisfies SystemConfig;
+
+		const checks = await collectManagedImagePackageOverrideDoctorChecks({
+			managedImageRelease: createManagedImageReleaseFixture(),
+			systemConfig: managedBaseConfig,
+		});
+
+		expect(checks).toContainEqual({
+			name: 'gateway-package-overrides-openclaw',
+			ok: false,
+			hint: expect.stringContaining(overlayPath),
+		});
+		expect(checks[0]?.hint).toContain('move openClawPackageOverrides to packageOverrides.openclaw');
+	});
+
 	it('flags legacy Dockerfile image profiles for migration', () => {
 		const dockerBackedConfig = {
 			...systemConfig,
@@ -612,7 +758,7 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(false);
 		expect(result.checks.find((check) => check.name === 'openclaw-cli')).toMatchObject({
 			ok: false,
-			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.5.',
+			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.8.',
 		});
 	});
 

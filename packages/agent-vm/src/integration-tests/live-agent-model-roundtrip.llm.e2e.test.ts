@@ -140,7 +140,6 @@ const liveRoundtripFixtureSystemConfig = {
 			},
 			secrets: {},
 			egressHosts: [],
-			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 		},

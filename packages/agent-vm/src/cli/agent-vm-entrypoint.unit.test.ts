@@ -82,6 +82,14 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 					port: 18791,
 					stateDir: './state/shravan',
 					zoneFilesDir: './zone-files/shravan',
+					authLogin: {
+						defaultAgent: 'main',
+						providers: {
+							openai: {
+								profileIds: ['openai-codex:test@example.com'],
+							},
+						},
+					},
 				},
 				id: 'shravan',
 				secrets: {
@@ -94,7 +102,6 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 				},
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
-				websocketBypass: [],
 			},
 		],
 	};
@@ -330,6 +337,107 @@ describe('runAgentVmCli', () => {
 			}),
 		);
 		expect(outputs.join('')).toContain('"config/system.json"');
+	});
+
+	it('routes init Keychain account names to the scaffolder and token prompt', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json'],
+			keychainStored: false,
+			skipped: [],
+		}));
+		const promptAndStoreServiceAccountToken = vi.fn(async () => true);
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'shravan-claw',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				promptAndStoreServiceAccountToken,
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				onePasswordKeychainAccountName: 'shravan-claw',
+			}),
+		);
+		expect(promptAndStoreServiceAccountToken).toHaveBeenCalledWith({
+			accountName: 'shravan-claw',
+		});
+	});
+
+	it('routes init token prompt through the effective skipped config Keychain account', async () => {
+		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-keychain-'));
+		const promptAndStoreServiceAccountToken = vi.fn(async () => true);
+		const dependencies = {
+			...defaultCliDependencies,
+			getCurrentWorkingDirectory: () => targetDir,
+			promptAndStoreServiceAccountToken,
+			resolveGondolinMinimumZigVersion: async () => '0.15.2',
+		} satisfies CliDependencies;
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'configured-account',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			dependencies,
+		);
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--onepassword-keychain-account-name',
+				'ignored-new-account',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			dependencies,
+		);
+
+		expect(promptAndStoreServiceAccountToken).toHaveBeenNthCalledWith(2, {
+			account: '1p-service-account--configured-account',
+			service: 'agent-vm',
+		});
+
+		await fs.rm(targetDir, { recursive: true, force: true });
 	});
 
 	it('passes comma-separated init agent ids to the project scaffolder', async () => {
@@ -1136,9 +1244,25 @@ describe('runAgentVmCli', () => {
 
 	it('routes auth openclaw to an interactive SSH-backed OpenClaw login', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'openai-codex:test@example.com\n',
+		}));
 
 		await runAgentVmCli(
-			['auth', 'openclaw', 'codex', '--zone', 'shravan'],
+			[
+				'auth',
+				'openclaw',
+				'login',
+				'openai',
+				'--zone',
+				'shravan',
+				'--agent',
+				'main',
+				'--profile-id',
+				'openai-codex:test@example.com',
+			],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -1153,6 +1277,7 @@ describe('runAgentVmCli', () => {
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runCommand,
 				runInteractiveProcess,
 			},
 		);
@@ -1170,13 +1295,87 @@ describe('runAgentVmCli', () => {
 			'root@127.0.0.1',
 			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 		]);
+		expect(runCommand).toHaveBeenCalledWith('ssh', expect.any(Array));
 	});
 
-	it('passes auth openclaw device-code and set-default flags to the login command', async () => {
-		const runInteractiveProcess = vi.fn(async () => {});
+	it('routes auth 1password to configured Keychain storage', async () => {
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'service-account-token\n',
+		}));
+		const storeServiceAccountToken = vi.fn();
+		const outputs: string[] = [];
+		const systemConfig: LoadedSystemConfig = {
+			...createCliBuildSystemConfig(),
+			host: {
+				...createCliBuildSystemConfig().host,
+				secretsProvider: {
+					type: '1password',
+					tokenSource: {
+						type: 'keychain',
+						service: 'agent-vm',
+						account: '1p-service-account--shravan-claw',
+					},
+				},
+			},
+		};
 
 		await runAgentVmCli(
-			['auth', 'openclaw', 'openai', '--zone', 'shravan', '--device-code', '--set-default'],
+			[
+				'auth',
+				'1password',
+				'op://agent-vm/1p-service-account-shravan-claw/credential',
+				'--config',
+				'config/system.jsonc',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(async () => systemConfig),
+				runCommand,
+				storeServiceAccountToken,
+			},
+		);
+
+		expect(runCommand).toHaveBeenCalledWith('op', [
+			'read',
+			'op://agent-vm/1p-service-account-shravan-claw/credential',
+		]);
+		expect(storeServiceAccountToken).toHaveBeenCalledWith('service-account-token', {
+			service: 'agent-vm',
+			account: '1p-service-account--shravan-claw',
+		});
+		expect(outputs.join('')).not.toContain('service-account-token');
+	});
+
+	it('passes auth openclaw device-code to the login command', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'openai-codex:test@example.com\n',
+		}));
+
+		await runAgentVmCli(
+			[
+				'auth',
+				'openclaw',
+				'login',
+				'openai',
+				'--zone',
+				'shravan',
+				'--all-configured-profiles',
+				'--device-code',
+			],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -1191,6 +1390,7 @@ describe('runAgentVmCli', () => {
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runCommand,
 				runInteractiveProcess,
 			},
 		);
@@ -1198,19 +1398,80 @@ describe('runAgentVmCli', () => {
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
 			expect.arrayContaining([
-				expect.stringContaining('openclaw models auth login --provider'),
-				expect.stringContaining('--device-code --set-default'),
+				expect.stringContaining('openclaw models auth --agent'),
+				expect.stringContaining('login --provider'),
+				expect.stringContaining('--device-code'),
 			]),
 		);
+	});
+
+	it('routes auth openclaw login --dry-run without opening SSH', async () => {
+		const stdoutChunks: string[] = [];
+		const runInteractiveProcess = vi.fn(async () => {});
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'openai-codex:test@example.com\n',
+		}));
+
+		await runAgentVmCli(
+			[
+				'auth',
+				'openclaw',
+				'login',
+				'openai',
+				'--zone',
+				'shravan',
+				'--all-configured-profiles',
+				'--dry-run',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string) => {
+						stdoutChunks.push(chunk);
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: vi.fn(),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runCommand,
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+		expect(runCommand).not.toHaveBeenCalled();
+		expect(stdoutChunks.join('')).toContain("OpenClaw auth login plan for zone 'shravan'");
+		expect(stdoutChunks.join('')).toContain('openai-codex:test@example.com');
 	});
 
 	it('routes auth openclaw --agent to the OpenClaw provider login for that agent', async () => {
 		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
 			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
 		);
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'openai-codex:test@example.com\n',
+		}));
 
 		await runAgentVmCli(
-			['auth', 'openclaw', 'openai-codex', '--zone', 'shravan', '--agent', 'shravan'],
+			[
+				'auth',
+				'openclaw',
+				'login',
+				'openai',
+				'--zone',
+				'shravan',
+				'--agent',
+				'shravan',
+				'--profile-id',
+				'openai-codex:test@example.com',
+			],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -1225,6 +1486,7 @@ describe('runAgentVmCli', () => {
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+				runCommand,
 				runInteractiveProcess,
 			},
 		);
@@ -1239,18 +1501,24 @@ describe('runAgentVmCli', () => {
 		expect(remoteCommand).toEqual(expect.stringContaining('--agent'));
 		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
 		expect(remoteCommand).toEqual(expect.stringContaining('login --provider'));
-		expect(remoteCommand).toEqual(expect.stringContaining('openai-codex'));
+		expect(remoteCommand).toEqual(expect.stringContaining('openai'));
+		expect(remoteCommand).toEqual(expect.stringContaining('--profile-id'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('CODEX_HOME='));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('codex login'));
 	});
 
-	it('routes auth openclaw --all-agents to one OpenClaw provider login per configured agent', async () => {
+	it('routes auth openclaw login --all-configured-profiles to configured profile login', async () => {
 		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
 			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
 		);
+		const runCommand = vi.fn(async () => ({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'openai-codex:test@example.com\n',
+		}));
 
 		await runAgentVmCli(
-			['auth', 'openclaw', 'openai-codex', '--zone', 'shravan', '--all-agents'],
+			['auth', 'openclaw', 'login', 'openai', '--zone', 'shravan', '--all-configured-profiles'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -1265,31 +1533,30 @@ describe('runAgentVmCli', () => {
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+				runCommand,
 				runInteractiveProcess,
 			},
 		);
 
-		expect(runInteractiveProcess).toHaveBeenCalledTimes(2);
+		expect(runInteractiveProcess).toHaveBeenCalledTimes(1);
 		const firstSshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
-		const secondSshArguments = vi.mocked(runInteractiveProcess).mock.calls[1]?.[1];
-		if (!firstSshArguments || !secondSshArguments) {
-			throw new Error('Expected one ssh invocation per agent.');
+		if (!firstSshArguments) {
+			throw new Error('Expected one ssh invocation.');
 		}
 		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('openclaw models auth'));
 		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('--agent'));
-		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('shravan'));
+		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('main'));
 		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('login --provider'));
-		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('openclaw models auth'));
-		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('--agent'));
-		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('ember'));
-		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('login --provider'));
+		expect(firstSshArguments.at(-1)).toEqual(
+			expect.stringContaining('openai-codex:test@example.com'),
+		);
 	});
 
 	it('auth openclaw without --zone shows available zones', async () => {
 		const stderrChunks: string[] = [];
 		await expect(
 			runAgentVmCli(
-				['auth', 'openclaw', 'codex'],
+				['auth', 'openclaw', 'login', 'codex', '--profile-id', 'openai-codex:test@example.com'],
 				{
 					stderr: {
 						write: (s: string) => {
@@ -1840,7 +2107,6 @@ describe('runAgentVmCli', () => {
 									audience: 'gateway',
 								},
 							},
-							websocketBypass: [],
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
 						},
@@ -2168,7 +2434,6 @@ describe('runAgentVmCli', () => {
 								audience: 'gateway',
 							},
 						},
-						websocketBypass: [],
 						defaultToolVmProfile: 'standard',
 						agentToolVmProfiles: {},
 					},
@@ -2959,7 +3224,6 @@ describe('runAgentVmCli', () => {
 									audience: 'gateway',
 								},
 							},
-							websocketBypass: [],
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
 						},
@@ -3128,7 +3392,6 @@ describe('runAgentVmCli', () => {
 									audience: 'gateway',
 								},
 							},
-							websocketBypass: [],
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
 						},

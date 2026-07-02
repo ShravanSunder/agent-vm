@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
@@ -27,6 +27,19 @@ interface EvidenceValidationResult {
 	readonly summary?: VitestEvidenceSummary | undefined;
 }
 
+interface VitestEvidenceObservabilityState {
+	readonly marker: string;
+	readonly projectName: string;
+	readonly queryStart: string;
+	readonly runId: string;
+	readonly stateFilePath: string;
+}
+
+interface VitestEvidenceObservabilityEnvironment {
+	readonly env: Readonly<Record<string, string>>;
+	readonly state: VitestEvidenceObservabilityState;
+}
+
 export interface VitestEvidenceSummary {
 	readonly pendingTests: number;
 	readonly projectName: string;
@@ -50,6 +63,34 @@ export function resolveVitestJsonOutputFilePath(
 		`${projectName}-${runId}`,
 		'results.json',
 	);
+}
+
+export function createVitestEvidenceObservabilityEnvironment(options: {
+	readonly now?: () => Date;
+	readonly projectName: string;
+	readonly runDirectory: string;
+	readonly runId: string;
+}): VitestEvidenceObservabilityEnvironment {
+	const queryStart = (options.now ?? (() => new Date()))().toISOString();
+	const marker = `agent-vm-${options.projectName}-${options.runId}`;
+	const stateFilePath = path.join(options.runDirectory, 'observability-state.json');
+	const state = {
+		marker,
+		projectName: options.projectName,
+		queryStart,
+		runId: options.runId,
+		stateFilePath,
+	} satisfies VitestEvidenceObservabilityState;
+	return {
+		env: {
+			AGENT_VM_OBSERVABILITY_MARKER: marker,
+			AGENT_VM_OBSERVABILITY_QUERY_START: queryStart,
+			AGENT_VM_OBSERVABILITY_RELEASE_CHANNEL: 'local',
+			AGENT_VM_OBSERVABILITY_RUNTIME_FLAVOR: 'e2e',
+			AGENT_VM_OBSERVABILITY_STATE_FILE: stateFilePath,
+		},
+		state,
+	};
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -153,6 +194,7 @@ async function runVitestProject(
 	projectName: string,
 	outputFilePath: string,
 	filters: readonly string[],
+	env: Readonly<Record<string, string>>,
 ): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		const child = spawn(
@@ -169,7 +211,7 @@ async function runVitestProject(
 				`--outputFile.json=${outputFilePath}`,
 				...filters,
 			],
-			{ cwd: repositoryRoot, stdio: 'inherit' },
+			{ cwd: repositoryRoot, env: { ...process.env, ...env }, stdio: 'inherit' },
 		);
 		child.on('error', reject);
 		child.on('exit', (code, signal) => {
@@ -198,8 +240,18 @@ export async function runEvidenceProject(
 	const runId = path.basename(runDirectory).slice(`${projectName}-`.length);
 	const outputFilePath = resolveVitestJsonOutputFilePath(repositoryRoot, projectName, runId);
 	await mkdir(path.dirname(outputFilePath), { recursive: true });
+	const observability = createVitestEvidenceObservabilityEnvironment({
+		projectName,
+		runDirectory,
+		runId,
+	});
+	await writeFile(
+		observability.state.stateFilePath,
+		`${JSON.stringify(observability.state, null, '\t')}\n`,
+		'utf8',
+	);
 
-	await runVitestProject(projectName, outputFilePath, filters);
+	await runVitestProject(projectName, outputFilePath, filters, observability.env);
 
 	const results = parseVitestJsonResults(await readFile(outputFilePath, 'utf8'));
 	return validateProofProjectResults(projectName, results, outputFilePath);

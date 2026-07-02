@@ -110,7 +110,6 @@ describe('isGatewayImageCached', () => {
 						},
 						id: 'coding-agent',
 						secrets: {},
-						websocketBypass: [],
 					},
 				],
 			},

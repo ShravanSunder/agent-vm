@@ -49,6 +49,7 @@ export interface ScaffoldAgentVmProjectOptions {
 	readonly architecture: ImageArchitecture;
 	readonly gatewayType: GatewayType;
 	readonly hostSystemType?: HostSystemType;
+	readonly onePasswordKeychainAccountName?: string;
 	readonly secretsProvider: SecretsProvider;
 	readonly paths?: ScaffoldPathMode;
 	readonly projectNamespace?: string;
@@ -74,7 +75,10 @@ interface ScaffoldAgentVmProjectDependencies {
 }
 
 export interface PromptAndStoreTokenDependencies {
+	readonly account?: string;
+	readonly accountName?: string;
 	readonly hasKeychainToken?: () => boolean;
+	readonly service?: string;
 	readonly storeKeychainToken?: (token: string) => void;
 	readonly createReadlineInterface?: () => readline.Interface;
 }
@@ -155,7 +159,6 @@ interface RuntimeAuthHint {
 interface DefaultManagedImageOverlay {
 	readonly schemaVersion: 1;
 	readonly extraAptPackages: readonly string[];
-	readonly openClawPackageOverrides: readonly string[];
 	readonly copy: readonly [];
 	readonly runAfterBase: readonly string[];
 }
@@ -323,7 +326,6 @@ function defaultManagedImageOverlay(): DefaultManagedImageOverlay {
 	return {
 		schemaVersion: 1,
 		extraAptPackages: [],
-		openClawPackageOverrides: [],
 		copy: [],
 		runAfterBase: [],
 	} satisfies DefaultManagedImageOverlay;
@@ -357,6 +359,7 @@ const defaultSystemConfig = (
 	projectNamespace: string,
 	secretsProvider: SecretsProvider,
 	pathProfile: ScaffoldPathProfile,
+	onePasswordKeychainAccountName: string | undefined,
 	agentIds?: readonly string[],
 ): object => ({
 	$schema: './schemas/system.schema.json',
@@ -369,7 +372,11 @@ const defaultSystemConfig = (
 			? {
 					secretsProvider: {
 						type: '1password',
-						tokenSource: getKeychainTokenSource(),
+						tokenSource: getKeychainTokenSource(
+							onePasswordKeychainAccountName === undefined
+								? {}
+								: { accountName: onePasswordKeychainAccountName },
+						),
 					},
 				}
 			: {}),
@@ -422,7 +429,6 @@ const defaultSystemConfig = (
 				? { runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType) }
 				: {}),
 			egressHosts: defaultEgressHostsForGatewayType(gatewayType),
-			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			...(gatewayType === 'openclaw'
 				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {}, agentSandboxSeeds: {} }
 				: {}),
@@ -618,14 +624,6 @@ function defaultEgressHostsForGatewayType(gatewayType: GatewayType): readonly Eg
 	].map((host) => ({ host, audience: 'gateway' }));
 }
 
-function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonly string[] {
-	if (gatewayType === 'worker') {
-		return [];
-	}
-
-	return [];
-}
-
 function envVarsForGatewayType(gatewayType: GatewayType, zoneId: string): readonly string[] {
 	void zoneId;
 	switch (gatewayType) {
@@ -720,8 +718,12 @@ function defaultOpenClawPortalToolDenyList(
 function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): object {
 	return {
 		defaults: {
-			model: { primary: 'openai-codex/gpt-5.5' },
-			thinkingDefault: 'low',
+			model: { primary: 'openai/gpt-5.5' },
+			models: {
+				'openai/gpt-5.5': {
+					agentRuntime: { id: 'pi' },
+				},
+			},
 			sandbox: {
 				backend: 'gondolin',
 				mode: 'all',
@@ -910,7 +912,7 @@ function formatAuthoredConfig(filePath: string, comment: string, value: unknown)
 	return `${JSON.stringify(value, null, '\t')}\n`;
 }
 
-async function resolveScaffoldSystemConfigPath(configDir: string): Promise<string> {
+export async function resolveScaffoldSystemConfigPath(configDir: string): Promise<string> {
 	const legacyJsonPath = path.join(configDir, 'system.json');
 	try {
 		await access(legacyJsonPath);
@@ -1087,6 +1089,7 @@ async function scaffoldAgentVmProjectInternal(
 				projectNamespace,
 				options.secretsProvider,
 				configWritablePathProfile,
+				options.onePasswordKeychainAccountName,
 				options.agents,
 			),
 		),
@@ -1342,8 +1345,19 @@ async function scaffoldAgentVmProjectInternal(
 export async function promptAndStoreServiceAccountToken(
 	dependencies: PromptAndStoreTokenDependencies = {},
 ): Promise<boolean> {
-	const hasToken = dependencies.hasKeychainToken ?? hasServiceAccountToken;
-	const storeToken = dependencies.storeKeychainToken ?? storeServiceAccountToken;
+	const keychainTarget =
+		dependencies.account !== undefined || dependencies.service !== undefined
+			? {
+					...(dependencies.account === undefined ? {} : { account: dependencies.account }),
+					...(dependencies.service === undefined ? {} : { service: dependencies.service }),
+				}
+			: dependencies.accountName === undefined
+				? {}
+				: { accountName: dependencies.accountName };
+	const hasToken = dependencies.hasKeychainToken ?? (() => hasServiceAccountToken(keychainTarget));
+	const storeToken =
+		dependencies.storeKeychainToken ??
+		((token: string) => storeServiceAccountToken(token, keychainTarget));
 
 	if (hasToken()) {
 		return false;

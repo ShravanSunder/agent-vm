@@ -122,7 +122,6 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
-					websocketBypass: [],
 				},
 			],
 		},
@@ -446,6 +445,107 @@ describe('createToolVm', () => {
 		expect(bootstrapCommand).not.toContain('github-real-secret');
 		expect(bootstrapCommand).not.toContain('linear-real-secret');
 		expect(bootstrapCommand).not.toContain('readwise-real-secret');
+	});
+
+	it('uses Tool VM websocket upgrade policy for websocket request guarding', async () => {
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: vi.fn(() => createManagedExecProcessStub()),
+			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
+			getVmInstance: () => ({
+				close: async () => {},
+				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				exec: () => createManagedExecProcessStub(),
+				fs: createManagedVmFsStub(),
+				id: 'vm-instance',
+				setIngressRoutes: () => {},
+			}),
+			id: 'managed-vm',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+		let capturedCreateVmOptions: CreateVmOptions | undefined;
+		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
+			capturedCreateVmOptions = createVmOptions;
+			return managedVm;
+		});
+		const systemConfig = await createToolVmSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone');
+		}
+		zone.egressHosts = [
+			{ host: 'gateway-websocket.example.com', audience: 'gateway' },
+			{ host: 'tool-websocket.example.com', audience: 'tool-vm' },
+		];
+		zone.websocketUpgrades = [
+			{
+				audience: 'gateway',
+				host: 'gateway-websocket.example.com',
+				path: '/socket',
+				scheme: 'wss',
+			},
+			{
+				audience: 'tool-vm',
+				host: 'tool-websocket.example.com',
+				path: '/socket',
+				scheme: 'wss',
+			},
+		];
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool VM profile');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'tool-vm-websocket-work-mount',
+		);
+
+		await createToolVm(
+			{
+				cacheDir: systemConfig.cacheDir,
+				agentId: 'sun',
+				profile: standardProfile,
+				systemConfig,
+				tcpSlot: 0,
+				hostWorkMountDir: requestedWorkMountDir,
+				zoneId: 'shravan',
+				secretResolver: createSecretResolver({}),
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				createManagedVm,
+				closePinnedRealFsRoot: () => {},
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+
+		const onRequest = capturedCreateVmOptions?.onRequest;
+		expect(onRequest).toBeDefined();
+		if (!onRequest) {
+			throw new Error('Expected Tool VM websocket guard');
+		}
+		const allowedResult = await onRequest(
+			new Request('https://tool-websocket.example.com/socket', {
+				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+			}),
+		);
+		const gatewayOnlyResult = await onRequest(
+			new Request('https://gateway-websocket.example.com/socket', {
+				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+			}),
+		);
+
+		expect(allowedResult).toBeUndefined();
+		expect(gatewayOnlyResult).toBeInstanceOf(Response);
+		expect((gatewayOnlyResult as Response).status).toBe(403);
 	});
 
 	it.each(['BASH_ENV', 'HOME', 'LOGNAME', 'NODE_OPTIONS', 'PATH', 'SHELL', 'USER'])(

@@ -11,6 +11,10 @@ export {
 	vmAudienceValues,
 } from './audience.js';
 export {
+	createWebSocketUpgradeRequestGuard,
+	websocketUpgradesForAudience,
+} from './websocket-upgrade-policy.js';
+export {
 	agentVmHealthEventKinds,
 	agentVmHealthResultKinds,
 	deriveZoneHealthSnapshot,
@@ -33,6 +37,7 @@ export {
 } from './health/controller-request-policy.js';
 export { composeNodeOptions, FORCE_IPV4_EGRESS_NODE_OPTIONS } from './force-ipv4-egress.js';
 export type { EgressHostConfig, RuntimeVmAudience, VmAudience } from './audience.js';
+export type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 export type { GatewayType } from './gateway-runtime-contract.js';
 export type {
 	AgentVmHealthEvent,

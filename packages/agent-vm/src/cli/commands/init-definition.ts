@@ -1,11 +1,12 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
 import { command, flag, oneOf, option, optional, positional, string, type Type } from 'cmd-ts';
 
-import { agentIdSchema } from '../../config/system-config.js';
+import { agentIdSchema, loadSystemConfig } from '../../config/system-config.js';
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import {
 	imageArchitectureSchema,
 	promptAndStoreServiceAccountToken,
+	resolveScaffoldSystemConfigPath,
 	scaffoldAgentVmProject,
 	secretsProviderSchema,
 	type HostSystemType,
@@ -122,6 +123,34 @@ function resolveHostSystemType(
 	return preset?.hostSystemType ?? (paths === 'pod' ? 'container' : 'bare-metal');
 }
 
+async function resolveOnePasswordPromptOptions(options: {
+	readonly accountName: string | undefined;
+	readonly targetDir: string;
+}): Promise<{
+	readonly account?: string;
+	readonly accountName?: string;
+	readonly service?: string;
+}> {
+	try {
+		const systemConfigPath = await resolveScaffoldSystemConfigPath(`${options.targetDir}/config`);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const secretsProvider = systemConfig.host.secretsProvider;
+		if (secretsProvider?.type === '1password' && secretsProvider.tokenSource.type === 'keychain') {
+			return {
+				account: secretsProvider.tokenSource.account,
+				service: secretsProvider.tokenSource.service,
+			};
+		}
+	} catch (error) {
+		if (
+			!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')
+		) {
+			throw error;
+		}
+	}
+	return options.accountName === undefined ? {} : { accountName: options.accountName };
+}
+
 export function parseAgentIds(agentIds: string): readonly string[] {
 	const parsedAgentIds = agentIds
 		.split(',')
@@ -195,11 +224,18 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 				description:
 					'Comma-separated OpenClaw agent ids to scaffold, for example: sun,shravan,alevtina.',
 			}),
+			onePasswordKeychainAccountName: option({
+				type: optional(string),
+				long: 'onepassword-keychain-account-name',
+				description:
+					'Keychain account suffix for the 1Password service account token, stored as 1p-service-account--<name>.',
+			}),
 		},
 		handler: async ({
 			agents,
 			arch,
 			namespace,
+			onePasswordKeychainAccountName,
 			overwrite,
 			paths,
 			preset,
@@ -213,16 +249,18 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 			const architecture = resolveArchitecture(arch, presetDefaults);
 			const pathMode = resolvePathMode(paths, presetDefaults);
 			const hostSystemType = resolveHostSystemType(pathMode, presetDefaults);
+			const targetDir = dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
 			const result = await (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
 				...(agents === undefined ? {} : { agents: parseAgentIds(agents) }),
 				architecture,
 				gatewayType,
 				hostSystemType,
+				...(onePasswordKeychainAccountName === undefined ? {} : { onePasswordKeychainAccountName }),
 				overwrite,
 				paths: pathMode,
 				...(namespace === undefined ? {} : { projectNamespace: namespace }),
 				secretsProvider,
-				targetDir: dependencies.getCurrentWorkingDirectory?.() ?? process.cwd(),
+				targetDir,
 				writeLocalEnvironmentFile: presetDefaults?.writeLocalEnvironmentFile ?? false,
 				zoneId: zoneId ?? 'default',
 			});
@@ -230,7 +268,12 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 				secretsProvider === '1password'
 					? await (
 							dependencies.promptAndStoreServiceAccountToken ?? promptAndStoreServiceAccountToken
-						)()
+						)(
+							await resolveOnePasswordPromptOptions({
+								accountName: onePasswordKeychainAccountName,
+								targetDir,
+							}),
+						)
 					: false;
 			io.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
 		},

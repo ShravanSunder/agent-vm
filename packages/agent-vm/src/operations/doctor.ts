@@ -8,6 +8,17 @@ import type {
 } from '@agent-vm/gateway-interface';
 import { workerLifecycle } from '@agent-vm/worker-gateway';
 
+import {
+	loadManagedImageOverlay,
+	type ManagedImageRelease,
+	type ManagedImageSource,
+} from '../build/managed-image-dockerfile.js';
+import {
+	emptyPackageOverrides,
+	type EffectivePackageOverrides,
+	type PackageOverrides,
+	resolveEffectivePackageOverrides,
+} from '../build/package-overrides.js';
 import { buildZigInstallHint, checkGondolinZigCompatibility } from '../build/zig-compatibility.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import { buildOpenClawAgentSecretAccessChecks } from './agent-secret-access-checks.js';
@@ -151,7 +162,7 @@ function buildOpenClawCliCheck(
 			...(openClawCliReady
 				? { hint: 'openclaw' }
 				: {
-						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.5.',
+						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.8.',
 					}),
 		},
 	];
@@ -262,7 +273,6 @@ function buildWorkerWorkRootfsChecks(
 				},
 				secrets: zone.secrets,
 				egressHosts: zone.egressHosts,
-				websocketBypass: zone.websocketBypass,
 			};
 			const vmSpec = buildWorkerVmSpec({
 				controllerPort: systemConfig.host.controllerPort,
@@ -381,6 +391,113 @@ function formatImageProfileHint(profile: {
 		return `type=${profile.type}`;
 	}
 	return `type=${profile.type} source=${profile.source.kind} base=${profile.source.base}`;
+}
+
+function formatPackageOverrideEntries(
+	effectivePackageOverrides: EffectivePackageOverrides,
+): readonly string[] {
+	return [
+		...effectivePackageOverrides.openclaw.map(
+			(packageEntry) => `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`,
+		),
+		...effectivePackageOverrides.npm.map(
+			(packageEntry) => `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`,
+		),
+		...effectivePackageOverrides.pnpm.map(
+			(packageEntry) => `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`,
+		),
+	];
+}
+
+function formatPackageOverrideHint(props: {
+	readonly effectivePackageOverrides: EffectivePackageOverrides;
+	readonly overlayPath?: string | undefined;
+}): string {
+	const packageEntries = formatPackageOverrideEntries(props.effectivePackageOverrides);
+	const packageSummary = packageEntries.length > 0 ? packageEntries.join(',') : 'none';
+	return props.overlayPath
+		? `${packageSummary}; overlay ${props.overlayPath}`
+		: `${packageSummary}; no overlay`;
+}
+
+async function buildManagedPackageOverrideCheck(props: {
+	readonly checkName: string;
+	readonly managedPackageOverrides: PackageOverrides;
+	readonly source: ManagedImageSource;
+}): Promise<DoctorCheck> {
+	let overlayPackageOverrides = emptyPackageOverrides();
+	if (props.source.overlay) {
+		try {
+			const overlay = await loadManagedImageOverlay(props.source.overlay);
+			overlayPackageOverrides = overlay.packageOverrides;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return {
+				name: props.checkName,
+				ok: false,
+				hint: `Cannot read package overrides from ${props.source.overlay}: ${message}`,
+			};
+		}
+	}
+	try {
+		const effectivePackageOverrides = resolveEffectivePackageOverrides({
+			base: props.source.base,
+			managed: props.managedPackageOverrides,
+			overlay: overlayPackageOverrides,
+		});
+		return {
+			name: props.checkName,
+			ok: true,
+			hint: formatPackageOverrideHint({
+				effectivePackageOverrides,
+				overlayPath: props.source.overlay,
+			}),
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			name: props.checkName,
+			ok: false,
+			hint: message,
+		};
+	}
+}
+
+export async function collectManagedImagePackageOverrideDoctorChecks(props: {
+	readonly managedImageRelease: ManagedImageRelease;
+	readonly systemConfig: LoadedSystemConfig | SystemConfig;
+}): Promise<readonly DoctorCheck[]> {
+	const gatewayChecks = await Promise.all(
+		Object.entries(props.systemConfig.imageProfiles.gateways).map(
+			async ([profileName, profile]) => {
+				if (profile.source?.kind !== 'managedBase') {
+					return [];
+				}
+				const managedBaseImage = props.managedImageRelease.baseImages[profile.source.base];
+				const check = await buildManagedPackageOverrideCheck({
+					checkName: `gateway-package-overrides-${profileName}`,
+					managedPackageOverrides: managedBaseImage.packageOverrides,
+					source: profile.source,
+				});
+				return [check];
+			},
+		),
+	);
+	const toolVmChecks = await Promise.all(
+		Object.entries(props.systemConfig.imageProfiles.toolVms).map(async ([profileName, profile]) => {
+			if (profile.source?.kind !== 'managedBase') {
+				return [];
+			}
+			const managedBaseImage = props.managedImageRelease.baseImages[profile.source.base];
+			const check = await buildManagedPackageOverrideCheck({
+				checkName: `tool-vm-package-overrides-${profileName}`,
+				managedPackageOverrides: managedBaseImage.packageOverrides,
+				source: profile.source,
+			});
+			return [check];
+		}),
+	);
+	return [...gatewayChecks.flat(), ...toolVmChecks.flat()];
 }
 
 export async function collectVmHostSystemDoctorCheck(
