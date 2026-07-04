@@ -8369,6 +8369,76 @@ Still not PR-ready:
 - Implementation review/Fable refresh remains required.
 - Live `../shravan-claw-beta` actual Discord/OpenClaw proof remains required.
 - PR-ready non-merge wrapup remains required.
+
+## Event 202 Review Drift And Bugbot Fixes
+
+Completed in this checkpoint:
+- Created checkpoint commits `17e0d1a` and `64fd26d` after Event 201.
+- Fixed control-plane review lifecycle blockers in runtime/controller code.
+- Fixed Bugbot documentation drift:
+  - `docs/specs/2026-06-25-tool-portal-composition-contract.md` now treats
+    `zones[].toolPortal` as the managed Tool Portal root, not a stale field.
+  - The Tool Portal runtime plugin path is documented as
+    `runtimePluginConfigs.gondolin.toolPortal`.
+  - `docs/architecture/overview.md` now includes
+    `control-protocol-contracts`, `gateway-control-contracts`, and
+    `worker-control-contracts` in the package graph/table.
+
+Fresh proof:
+- `pnpm fmt:check` passed.
+- `git diff --check` passed.
+- Targeted residue scan found no stale `zones[].toolPortal` stale wording,
+  flat `runtimePluginConfigs["tool-portal"]`, or missing control-contract
+  package graph anchors in the reviewed docs.
+- `pnpm check` passed 10 passed / 0 failed in 49.95s.
+
+Still not PR-ready:
+- Live `../shravan-claw-beta` actual Discord/OpenClaw proof remains required.
+- Implementation review/Fable freshness after Bugbot drift fixes remains
+  required unless the Bugbot result is accepted as the final implementation
+  review gate.
+- PR-ready non-merge wrapup remains required.
+
+## Event 203 Beta Runtime And Discord Connectivity Proof
+
+Completed in this checkpoint:
+- Verified source repo branch `mcp-portal-better-interface` is clean except for
+  workflow-state edits and is ahead of `origin/mcp-portal-better-interface` by
+  26 commits.
+- Verified beta deployment worktree is dirty from local tarball/config/runtime
+  proof work; this remains intentionally separate from the source repo.
+- Verified live beta controller and ingress health:
+  - `curl -fsS http://127.0.0.1:18900/health` returned controller ready.
+  - `curl -fsS http://127.0.0.1:18891/health` returned OpenClaw live.
+  - `curl -fsS http://127.0.0.1:18891/readyz` returned ready.
+  - `curl -fsS http://127.0.0.1:18900/zones/beta/health` returned `ok: true`
+    with `/readyz` HTTP 200.
+- Verified beta config/doctor:
+  - `mise exec -- pnpm -C ../shravan-claw-beta doctor` exited 0.
+  - `pnpm -C ../shravan-claw-beta validate` exited 0 with all reported checks
+    `ok: true`.
+- Verified current beta runtime record names VM
+  `cd98c089-0c34-479a-8f78-032ac37afcb1`.
+- Verified current OpenClaw log evidence:
+  - OpenClaw runtime path contains `openclaw@2026.6.8`.
+  - Discord bot probe resolved at `2026-07-04T20:23:01.143+00:00`.
+  - Discord gateway websocket opened at `2026-07-04T20:23:01.648+00:00`.
+  - `gondolin` plugin loaded from the local
+    `@agent-vm/openclaw-agent-vm-plugin` package at
+    `2026-07-04T20:23:09.341+00:00`.
+  - `@openclaw/discord@2026.6.8` plugin loaded at
+    `2026-07-04T20:23:09.382+00:00`.
+
+Still not PR-ready:
+- Fresh actual allowed-user Discord inbound proof is still missing.
+- 1Password CLI is not signed in in this shell, so Codex could not fetch the
+  approved test sender credential. A 1Password metadata command was interrupted
+  after it waited for auth.
+- Current state/log inspection found current heartbeat/direct activity and
+  Discord gateway connectivity, but no fresh user-originated Discord inbound
+  message after the latest runtime fixes.
+- Implementation review/Fable freshness and PR-ready non-merge wrapup remain
+  required.
 - No checkpoint commit has been made yet.
 
 ## Event 201 Checkpoint Commit And Review Packet Retarget
