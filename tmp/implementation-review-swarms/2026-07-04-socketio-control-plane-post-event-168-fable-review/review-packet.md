@@ -4,7 +4,8 @@ Socket.IO Control Plane Post-Event-200 Fable Review Packet
 Purpose
 -------
 
-This packet is for a fresh implementation review of the current staged branch
+This packet is for a fresh implementation review of the current committed
+branch diff
 after Event 185 accepted blocker/important findings were addressed, the
 post-Event-186 Worker git RPC proof gap was fixed, the Event 188 internal review
 fixes were folded in, the Event 189 accepted findings were fixed, the
@@ -70,18 +71,17 @@ Branch/base:
 
 ```text
 branch: mcp-portal-better-interface
-HEAD: ed40896
+HEAD: af018d2
 base: origin/master 479ad73
-unstaged files: 0 expected after this packet and regenerated inventory are staged
-staged files: refreshed in staged-name-status.txt against origin/master
-untracked files: 0
-staged diff: staged-stat.txt is a generated review aid; because the inventory
-  files include themselves, use `git diff --cached --stat origin/master` for
-  exact live counts if the stat artifact differs by its own inventory rows.
+working tree: expected clean
+branch diff: `origin/master...HEAD`
+inventory files: staged-name-status.txt and staged-stat.txt keep their legacy
+  names from earlier staged review cycles, but now contain the committed branch
+  diff against `origin/master`.
 ```
 
-Review the staged diff against `origin/master` and the source artifacts below.
-The staged file inventory is captured here:
+Review the committed branch diff against `origin/master` and the source
+artifacts below. The branch file inventory is captured here:
 
 - tmp/implementation-review-swarms/2026-07-04-socketio-control-plane-post-event-168-fable-review/staged-name-status.txt
 - tmp/implementation-review-swarms/2026-07-04-socketio-control-plane-post-event-168-fable-review/staged-stat.txt
@@ -185,8 +185,9 @@ Important current-state note:
 - This packet was refreshed after Hilbert's post-Event-191 proof review:
   plain `pnpm lint` now passes and is included in `pnpm check`; the CI default
   e2e step is named as the default four-lane proof rather than all non-secret
-  e2e proof; `staged-stat.txt` is documented as a self-referential review aid
-  with live `git diff --cached --stat origin/master` as the exact count source.
+  e2e proof; `staged-stat.txt` was documented as a self-referential review aid
+  during staged review cycles. For this committed review cycle, use live
+  `git diff --stat origin/master...HEAD` as the exact count source.
 - This packet was refreshed after Event 193:
   failed Worker tasks now publish failed advisory runtime events; Worker
   advisory publishes are caught/logged instead of producing unhandled promise
@@ -205,7 +206,7 @@ Important current-state note:
   for this PR; Gateway and Worker peer services coalesce latest-wins events and
   use volatile emits for latest-wins/droppable advisory traffic; MCP-backed Tool
   Portal sessions now thread session provenance into the MCP provider backend;
-  staged inventory and this review packet were refreshed at
+  the staged inventory and this review packet were refreshed at
   that checkpoint.
 - This packet was refreshed after Event 195:
   lossy/advisory latest-wins and droppable packets no longer reserve or advance
@@ -217,17 +218,13 @@ Important current-state note:
   `sessionId`, and `connectionId` when stable controller-vetted provenance
   matches, while different agent/session-key provenance is rejected; root plan,
   canonical proof matrix, and slice files were updated for these semantics.
-  Current staged inventory was refreshed to 397 staged paths against
-  `origin/master` at that checkpoint.
+  The staged-review inventory was refreshed to 397 paths against
+  `origin/master` at that historical checkpoint.
 - This packet was refreshed after Event 200:
   the Worker e2e harness sequence-gap fix, host e2e fixture repairs, full VM
-  gate, default e2e gate, and `pnpm check` refresh are staged. Live staged
-  inventory after packet refresh is self-referential: before staging the
-  refreshed packet/inventory files, `git diff --cached --name-only
-  origin/master | wc -l` reports 399 paths and `git diff --cached --shortstat
-  origin/master` reports 399 files changed. After staging these regenerated
-  artifacts, exact counts should be taken from live `git diff` commands, not
-  from the inventory files' own previous count.
+  gate, default e2e gate, and `pnpm check` refresh were checkpointed in commit
+  `af018d2`. After that checkpoint, the review surface is the committed branch
+  diff `origin/master...HEAD`, not the empty staged index.
 
 Implementation Scope
 --------------------
@@ -273,7 +270,7 @@ Event 172 Findings To Verify As Fixed
 -------------------------------------
 
 Fable should specifically verify whether these Event 172 findings are actually
-fixed in the current staged diff:
+fixed in the current branch diff:
 
 1. Managed OpenClaw plugin-supplied agent identity:
    - Expected fix: managed OpenClaw zones fail closed when `zones[].agents` is
@@ -589,7 +586,7 @@ pnpm check
   architecture audit, portal export audit, lint, format, type-aware lint, and
   typecheck
 
-git diff --cached --check
+git diff --check
   passed
 
 git diff --check
@@ -661,11 +658,11 @@ git ls-files --others --exclude-standard | wc -l
 git diff --name-only | wc -l
   0
 
-git diff --cached --name-only origin/master | wc -l
-  365
+git diff --name-only origin/master...HEAD | wc -l
+  400
 
-git diff --cached --shortstat origin/master
-  365 files changed, 61456 insertions(+), 11021 deletions(-)
+git diff --shortstat origin/master...HEAD
+  400 files changed, 68944 insertions(+), 11058 deletions(-)
 
 pnpm vitest run --config vitest.config.ts --project unit packages/control-protocol-contracts/src/control-protocol-contracts.unit.test.ts packages/gateway-control-contracts/src/gateway-control-contracts.unit.test.ts packages/worker-control-contracts/src/worker-control-contracts.unit.test.ts packages/gateway-interface/src/health/controller-request-policy.unit.test.ts packages/agent-vm/src/controller/control-session/gateway-control-domain-handler.unit.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-controller-host-action-backend.unit.test.ts
   passed after Event 188 fixes, 6 files / 72 tests
@@ -953,13 +950,12 @@ git diff --check
 pnpm check
   passed, 10 passed / 0 failed in about 27.9s
 
-git diff --cached --name-only origin/master | wc -l
-  397
+git diff --name-only origin/master...HEAD | wc -l
+  400
 
-git diff --cached --stat origin/master
-  397 files changed; use live `git diff --cached --stat origin/master` for
-  exact insertion/deletion counts because the inventory files include
-  themselves.
+git diff --stat origin/master...HEAD
+  400 files changed; use live `git diff --stat origin/master...HEAD` for
+  exact insertion/deletion counts.
 ```
 
 Fable should treat beta Discord/OpenClaw proof as stale relative to the
@@ -991,7 +987,7 @@ findings that would prevent PR-ready non-merge wrapup.
    Event 184, Event 185, Event 187, Event 188, Event 189, Event 191,
    Event 192, Event 193, Event 194, and Event 195
    blocker/important fixes hold up against
-   the current staged code,
+   the current branch code,
    especially trust identity,
    caller-context purpose, response sequencing, retry identity, export verifier
    freshness, reconnect/resync behavior, ready-fetch aborts, caller-context
@@ -1007,7 +1003,7 @@ findings that would prevent PR-ready non-merge wrapup.
    MCP-backed Tool Portal session scoping, lossy sequence-frontier handling,
    MCP session retirement on Tool Portal entrypoint eviction/runtime close, and
    refreshed caller-context lease ownership?
-2. Does the staged implementation satisfy the Socket.IO-over-Gondolin hard
+2. Does the branch implementation satisfy the Socket.IO-over-Gondolin hard
    cutover without preserving old managed raw-controller control paths?
 3. Are gateway and worker trust boundaries controller-owned where authority is
    exercised?

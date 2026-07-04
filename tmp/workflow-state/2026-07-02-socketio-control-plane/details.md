@@ -8370,3 +8370,26 @@ Still not PR-ready:
 - Live `../shravan-claw-beta` actual Discord/OpenClaw proof remains required.
 - PR-ready non-merge wrapup remains required.
 - No checkpoint commit has been made yet.
+
+## Event 201 Checkpoint Commit And Review Packet Retarget
+
+Completed in this checkpoint:
+- Created local checkpoint commit `af018d2` with the full Socket.IO control
+  plane cutover implementation after Event 200 terminal VM/default e2e and
+  `pnpm check` proof were green.
+- Retargeted the Event 200 Fable/review packet from the now-empty staged index
+  to the committed branch diff `origin/master...HEAD`.
+- Regenerated the legacy-named `staged-name-status.txt` and `staged-stat.txt`
+  inventory files from the committed branch diff. The filenames are historical
+  review-aid names; their contents now describe the branch diff.
+
+Fresh proof:
+- `git diff --check` passed after the review-packet retarget.
+- Stale current-scope phrases such as `current staged`, `staged diff`,
+  `git diff --cached --stat`, and `git diff --cached --name` are absent from
+  the current review packet and copy-paste prompt.
+
+Still not PR-ready:
+- Implementation review/Fable refresh remains required.
+- Live `../shravan-claw-beta` actual Discord/OpenClaw proof remains required.
+- PR-ready non-merge wrapup remains required.

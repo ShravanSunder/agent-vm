@@ -1,4 +1,5 @@
-Please perform a read-only implementation review of the current staged branch.
+Please perform a read-only implementation review of the current committed
+branch diff.
 
 Repo:
 
@@ -18,7 +19,7 @@ Latest local reducer note:
 tmp/implementation-review-swarms/2026-07-04-socketio-control-plane-post-event-168-fable-review/reducer-report-event-197.md
 ```
 
-Read the packet first, then review the actual staged diff and source artifacts.
+Read the packet first, then review the actual branch diff and source artifacts.
 Do not trust summaries, prior reducer reports, or proof claims without checking
 the current repo.
 
@@ -26,11 +27,13 @@ Scope:
 
 - Branch: `mcp-portal-better-interface`
 - Base: `origin/master`
-- Staged diff against origin/master: see the refreshed staged inventory in the review packet
+- Branch diff against origin/master: `origin/master...HEAD`; see the refreshed
+  inventory in the review packet. The inventory filenames still say `staged`
+  because they are legacy generated review aids from earlier review cycles.
 - Review class: source-backed, plan-backed, risk-triggered
 - Whole-source trace required
 
-The key job is to verify the current staged fixes after Event 172, Event 176,
+The key job is to verify the current branch fixes after Event 172, Event 176,
 Event 178, the post-Event-179 reducer fixes, the Event 181 reducer fixes, the
 Event 183 signer-exposure fix, the Event 184 controller-restart semantics
 correction, the Event 185 accepted finding fixes, the Event 187 Worker git RPC
@@ -154,7 +157,7 @@ In particular, scrutinize:
     - the CI/default e2e label should not imply OpenClaw and Worker proof are
       part of the default four-lane `pnpm test:e2e`
     - `staged-stat.txt` is a generated review aid with a documented
-      self-reference caveat; use live `git diff --cached --stat origin/master`
+      legacy filename caveat; use live `git diff --stat origin/master...HEAD`
       when exact counts matter
 22. Event 192 Worker-control scope fix:
     - VM-side Worker control application handler should accept `control_ping`,
@@ -205,8 +208,7 @@ In particular, scrutinize:
       droppable traffic instead of unbounded acked sends
     - MCP-backed Tool Portal calls should scope upstream MCP sessions by session
       provenance, not only by agent identity
-    - staged inventory should be current: 397 staged paths against
-      `origin/master`
+    - branch inventory should be current against `origin/master...HEAD`
 26. Event 197 local reducer status:
     - child reviewer lanes were unavailable, timed out, or returned null
       payloads and were closed

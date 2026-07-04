@@ -1,11 +1,12 @@
  .github/workflows/ci.yml                           |    8 +-
+ docs/README.md                                     |    1 +
  docs/architecture/agent-worker-gateway.md          |   24 +-
- docs/architecture/openclaw-gateway.md              |   66 +-
- docs/architecture/overview.md                      |   94 +-
+ docs/architecture/openclaw-gateway.md              |   61 +-
+ docs/architecture/overview.md                      |  165 +-
  docs/architecture/storage-model.md                 |    2 +-
  docs/getting-started/openclaw-guide.md             |   19 +-
  docs/getting-started/worker-guide.md               |    3 +-
- docs/reference/configuration/system-json.md        |  139 +-
+ docs/reference/configuration/system-json.md        |  135 +-
  docs/reference/validate-and-doctor.md              |    4 +-
  .../2026-06-25-tool-portal-composition-contract.md | 1687 ++++
  ...6-06-30-gateway-control-session-hard-cutover.md | 2445 ++++++
@@ -42,22 +43,41 @@
  docs/subsystems/controller.md                      |   70 +-
  docs/subsystems/gateway-lifecycle.md               |   10 +-
  docs/subsystems/gondolin-vm-layer.md               |   26 +-
- docs/subsystems/mcp-portal.md                      |   70 +-
- .../plans/2026-05-22-credentialed-runner-v1.md     | 1744 ----
- .../2026-05-29-vm-capability-lease-redesign.md     | 2780 -------
- ...le-capability-interfaces-implementation-plan.md |  697 --
- docs/superpowers/plans/README.md                   |   36 +-
- .../2026-05-30-credentialed-actions-design.md      | 1125 ---
- ...-06-20-portable-capability-interfaces-design.md | 2625 ------
- packages/agent-portal-sdk/package.json             |    2 +-
- .../models/capability-descriptor-schema.ts         |   67 +-
- .../models/capability-reference-schema.ts          |    2 +-
- .../models/portal-batch-id-refinement.ts           |    2 +-
- .../models/portal-call-request-schema.ts           |    2 +-
- .../models/portal-call-result-schema.ts            |  123 +-
- .../portal-call-contracts.unit.test.ts             |   58 +-
+ docs/subsystems/mcp-portal.md                      |  116 +-
+ package.json                                       |    2 +
+ packages/agent-portal-sdk/package.json             |   72 +
+ .../agent-portal-sdk/src/adapter-boundary/index.ts |    1 +
+ .../models/portal-adapter-envelope-schema.ts       |   22 +
+ .../agent-portal-sdk/src/approval-surface/index.ts |    1 +
+ .../models/approval-decision-reference-schema.ts   |   27 +
+ .../agent-portal-sdk/src/artifact-surface/index.ts |    2 +
+ .../models/artifact-reference-schema.ts            |   12 +
+ .../models/portal-artifact-contract-schema.ts      |   47 +
+ .../src/capability-description-surface/index.ts    |    1 +
+ .../models/capability-descriptor-schema.ts         |  108 +
+ .../src/contract-primitives/index.ts               |    3 +
+ .../models/capability-reference-schema.ts          |   13 +
+ .../models/json-value-schema.ts                    |   28 +
+ .../models/request-id-schema.ts                    |   12 +
+ packages/agent-portal-sdk/src/index.ts             |    7 +
+ .../src/portal-call-surface/index.ts               |    7 +
+ .../models/portal-batch-id-refinement.ts           |   26 +
+ .../models/portal-call-request-schema.ts           |   28 +
+ .../models/portal-call-result-schema.ts            |  131 +
+ .../models/portal-describe-request-schema.ts       |   30 +
+ .../models/portal-error-schema.ts                  |   29 +
+ .../models/portal-list-request-schema.ts           |   29 +
+ .../models/portal-search-request-schema.ts         |   27 +
+ .../portal-call-contracts.unit.test.ts             |  383 +
+ .../portal-call-json-schema-exporter.ts            |   22 +
  .../portal-call-json-schema.snapshot.json          |  269 +
- packages/agent-portal-sdk/src/testing/index.ts     |    4 +-
+ .../src/portal-event-surface/index.ts              |    2 +
+ .../models/portal-event-schema.ts                  |   69 +
+ .../models/safe-diagnostic-schema.ts               |   24 +
+ packages/agent-portal-sdk/src/testing/index.ts     |   53 +
+ packages/agent-portal-sdk/tsconfig.build.json      |   12 +
+ packages/agent-portal-sdk/tsconfig.json            |    5 +
+ packages/agent-portal-sdk/tsdown.config.ts         |   23 +
  packages/agent-vm-worker/package.json              |    7 +-
  .../worker-control-application-handler.ts          |  142 +
  ...worker-control-application-handler.unit.test.ts |  230 +
@@ -100,8 +120,8 @@
  .../src/cli/init-command.integration.test.ts       |   19 +-
  packages/agent-vm/src/cli/init-command.ts          |   48 +-
  packages/agent-vm/src/cli/lease-commands.ts        |   47 -
- packages/agent-vm/src/cli/manual-templates.ts      |   70 +-
- .../agent-vm/src/cli/manual-templates.unit.test.ts |   51 +-
+ packages/agent-vm/src/cli/manual-templates.ts      |   72 +-
+ .../agent-vm/src/cli/manual-templates.unit.test.ts |   53 +-
  .../src/cli/openclaw-auth-command.unit.test.ts     |   16 -
  .../agent-vm/src/cli/ssh-commands.unit.test.ts     |   16 -
  .../src/cli/zone-git-commands.host.e2e.test.ts     |    6 +-
@@ -206,8 +226,11 @@
  .../operations/zone-git-doctor.host.e2e.test.ts    |    3 +
  .../agent-vm/src/operations/zone-git-doctor.ts     |    3 +
  packages/agent-vm/tsconfig.build.json              |    1 -
- .../config-contracts/src/tool-portal-config.ts     |   73 +-
- .../src/tool-portal-config.unit.test.ts            |   71 +-
+ packages/config-contracts/src/index.ts             |    1 +
+ packages/config-contracts/src/schema-artifacts.ts  |    9 +
+ .../src/schema-artifacts.unit.test.ts              |    6 +
+ .../config-contracts/src/tool-portal-config.ts     |  245 +
+ .../src/tool-portal-config.unit.test.ts            |  200 +
  packages/control-protocol-contracts/package.json   |   44 +
  .../src/control-protocol-contracts.unit.test.ts    |  387 +
  .../src/control-protocol-json-schema.snapshot.json |  480 ++
@@ -215,17 +238,25 @@
  .../control-protocol-contracts/tsconfig.build.json |   12 +
  packages/control-protocol-contracts/tsconfig.json  |    5 +
  .../control-protocol-contracts/tsdown.config.ts    |   14 +
- .../controller-execution-contracts/package.json    |    8 +-
- .../controller-execution-contracts.unit.test.ts    |   62 +-
- .../models/credentialed-runner-request-schema.ts   |   14 -
- .../controller-execution-contracts/src/index.ts    |    2 +-
- ...troller-execution-testing-fixtures.unit.test.ts |   12 +-
- .../src/testing/index.ts                           |   68 +-
- .../index.ts                                       |    1 -
- .../models/cli-invocation-policy-schema.ts         |    0
- .../managed-vm-artifact-read-request-schema.ts     |    0
- .../models/managed-vm-exec-request-schema.ts       |    0
- .../tsdown.config.ts                               |    2 +-
+ .../controller-execution-contracts/package.json    |   61 +
+ .../src/controller-dispatch-boundary/index.ts      |    3 +
+ .../models/controller-dispatch-intent-schema.ts    |   21 +
+ .../models/controller-execution-result-schema.ts   |   27 +
+ .../models/execution-fingerprint-schema.ts         |   21 +
+ .../controller-execution-contracts.unit.test.ts    |  168 +
+ .../src/controller-host-action-boundary/index.ts   |    2 +
+ .../controller-host-action-request-schema.ts       |   14 +
+ .../models/controller-host-action-result-schema.ts |    5 +
+ .../controller-execution-contracts/src/index.ts    |    3 +
+ ...troller-execution-testing-fixtures.unit.test.ts |   22 +
+ .../src/testing/index.ts                           |   61 +
+ .../src/tool-vm-runner-boundary/index.ts           |    3 +
+ .../models/cli-invocation-policy-schema.ts         |   82 +
+ .../managed-vm-artifact-read-request-schema.ts     |   13 +
+ .../models/managed-vm-exec-request-schema.ts       |   40 +
+ .../tsconfig.build.json                            |   15 +
+ .../controller-execution-contracts/tsconfig.json   |    5 +
+ .../tsdown.config.ts                               |   20 +
  packages/gateway-control-contracts/package.json    |   45 +
  .../src/gateway-control-contracts.unit.test.ts     |  549 ++
  .../src/gateway-control-json-schema.snapshot.json  | 2711 +++++++
@@ -248,9 +279,13 @@
  .../src/tool-vm-active-use.unit.test.ts            |    4 +-
  packages/gondolin-adapter/src/vm-adapter.ts        |   72 +-
  .../gondolin-adapter/src/vm-adapter.unit.test.ts   |  127 +
- ...provider-capability-backend.integration.test.ts |   12 +-
- .../mcp-provider-capability-backend.ts             |  242 +-
- .../mcp-provider-capability-backend.unit.test.ts   |   87 +-
+ packages/mcp-portal/package.json                   |    5 +
+ .../mcp-portal/src/mcp-provider-backend/index.ts   |    1 +
+ ...provider-capability-backend.integration.test.ts |  131 +
+ .../mcp-provider-capability-backend.ts             |  789 ++
+ .../mcp-provider-capability-backend.unit.test.ts   |  362 +
+ packages/mcp-portal/tsconfig.build.json            |    1 +
+ packages/mcp-portal/tsdown.config.ts               |    1 +
  .../openclaw-agent-vm-plugin/openclaw.plugin.json  |   65 +-
  packages/openclaw-agent-vm-plugin/package.json     |   10 +
  .../src/controller-integration.integration.test.ts |  234 +-
@@ -290,16 +325,24 @@
  .../src/openclaw-lifecycle.host.e2e.test.ts        |  243 +-
  .../openclaw-gateway/src/openclaw-lifecycle.ts     |  192 +-
  packages/openclaw-mcp-portal-plugin/package.json   |    6 +-
- packages/tool-portal/package.json                  |    2 +-
- .../cli-allowance-contracts.unit.test.ts           |    2 +-
- .../tool-portal/src/in-process-entrypoint/index.ts |    1 +
+ packages/tool-portal/package.json                  |   56 +
+ .../cli-allowance-contracts.unit.test.ts           |  155 +
+ .../src/cli-allowances/cli-allowance-validator.ts  |  190 +
+ packages/tool-portal/src/cli-allowances/index.ts   |    2 +
+ .../cli-allowances/models/cli-allowance-schema.ts  |   64 +
+ .../tool-portal/src/in-process-entrypoint/index.ts |    2 +
  .../managed-tool-portal-runtime.ts                 |  275 +
  .../managed-tool-portal-runtime.unit.test.ts       |  235 +
- .../tool-portal-in-process-entrypoint.ts           |  382 +-
- .../tool-portal-in-process-entrypoint.unit.test.ts |  378 +-
- ...tal-mcp-backed-capabilities.integration.test.ts |    8 +-
- .../src/testing/agent-portal-harness.unit.test.ts  |    4 +-
- packages/tool-portal/src/testing/index.ts          |   18 +-
+ .../tool-portal-in-process-entrypoint.ts           |  440 +
+ .../tool-portal-in-process-entrypoint.unit.test.ts |  500 ++
+ ...tal-mcp-backed-capabilities.integration.test.ts |  114 +
+ packages/tool-portal/src/index.ts                  |    2 +
+ .../src/testing/agent-portal-harness.unit.test.ts  |   82 +
+ packages/tool-portal/src/testing/index.ts          |  101 +
+ .../tool-portal-testing-fixtures.unit.test.ts      |   12 +
+ packages/tool-portal/tsconfig.build.json           |   23 +
+ packages/tool-portal/tsconfig.json                 |    5 +
+ packages/tool-portal/tsdown.config.ts              |   14 +
  packages/worker-control-contracts/package.json     |   45 +
  packages/worker-control-contracts/src/index.ts     |  499 ++
  .../src/worker-control-contracts.unit.test.ts      |  364 +
@@ -309,18 +352,22 @@
  packages/worker-control-contracts/tsdown.config.ts |   14 +
  packages/worker-gateway/src/worker-lifecycle.ts    |   53 +-
  .../src/worker-lifecycle.unit.test.ts              |  128 +-
- pnpm-lock.yaml                                     |  332 +-
- scripts/audit-portal-architecture.ts               |  289 +-
- scripts/audit-portal-architecture.unit.test.ts     |  132 +-
+ pnpm-lock.yaml                                     |  380 +-
+ scripts/audit-portal-architecture.ts               |  567 ++
+ scripts/audit-portal-architecture.unit.test.ts     |  252 +
  scripts/check-package-version-sync.sh              |   19 +-
  scripts/live-sandbox-manual.mjs                    |  251 -
- scripts/run-check-gate.ts                          |   25 +
- scripts/run-check-gate.unit.test.ts                |   21 +-
- scripts/sync-local-tarballs-to-deployment.ts       |   25 +-
- scripts/verify-portal-package-exports.ts           |  302 +-
- .../agent-portal/fake-mcp-provider-server.ts       |   49 +-
+ scripts/run-check-gate.ts                          |   32 +
+ scripts/run-check-gate.unit.test.ts                |   32 +-
+ scripts/sync-local-tarballs-to-deployment.ts       |   30 +-
+ .../sync-local-tarballs-to-deployment.unit.test.ts |   29 +-
+ scripts/verify-portal-package-exports.ts           |  389 +
+ .../harness/agent-portal/fake-managed-vm-runner.ts |   54 +
+ .../agent-portal/fake-mcp-provider-server.ts       |  200 +
+ .../agent-portal/fake-tool-portal-controller.ts    |   30 +
+ .../agent-portal/portal-contract-assertions.ts     |   65 +
  .../debug-investigation.md                         |   41 +
- .../copy-paste-prompt.md                           |  243 +
+ .../copy-paste-prompt.md                           |  253 +
  .../execution-report-event-186.md                  |  120 +
  .../execution-report-event-187.md                  |   75 +
  .../execution-report-event-188.md                  |   96 +
@@ -328,6 +375,7 @@
  .../execution-report-event-192.md                  |  111 +
  .../execution-report-event-195.md                  |   91 +
  .../execution-report-event-196.md                  |  109 +
+ .../execution-report-event-200.md                  |   80 +
  .../reducer-report-event-171.md                    |  276 +
  .../reducer-report-event-172.md                    |   93 +
  .../reducer-report-event-178.md                    |  117 +
@@ -342,12 +390,12 @@
  .../reducer-report-event-194.md                    |   71 +
  .../reducer-report-event-197.md                    |  160 +
  .../reducer-report.md                              |  120 +
- .../review-packet.md                               | 1009 +++
- .../staged-name-status.txt                         |  397 +
- .../staged-stat.txt                                |  398 +
- .../2026-07-02-socketio-control-plane/details.md   | 8326 ++++++++++++++++++++
- .../2026-07-02-socketio-control-plane/events.jsonl |  199 +
- tsconfig.base.json                                 |   12 +-
+ .../review-packet.md                               | 1061 +++
+ .../staged-name-status.txt                         |  352 +
+ .../staged-stat.txt                                |  353 +
+ .../2026-07-02-socketio-control-plane/details.md   | 8372 ++++++++++++++++++++
+ .../2026-07-02-socketio-control-plane/events.jsonl |  200 +
+ tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
- vitest.config.ts                                   |   20 +-
- 352 files changed, 63769 insertions(+), 20419 deletions(-)
+ vitest.config.ts                                   |   57 +-
+ 400 files changed, 68944 insertions(+), 11058 deletions(-)
