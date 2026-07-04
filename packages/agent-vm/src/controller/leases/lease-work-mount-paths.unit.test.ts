@@ -179,7 +179,10 @@ describe('resolveLeaseWorkMountDir', () => {
 				zoneGit: {
 					remote: {
 						repoUrl: 'https://github.com/shravansunder/sunfam-zone-files.git',
-						branch: 'main',
+						branch: 'agent/zone-files',
+						defaultBranch: 'main',
+						protectedBranches: ['main'],
+						protectedBranchPatterns: ['release/*'],
 					},
 				},
 			},

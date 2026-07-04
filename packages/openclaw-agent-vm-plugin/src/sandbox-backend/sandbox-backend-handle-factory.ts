@@ -16,11 +16,9 @@ import {
 
 import {
 	ControllerLeaseRequestError,
-	createLeaseClient,
 	type LeaseClient,
 	type OpenClawRuntimeStatusReport,
-} from '../controller-lease-client.js';
-import { fetchControllerWithPolicy } from '../controller-request-policy.js';
+} from '../lease-client-contract.js';
 import {
 	findOpenClawGondolinSandboxMismatch,
 	resolveOpenClawAgentIdFromSessionKey,
@@ -292,25 +290,14 @@ export function createGondolinSandboxBackendFactory(
 			leaseWorkMountDir: pathIntent.leaseWorkMountDir,
 			profileId,
 		} satisfies CachedAgentLeaseCompatibility;
-		const leaseClient =
-			dependencies.createLeaseClient?.({
-				controllerUrl: options.controllerUrl,
-			}) ?? createLeaseClient({ controllerUrl: options.controllerUrl });
+		const leaseClient = dependencies.createLeaseClient({
+			controllerUrl: options.controllerUrl,
+		});
 		const publishHealthEvent = async (event: AgentVmHealthEvent): Promise<void> => {
-			const response = await fetchControllerWithPolicy({
-				input: `${options.controllerUrl.replace(/\/+$/u, '')}/zones/${encodeURIComponent(options.zoneId)}/health-events`,
-				init: {
-					body: JSON.stringify(event),
-					headers: { 'content-type': 'application/json' },
-					method: 'POST',
-				},
-				operation: 'health-event-publish',
-			});
-			if (!response.ok) {
-				await response.text().catch(() => undefined);
-				throw new Error(`health event publish returned HTTP ${String(response.status)}`);
+			if (dependencies.publishHealthEvent === undefined) {
+				throw new Error('OpenClaw Gondolin sandbox requires a gateway-control health publisher.');
 			}
-			await response.text().catch(() => undefined);
+			await dependencies.publishHealthEvent(event);
 		};
 		const markLeaseStale = async (
 			lease: CachedAgentLeaseEntry['lease'],
@@ -390,8 +377,8 @@ export function createGondolinSandboxBackendFactory(
 				// agent-vm's controller calls the selected host source `workMountDir`.
 				const leaseRequestPromise = (async (): Promise<CachedAgentLeaseEntry> => {
 					const runtimeStatus = options.openClawRuntimeStatusProvider?.();
-					if (runtimeStatus && leaseClient.publishOpenClawRuntimeStatus) {
-						await leaseClient.publishOpenClawRuntimeStatus(runtimeStatus);
+					if (runtimeStatus && dependencies.publishOpenClawRuntimeStatus) {
+						await dependencies.publishOpenClawRuntimeStatus(runtimeStatus);
 					}
 					const leaseResponse = await leaseClient.requestLease({
 						agentId,
@@ -460,7 +447,7 @@ function createSandboxBackendHandle(options: {
 	readonly zoneId: string;
 }): OpenClawSandboxBackendHandle {
 	const createActiveUseHandle = async (
-		correlation: ToolVmActiveUseCorrelation,
+		correlation?: ToolVmActiveUseCorrelation,
 	): Promise<ToolVmActiveUseHandle> => {
 		try {
 			return await createToolVmActiveUseHandle({
@@ -499,7 +486,7 @@ function createSandboxBackendHandle(options: {
 	};
 
 	const runWithActiveUse = async <TResult>(
-		correlation: ToolVmActiveUseCorrelation,
+		correlation: ToolVmActiveUseCorrelation | undefined,
 		fn: (activeUseHandle: ToolVmActiveUseHandle) => Promise<TResult>,
 	): Promise<TResult> => {
 		const activeUseHandle = await createActiveUseHandle(correlation);
@@ -530,10 +517,7 @@ function createSandboxBackendHandle(options: {
 		shellParams,
 	) =>
 		await runWithActiveUse(
-			{
-				sessionKey: options.sessionKey,
-				toolName: 'fs-bridge',
-			},
+			undefined,
 			async (activeUseHandle) =>
 				await runToolVmSshOperationWithGuard({
 					healthEvent: {
@@ -613,10 +597,7 @@ function createSandboxBackendHandle(options: {
 		runtimeLabel: options.lease.leaseId,
 		workdir: options.effectiveGuestCwd,
 		buildExecSpec: async (execParams) => {
-			const activeUseHandle = await createActiveUseHandle({
-				sessionKey: options.sessionKey,
-				toolName: 'shell',
-			});
+			const activeUseHandle = await createActiveUseHandle();
 			try {
 				const execSpec = await options.buildExecSpec({
 					command: execParams.command,
@@ -675,10 +656,7 @@ function createSandboxBackendHandle(options: {
 		},
 		runShellCommand: async (commandParams) =>
 			await runWithActiveUse(
-				{
-					sessionKey: options.sessionKey,
-					toolName: 'runShellCommand',
-				},
+				undefined,
 				async (activeUseHandle) =>
 					await runToolVmSshOperationWithGuard({
 						healthEvent: {

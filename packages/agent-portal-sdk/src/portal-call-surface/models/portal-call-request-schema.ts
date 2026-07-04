@@ -11,7 +11,7 @@ export const PortalCallItemRequestSchema = z
 		arguments: JsonObjectSchema,
 		id: RequestIdSchema,
 		namespace: z.string().min(1),
-		toolName: z.string().min(1),
+		name: z.string().min(1),
 	})
 	.strict();
 

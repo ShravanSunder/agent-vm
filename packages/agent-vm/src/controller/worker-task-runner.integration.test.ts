@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,7 @@ import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
+import type { ControlSessionClient, WorkerControlRpcOperations } from './control-session/index.js';
 import type { WorkerTaskInput } from './worker-task-runner.js';
 import type { WorkerTaskPollClock } from './worker-task-runner.js';
 
@@ -213,6 +215,68 @@ function createInstantPollClock(): WorkerTaskPollClock {
 	};
 }
 
+interface WorkerControlSessionClientStub {
+	readonly client: ControlSessionClient;
+	readonly closeMock: Mock<() => void>;
+}
+
+function createWorkerControlSessionClientStub(options: {
+	readonly connectedStates: readonly boolean[];
+	readonly readyStates?: readonly boolean[];
+}): WorkerControlSessionClientStub {
+	let diagnosticsIndex = 0;
+	const closeMock = vi.fn();
+	return {
+		client: {
+			ready: Promise.resolve({
+				connectionId: '55555555-5555-4555-8555-555555555555',
+				controllerEpoch: 'worker-epoch-a',
+				outcome: 'accepted',
+				sessionId: '33333333-3333-4333-8333-333333333333',
+			}),
+			close: closeMock,
+			emitApplicationMessage: vi.fn(async () => ({ received: true })),
+			getDiagnostics: vi.fn(() => {
+				const connected =
+					options.connectedStates[Math.min(diagnosticsIndex, options.connectedStates.length - 1)];
+				const ready =
+					options.readyStates?.[Math.min(diagnosticsIndex, options.readyStates.length - 1)] ??
+					connected;
+				diagnosticsIndex += 1;
+				return {
+					accepted: ready ?? false,
+					connected: connected ?? false,
+					endpointPath: '/__agent-vm/worker-control',
+					helloCount: ready ? 1 : 0,
+					ready: ready ?? false,
+				};
+			}),
+		},
+		closeMock,
+	};
+}
+
+const pullDefaultForTaskStub: WorkerControlRpcOperations['pullDefaultForTask'] = async () => {
+	return {
+		error: 'not used',
+		kind: 'failed',
+		message: 'not used',
+		repoUrl: 'https://github.com/org/repo.git',
+		success: false,
+	};
+};
+
+const pushTaskBranchesStub: WorkerControlRpcOperations['pushTaskBranches'] = async () => ({
+	results: [],
+});
+
+function createWorkerControlOperationsStub(): WorkerControlRpcOperations {
+	return {
+		pullDefaultForTask: pullDefaultForTaskStub,
+		pushTaskBranches: pushTaskBranchesStub,
+	};
+}
+
 describe('worker-task-runner', () => {
 	let tempDir: string;
 	let managedVm: ManagedVm;
@@ -280,6 +344,7 @@ describe('worker-task-runner', () => {
 
 	afterEach(() => {
 		delete process.env.AGENT_VM_WORKER_TARBALL_PATH;
+		delete process.env.AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON;
 		vi.resetModules();
 		startGatewayZoneMock.mockReset();
 		startRepoResourceProvidersMock.mockReset();
@@ -1299,6 +1364,88 @@ describe('worker-task-runner', () => {
 		).resolves.toBe('local worker tarball bytes');
 	});
 
+	it('copies configured local worker package tarballs and writes a local package manifest', async () => {
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const localWorkerTarballPath = path.join(tempDir, 'agent-vm-worker-local.tgz');
+		const localControlProtocolTarballPath = path.join(
+			tempDir,
+			'agent-vm-control-protocol-contracts-local.tgz',
+		);
+		const localWorkerControlTarballPath = path.join(
+			tempDir,
+			'agent-vm-worker-control-contracts-local.tgz',
+		);
+		const localGatewayInterfaceTarballPath = path.join(
+			tempDir,
+			'agent-vm-gateway-interface-local.tgz',
+		);
+		const localGondolinAdapterTarballPath = path.join(
+			tempDir,
+			'agent-vm-gondolin-adapter-local.tgz',
+		);
+		const localSecretManagementTarballPath = path.join(
+			tempDir,
+			'agent-vm-secret-management-local.tgz',
+		);
+		await Promise.all([
+			fs.writeFile(localWorkerTarballPath, 'local worker tarball bytes'),
+			fs.writeFile(localControlProtocolTarballPath, 'local control protocol tarball bytes'),
+			fs.writeFile(localWorkerControlTarballPath, 'local worker control tarball bytes'),
+			fs.writeFile(localGatewayInterfaceTarballPath, 'local gateway interface tarball bytes'),
+			fs.writeFile(localGondolinAdapterTarballPath, 'local gondolin adapter tarball bytes'),
+			fs.writeFile(localSecretManagementTarballPath, 'local secret management tarball bytes'),
+		]);
+		process.env.AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON = JSON.stringify([
+			{ packageName: 'agent-vm-worker', sourcePath: localWorkerTarballPath },
+			{ packageName: 'control-protocol-contracts', sourcePath: localControlProtocolTarballPath },
+			{ packageName: 'gateway-interface', sourcePath: localGatewayInterfaceTarballPath },
+			{ packageName: 'gondolin-adapter', sourcePath: localGondolinAdapterTarballPath },
+			{ packageName: 'secret-management', sourcePath: localSecretManagementTarballPath },
+			{ packageName: 'worker-control-contracts', sourcePath: localWorkerControlTarballPath },
+		]);
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		const result = await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [],
+				context: {},
+			},
+			zone,
+		);
+
+		const packageDirectory = path.join(result.stateDir, 'agent-vm-worker-packages');
+		const packageJson = z
+			.object({
+				dependencies: z.record(z.string(), z.string()),
+				pnpm: z.object({
+					overrides: z.record(z.string(), z.string()),
+				}),
+			})
+			.parse(JSON.parse(await fs.readFile(path.join(packageDirectory, 'package.json'), 'utf8')));
+		expect(packageJson.dependencies).toEqual({
+			'@agent-vm/agent-vm-worker': 'file:/state/agent-vm-worker-packages/agent-vm-worker-local.tgz',
+			'@agent-vm/control-protocol-contracts':
+				'file:/state/agent-vm-worker-packages/agent-vm-control-protocol-contracts-local.tgz',
+			'@agent-vm/gateway-interface':
+				'file:/state/agent-vm-worker-packages/agent-vm-gateway-interface-local.tgz',
+			'@agent-vm/gondolin-adapter':
+				'file:/state/agent-vm-worker-packages/agent-vm-gondolin-adapter-local.tgz',
+			'@agent-vm/secret-management':
+				'file:/state/agent-vm-worker-packages/agent-vm-secret-management-local.tgz',
+			'@agent-vm/worker-control-contracts':
+				'file:/state/agent-vm-worker-packages/agent-vm-worker-control-contracts-local.tgz',
+		});
+		expect(packageJson.pnpm?.overrides).toEqual(packageJson.dependencies);
+		await expect(
+			fs.readFile(path.join(packageDirectory, 'agent-vm-worker-local.tgz'), 'utf8'),
+		).resolves.toBe('local worker tarball bytes');
+	});
+
 	it('retries transient poll failures before giving up', async () => {
 		let pollCount = 0;
 		let submittedBody: unknown;
@@ -1500,6 +1647,165 @@ describe('worker-task-runner', () => {
 		});
 
 		expect(closedTaskStateSchema.parse(result.finalState).status).toBe('closed');
+	});
+
+	it('keeps an active worker task alive when worker control reconnects within death grace', async () => {
+		const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+		let pollCount = 0;
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				pollCount += 1;
+				const status = pollCount >= 3 ? 'completed' : 'running';
+				return new Response(JSON.stringify({ status, taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+		const controlSessionClient = createWorkerControlSessionClientStub({
+			connectedStates: [false, true],
+		});
+		const connectWorkerControlSession = vi.fn(async () => controlSessionClient.client);
+		const prepared = await prepareWorkerTask({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		const result = await executeWorkerTask(prepared, {
+			connectWorkerControlSession,
+			controlSession: {
+				controllerEpoch: 'worker-epoch-a',
+				operations: createWorkerControlOperationsStub(),
+			},
+			pollClock: createInstantPollClock(),
+			pollIntervalMs: 1,
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+		});
+
+		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
+		expect(completedTaskStateSchema.parse(result.finalState).status).toBe('completed');
+		expect(controlSessionClient.closeMock).toHaveBeenCalledOnce();
+	});
+
+	it('requires worker VM recovery when worker control stays disconnected beyond death grace', async () => {
+		const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'running', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+		const controlSessionClient = createWorkerControlSessionClientStub({
+			connectedStates: [false],
+		});
+		const connectWorkerControlSession = vi.fn(async () => controlSessionClient.client);
+		const prepared = await prepareWorkerTask({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			executeWorkerTask(prepared, {
+				connectWorkerControlSession,
+				controlSession: {
+					controllerEpoch: 'worker-epoch-a',
+					operations: createWorkerControlOperationsStub(),
+				},
+				pollClock: createInstantPollClock(),
+				pollIntervalMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				timeoutMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace * 2,
+			}),
+		).rejects.toThrow(/exceeded death grace/u);
+		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
+		expect(controlSessionClient.closeMock).toHaveBeenCalledOnce();
+	});
+
+	it('requires worker VM recovery when worker control reconnects transport without accepted hello', async () => {
+		const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'running', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+		const controlSessionClient = createWorkerControlSessionClientStub({
+			connectedStates: [true],
+			readyStates: [false],
+		});
+		const connectWorkerControlSession = vi.fn(async () => controlSessionClient.client);
+		const prepared = await prepareWorkerTask({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			executeWorkerTask(prepared, {
+				connectWorkerControlSession,
+				controlSession: {
+					controllerEpoch: 'worker-epoch-a',
+					operations: createWorkerControlOperationsStub(),
+				},
+				pollClock: createInstantPollClock(),
+				pollIntervalMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				timeoutMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace * 2,
+			}),
+		).rejects.toThrow(/exceeded death grace/u);
+		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
+		expect(controlSessionClient.closeMock).toHaveBeenCalledOnce();
 	});
 
 	it('includes worker HTTP response bodies in task submission failures', async () => {

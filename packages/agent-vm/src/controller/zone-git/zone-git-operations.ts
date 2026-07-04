@@ -8,10 +8,14 @@ import type { GitCommandResult } from '../git-retry-support.js';
 import { OPENCLAW_ZONE_GIT_GUEST_DIR, resolveZoneGitPaths } from './zone-git-paths.js';
 
 const GIT_OPERATION_TIMEOUT_MS = 120_000;
+const defaultProtectedZoneGitPushBranchNames = ['main', 'master'] as const;
 
 export interface ZoneGitReadConfig {
 	readonly branch: string;
+	readonly defaultBranch?: string;
 	readonly githubToken?: string;
+	readonly protectedBranches?: readonly string[];
+	readonly protectedBranchPatterns?: readonly string[];
 	readonly remoteUrl: string;
 	readonly runtimeDir: string;
 	readonly zoneFilesDir: string;
@@ -65,6 +69,13 @@ export class ZoneGitConflictError extends Error {
 	}
 }
 
+export class ZoneGitProtectedBranchError extends Error {
+	public constructor(message: string) {
+		super(message);
+		this.name = 'ZoneGitProtectedBranchError';
+	}
+}
+
 function isLocalRemoteUrl(remoteUrl: string): boolean {
 	return path.isAbsolute(remoteUrl) || remoteUrl.startsWith('file://');
 }
@@ -80,6 +91,41 @@ function buildRemoteUrl(options: {
 		throw new Error('zoneGit remote requires githubToken for GitHub pushes.');
 	}
 	return buildGithubTokenUrl(options.remoteUrl, options.githubToken);
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function gitBranchPatternMatches(pattern: string, branch: string): boolean {
+	const regex = new RegExp(`^${pattern.split('*').map(escapeRegExp).join('.*')}$`, 'u');
+	return regex.test(branch);
+}
+
+function assertZoneGitPushBranchAllowed(options: {
+	readonly branch: string;
+	readonly defaultBranch?: string;
+	readonly protectedBranches?: readonly string[];
+	readonly protectedBranchPatterns?: readonly string[];
+	readonly zoneId: string;
+}): void {
+	const protectedBranchNames = new Set([
+		...defaultProtectedZoneGitPushBranchNames,
+		...(options.defaultBranch === undefined ? [] : [options.defaultBranch]),
+		...(options.protectedBranches ?? []),
+	]);
+	const protectedBranchPattern = options.protectedBranchPatterns?.find((pattern) =>
+		gitBranchPatternMatches(pattern, options.branch),
+	);
+	if (protectedBranchNames.has(options.branch) || protectedBranchPattern !== undefined) {
+		const policyDescription =
+			protectedBranchPattern === undefined
+				? `protected branch '${options.branch}'`
+				: `protected branch pattern '${protectedBranchPattern}'`;
+		throw new ZoneGitProtectedBranchError(
+			`Zone Git push for zone '${options.zoneId}' refuses ${policyDescription}. Configure zoneGit.remote.branch to a non-protected branch.`,
+		);
+	}
 }
 
 function buildGitArgs(options: {
@@ -412,6 +458,17 @@ export async function pushZoneGit(options: ZoneGitPushOptions): Promise<ZoneGitP
 			`Zone Git repository for zone '${options.zoneId}' local HEAD '${status.localHead}' does not match expectedHead '${options.expectedHead}'.`,
 		);
 	}
+	assertZoneGitPushBranchAllowed({
+		branch: options.branch,
+		...(options.defaultBranch === undefined ? {} : { defaultBranch: options.defaultBranch }),
+		...(options.protectedBranches === undefined
+			? {}
+			: { protectedBranches: options.protectedBranches }),
+		...(options.protectedBranchPatterns === undefined
+			? {}
+			: { protectedBranchPatterns: options.protectedBranchPatterns }),
+		zoneId: options.zoneId,
+	});
 	const remoteRef = `refs/remotes/origin/${options.branch}`;
 	const commitRange = status.remoteHead ? `${remoteRef}..${status.localHead}` : status.localHead;
 	const pushedCommits = parseCommitSummaries(

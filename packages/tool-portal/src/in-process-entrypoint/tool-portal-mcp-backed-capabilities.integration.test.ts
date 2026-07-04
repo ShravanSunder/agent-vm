@@ -32,7 +32,7 @@ const toolPortalConfig = {
 		'code-builder': {
 			capabilities: {
 				github: {
-					backend: { kind: 'mcp' },
+					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: ['create_issue'], deny: [] },
 						withoutApproval: { allow: ['get_issue'], deny: [] },
@@ -61,7 +61,7 @@ describe('Tool Portal MCP-backed capabilities integration', () => {
 				callUpstreamTool: vi.fn(async (call) => ({
 					arguments: call.arguments,
 					ok: true,
-					upstreamTool: `${call.namespace}.${call.toolName}`,
+					upstreamTool: `${call.namespace}.${call.name}`,
 				})),
 				closeAgentScope: vi.fn(),
 				listTools: vi.fn(async ({ namespace }) => (namespace === 'github' ? githubTools : [])),
@@ -84,7 +84,7 @@ describe('Tool Portal MCP-backed capabilities integration', () => {
 					arguments: { number: 42 },
 					id: 'read-issue',
 					namespace: 'github',
-					toolName: 'get_issue',
+					name: 'get_issue',
 				},
 			],
 		});
@@ -94,7 +94,7 @@ describe('Tool Portal MCP-backed capabilities integration', () => {
 					arguments: { title: 'Write issue' },
 					id: 'write-issue',
 					namespace: 'github',
-					toolName: 'create_issue',
+					name: 'create_issue',
 				},
 			],
 		});

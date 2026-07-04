@@ -1,0 +1,2752 @@
+import { createServer, type Server as HttpServer } from 'node:http';
+
+import {
+	CONTROL_QUEUE_LIMITS,
+	CONTROL_PROTOCOL_VERSION,
+	type ControlEnvelope,
+	type ControlHello,
+} from '@agent-vm/control-protocol-contracts';
+import {
+	GatewayControlRpcMessageSchema,
+	gatewayControlDeliveryPolicyByKind,
+	gatewayControlDeliveryPolicyByOperation,
+} from '@agent-vm/gateway-control-contracts';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import {
+	GATEWAY_CONTROL_READY_PATH,
+	GATEWAY_CONTROL_SOCKET_PATH,
+	createGatewayControlService,
+} from '@agent-vm/openclaw-agent-vm-plugin';
+import { Server as SocketIoServer, type Socket as SocketIoServerSocket } from 'socket.io';
+import { io as createSocketIoClient } from 'socket.io-client';
+import { describe, expect, it, vi } from 'vitest';
+
+import { waitForProtocolRetryInterval } from '../../integration-tests/e2e-protocol-wait.js';
+import {
+	CONTROL_SESSION_EVENT_NAMES,
+	type ControlSessionClient,
+	clearControlSessionSendBuffer,
+	createControlSessionClient,
+} from './control-session-client.js';
+import {
+	createControlSessionDispatcher,
+	createControlSessionFenceRegistry,
+} from './control-session-dispatcher.js';
+import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
+import { createGatewayControlDomainHandler } from './gateway-control-domain-handler.js';
+import {
+	buildGatewayControlEndpoint,
+	connectGatewayControlSession,
+	createGatewayControlSessionMaterial,
+	fetchGatewayControlCredential,
+} from './gateway-control-session.js';
+
+const controlPath = '/__agent-vm/gateway-control';
+
+function listen(server: HttpServer): Promise<number> {
+	return new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', () => {
+			const address = server.address();
+			if (typeof address === 'object' && address !== null) {
+				resolve(address.port);
+				return;
+			}
+			reject(new Error('HTTP server did not expose a TCP address.'));
+		});
+	});
+}
+
+async function closeSocketIoServer(server: SocketIoServer): Promise<void> {
+	await server.close();
+}
+
+async function closeHttpServer(server: HttpServer): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		server.close((error) => {
+			if (error) {
+				reject(error);
+				return;
+			}
+			resolve();
+		});
+	});
+}
+
+function waitForProtocolEvent<TValue>(
+	register: (resolve: (value: TValue) => void) => void,
+): Promise<TValue> {
+	return new Promise((resolve) => {
+		register(resolve);
+	});
+}
+
+async function waitForClientHelloCount(options: {
+	readonly client: ControlSessionClient;
+	readonly minimumHelloCount: number;
+	readonly timeoutMs: number;
+}): Promise<void> {
+	const deadlineMs = Date.now() + options.timeoutMs;
+	const waitUntilHelloCount = (): Promise<void> => {
+		if (options.client.getDiagnostics().helloCount >= options.minimumHelloCount) {
+			return Promise.resolve();
+		}
+		if (Date.now() >= deadlineMs) {
+			return Promise.reject(
+				new Error(
+					`Timed out waiting for control-session hello count >= ${String(options.minimumHelloCount)}; diagnostics: ${JSON.stringify(options.client.getDiagnostics())}`,
+				),
+			);
+		}
+		return waitForProtocolRetryInterval(25).then(waitUntilHelloCount);
+	};
+	await waitUntilHelloCount();
+}
+
+const validEnvelope = {
+	bootId: 'gateway-boot-a',
+	commandId: '44444444-4444-4444-8444-444444444444',
+	connectionId: '11111111-1111-4111-8111-111111111111',
+	controllerEpoch: 'epoch-a',
+	createdAtMs: 1,
+	deliveryPolicy: 'single_use_critical',
+	domain: 'gateway_control',
+	idempotencyKey: 'command-key-a',
+	kind: 'command',
+	messageId: '22222222-2222-4222-8222-222222222222',
+	operation: 'lease_create',
+	peerId: 'gateway-zone-a',
+	protocolVersion: CONTROL_PROTOCOL_VERSION,
+	sequence: 1,
+	sessionId: '33333333-3333-4333-8333-333333333333',
+	zoneId: 'zone-a',
+} satisfies ControlEnvelope;
+
+const heartbeatEnvelope = {
+	...validEnvelope,
+	commandId: undefined,
+	deliveryPolicy: 'critical_idempotent',
+	idempotencyKey: undefined,
+	kind: 'heartbeat',
+	messageId: '66666666-6666-4666-8666-666666666666',
+	operation: undefined,
+	sequence: 2,
+} satisfies ControlEnvelope;
+
+const snapshotEnvelope = {
+	...validEnvelope,
+	commandId: undefined,
+	deliveryPolicy: 'latest_wins',
+	idempotencyKey: undefined,
+	kind: 'snapshot',
+	messageId: '77777777-7777-4777-8777-777777777777',
+	operation: undefined,
+	sequence: 3,
+} satisfies ControlEnvelope;
+
+function commandResultEnvelopeFor(requestEnvelope: ControlEnvelope, sequence = 1): ControlEnvelope {
+	return {
+		...requestEnvelope,
+		createdAtMs: requestEnvelope.createdAtMs + 1,
+		deliveryPolicy: 'critical_idempotent',
+		kind: 'command_result',
+		messageId: '99999999-9999-4999-8999-999999999999',
+		sequence,
+	};
+}
+
+describe('control session client', () => {
+	it('connects to a Socket.IO server over websocket-only transport and sends hello before messages', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedHelloPayloads: ControlHello[] = [];
+		const observedTransports: string[] = [];
+		const observedMessages: unknown[] = [];
+
+		socketServer.on('connection', (socket) => {
+			observedTransports.push(socket.conn.transport.name);
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (payload: ControlHello, ack) => {
+				observedHelloPayloads.push(payload);
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.message, (envelope: unknown, payload: unknown, ack) => {
+				observedMessages.push({ envelope, payload });
+				ack({ received: true });
+				setImmediate(() => {
+					const controlEnvelope = envelope as ControlEnvelope;
+					socket.emit(
+						CONTROL_SESSION_EVENT_NAMES.message,
+						commandResultEnvelopeFor(controlEnvelope),
+						GatewayControlRpcMessageSchema.parse({
+							kind: 'command_result',
+							operation: 'lease_create',
+							payload: {
+								responseToMessageId: controlEnvelope.messageId,
+								result: 'ok',
+							},
+						}),
+						() => undefined,
+					);
+				});
+			});
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+		});
+
+		try {
+			await expect(client.ready).resolves.toMatchObject({
+				controllerEpoch: 'epoch-a',
+				outcome: 'accepted',
+			});
+			await expect(
+				client.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-a' },
+				),
+			).resolves.toEqual({
+				kind: 'command_result',
+				operation: 'lease_create',
+				payload: {
+					responseToMessageId: validEnvelope.messageId,
+					result: 'ok',
+				},
+			});
+
+			expect(observedTransports).toEqual(['websocket']);
+			expect(observedHelloPayloads).toEqual([
+				{
+					bootId: 'gateway-boot-a',
+					controllerEpoch: 'epoch-a',
+					domain: 'gateway_control',
+					peerId: 'gateway-zone-a',
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+				},
+			]);
+			expect(observedMessages).toHaveLength(1);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('dispatches a peer-originated gateway heartbeat through the accepted session fence', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'epoch-heartbeat',
+			zoneId: 'zone-heartbeat',
+		});
+		const gatewayControlService = createGatewayControlService({
+			identity: {
+				bootId: material.bootId,
+				controllerEpoch: material.controllerEpoch,
+				generationId: material.generationId,
+				peerId: material.peerId,
+				zoneId: material.zoneId,
+			},
+			verifierPublicKeyPem: material.verifierPublicKeyPem,
+		});
+		const httpServer = createServer((req, res) => {
+			const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
+				gatewayControlService.handleReadyRequest(req, res);
+				return;
+			}
+			res.statusCode = 404;
+			res.end('not found\n');
+		});
+		httpServer.on('upgrade', (req, socket, head) => {
+			const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
+				gatewayControlService.handleUpgrade(req, socket, head);
+				return;
+			}
+			socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+			socket.destroy();
+		});
+		const recordedHealthEvents: AgentVmHealthEvent[] = [];
+		const sessionFenceRegistry = createControlSessionFenceRegistry();
+		const dispatcher = createControlSessionDispatcher({ sessionFenceRegistry });
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				callerContexts: createGatewayControlCallerContextRegistry(),
+				recordHealthEvent: (event) => {
+					recordedHealthEvents.push(event);
+				},
+				session: {
+					bootId: material.bootId,
+					controllerEpoch: material.controllerEpoch,
+					peerId: material.peerId,
+					zoneId: material.zoneId,
+				},
+			}),
+		);
+		const port = await listen(httpServer);
+		const client = await connectGatewayControlSession({
+			dispatcher,
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port }),
+			material,
+			sessionFenceRegistry,
+		});
+
+		try {
+			const acceptedSession = await gatewayControlService.getAcceptedSession();
+			const observedAtMs = Date.now();
+			await gatewayControlService.emitApplicationMessage(
+				{
+					bootId: material.bootId,
+					connectionId: acceptedSession.connectionId,
+					controllerEpoch: material.controllerEpoch,
+					createdAtMs: observedAtMs,
+					deliveryPolicy: gatewayControlDeliveryPolicyByKind.heartbeat,
+					domain: 'gateway_control',
+					kind: 'heartbeat',
+					messageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					peerId: material.peerId,
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence: gatewayControlService.nextPeerSequence(),
+					sessionId: acceptedSession.sessionId,
+					zoneId: material.zoneId,
+				},
+				{ kind: 'heartbeat' },
+				{
+					kind: 'heartbeat',
+					payload: {
+						elapsedMs: 7,
+						observedAtMs,
+					},
+				},
+			);
+
+			expect(recordedHealthEvents).toEqual([
+				{
+					domain: 'gateway_control',
+					elapsedMs: 7,
+					kind: 'gateway-control-session',
+					observedAtMs,
+					operation: 'control-session-heartbeat',
+					peerId: material.peerId,
+					result: 'ok',
+					zoneId: material.zoneId,
+				},
+			]);
+		} finally {
+			client.close();
+			await gatewayControlService.close();
+			await closeHttpServer(httpServer);
+		}
+	});
+
+	it('treats Socket.IO message ack as receipt and waits for correlated command_result', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const commandResultMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command_result',
+			operation: 'lease_create',
+			payload: {
+				responseToMessageId: validEnvelope.messageId,
+				result: 'ok',
+			},
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, _payload: unknown, ack) => {
+					ack({ received: true });
+					setImmediate(() => {
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							commandResultEnvelopeFor(envelope as ControlEnvelope),
+							commandResultMessage,
+							() => undefined,
+						);
+					});
+				},
+			);
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 500,
+		});
+
+		try {
+			await client.ready;
+			await expect(
+				client.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-a' },
+				),
+			).resolves.toEqual(commandResultMessage);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('waits for semantic command_result beyond the transport ack timeout', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const commandResultMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command_result',
+			operation: 'lease_create',
+			payload: {
+				responseToMessageId: validEnvelope.messageId,
+				result: 'ok',
+			},
+		});
+		let releaseCommandResult: (() => void) | undefined;
+		const commandResultRelease = new Promise<void>((resolve) => {
+			releaseCommandResult = resolve;
+		});
+		let observeTransportReceipt: (() => void) | undefined;
+		const transportReceiptObserved = new Promise<void>((resolve) => {
+			observeTransportReceipt = resolve;
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, _payload: unknown, ack) => {
+					ack({ received: true });
+					observeTransportReceipt?.();
+					void commandResultRelease.then(() => {
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							commandResultEnvelopeFor(envelope as ControlEnvelope),
+							commandResultMessage,
+							() => undefined,
+						);
+					});
+				},
+			);
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 50,
+		});
+
+		try {
+			await client.ready;
+			let commandResolvedBeforeRelease = false;
+			const commandResultPromise = client
+				.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-a' },
+					{ commandResultTimeoutMs: 500 },
+				)
+				.then((result) => {
+					commandResolvedBeforeRelease = true;
+					return result;
+				});
+			await transportReceiptObserved;
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(commandResolvedBeforeRelease).toBe(false);
+			if (releaseCommandResult === undefined) {
+				throw new Error('Expected command result release hook to be registered.');
+			}
+			releaseCommandResult();
+			await expect(commandResultPromise).resolves.toEqual(commandResultMessage);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('does not resolve pending commands from stale-session command_result frames', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const commandResultMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command_result',
+			operation: 'lease_create',
+			payload: {
+				responseToMessageId: validEnvelope.messageId,
+				result: 'ok',
+			},
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, _payload: unknown, ack) => {
+					ack({ received: true });
+					setImmediate(() => {
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							{
+								...(envelope as ControlEnvelope),
+								sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+							},
+							commandResultMessage,
+							() => undefined,
+						);
+					});
+				},
+			);
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 50,
+		});
+
+		try {
+			await client.ready;
+			await expect(
+				client.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-a' },
+					{ commandResultTimeoutMs: 50 },
+				),
+			).rejects.toThrow(/control command result timed out/u);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('rejects oversized control payloads before they enter the Socket.IO control channel', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedMessages: unknown[] = [];
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.message, (envelope: unknown, payload: unknown, ack) => {
+				observedMessages.push({ envelope, payload });
+				ack({ received: true });
+				setImmediate(() => {
+					const controlEnvelope = envelope as ControlEnvelope;
+					socket.emit(
+						CONTROL_SESSION_EVENT_NAMES.message,
+						commandResultEnvelopeFor(controlEnvelope),
+						GatewayControlRpcMessageSchema.parse({
+							kind: 'command_result',
+							operation: 'lease_create',
+							payload: {
+								responseToMessageId: controlEnvelope.messageId,
+								result: 'ok',
+							},
+						}),
+						() => undefined,
+					);
+				});
+			});
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+		});
+
+		try {
+			await client.ready;
+			await expect(
+				client.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ bulkLikeLogChunk: 'x'.repeat(CONTROL_QUEUE_LIMITS.maxHttpBufferBytes) },
+				),
+			).rejects.toThrow(/control message exceeds/u);
+			expect(observedMessages).toEqual([]);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('rejects forbidden bulk envelopes before they enter the Socket.IO control channel', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedMessages: unknown[] = [];
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.message, (envelope: unknown, payload: unknown, ack) => {
+				observedMessages.push({ envelope, payload });
+				ack({ received: true });
+				setImmediate(() => {
+					const controlEnvelope = envelope as ControlEnvelope;
+					socket.emit(
+						CONTROL_SESSION_EVENT_NAMES.message,
+						commandResultEnvelopeFor(controlEnvelope),
+						GatewayControlRpcMessageSchema.parse({
+							kind: 'command_result',
+							operation: 'lease_create',
+							payload: {
+								responseToMessageId: controlEnvelope.messageId,
+								result: 'ok',
+							},
+						}),
+						() => undefined,
+					);
+				});
+			});
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+		});
+
+		try {
+			await client.ready;
+			await expect(
+				client.emitApplicationMessage(
+					{
+						...validEnvelope,
+						deliveryPolicy: 'forbidden_bulk',
+						messageId: '99999999-aaaa-4bbb-8ccc-dddddddddddd',
+					},
+					{ kind: 'command', operation: 'lease_create' },
+					{ bulkLikeLogChunk: 'bulk must not cross control' },
+				),
+			).rejects.toThrow(/forbidden bulk message/u);
+			expect(observedMessages).toEqual([]);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('fetches a gateway readiness credential, signs the upgrade headers, and connects through the plugin service', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'controller-epoch-a',
+			zoneId: 'zone-a',
+		});
+		const service = createGatewayControlService({
+			identity: {
+				bootId: material.bootId,
+				controllerEpoch: material.controllerEpoch,
+				generationId: material.generationId,
+				peerId: material.peerId,
+				zoneId: material.zoneId,
+			},
+			verifierPublicKeyPem: material.verifierPublicKeyPem,
+		});
+		const httpServer = createServer((req, res) => {
+			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
+				service.handleReadyRequest(req, res);
+				return;
+			}
+			res.statusCode = 404;
+			res.end('not found\n');
+		});
+		httpServer.on('upgrade', (req, socket, head) => {
+			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
+				service.handleUpgrade(req, socket, head);
+				return;
+			}
+			socket.destroy();
+		});
+		const port = await listen(httpServer);
+
+		const client = await connectGatewayControlSession({
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port }),
+			material,
+		});
+
+		try {
+			await expect(client.ready).resolves.toMatchObject({
+				controllerEpoch: 'controller-epoch-a',
+				outcome: 'accepted',
+			});
+		} finally {
+			client.close();
+			await service.close();
+			await new Promise<void>((resolve, reject) => {
+				httpServer.close((error) => {
+					if (error) {
+						reject(error);
+						return;
+					}
+					resolve();
+				});
+			});
+		}
+	});
+
+	it('includes safe gateway readiness rejection details in startup errors', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'controller-epoch-a',
+			zoneId: 'zone-a',
+		});
+		const fetchImpl = vi.fn<typeof fetch>(async () => {
+			return new Response('unauthorized: signature_mismatch\n', {
+				status: 401,
+				statusText: 'Unauthorized',
+			});
+		});
+
+		await expect(
+			fetchGatewayControlCredential({
+				endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: 18791 }),
+				fetchImpl,
+				material,
+			}),
+		).rejects.toThrow(
+			'Gateway control readiness failed with HTTP 401 Unauthorized: unauthorized: signature_mismatch',
+		);
+	});
+
+	it('dispatches peer-originated gateway control messages through the controller dispatcher', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const dispatcher = createControlSessionDispatcher();
+		const dispatchedPayloads: unknown[] = [];
+		const observedCommandResults: unknown[] = [];
+		let resolveCommandResultObserved: (() => void) | undefined;
+		const commandResultObserved = new Promise<void>((resolve) => {
+			resolveCommandResultObserved = resolve;
+		});
+		const peerEnvelope = {
+			...validEnvelope,
+			deliveryPolicy: 'critical_idempotent',
+			messageId: 'abababab-abab-4bab-8bab-abababababab',
+			sequence: 1,
+		} satisfies ControlEnvelope;
+		const peerMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: {
+					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+				},
+				correlation: {
+					traceId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+				},
+				gatewayWorkspaceDir: '/workspace/from-gateway',
+			},
+		});
+		let emitPeerMessage:
+			| ((envelope: ControlEnvelope, payload: unknown) => Promise<unknown>)
+			| undefined;
+
+		dispatcher.register('gateway_control', {
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			messageIdentity: ({ payload }) => {
+				const parsedMessage = GatewayControlRpcMessageSchema.parse(payload);
+				return {
+					kind: parsedMessage.kind,
+					...(parsedMessage.operation === undefined ? {} : { operation: parsedMessage.operation }),
+				};
+			},
+			handle: async ({ payload }) => {
+				dispatchedPayloads.push(payload);
+				return {
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						responseToMessageId: peerEnvelope.messageId,
+						result: 'ok',
+					},
+				};
+			},
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			emitPeerMessage = async (envelope, payload) => {
+				const receipt: unknown = await socket
+					.timeout(500)
+					.emitWithAck(CONTROL_SESSION_EVENT_NAMES.message, envelope, payload);
+				return receipt;
+			};
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, payload: unknown, acknowledge: (response: unknown) => void) => {
+					const controlEnvelope = envelope as ControlEnvelope;
+					if (controlEnvelope.kind === 'command_result') {
+						observedCommandResults.push(payload);
+						resolveCommandResultObserved?.();
+					}
+					acknowledge({ received: true });
+				},
+			);
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			dispatcher,
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			timeoutMs: 500,
+		});
+
+		try {
+			await client.ready;
+			if (emitPeerMessage === undefined) {
+				throw new Error('peer socket was not connected');
+			}
+			await expect(emitPeerMessage(peerEnvelope, peerMessage)).resolves.toEqual({
+				received: true,
+			});
+			await commandResultObserved;
+			expect(observedCommandResults).toEqual([
+				{
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						responseToMessageId: peerEnvelope.messageId,
+						result: 'ok',
+					},
+				},
+			]);
+			expect(dispatchedPayloads).toEqual([peerMessage]);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('returns a failed command_result when controller dispatch throws after accepting a peer command', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const dispatcher = createControlSessionDispatcher();
+		const observedCommandResults: unknown[] = [];
+		let resolveCommandResultObserved: (() => void) | undefined;
+		const commandResultObserved = new Promise<void>((resolve) => {
+			resolveCommandResultObserved = resolve;
+		});
+		const peerEnvelope = {
+			...validEnvelope,
+			deliveryPolicy: 'critical_idempotent',
+			messageId: 'abababab-abab-4bab-8bab-abababababab',
+			sequence: 1,
+		} satisfies ControlEnvelope;
+		const peerMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: {
+					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+				},
+				gatewayWorkspaceDir: '/workspace/from-gateway',
+			},
+		});
+		let emitPeerMessage:
+			| ((envelope: ControlEnvelope, payload: unknown) => Promise<unknown>)
+			| undefined;
+
+		dispatcher.register('gateway_control', {
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			messageIdentity: ({ payload }) => {
+				const parsedMessage = GatewayControlRpcMessageSchema.parse(payload);
+				return {
+					kind: parsedMessage.kind,
+					...(parsedMessage.operation === undefined ? {} : { operation: parsedMessage.operation }),
+				};
+			},
+			buildHandlerFailureResult: ({ envelope, payload }) => {
+				const parsedMessage = GatewayControlRpcMessageSchema.parse(payload);
+				return {
+					kind: 'command_result',
+					operation: parsedMessage.operation,
+					payload: {
+						error: {
+							errorClass: 'test_handler_failed',
+							retryable: true,
+							safeMessage: 'test handler failed',
+						},
+						responseToMessageId: envelope.messageId,
+						result: 'failed',
+					},
+				};
+			},
+			handle: async () => {
+				throw new Error('boom after ack');
+			},
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			emitPeerMessage = async (envelope, payload) => {
+				const receiptPayload: unknown = await socket
+					.timeout(500)
+					.emitWithAck(CONTROL_SESSION_EVENT_NAMES.message, envelope, payload);
+				return receiptPayload;
+			};
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, payload: unknown, acknowledge: (response: unknown) => void) => {
+					const controlEnvelope = envelope as ControlEnvelope;
+					if (controlEnvelope.kind === 'command_result') {
+						observedCommandResults.push(payload);
+						resolveCommandResultObserved?.();
+					}
+					acknowledge({ received: true });
+				},
+			);
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			dispatcher,
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			timeoutMs: 500,
+		});
+
+		try {
+			await client.ready;
+			if (emitPeerMessage === undefined) {
+				throw new Error('peer socket was not connected');
+			}
+			await expect(emitPeerMessage(peerEnvelope, peerMessage)).resolves.toEqual({
+				received: true,
+			});
+			await commandResultObserved;
+			expect(observedCommandResults).toEqual([
+				{
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						error: {
+							errorClass: 'test_handler_failed',
+							retryable: true,
+							safeMessage: 'test handler failed',
+						},
+						responseToMessageId: peerEnvelope.messageId,
+						result: 'failed',
+					},
+				},
+			]);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('closes instead of dispatching peer-originated critical messages after a sequence gap', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const dispatcher = createControlSessionDispatcher();
+		const dispatchedPayloads: unknown[] = [];
+		const peerEnvelope = {
+			...validEnvelope,
+			deliveryPolicy: 'critical_idempotent',
+			messageId: 'abababab-abab-4bab-8bab-abababababab',
+			sequence: 2,
+		} satisfies ControlEnvelope;
+		const peerMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: {
+					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+				},
+				gatewayWorkspaceDir: '/workspace/from-gateway',
+			},
+		});
+		let emitPeerMessage:
+			| ((envelope: ControlEnvelope, payload: unknown) => Promise<unknown>)
+			| undefined;
+
+		dispatcher.register('gateway_control', {
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			messageIdentity: ({ payload }) => {
+				const parsedMessage = GatewayControlRpcMessageSchema.parse(payload);
+				return {
+					kind: parsedMessage.kind,
+					...(parsedMessage.operation === undefined ? {} : { operation: parsedMessage.operation }),
+				};
+			},
+			handle: async ({ payload }) => {
+				dispatchedPayloads.push(payload);
+				return undefined;
+			},
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			emitPeerMessage = async (envelope, payload) => {
+				const receipt: unknown = await socket
+					.timeout(100)
+					.emitWithAck(CONTROL_SESSION_EVENT_NAMES.message, envelope, payload);
+				return receipt;
+			};
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			dispatcher,
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			timeoutMs: 100,
+		});
+
+		try {
+			await client.ready;
+			if (emitPeerMessage === undefined) {
+				throw new Error('peer socket was not connected');
+			}
+			await expect(emitPeerMessage(peerEnvelope, peerMessage)).rejects.toThrow();
+			expect(dispatchedPayloads).toEqual([]);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('refreshes the gateway readiness credential before reconnecting after plugin restart', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'controller-epoch-a',
+			zoneId: 'zone-a',
+		});
+		const createService = (): ReturnType<typeof createGatewayControlService> =>
+			createGatewayControlService({
+				identity: {
+					bootId: material.bootId,
+					controllerEpoch: material.controllerEpoch,
+					generationId: material.generationId,
+					peerId: material.peerId,
+					zoneId: material.zoneId,
+				},
+				verifierPublicKeyPem: material.verifierPublicKeyPem,
+			});
+		let service = createService();
+		const httpServer = createServer((req, res) => {
+			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
+				service.handleReadyRequest(req, res);
+				return;
+			}
+			res.statusCode = 404;
+			res.end('not found\n');
+		});
+		httpServer.on('upgrade', (req, socket, head) => {
+			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
+				service.handleUpgrade(req, socket, head);
+				return;
+			}
+			socket.destroy();
+		});
+		const port = await listen(httpServer);
+
+		const client = await connectGatewayControlSession({
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port }),
+			material,
+		});
+
+		try {
+			expect(client.getDiagnostics().helloCount).toBe(1);
+			await service.close();
+			service = createService();
+
+			await waitForClientHelloCount({
+				client,
+				minimumHelloCount: 2,
+				timeoutMs: 2_000,
+			});
+		} finally {
+			client.close();
+			await service.close();
+			await new Promise<void>((resolve, reject) => {
+				httpServer.close((error) => {
+					if (error) {
+						reject(error);
+						return;
+					}
+					resolve();
+				});
+			});
+		}
+	});
+
+	it('clears the real socket.io-client send buffer so stale application emits cannot flush', () => {
+		const socket = createSocketIoClient('http://127.0.0.1:1', {
+			autoConnect: false,
+			path: controlPath,
+			transports: ['websocket'],
+		});
+		try {
+			socket.emit(CONTROL_SESSION_EVENT_NAMES.message, validEnvelope, { stale: true });
+			expect(socket.sendBuffer).toHaveLength(1);
+
+			clearControlSessionSendBuffer(socket);
+
+			expect(socket.sendBuffer).toHaveLength(0);
+		} finally {
+			socket.close();
+		}
+	});
+
+	it('sends hello again before application messages after reconnect', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedHelloPayloads: ControlHello[] = [];
+		const observedMessages: unknown[] = [];
+		let clientSocket: ReturnType<typeof createSocketIoClient> | undefined;
+		let resolveSecondHello: (() => void) | undefined;
+		const secondHelloObserved = waitForProtocolEvent<void>((resolve) => {
+			resolveSecondHello = resolve;
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (payload: ControlHello, ack) => {
+				observedHelloPayloads.push(payload);
+				ack({
+					connectionId:
+						observedHelloPayloads.length === 1
+							? '55555555-5555-4555-8555-555555555555'
+							: '66666666-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+				if (observedHelloPayloads.length === 2) {
+					resolveSecondHello?.();
+				}
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.message, (envelope: unknown, payload: unknown, ack) => {
+				observedMessages.push({ envelope, payload });
+				ack({ received: true });
+				setImmediate(() => {
+					const controlEnvelope = envelope as ControlEnvelope;
+					socket.emit(
+						CONTROL_SESSION_EVENT_NAMES.message,
+						commandResultEnvelopeFor(controlEnvelope),
+						GatewayControlRpcMessageSchema.parse({
+							kind: 'command_result',
+							operation: 'lease_create',
+							payload: {
+								responseToMessageId: controlEnvelope.messageId,
+								result: 'ok',
+							},
+						}),
+						() => undefined,
+					);
+				});
+			});
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			createSocket: (socketOptions) => {
+				const socket = createSocketIoClient(
+					`http://${socketOptions.endpoint.host}:${String(socketOptions.endpoint.port)}`,
+					{
+						addTrailingSlash: false,
+						path: socketOptions.endpoint.path,
+						reconnectionDelay: 10,
+						reconnectionDelayMax: 10,
+						timeout: socketOptions.timeoutMs,
+						transports: ['websocket'],
+					},
+				);
+				clientSocket = socket;
+				return socket;
+			},
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 500,
+		});
+
+		try {
+			await client.ready;
+			clientSocket?.io.engine?.close();
+			await expect(secondHelloObserved).resolves.toBeUndefined();
+			await expect(
+				client.emitApplicationMessage(
+					{
+						...validEnvelope,
+						connectionId: '66666666-5555-4555-8555-555555555555',
+						messageId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+						sequence: 1,
+					},
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-after-reconnect' },
+				),
+			).resolves.toEqual({
+				kind: 'command_result',
+				operation: 'lease_create',
+				payload: {
+					responseToMessageId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+					result: 'ok',
+				},
+			});
+
+			expect(observedHelloPayloads).toHaveLength(2);
+			expect(observedHelloPayloads[1]).toEqual({
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				lastSeenControllerSequence: 0,
+				lastSeenPeerSequence: 0,
+				peerId: 'gateway-zone-a',
+				previousSessionId: '33333333-3333-4333-8333-333333333333',
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+			});
+			expect(observedMessages).toHaveLength(1);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('marks the session stale when a reserved dispatcher response is not receipted', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedResponseEnvelopes: ControlEnvelope[] = [];
+		let clientSocket: ReturnType<typeof createSocketIoClient> | undefined;
+		let serverSocket: SocketIoServerSocket | undefined;
+		let resolveFirstResponse: (() => void) | undefined;
+		const firstResponseObserved = waitForProtocolEvent<void>((resolve) => {
+			resolveFirstResponse = resolve;
+		});
+
+		socketServer.on('connection', (socket) => {
+			serverSocket = socket;
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.message, (envelope: ControlEnvelope, _payload) => {
+				observedResponseEnvelopes.push(envelope);
+				if (observedResponseEnvelopes.length === 1) {
+					resolveFirstResponse?.();
+				}
+			});
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			createSocket: (socketOptions) => {
+				const socket = createSocketIoClient(
+					`http://${socketOptions.endpoint.host}:${String(socketOptions.endpoint.port)}`,
+					{
+						addTrailingSlash: false,
+						path: socketOptions.endpoint.path,
+						reconnectionDelay: 10,
+						reconnectionDelayMax: 10,
+						timeout: socketOptions.timeoutMs,
+						transports: ['websocket'],
+					},
+				);
+				clientSocket = socket;
+				return socket;
+			},
+			dispatcher: {
+				dispatch: async ({ envelope }) =>
+					GatewayControlRpcMessageSchema.parse({
+						kind: 'command_result',
+						operation: 'lease_create',
+						payload: {
+							responseToMessageId: envelope.messageId,
+							result: 'ok',
+						},
+					}),
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 50,
+		});
+
+		try {
+			await client.ready;
+			expect(clientSocket?.connected).toBe(true);
+			const firstCommandEnvelope = {
+				...validEnvelope,
+				messageId: 'aaaaaaaa-1111-4111-8111-111111111111',
+				sequence: 1,
+			} satisfies ControlEnvelope;
+			await serverSocket?.timeout(1_000).emitWithAck(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				firstCommandEnvelope,
+				GatewayControlRpcMessageSchema.parse({
+					kind: 'command',
+					operation: 'lease_create',
+					payload: {
+						callerContext: {
+							callerContextId: '44444444-4444-4444-8444-444444444444',
+						},
+					},
+				}),
+			);
+			await firstResponseObserved;
+			await waitForProtocolRetryInterval(75);
+
+			await expect(
+				client.emitApplicationMessage(
+					{
+						...validEnvelope,
+						messageId: 'bbbbbbbb-2222-4222-8222-222222222222',
+						sequence: 2,
+					},
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-after-unreceipted-response' },
+				),
+			).rejects.toThrow(/control session is stale: sequence_gap/u);
+			expect(observedResponseEnvelopes.map((envelope) => envelope.sequence)).toEqual([1]);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('resends hello and resumes application traffic when reconnect requires resync', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedHelloPayloads: ControlHello[] = [];
+		let clientSocket: ReturnType<typeof createSocketIoClient> | undefined;
+		let resolveSecondHello: (() => void) | undefined;
+		const secondHelloObserved = waitForProtocolEvent<void>((resolve) => {
+			resolveSecondHello = resolve;
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (payload: ControlHello, ack) => {
+				observedHelloPayloads.push(payload);
+				ack({
+					connectionId:
+						observedHelloPayloads.length === 1
+							? '55555555-5555-4555-8555-555555555555'
+							: '66666666-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: observedHelloPayloads.length === 2 ? 'resync_required' : 'accepted',
+					sessionId:
+						observedHelloPayloads.length === 1
+							? '33333333-3333-4333-8333-333333333333'
+							: '99999999-9999-4999-8999-999999999999',
+				});
+				if (observedHelloPayloads.length === 2) {
+					resolveSecondHello?.();
+				}
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, _payload: unknown, ack) => {
+					ack({ received: true });
+					setImmediate(() => {
+						const controlEnvelope = envelope as ControlEnvelope;
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							commandResultEnvelopeFor(controlEnvelope),
+							GatewayControlRpcMessageSchema.parse({
+								kind: 'command_result',
+								operation: 'lease_create',
+								payload: {
+									responseToMessageId: controlEnvelope.messageId,
+									result: 'ok',
+								},
+							}),
+							() => undefined,
+						);
+					});
+				},
+			);
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			createSocket: (socketOptions) => {
+				const socket = createSocketIoClient(
+					`http://${socketOptions.endpoint.host}:${String(socketOptions.endpoint.port)}`,
+					{
+						addTrailingSlash: false,
+						path: socketOptions.endpoint.path,
+						reconnectionDelay: 10,
+						reconnectionDelayMax: 10,
+						timeout: socketOptions.timeoutMs,
+						transports: ['websocket'],
+					},
+				);
+				clientSocket = socket;
+				return socket;
+			},
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 500,
+		});
+
+		try {
+			await client.ready;
+			clientSocket?.io.engine?.close();
+			await expect(secondHelloObserved).resolves.toBeUndefined();
+			await waitForClientHelloCount({ client, minimumHelloCount: 3, timeoutMs: 1_000 });
+			await expect(
+				client.emitApplicationMessage(
+					{
+						...validEnvelope,
+						connectionId: '66666666-5555-4555-8555-555555555555',
+						messageId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+						sequence: 1,
+						sessionId: '99999999-9999-4999-8999-999999999999',
+					},
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-after-reconnect' },
+				),
+			).resolves.toEqual({
+				kind: 'command_result',
+				operation: 'lease_create',
+				payload: {
+					responseToMessageId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+					result: 'ok',
+				},
+			});
+			expect(client.getDiagnostics().lastHelloResponse).toMatchObject({
+				outcome: 'accepted',
+			});
+			expect(observedHelloPayloads).toHaveLength(3);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('continues reconnecting when one reconnect hello is not acknowledged', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedHelloPayloads: ControlHello[] = [];
+		let clientSocket: ReturnType<typeof createSocketIoClient> | undefined;
+		let resolveSecondHello: (() => void) | undefined;
+		const secondHelloObserved = waitForProtocolEvent<void>((resolve) => {
+			resolveSecondHello = resolve;
+		});
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (payload: ControlHello, ack) => {
+				observedHelloPayloads.push(payload);
+				if (observedHelloPayloads.length === 1) {
+					ack({
+						connectionId: '55555555-5555-4555-8555-555555555555',
+						controllerEpoch: 'epoch-a',
+						outcome: 'accepted',
+						sessionId: '33333333-3333-4333-8333-333333333333',
+					});
+					return;
+				}
+				resolveSecondHello?.();
+				if (observedHelloPayloads.length === 2) {
+					return;
+				}
+				ack({
+					connectionId: '66666666-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '99999999-9999-4999-8999-999999999999',
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, _payload: unknown, ack) => {
+					ack({ received: true });
+					setImmediate(() => {
+						const controlEnvelope = envelope as ControlEnvelope;
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							commandResultEnvelopeFor(controlEnvelope),
+							GatewayControlRpcMessageSchema.parse({
+								kind: 'command_result',
+								operation: 'lease_create',
+								payload: {
+									responseToMessageId: controlEnvelope.messageId,
+									result: 'ok',
+								},
+							}),
+							() => undefined,
+						);
+					});
+				},
+			);
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			createSocket: (socketOptions) => {
+				const socket = createSocketIoClient(
+					`http://${socketOptions.endpoint.host}:${String(socketOptions.endpoint.port)}`,
+					{
+						addTrailingSlash: false,
+						path: socketOptions.endpoint.path,
+						reconnectionDelay: 10,
+						reconnectionDelayMax: 10,
+						timeout: socketOptions.timeoutMs,
+						transports: ['websocket'],
+					},
+				);
+				clientSocket = socket;
+				return socket;
+			},
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 50,
+		});
+
+		try {
+			await client.ready;
+			clientSocket?.io.engine?.close();
+			await expect(secondHelloObserved).resolves.toBeUndefined();
+			expect(client.getDiagnostics()).toMatchObject({
+				accepted: false,
+				connected: true,
+				ready: false,
+			});
+			await waitForClientHelloCount({ client, minimumHelloCount: 2, timeoutMs: 1_000 });
+			await expect(
+				client.emitApplicationMessage(
+					{
+						...validEnvelope,
+						connectionId: '66666666-5555-4555-8555-555555555555',
+						messageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+						sequence: 1,
+						sessionId: '99999999-9999-4999-8999-999999999999',
+					},
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-after-timeout' },
+				),
+			).resolves.toEqual({
+				kind: 'command_result',
+				operation: 'lease_create',
+				payload: {
+					responseToMessageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+					result: 'ok',
+				},
+			});
+			expect(observedHelloPayloads).toHaveLength(3);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('does not buffer critical application messages while disconnected', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+		});
+		const port = await listen(httpServer);
+		let socketRef: ReturnType<typeof createSocketIoClient> | undefined;
+		const client = createControlSessionClient({
+			createSocket: (socketOptions) => {
+				const socket = createSocketIoClient(
+					`http://${socketOptions.endpoint.host}:${String(socketOptions.endpoint.port)}`,
+					{
+						addTrailingSlash: false,
+						path: socketOptions.endpoint.path,
+						timeout: socketOptions.timeoutMs,
+						transports: ['websocket'],
+					},
+				);
+				socketRef = socket;
+				return socket;
+			},
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 50,
+		});
+
+		try {
+			await client.ready;
+			if (socketRef === undefined) {
+				throw new Error('test socket was not created');
+			}
+			socketRef.disconnect();
+			await expect(
+				client.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-a' },
+				),
+			).rejects.toThrow(/control session is not connected/u);
+			expect(socketRef.sendBuffer).toHaveLength(0);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('bounds pending critical messages and rejects overflow before the peer observes it', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const pendingCommandCompletions: Array<() => void> = [];
+		let observedMessageCount = 0;
+		let resolveAllPendingObserved: (() => void) | undefined;
+		const allPendingObserved = new Promise<void>((resolve) => {
+			resolveAllPendingObserved = resolve;
+		});
+		socketServer.on('connection', (socket) => {
+			let peerSequence = 0;
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, _payload: unknown, ack) => {
+					const controlEnvelope = envelope as ControlEnvelope;
+					observedMessageCount += 1;
+					pendingCommandCompletions.push(() => {
+						ack({ received: true });
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							commandResultEnvelopeFor(controlEnvelope, ++peerSequence),
+							GatewayControlRpcMessageSchema.parse({
+								kind: 'command_result',
+								operation: 'lease_create',
+								payload: {
+									responseToMessageId: controlEnvelope.messageId,
+									result: 'ok',
+								},
+							}),
+							() => undefined,
+						);
+					});
+					if (observedMessageCount === CONTROL_QUEUE_LIMITS.queueMessageCap) {
+						resolveAllPendingObserved?.();
+					}
+				},
+			);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 5_000,
+		});
+
+		try {
+			await client.ready;
+			const pendingResults = Array.from(
+				{ length: CONTROL_QUEUE_LIMITS.queueMessageCap },
+				(_unused, commandIndex) =>
+					client.emitApplicationMessage(
+						{
+							...validEnvelope,
+							messageId: `20000000-0000-4000-8000-${String(commandIndex + 1).padStart(12, '0')}`,
+							sequence: commandIndex + 1,
+						},
+						{ kind: 'command', operation: 'lease_create' },
+						{ leaseId: 'lease-a' },
+					),
+			);
+			const overflowEnvelope = {
+				...validEnvelope,
+				messageId: '20000000-0000-4000-8000-999999999999',
+				sequence: CONTROL_QUEUE_LIMITS.queueMessageCap + 1,
+			} satisfies ControlEnvelope;
+			for (const pendingResult of pendingResults) {
+				pendingResult.catch(() => undefined);
+			}
+			await expect(
+				client.emitApplicationMessage(
+					overflowEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-overflow' },
+				),
+			).rejects.toThrow(/control session pending queue overflow/u);
+			await allPendingObserved;
+			expect(observedMessageCount).toBe(CONTROL_QUEUE_LIMITS.queueMessageCap);
+
+			for (const completeCommand of pendingCommandCompletions) {
+				completeCommand();
+			}
+			await expect(Promise.allSettled(pendingResults)).resolves.toHaveLength(
+				CONTROL_QUEUE_LIMITS.queueMessageCap,
+			);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('marks the session unusable after pending critical message overflow', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const pendingCommandCompletions: Array<() => void> = [];
+		const observedCloseReasons: unknown[] = [];
+		let resolveCloseObserved: (() => void) | undefined;
+		const closeObserved = new Promise<void>((resolve) => {
+			resolveCloseObserved = resolve;
+		});
+		let observedMessageCount = 0;
+		let resolveAllPendingObserved: (() => void) | undefined;
+		const allPendingObserved = new Promise<void>((resolve) => {
+			resolveAllPendingObserved = resolve;
+		});
+		socketServer.on('connection', (socket) => {
+			let peerSequence = 0;
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.close, (payload: unknown, ack) => {
+				observedCloseReasons.push(payload);
+				resolveCloseObserved?.();
+				ack({ received: true });
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: unknown, _payload: unknown, ack) => {
+					const controlEnvelope = envelope as ControlEnvelope;
+					observedMessageCount += 1;
+					pendingCommandCompletions.push(() => {
+						ack({ received: true });
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							commandResultEnvelopeFor(controlEnvelope, ++peerSequence),
+							GatewayControlRpcMessageSchema.parse({
+								kind: 'command_result',
+								operation: 'lease_create',
+								payload: {
+									responseToMessageId: controlEnvelope.messageId,
+									result: 'ok',
+								},
+							}),
+							() => undefined,
+						);
+					});
+					if (observedMessageCount === CONTROL_QUEUE_LIMITS.queueMessageCap) {
+						resolveAllPendingObserved?.();
+					}
+				},
+			);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 5_000,
+		});
+
+		try {
+			await client.ready;
+			const pendingResults = Array.from(
+				{ length: CONTROL_QUEUE_LIMITS.queueMessageCap },
+				(_unused, commandIndex) =>
+					client.emitApplicationMessage(
+						{
+							...validEnvelope,
+							messageId: `30000000-0000-4000-8000-${String(commandIndex + 1).padStart(12, '0')}`,
+							sequence: commandIndex + 1,
+						},
+						{ kind: 'command', operation: 'lease_create' },
+						{ leaseId: 'lease-a' },
+					),
+			);
+			const overflowEnvelope = {
+				...validEnvelope,
+				messageId: '30000000-0000-4000-8000-999999999999',
+				sequence: CONTROL_QUEUE_LIMITS.queueMessageCap + 1,
+			} satisfies ControlEnvelope;
+			for (const pendingResult of pendingResults) {
+				pendingResult.catch(() => undefined);
+			}
+			await expect(
+				client.emitApplicationMessage(
+					overflowEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-overflow' },
+				),
+			).rejects.toThrow(/control session pending queue overflow/u);
+			await allPendingObserved;
+
+			expect(observedMessageCount).toBe(CONTROL_QUEUE_LIMITS.queueMessageCap);
+			await closeObserved;
+			expect(observedCloseReasons).toEqual([
+				{
+					reason: 'queue_overflow',
+					safeMessage: 'control session pending queue overflow',
+					sessionId: validEnvelope.sessionId,
+				},
+			]);
+
+			for (const completeCommand of pendingCommandCompletions) {
+				completeCommand();
+			}
+			await expect(Promise.allSettled(pendingResults)).resolves.toHaveLength(
+				CONTROL_QUEUE_LIMITS.queueMessageCap,
+			);
+			await expect(
+				client.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-after-overflow' },
+				),
+			).rejects.toThrow(/control session is stale/u);
+			expect(observedMessageCount).toBe(CONTROL_QUEUE_LIMITS.queueMessageCap);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('preserves the heartbeat priority lane when the normal critical lane is saturated', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const pendingCommandCompletions: Array<() => void> = [];
+		let observedCommandCount = 0;
+		let observedHeartbeatCount = 0;
+		let resolveAllPendingObserved: (() => void) | undefined;
+		const allPendingObserved = new Promise<void>((resolve) => {
+			resolveAllPendingObserved = resolve;
+		});
+		socketServer.on('connection', (socket) => {
+			let peerSequence = 0;
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: ControlEnvelope, _payload: unknown, ack) => {
+					if (envelope.kind === 'heartbeat') {
+						observedHeartbeatCount += 1;
+						ack({ received: true });
+						return;
+					}
+					observedCommandCount += 1;
+					pendingCommandCompletions.push(() => {
+						ack({ received: true });
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							commandResultEnvelopeFor(envelope, ++peerSequence),
+							GatewayControlRpcMessageSchema.parse({
+								kind: 'command_result',
+								operation: 'lease_create',
+								payload: {
+									responseToMessageId: envelope.messageId,
+									result: 'ok',
+								},
+							}),
+							() => undefined,
+						);
+					});
+					if (observedCommandCount === CONTROL_QUEUE_LIMITS.queueMessageCap) {
+						resolveAllPendingObserved?.();
+					}
+				},
+			);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByKind: {
+				heartbeat: 'critical_idempotent',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 5_000,
+		});
+
+		try {
+			await client.ready;
+			const pendingResults = Array.from(
+				{ length: CONTROL_QUEUE_LIMITS.queueMessageCap },
+				(_unused, commandIndex) =>
+					client.emitApplicationMessage(
+						{
+							...validEnvelope,
+							messageId: `00000000-0000-4000-8000-${String(commandIndex + 1).padStart(12, '0')}`,
+							sequence: commandIndex + 1,
+						},
+						{ kind: 'command', operation: 'lease_create' },
+						{ leaseId: 'lease-a' },
+					),
+			);
+			const heartbeatAfterFloodEnvelope = {
+				...heartbeatEnvelope,
+				sequence: CONTROL_QUEUE_LIMITS.queueMessageCap + 1,
+			} satisfies ControlEnvelope;
+			for (const pendingResult of pendingResults) {
+				pendingResult.catch(() => undefined);
+			}
+			await allPendingObserved;
+
+			await expect(
+				client.emitApplicationMessage(
+					heartbeatAfterFloodEnvelope,
+					{ kind: 'heartbeat' },
+					{ observedAtMs: 1 },
+				),
+			).resolves.toEqual({ received: true });
+			expect(observedHeartbeatCount).toBe(1);
+
+			expect(observedCommandCount).toBe(CONTROL_QUEUE_LIMITS.queueMessageCap);
+
+			for (const completeCommand of pendingCommandCompletions) {
+				completeCommand();
+			}
+			await expect(Promise.allSettled(pendingResults)).resolves.toHaveLength(
+				CONTROL_QUEUE_LIMITS.queueMessageCap,
+			);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('marks the session stale when a priority heartbeat cannot be acknowledged', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedCloseReasons: unknown[] = [];
+		let observedHeartbeatCount = 0;
+		let resolveCloseObserved: (() => void) | undefined;
+		const closeObserved = new Promise<void>((resolve) => {
+			resolveCloseObserved = resolve;
+		});
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.close, (payload: unknown, ack) => {
+				observedCloseReasons.push(payload);
+				resolveCloseObserved?.();
+				ack({ received: true });
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: ControlEnvelope, _payload: unknown) => {
+					if (envelope.kind === 'heartbeat') {
+						observedHeartbeatCount += 1;
+					}
+				},
+			);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByKind: {
+				heartbeat: 'critical_idempotent',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 20,
+		});
+
+		try {
+			await client.ready;
+			const firstHeartbeatEnvelope = {
+				...heartbeatEnvelope,
+				sequence: 1,
+			} satisfies ControlEnvelope;
+			await expect(
+				client.emitApplicationMessage(
+					firstHeartbeatEnvelope,
+					{ kind: 'heartbeat' },
+					{ observedAtMs: 1 },
+				),
+			).rejects.toThrow(/operation has timed out/u);
+			await closeObserved;
+			expect(observedHeartbeatCount).toBe(1);
+			expect(observedCloseReasons).toEqual([
+				{
+					reason: 'transport_error',
+					safeMessage: 'control session priority heartbeat timed out',
+					sessionId: firstHeartbeatEnvelope.sessionId,
+				},
+			]);
+			await expect(
+				client.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-after-heartbeat-timeout' },
+				),
+			).rejects.toThrow(/control session is stale/u);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('coalesces latest-wins flood traffic before it reaches Socket.IO', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedSnapshots: unknown[] = [];
+		let resolveHeartbeatObserved: (() => void) | undefined;
+		const heartbeatObserved = new Promise<void>((resolve) => {
+			resolveHeartbeatObserved = resolve;
+		});
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: ControlEnvelope, payload: unknown, ack) => {
+					if (envelope.kind === 'snapshot') {
+						observedSnapshots.push(payload);
+						return;
+					}
+					if (envelope.kind === 'heartbeat') {
+						resolveHeartbeatObserved?.();
+						ack({ received: true });
+					}
+				},
+			);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByKind: {
+				heartbeat: 'critical_idempotent',
+				snapshot: 'latest_wins',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			timeoutMs: 5_000,
+		});
+
+		try {
+			await client.ready;
+			const floodCount = CONTROL_QUEUE_LIMITS.queueMessageCap * 2;
+			await Promise.all(
+				Array.from({ length: floodCount }, (_unused, snapshotIndex) =>
+					client.emitApplicationMessage(
+						{
+							...snapshotEnvelope,
+							messageId: `10000000-0000-4000-8000-${String(snapshotIndex + 1).padStart(12, '0')}`,
+							sequence: snapshotIndex + 1,
+						},
+						{ kind: 'snapshot' },
+						{ snapshotIndex },
+					),
+				),
+			);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			const heartbeatAfterFloodEnvelope = {
+				...heartbeatEnvelope,
+				sequence: 1,
+			} satisfies ControlEnvelope;
+			await expect(
+				client.emitApplicationMessage(
+					heartbeatAfterFloodEnvelope,
+					{ kind: 'heartbeat' },
+					{ observedAtMs: 1 },
+				),
+			).resolves.toEqual({ received: true });
+			await heartbeatObserved;
+
+			expect(observedSnapshots).toEqual([{ snapshotIndex: floodCount - 1 }]);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('fails closed when envelope delivery policy contradicts the receiver-derived policy', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+		});
+
+		try {
+			await client.ready;
+			await expect(
+				client.emitApplicationMessage(
+					{
+						...validEnvelope,
+						deliveryPolicy: 'latest_wins',
+					},
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-a' },
+				),
+			).rejects.toThrow(/delivery policy mismatch/u);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+});
+
+describe('control session dispatcher', () => {
+	it('registers per-domain handlers and rejects unknown or mismatched messages before dispatch', async () => {
+		const dispatcher = createControlSessionDispatcher();
+		const handledPayloads: unknown[] = [];
+
+		dispatcher.register('gateway_control', {
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			messageIdentity: () => ({ kind: 'command', operation: 'lease_create' }),
+			handle: async ({ payload }) => {
+				handledPayloads.push(payload);
+				return { ok: true };
+			},
+		});
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: validEnvelope,
+				payload: { leaseId: 'lease-a' },
+			}),
+		).resolves.toEqual({ ok: true });
+		expect(handledPayloads).toEqual([{ leaseId: 'lease-a' }]);
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: {
+					...validEnvelope,
+					domain: 'worker_control',
+				},
+				payload: {},
+			}),
+		).rejects.toThrow(/no control session handler/u);
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: {
+					...validEnvelope,
+					deliveryPolicy: 'latest_wins',
+				},
+				payload: {},
+			}),
+		).rejects.toThrow(/delivery policy mismatch/u);
+	});
+
+	it('rejects stale session identity before dispatch can mutate state', async () => {
+		const dispatcher = createControlSessionDispatcher({
+			sessionFence: {
+				bootId: validEnvelope.bootId,
+				connectionId: validEnvelope.connectionId,
+				controllerEpoch: validEnvelope.controllerEpoch,
+				domain: validEnvelope.domain,
+				peerId: validEnvelope.peerId,
+				sessionId: validEnvelope.sessionId,
+				zoneId: validEnvelope.zoneId,
+			},
+		});
+		const handledPayloads: unknown[] = [];
+
+		dispatcher.register('gateway_control', {
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			messageIdentity: () => ({ kind: 'command', operation: 'lease_create' }),
+			handle: async ({ payload }) => {
+				handledPayloads.push(payload);
+				return { ok: true };
+			},
+		});
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: {
+					...validEnvelope,
+					controllerEpoch: 'stale-controller-epoch',
+				},
+				payload: { leaseId: 'lease-stale' },
+			}),
+		).rejects.toThrow(/control session envelope controllerEpoch mismatch/u);
+		expect(handledPayloads).toEqual([]);
+	});
+
+	it('deduplicates retried command envelopes and returns the cached terminal result', async () => {
+		const dispatcher = createControlSessionDispatcher();
+		let sideEffectCount = 0;
+
+		dispatcher.register('gateway_control', {
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			messageIdentity: () => ({ kind: 'command', operation: 'lease_create' }),
+			handle: async () => {
+				sideEffectCount += 1;
+				return { ok: true, sideEffectCount };
+			},
+		});
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: validEnvelope,
+				payload: { leaseId: 'lease-a' },
+			}),
+		).resolves.toEqual({ ok: true, sideEffectCount: 1 });
+		await expect(
+			dispatcher.dispatch({
+				envelope: {
+					...validEnvelope,
+					messageId: '88888888-8888-4888-8888-888888888888',
+					sequence: validEnvelope.sequence + 1,
+				},
+				payload: { leaseId: 'lease-a' },
+			}),
+		).resolves.toEqual({ ok: true, sideEffectCount: 1 });
+		expect(sideEffectCount).toBe(1);
+	});
+
+	it('rejects out-of-window command replay before dispatch can mutate state again', async () => {
+		vi.useFakeTimers({ now: 1_000 });
+		try {
+			const dispatcher = createControlSessionDispatcher();
+			let sideEffectCount = 0;
+
+			dispatcher.register('gateway_control', {
+				policyByOperation: {
+					lease_create: 'single_use_critical',
+				},
+				messageIdentity: () => ({ kind: 'command', operation: 'lease_create' }),
+				handle: async () => {
+					sideEffectCount += 1;
+					return { ok: true, sideEffectCount };
+				},
+			});
+
+			await expect(
+				dispatcher.dispatch({
+					envelope: validEnvelope,
+					payload: { leaseId: 'lease-a' },
+				}),
+			).resolves.toEqual({ ok: true, sideEffectCount: 1 });
+
+			vi.setSystemTime(1_000 + CONTROL_QUEUE_LIMITS.dedupeWindowTtlMs + 1);
+
+			await expect(
+				dispatcher.dispatch({
+					envelope: {
+						...validEnvelope,
+						messageId: '99999999-9999-4999-8999-999999999999',
+						sequence: validEnvelope.sequence + 1,
+					},
+					payload: { leaseId: 'lease-a' },
+				}),
+			).rejects.toThrow(/control session replay window expired/u);
+			expect(sideEffectCount).toBe(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('accepts a recreated boot session and fences lingering old boot traffic', async () => {
+		const fenceRegistry = createControlSessionFenceRegistry();
+		const dispatcher = createControlSessionDispatcher({ sessionFenceRegistry: fenceRegistry });
+		const handledBootIds: string[] = [];
+
+		dispatcher.register('gateway_control', {
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+			messageIdentity: () => ({ kind: 'command', operation: 'lease_create' }),
+			handle: async ({ envelope }) => {
+				handledBootIds.push(envelope.bootId);
+				return { ok: true, bootId: envelope.bootId };
+			},
+		});
+
+		fenceRegistry.acceptSession({
+			bootId: 'old-boot',
+			connectionId: validEnvelope.connectionId,
+			controllerEpoch: 'old-epoch',
+			domain: validEnvelope.domain,
+			peerId: validEnvelope.peerId,
+			sessionId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+			zoneId: validEnvelope.zoneId,
+		});
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: {
+					...validEnvelope,
+					bootId: 'old-boot',
+					controllerEpoch: 'old-epoch',
+					sessionId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+				},
+				payload: { leaseId: 'lease-old' },
+			}),
+		).resolves.toEqual({ ok: true, bootId: 'old-boot' });
+
+		fenceRegistry.acceptSession({
+			bootId: 'new-boot',
+			connectionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			controllerEpoch: 'new-epoch',
+			domain: validEnvelope.domain,
+			peerId: validEnvelope.peerId,
+			sessionId: 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb',
+			zoneId: validEnvelope.zoneId,
+		});
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: {
+					...validEnvelope,
+					bootId: 'new-boot',
+					commandId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+					connectionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					controllerEpoch: 'new-epoch',
+					idempotencyKey: 'new-command-key',
+					messageId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+					sequence: validEnvelope.sequence + 1,
+					sessionId: 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb',
+				},
+				payload: { leaseId: 'lease-new' },
+			}),
+		).resolves.toEqual({ ok: true, bootId: 'new-boot' });
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: {
+					...validEnvelope,
+					bootId: 'old-boot',
+					commandId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+					controllerEpoch: 'old-epoch',
+					idempotencyKey: 'old-command-after-recreate',
+					messageId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+					sequence: validEnvelope.sequence + 2,
+					sessionId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+				},
+				payload: { leaseId: 'lease-old-after-recreate' },
+			}),
+		).rejects.toThrow(/control session envelope bootId mismatch/u);
+		expect(handledBootIds).toEqual(['old-boot', 'new-boot']);
+	});
+});

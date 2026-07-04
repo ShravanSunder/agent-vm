@@ -107,6 +107,12 @@ jobs:
       - name: Test taxonomy audit
         run: pnpm test:taxonomy
 
+      - name: Portal architecture audit
+        run: pnpm test:portal-architecture
+
+      - name: Portal package export audit
+        run: pnpm test:portal-exports
+
       - name: Lint
         run: pnpm lint
 
@@ -128,5 +134,5 @@ jobs:
       - name: E2E inventory
         run: pnpm test:e2e:inventory
 
-      - name: Non-secret E2E proofs
+      - name: Default 4-lane E2E proofs
         run: AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e

@@ -101,7 +101,7 @@ describe('manual templates', () => {
 		);
 		expect(observabilityManual).toContain('controllerStartPolicy=degraded');
 		expect(observabilityManual).toContain('host.observability.dataDir');
-		expect(observabilityManual).toContain('zones[].observability.openclaw.diagnosticsFlags');
+		expect(observabilityManual).toContain('Validation rejects it');
 		expect(observabilityManual).toContain('Never log secrets');
 		const gatewayIngressManual = files.find((file) =>
 			file.relativePath.endsWith('gateway-ingress.md'),
@@ -228,8 +228,11 @@ describe('manual templates', () => {
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('approvals.plugin.mode');
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'approvals.plugin.mode=session',
+			'rejects calls.requiresApproval',
 		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('approvals.plugin.mode=session');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('::ffff:198.18.0.1');
@@ -238,15 +241,21 @@ describe('manual templates', () => {
 		).toContain('@agent-vm/openclaw-agent-vm-plugin');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
-		).toContain('@agent-vm/openclaw-mcp-portal-plugin');
+		).not.toContain('@agent-vm/openclaw-mcp-portal-plugin');
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'mcp_portal_describe',
+			'tool_portal_describe',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'Tool Portal is separate',
+			'namespace + name',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('namespace + toolName');
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Tool Portal is the model-visible',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'does not yet load tool-portal.config.jsonc',
+			'MCP Portal remains the MCP-provider backend',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Denied tools do not enter',
@@ -254,6 +263,15 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'diagnostics',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'items',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'status',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('results is keyed by request/call id');
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'deny-all',
 		);
@@ -322,7 +340,7 @@ describe('manual templates', () => {
 			'The OpenClaw plugin may accept Tool VM guest cwd intent',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'The controller `/lease workMountDir` is stricter',
+			'The controller-owned lease flow is stricter',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'Direct Tool VM guest paths such as `/workspace` and `/work` are rejected at the controller boundary',
@@ -350,9 +368,16 @@ describe('manual templates', () => {
 		)?.content;
 		expect(toolVmLeaseManual).toContain('defaultToolVmProfile');
 		expect(toolVmLeaseManual).toContain('one compatible Tool VM per zone and OpenClaw agent id');
-		expect(toolVmLeaseManual).toContain('discarded before the controller lease request');
+		expect(toolVmLeaseManual).toContain('discarded before controller-owned lease resolution');
+		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_renew');
+		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_use_heartbeat');
+		expect(toolVmLeaseManual).not.toContain('controller lease request');
+		expect(toolVmLeaseManual).not.toContain('GET lease');
+		expect(toolVmLeaseManual).not.toContain('POST renew');
 		expect(toolVmLeaseManual).not.toContain('scopeKey');
-		expect(toolVmLeaseManual).toContain('active shell/file operations heartbeat per-use records');
+		expect(toolVmLeaseManual).toContain(
+			'active shell/file operations use private gateway_control_rpc lease_use_heartbeat records',
+		);
 		expect(toolVmLeaseManual).toContain('lease-heartbeat');
 		expect(toolVmLeaseManual).toContain('lease-renew');
 		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
@@ -367,7 +392,7 @@ describe('manual templates', () => {
 		expect(operationsManual).toContain('gateway-recovery');
 		expect(operationsManual).toContain('gateway-recovery-suspended');
 		expect(operationsManual).toContain(
-			'10 consecutive gateway-service or gateway-control-link failures',
+			'10 consecutive gateway-service or gateway-control-session failures',
 		);
 		expect(operationsManual).toContain('61 minute cooldown');
 		expect(operationsManual).toContain('3 consecutive failed automatic recoveries');
@@ -425,6 +450,12 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('Native Codex-runtime agents use codex-harness --all-agents');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).toContain('controller-owned zone Git push capability');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).not.toContain('zone_git_push');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfile');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfiles');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('/home/openclaw/zone-files');

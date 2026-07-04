@@ -18,6 +18,7 @@ const GIT_PUSH_RETRY_AFTER_SECONDS = 300;
 export interface PushBranchRequest {
 	readonly repoUrl: string;
 	readonly branchName: string;
+	readonly expectedHead?: string;
 }
 
 export interface PushCommitSummary {
@@ -572,6 +573,15 @@ async function pushOneBranchForTask(options: {
 			['rev-parse', 'HEAD'],
 			options.signal,
 		);
+		if (options.branch.expectedHead !== undefined && options.branch.expectedHead !== localHead) {
+			return {
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+				success: false,
+				error: `Refusing to push: local HEAD '${localHead}' does not match expectedHead '${options.branch.expectedHead}'. Refresh task state before retrying.`,
+				localHead,
+			};
+		}
 		if (previousRemoteBranchHead === localHead) {
 			return {
 				repoUrl: options.branch.repoUrl,

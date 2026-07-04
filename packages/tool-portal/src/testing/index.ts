@@ -9,21 +9,21 @@ export interface CreateToolPortalConfigFixtureProps {
 	readonly agentId?: string;
 	readonly namespace?: string;
 	readonly profileId?: string;
-	readonly toolName?: string;
+	readonly name?: string;
 }
 
 export interface CreateCliAllowanceFixtureProps {
 	readonly credentialProfileId?: string;
 	readonly executablePath?: string;
 	readonly namespace?: string;
-	readonly toolName?: string;
+	readonly name?: string;
 }
 
 export function createToolPortalConfigFixture(
 	props: CreateToolPortalConfigFixtureProps = {},
 ): ToolPortalConfig {
 	const namespace = props.namespace ?? 'github';
-	const toolName = props.toolName ?? 'get_issue';
+	const name = props.name ?? 'get_issue';
 	const profileId = props.profileId ?? 'code-builder';
 	return toolPortalConfigSchema.parse({
 		agents: {
@@ -35,13 +35,13 @@ export function createToolPortalConfigFixture(
 			[profileId]: {
 				capabilities: {
 					[namespace]: {
-						backend: { kind: 'mcp' },
+						backend: { kind: 'mcp_provider' },
 						calls: {
 							requiresApproval: { allow: [] },
-							withoutApproval: { allow: [toolName] },
+							withoutApproval: { allow: [name] },
 						},
 						tools: {
-							allow: [toolName],
+							allow: [name],
 						},
 					},
 				},
@@ -55,7 +55,7 @@ export function createCliAllowanceFixture(
 	props: CreateCliAllowanceFixtureProps = {},
 ): CliAllowance {
 	const namespace = props.namespace ?? 'github';
-	const toolName = props.toolName ?? 'issue_view';
+	const name = props.name ?? 'issue_view';
 	return CliAllowanceSchema.parse({
 		allowedFlags: [{ flag: '--json', value: 'none' }],
 		allowedSubcommands: [['issue', 'view']],
@@ -67,7 +67,7 @@ export function createCliAllowanceFixture(
 		},
 		capability: {
 			namespace,
-			toolName,
+			name,
 		},
 		cancellation: {
 			onCancel: 'close_vm',
@@ -88,7 +88,7 @@ export function createCliAllowanceFixture(
 			mode: 'empty',
 		},
 		executablePath: props.executablePath ?? '/usr/local/bin/gh',
-		inputSchemaId: `${namespace}.${toolName}.input`,
+		inputSchemaId: `${namespace}.${name}.input`,
 		output: {
 			modelVisibleStderr: 'safe_summary',
 			redactionProfile: 'default',

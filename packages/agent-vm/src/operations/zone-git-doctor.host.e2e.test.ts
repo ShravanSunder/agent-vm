@@ -71,6 +71,9 @@ function createSystemConfig(options: {
 						remote: {
 							repoUrl: options.remoteUrl,
 							branch: 'main',
+							defaultBranch: 'trunk',
+							protectedBranches: ['trunk'],
+							protectedBranchPatterns: ['release/*'],
 						},
 					},
 				},

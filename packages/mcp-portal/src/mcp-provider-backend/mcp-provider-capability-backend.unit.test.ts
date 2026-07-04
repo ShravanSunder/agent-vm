@@ -85,6 +85,83 @@ function createBackendFixture(options?: {
 }
 
 describe('MCP provider capability backend', () => {
+	it('includes managed session provenance in upstream MCP agent scope ids', async () => {
+		const observedAgentScopeIds: string[] = [];
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: (calls) => ({
+				decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
+			}),
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(async (call) => {
+					observedAgentScopeIds.push(call.agentScopeId);
+					return {
+						arguments: call.arguments,
+						ok: true,
+						upstreamTool: `${call.namespace}.${call.toolName}`,
+					};
+				}),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async ({ namespace }) => (namespace === 'github' ? githubTools : [])),
+			},
+			upstreamNamespaces: ['github'],
+		});
+		const projection = ToolPortalMcpProjectionSchema.parse({
+			agentId: 'agent-a',
+			namespaces: {
+				github: {
+					calls: {
+						requiresApproval: { allow: [], deny: [] },
+						withoutApproval: { allow: ['get_issue'], deny: [] },
+					},
+					tools: { allow: ['get_issue'], deny: [] },
+				},
+			},
+			profile: 'code-builder',
+		});
+		const sessionABackend = createMcpProviderCapabilityBackend({
+			core,
+			projection,
+			sessionKey: 'session-a',
+		});
+		const sessionBBackend = createMcpProviderCapabilityBackend({
+			core,
+			projection,
+			sessionKey: 'session-b',
+		});
+
+		await sessionABackend.call({
+			calls: [
+				{
+					arguments: { number: 1 },
+					id: 'session-a-read',
+					namespace: 'github',
+					name: 'get_issue',
+				},
+			],
+		});
+		await sessionBBackend.call({
+			calls: [
+				{
+					arguments: { number: 2 },
+					id: 'session-b-read',
+					namespace: 'github',
+					name: 'get_issue',
+				},
+			],
+		});
+
+		expect(observedAgentScopeIds).toEqual([
+			'mcp-provider:agent-a\nsession-a',
+			'mcp-provider:agent-a\nsession-b',
+		]);
+	});
+
 	it('lists and searches projected upstream MCP capabilities without portal tool names', async () => {
 		const backend = createBackendFixture();
 
@@ -176,7 +253,7 @@ describe('MCP provider capability backend', () => {
 					arguments: { number: 42 },
 					id: 'read-issue',
 					namespace: 'github',
-					toolName: 'get_issue',
+					name: 'get_issue',
 				},
 			],
 		});
@@ -193,7 +270,7 @@ describe('MCP provider capability backend', () => {
 							ok: true,
 							upstreamTool: 'github.get_issue',
 						},
-						toolName: 'get_issue',
+						name: 'get_issue',
 					},
 				},
 			],
@@ -216,7 +293,7 @@ describe('MCP provider capability backend', () => {
 					arguments: { number: 42 },
 					id: 'read-issue',
 					namespace: 'github',
-					toolName: 'get_issue',
+					name: 'get_issue',
 				},
 			],
 		});
@@ -251,7 +328,7 @@ describe('MCP provider capability backend', () => {
 						arguments: { title: 'Write' },
 						id: 'create-issue',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 			}),
@@ -275,7 +352,7 @@ describe('MCP provider capability backend', () => {
 						arguments: { title: 'Write' },
 						id: 'create-issue',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 				portalApprovalToken: 'model-token',

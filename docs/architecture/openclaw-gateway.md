@@ -160,7 +160,10 @@ up. The host-side config field is `zoneFilesDir`; there is no static
 
 ## Tool VM Leases
 
-When the agent needs to execute code, OpenClaw requests a tool VM lease through the controller's HTTP API.
+When the agent needs to execute code, OpenClaw requests a Tool VM capability
+from the managed Gondolin plugin. The controller owns lease authority and talks
+to the gateway plugin over the private Socket.IO control session exposed through
+Gondolin ingress.
 
 ### Lease Lifecycle
 
@@ -168,10 +171,8 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
   OpenClaw agent: "I need to run this code"
        |
        v
-  POST /lease {
-    zoneId,
-    agentId,
-    sessionKey,
+  plugin emits gateway_control_rpc lease_create {
+    opaque caller context,
     profileId,
     agentWorkspaceDir,
     workMountDir: "/zone/..."
@@ -194,9 +195,9 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        v
   Gateway uses SSH directly to execute code in tool VM
        |
-       |-- POST /lease/:leaseId/uses before command or file-bridge script
-       |-- POST /lease/:leaseId/uses/:useId/heartbeat while it runs
-       |-- DELETE /lease/:leaseId/uses/:useId when it finishes
+       |-- gateway_control_rpc lease_use_start before command or file-bridge script
+       |-- gateway_control_rpc lease_use_heartbeat while it runs
+       |-- gateway_control_rpc lease_use_end when it finishes
        |
   v  (lease idle TTL; default 100 minutes)
   Idle reaper: releaseLease()
@@ -219,16 +220,17 @@ controller probes the VM; dead leases are evicted and replaced. This means an
 agent's Tool VM persists across multiple tool calls, channels, sessions, or
 subagents without silently crossing work mount or profile boundaries.
 
-Cached handles renew the idle lease with `POST /lease/:leaseId/renew`; health
-snapshots call this `lease-renew`. `GET` lease routes are read-only; they do
-not update `lastUsedAt`. In-flight commands and file-bridge operations are
-tracked separately as active uses; health snapshots call
-`POST /lease/:leaseId/uses/:useId/heartbeat` a `lease-heartbeat`. Successful
-lease-heartbeats and lease-renews both keep lease state alive, but they
-diagnose different boundaries. A lease-heartbeat means an active operation is
-still alive. A lease-renew means an idle cached lease is being reused. This
-distinction matters when debugging controller-link timeouts versus stale Tool
-VM SSH state. Because active uses are tracked separately, a
+Cached handles renew the idle lease over `gateway_control_rpc`; health snapshots
+call this `lease-renew`. Operator-visible lease summaries come from controller
+status and health snapshot routes, not from a public lease-list route.
+VM-facing lease mutation/read routes are not part of the managed control path.
+In-flight commands and file-bridge operations are tracked separately as active
+uses; health snapshots call active-use heartbeat a `lease-heartbeat`.
+Successful lease-heartbeats and lease-renews both keep lease state alive, but
+they diagnose different boundaries. A lease-heartbeat means an active operation
+is still alive. A lease-renew means an idle cached lease is being reused. This
+distinction matters when debugging control-session timeouts versus stale Tool VM
+SSH state. Because active uses are tracked separately, a
 long-running SSH command keeps the Tool VM protected from idle reap without
 making the controller a stdout/stderr data proxy. If a plugin misses its final
 cleanup callback, plugin heartbeats stop after a finite safety cap (12 hours by
@@ -282,20 +284,17 @@ For implementation details, see [subsystems/controller.md](../subsystems/control
 
 ---
 
-## MCP Portal Native Tools
+## Tool Portal Native Tools
 
-Managed OpenClaw gateway images install the MCP Portal plugin and the
-`@agent-vm/mcp-portal` package. The plugin registers native OpenClaw tools for
-`mcp_portal_list`, `mcp_portal_search`, `mcp_portal_describe`, and
-`mcp_portal_call`. Those tools call `@agent-vm/mcp-portal/core` directly inside
-the gateway VM.
+Managed OpenClaw gateway images install the Gondolin plugin and Tool Portal
+packages. The plugin registers native OpenClaw tools for `tool_portal_list`,
+`tool_portal_search`, `tool_portal_describe`, and `tool_portal_call`.
 
-This is the current model-visible MCP capability surface for managed OpenClaw.
-Tool Portal is a separate cross-backend facade, not a replacement name for MCP
-Portal's native tools. A future OpenClaw Tool Portal adapter can call
-`@agent-vm/tool-portal` in process and compose MCP-backed capabilities through
-`@agent-vm/mcp-portal/mcp-provider-backend`, but it must not make the same
-capability visible through both Tool Portal policy and `mcp_portal_*` policy.
+Tool Portal is the managed model-visible capability surface. MCP Portal remains
+the MCP-specific provider backend for MCP-backed capabilities and the standalone
+MCP proxy surface for deployments that explicitly choose it outside managed
+OpenClaw. Managed OpenClaw must not expose a second native `mcp_portal_*` model
+tool surface for the same capabilities.
 
 At gateway startup, agent-vm materializes effective MCP Portal configs under the
 gateway cache directory and points the plugin at that effective config
@@ -445,9 +444,10 @@ Wildcard destination authority still belongs in `egressHosts` (`*.discord.gg`,
 upgrade URLs for the gateway or Tool VM audience, and every upgrade host must
 also be declared in `egressHosts`.
 
-Raw `tcpHosts` remain internal plumbing for controller communication, Tool VM
-SSH slots, and explicit host services such as observability collector routes.
-They are not a deployment-level WebSocket escape hatch.
+Raw `tcpHosts` remain internal plumbing for Tool VM SSH slots and explicit host
+services such as resource endpoints. Managed gateway/controller control uses
+Gondolin ingress plus the private Socket.IO control session, not raw controller
+callbacks. Raw `tcpHosts` are not a deployment-level WebSocket escape hatch.
 
 ---
 

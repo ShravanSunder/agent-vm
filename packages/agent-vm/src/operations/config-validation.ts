@@ -439,10 +439,10 @@ async function collectMcpPortalConfigChecks(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
+	if (zone.gateway.type !== 'openclaw' || zone.toolPortal === undefined) {
 		return [];
 	}
-	const configDir = resolveProjectCheckoutPath(systemConfig, zone.mcpPortal.configDir);
+	const configDir = resolveProjectCheckoutPath(systemConfig, zone.toolPortal.configDir);
 	const mcpConfigPath = path.join(configDir, 'mcp.config.jsonc');
 	const mcpPortalConfigPath = path.join(configDir, 'mcp-portal.config.jsonc');
 	const checks: ConfigValidationCheck[] = [];
@@ -510,20 +510,21 @@ async function collectMcpPortalConfigChecks(
 				: [];
 		await planMcpPortalEffectiveConfig({
 			authoredConfigDir: configDir,
-			effectiveHostConfigDir: path.join(systemConfig.cacheDir, zone.id, 'mcp-portal-effective'),
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			effectiveHostConfigDir: path.join(systemConfig.cacheDir, zone.id, 'tool-portal-effective'),
+			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 			allowedRawEnvSecretNames,
+			declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 			secretResolver: validationOnlySecretResolver,
 			zoneId: zone.id,
 		});
 		checks.push({
-			name: `mcp-portal-effective-config-${zone.id}`,
+			name: `tool-portal-effective-config-${zone.id}`,
 			ok: true,
 			hint: configDir,
 		});
 	} catch (error) {
 		checks.push({
-			name: `mcp-portal-effective-config-${zone.id}`,
+			name: `tool-portal-effective-config-${zone.id}`,
 			ok: false,
 			hint: `Invalid MCP Portal materialization config in ${configDir}: ${getErrorMessage(error)}`,
 		});
@@ -543,7 +544,7 @@ export async function runConfigValidation(
 				: await collectGatewayConfigCheck(systemConfig, zone),
 		),
 	);
-	const mcpPortalConfigChecks = (
+	const toolPortalConfigChecks = (
 		await Promise.all(
 			systemConfig.zones.map(
 				async (zone) => await collectMcpPortalConfigChecks(systemConfig, zone),
@@ -579,7 +580,7 @@ export async function runConfigValidation(
 		...buildOpenClawAgentSecretAccessChecks(systemConfig),
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...zoneConfigChecks,
-		...mcpPortalConfigChecks,
+		...toolPortalConfigChecks,
 		...liveMcpPortalChecks,
 		...(await collectOpenClawConfigChecks(systemConfig, runCommand)),
 	] as const satisfies readonly ConfigValidationCheck[];

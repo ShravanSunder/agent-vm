@@ -73,7 +73,7 @@ Read in this order:
 12. per-agent-setup.md explains multi-agent layout and tool access choices.
 13. migration-discord.md explains how existing Discord deployments keep working.
 14. secrets.md explains runtime auth and HTTP mediation.
-15. operations.md explains start, graceful stop, scoped offline cleanup, health snapshots, lease-heartbeat, lease-renew, gateway-service health, and gateway-to-controller control-link checks.
+15. operations.md explains start, graceful stop, scoped offline cleanup, health snapshots, lease-heartbeat, lease-renew, gateway-service health, and gateway-to-controller control-session checks.
 
 Local deployment notes belong in docs/manual/local-notes.md or another non-generated file.
 `,
@@ -140,11 +140,11 @@ agent-vm build prints the resolved base image, generated Dockerfile path, OpenCl
 				'Tool VM Lease Identity And Reuse',
 				`
 Managed OpenClaw Tool VMs are agent-keyed: one compatible Tool VM per zone and OpenClaw agent id.
-The OpenClaw plugin derives agentId from the OpenClaw session key and sends agentId to the controller. OpenClaw scope keys are plugin-boundary metadata only: they are discarded before the controller lease request and do not choose, identify, renew, list, log, or store Tool VM leases.
+The OpenClaw plugin derives agentId from the OpenClaw session key and sends only private control-session caller evidence to the controller. OpenClaw scope keys are plugin-boundary metadata only: they are discarded before controller-owned lease resolution and do not choose, identify, renew, list, log, or store Tool VM leases.
 The controller validates the requested gateway work path, resolves it to a host work mount, and returns the Tool VM guest workdir. The lease identity remains zoneId + agentId, not a path string.
 TCP slots are capacity; they are not identity.
-GET lease reads are read-only. Cached Tool VM handles renew idle leases with POST renew, and active shell/file operations heartbeat per-use records so long commands are not reaped mid-run.
-Health snapshots call POST renew lease-renew and active-use heartbeat lease-heartbeat. Both keep lease state alive when successful, but they prove different things: lease-renew proves an idle cached lease can be reused, while lease-heartbeat proves an active operation still has a live controller path.
+Cached Tool VM handles use private gateway_control_rpc lease_renew for idle lease reuse, and active shell/file operations use private gateway_control_rpc lease_use_heartbeat records so long commands are not reaped mid-run.
+Health snapshots include lease-renew and lease-heartbeat observations. Both keep lease state alive when successful, but they prove different things: lease-renew proves an idle cached lease can be reused, while lease-heartbeat proves an active operation still has a live private control-session path.
 
 Example:
 - shravan agent uses agentId=shravan.
@@ -188,9 +188,9 @@ Health model:
 - agent-vm controller health-snapshot --config <system-config> --zone <zoneId> prints the in-memory zone health snapshot.
 - Health snapshots separate gateway infrastructure, gateway service, channel-provider, and Tool VM lease health.
 - gateway-service-health means the agent-vm controller can probe gateway service liveness through the gateway VM runtime. For OpenClaw, periodic monitoring and explicit service-health use /health; explicit zone health probes /readyz.
-- gateway-control-link means the gateway VM can call back to the agent-vm controller through controller.vm.host:18800.
+- gateway-control-session means the agent-vm controller owns a private Socket.IO control session into the gateway VM through Gondolin ingress.
 - agent-channel-provider-health means the gateway/plugin reports whether an agent channel provider can communicate. The controller reads only generic health values such as healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable.
-- gateway-recovery means the controller attempted an automatic gateway VM restart after repeated gateway-service or gateway-control-link failures.
+- gateway-recovery means the controller attempted an automatic gateway VM restart after repeated gateway-service or gateway-control-session failures.
 - gateway-recovery-suspended means repeated automatic restarts failed and the controller paused further auto-recovery for that zone until the reset window expires.
 - lease-heartbeat means an active Tool VM operation can refresh its active use.
 - lease-renew means an idle cached Tool VM lease can be reused.
@@ -198,7 +198,7 @@ Health model:
 
 Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <runtimeDir>/controller-health/events.jsonl as diagnostic evidence; that log is not ownership authority and recovery still uses runtime records plus current process/port checks.
 
-By default, controller.health.gatewayServiceAutoRestart restarts a running OpenClaw gateway VM after 10 consecutive gateway-service or gateway-control-link failures. The same recovery path can cold-start a failed or stopped gateway when current ownership checks prove it is safe. It has a 61 minute cooldown per zone and a 10 minute restart deadline. Restart releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
+By default, controller.health.gatewayServiceAutoRestart restarts a running OpenClaw gateway VM after 10 consecutive gateway-service or gateway-control-session failures. The same recovery path can cold-start a failed or stopped gateway when current ownership checks prove it is safe. It has a 61 minute cooldown per zone and a 10 minute restart deadline. Restart releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
 
 Channel-provider failures are diagnostic input only through the generic contract by default. A channel provider marked unhealthy-recoverable degrades readiness/status but does not restart the gateway unless controller health policy explicitly enables restartGatewayOnRecoverable. A channel provider marked unhealthy-unrecoverable is surfaced for operator diagnosis and does not restart the gateway by default. Provider-specific details stay in the event payload; the controller must not branch on Discord, Slack, or other platform-specific names.
 
@@ -206,7 +206,7 @@ secret-resolution-failed is a recovery blocker, not proof of the original outage
 
 Use agent-vm controller credentials check --zone <zone> to verify gateway secret resolution without contacting the controller or restarting the gateway. Use credentials refresh only when the operator intentionally wants a credential refresh and zone runtime restart.
 
-Tool VM lease failures retire or quarantine one lease before gateway restart. A tool-vm-ssh failure should not be treated as gateway infrastructure failure unless lease-manager or gateway control-link health also proves a broader gateway problem.
+Tool VM lease failures retire or quarantine one lease before gateway restart. A tool-vm-ssh failure should not be treated as gateway infrastructure failure unless lease-manager or gateway control-session health also proves a broader gateway problem.
 
 Health timeouts are operation-specific. Short health probes should fail quickly; git push/pull and lease-create get longer budgets. Do not assume every abort means the work should be killed.
 `,
@@ -220,7 +220,7 @@ Health timeouts are operation-specific. Short health probes should fail quickly;
 Agent-vm provides VM lifecycle, storage mounts, TCP/HTTP mediation, image build, and tool VM leases.
 OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
 The controller is the control plane: it issues leases and tracks active uses. Command stdout, stderr, and file bridge traffic stay on the gateway-to-Tool-VM SSH data path.
-OpenClaw application heartbeat turns are not infrastructure health checks. Use agent-vm health snapshots to distinguish gateway-service health, gateway-to-controller control link, lease-heartbeat, lease-renew, and Tool VM SSH health.
+OpenClaw application heartbeat turns are not infrastructure health checks. Use agent-vm health snapshots to distinguish gateway-service health, gateway-to-controller control session, lease-heartbeat, lease-renew, and Tool VM SSH health.
 Channel-provider details stay inside OpenClaw/plugin payloads. The controller branches only on generic channel-provider health: healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable. Recoverable channel-provider failures degrade readiness/status by default; gateway VM restart is opt-in through controller health policy.
 
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
@@ -235,9 +235,9 @@ Multi-zone controller work makes one controller process manage multiple typed zo
 			content: generatedPage(
 				'Host Observability',
 				`
-Host observability is deployment-configured. Enable host.observability in ${options.systemConfigPath}, then opt in each OpenClaw zone with zones[].observability.
+Host observability is deployment-configured. Enable host.observability in ${options.systemConfigPath}. Per-zone OpenClaw observability is disabled during the Socket.IO control-plane hard cutover because the old collector route depended on raw Gondolin tcpHosts.
 
-Use host.observability.stack.mode=managed when this deployment should own the local Victoria + OpenTelemetry Collector stack. In managed mode, host.observability.stack.scrubbing.responsibility defaults to agent-vm-managed-collector. Agent-vm build prepares the host stack when host.observability.prepareOnBuild is true and at least one selected OpenClaw zone opts in. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under runtimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
+Use host.observability.stack.mode=managed when this deployment should own the local Victoria + OpenTelemetry Collector stack. In managed mode, host.observability.stack.scrubbing.responsibility defaults to agent-vm-managed-collector. Agent-vm build prepares the host stack when host.observability.prepareOnBuild is true. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under runtimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
 
 Use host.observability.stack.mode=external when a shared collector is already managed outside this deployment. External mode never renders or starts Docker Compose and does not require host.observability.dataDir or retention. Set host.observability.stack.scrubbing.responsibility=external-collector to make the external collector sanitization responsibility explicit, and keep that collector available on the configured loopback collector ports.
 
@@ -247,9 +247,9 @@ For managed mode, use a durable host.observability.dataDir outside cacheDir, run
 
 Published ports bind to loopback only. Do not publish collector or Victoria ports on broad host interfaces unless a separate, authenticated access layer owns that exposure.
 
-OpenClaw observability is collector mode. Agent-vm owns the effective OpenClaw diagnostics config, installs diagnostics-otel in the managed OpenClaw gateway image, and points logs, metrics, and traces at the host OpenTelemetry collector through a synthetic Gondolin tcpHosts mapping.
+Do not enable zones[].observability for managed OpenClaw zones in this cutover. Validation rejects it until a non-raw-tcp telemetry path is accepted.
 
-Do not inject OPENCLAW_DIAGNOSTICS through rawEnvSecrets for observability-enabled zones. Use zones[].observability.openclaw.diagnosticsFlags for narrow debug categories. Broad or content-capturing flags are rejected. Authored OpenClaw logging.redactSensitive must stay enabled.
+Do not inject OPENCLAW_DIAGNOSTICS through rawEnvSecrets to recreate the old collector route. Authored OpenClaw logging.redactSensitive must stay enabled.
 
 Never log secrets, prompts, message bodies, tool payloads, cookies, authorization headers, token values, raw URLs with query strings, private keys, or command content. The managed OpenTelemetry collector drops known sensitive attributes before export and Victoria Logs ignores known sensitive fields, but that is defense-in-depth. External collectors must provide equivalent sanitization before storing or forwarding agent-vm telemetry. Source logging still owns the first safety boundary.
 `,
@@ -290,18 +290,16 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.model.primary is openai/gpt-5.5.
 	agents.defaults.models["openai/gpt-5.5"].agentRuntime.id is pi so GPT-5.5 runs through the PI harness.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
-	approvals.plugin.enabled is true with approvals.plugin.mode=session so MCP Portal plugin approval prompts route back to the originating session by default. Exec approval forwarding remains deployment-owned.
-	tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
-	tools.sandbox.tools.alsoAllow includes web_search, web_fetch, message, and group:plugins so sandboxed sessions can see web tools once a provider is configured, can explicitly send channel replies when OpenClaw uses message_tool_only group reply delivery, and can see optional plugin-owned tools such as mcp_portal_*.
+		approvals.plugin.enabled is true with approvals.plugin.mode=session for OpenClaw-owned plugin approval prompts. Managed Tool Portal capabilities under calls.requiresApproval are rejected in this cutover; use calls.withoutApproval for callable managed OpenClaw capabilities until an approval bridge exists. Exec approval forwarding remains deployment-owned.
+		tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
+		tools.sandbox.tools.alsoAllow includes web_search, web_fetch, message, and group:plugins so sandboxed sessions can see web tools once a provider is configured, can explicitly send channel replies when OpenClaw uses message_tool_only group reply delivery, and can see optional plugin-owned tools such as tool_portal_*.
 	plugins.load.paths includes /home/openclaw/.openclaw/extensions for agent-vm-managed extensions and the package manager's global root for managed OpenClaw packages.
 	plugins.slots.memory selects memory-core when memory-core is enabled.
 	gateway.auth.mode is token for agent-vm-managed gateways.
 	logging.file is rendered in the effective OpenClaw config as /agent-vm/logs/openclaw-YYYY-MM-DD.log unless the deployment explicitly sets its own logging.file.
 
-	Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension.
-		Managed OpenClaw gateway images install @agent-vm/openclaw-mcp-portal-plugin and @agent-vm/mcp-portal. The plugin registers native MCP Portal tools and calls the portal core library directly inside the gateway VM.
-		plugins.entries.mcp-portal.hooks.allowPromptInjection must stay true when promptContext is enabled.
-	Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in packageOverrides.openclaw. Transitive workarounds use packageOverrides.pnpm, and the rebuilt image must be inspected before calling that workaround active.
+		Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension. The gondolin extension registers Tool Portal native tools and calls Tool Portal with MCP providers as an internal backend when configured.
+		Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in packageOverrides.openclaw. Transitive workarounds use packageOverrides.pnpm, and the rebuilt image must be inspected before calling that workaround active.
 
 	Use agent-vm init --openclaw-agents sun,shravan,alevtina to scaffold agents.list entries with per-agent /zone/agents/<id> workspaces.
 
@@ -314,19 +312,19 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 			content: generatedPage(
 				'MCP Portal',
 				`
-MCP Portal is a scoped tool facade over deployment-owned upstream MCP servers. Managed OpenClaw uses native tools in the gateway VM; external MCP clients use mcp-portal mcp-proxy serve.
+MCP Portal is a scoped backend facade over deployment-owned upstream MCP servers. Managed OpenClaw exposes Tool Portal native tools in the gateway VM; external MCP clients may still use mcp-portal mcp-proxy serve.
 
-Tool Portal is separate. It is the cross-backend contract layer for future capability surfaces that may compose MCP providers, controller host actions, and credentialed runner execution. Current deployments should treat MCP Portal as the live surface for MCP providers. agent-vm does not yet load tool-portal.config.jsonc, and generated OpenClaw config does not expose Tool Portal CLI, HTTP API, MCP server, or native OpenClaw tools.
+Tool Portal is the model-visible cross-backend contract layer for managed OpenClaw. It composes MCP providers, controller host actions, and future backend kinds behind one capability vocabulary. MCP Portal remains the MCP-provider backend and standalone proxy surface, not the managed OpenClaw plugin identity.
 
-	Agents should use progressive disclosure:
-	1. mcp_portal_list with requests[] for allowed namespaces and compact summaries.
-	2. mcp_portal_search with requests[] for discovery inside the scoped index.
-	3. mcp_portal_describe with requests[] for full JSON Schema and optional TypeScript/Zod helpers.
-	4. mcp_portal_call with calls[] to call upstream tools by namespace + toolName after seeing the schema.
+		Agents should use progressive disclosure:
+		1. tool_portal_list with requests[] for allowed capabilities and compact summaries.
+		2. tool_portal_search with requests[] for discovery inside the scoped index.
+		3. tool_portal_describe with requests[] for full JSON Schema and optional TypeScript/Zod helpers.
+		4. tool_portal_call with calls[] to call authorized capabilities by namespace + name after seeing the schema.
 
-	All portal responses are { ok, results, errors, diagnostics }. results is keyed by request/call id. Each keyed result is either { ok: true, input, output } or { ok: false, input, error }.
+	All portal responses are { ok, items, diagnostics? }. Each item has id and status. Successful items use { status: "ok", value }; failed items use { status: "error", error }.
 
-	Each agent receives a named profile in mcp-portal.config.jsonc. mcp.config.jsonc owns the upstream MCP providers; mcp-portal.config.jsonc owns agent profile assignments and profile policies. Each profile is a complete policy; profiles do not inherit from or merge with other profiles. Namespace exposure defaults to deny-all unless config enables namespaces. Each namespace uses selector policies: tools.allow / tools.deny for visibility, calls.withoutApproval for direct calls, and calls.requiresApproval for calls that need an approval route. A visible tool outside both call selectors is discoverable but blocked at execution time. Denied tools do not enter the agent's catalog or search index.
+		Each agent receives a named MCP profile in mcp-portal.config.jsonc. mcp.config.jsonc owns the upstream MCP providers; mcp-portal.config.jsonc owns agent profile assignments and MCP namespace policies. Agent-vm projects those MCP policies into a generated Tool Portal effective config for managed OpenClaw. Each profile is a complete policy; profiles do not inherit from or merge with other profiles. Namespace exposure defaults to deny-all unless config enables namespaces. Each namespace uses selector policies: tools.allow / tools.deny for visibility, calls.withoutApproval for direct managed OpenClaw calls, and calls.requiresApproval for standalone MCP Portal approval policy. Managed OpenClaw rejects calls.requiresApproval during effective config materialization in this cutover. Denied tools do not enter the agent's catalog or search index.
 
 	Authored config is JSONC. $schema points at local config/schemas/*.schema.json files generated by agent-vm init. schemaVersion is the runtime compatibility gate.
 
@@ -336,10 +334,10 @@ Tool Portal is separate. It is the cross-backend contract layer for future capab
 
 	Store MCP provider secrets as raw values. Omit \`format\` when the upstream expects the raw value. Use \`format: { "kind": "bearer" }\` when an upstream expects Bearer presentation, or \`format: { "kind": "prefix", "prefix": "Token" }\` for provider-specific schemes. Prefix presentation inserts exactly one ASCII space between the prefix and the raw secret or mediated placeholder, and the prefix itself must not contain whitespace.
 
-	Run agent-vm validate --mcp-live after editing MCP providers or MCP Portal profiles. Static validate checks schema and materialization. Live validate starts each configured MCP provider, runs tools/list, and reports namespace, transport, phase, and hints for failures.
+		Run agent-vm validate --mcp-live after editing MCP providers or MCP Portal profiles. Static validate checks schema and Tool Portal materialization. Live validate starts each configured MCP provider, runs tools/list, and reports namespace, transport, phase, and hints for failures.
 
-	Read-only/destructive annotations are trusted only for configured namespaces. Untrusted upstream tools require approval unless explicitly allowlisted by policy. Managed OpenClaw uses the in-process before_tool_call approval boundary.
-	Scaffolded OpenClaw config sets approvals.plugin.mode=session so tools under calls.requiresApproval have a route back to the originating session. Channel-native approval settings, such as Discord approver user IDs, remain deployment-owned.
+	Read-only/destructive annotations are trusted only for configured namespaces. Managed OpenClaw capabilities must be explicitly allowed through calls.withoutApproval in this cutover; calls.requiresApproval is rejected until a Tool Portal approval bridge exists.
+	Channel-native approval settings, such as Discord approver user IDs, remain deployment-owned.
 
 	MCP provider URLs must use http or https. Loopback and private-network upstream URLs are allowed because authored config is trusted deployment config and sidecar/local MCP providers are a supported shape. Do not import untrusted MCP provider config directly; if config trust changes, add an explicit per-provider network allowlist before accepting private-network targets.
 
@@ -447,8 +445,8 @@ worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by gateway.zoneFilesDir.
 
-The OpenClaw plugin may accept Tool VM guest cwd intent such as \`/workspace\`, \`/workspace/<child>\`, \`/work\`, or \`/work/<child>\`. The plugin translates that intent before it calls the controller.
-The controller \`/lease workMountDir\` is stricter: it accepts only controller-supported OpenClaw gateway paths such as \`/zone/<child>\` or \`/home/openclaw/.openclaw/state/sandboxes/<child>\`. Direct Tool VM guest paths such as \`/workspace\` and \`/work\` are rejected at the controller boundary.
+The OpenClaw plugin may accept Tool VM guest cwd intent such as \`/workspace\`, \`/workspace/<child>\`, \`/work\`, or \`/work/<child>\`. The plugin translates that intent before it enters the controller-owned lease flow.
+The controller-owned lease flow is stricter: it accepts only controller-supported OpenClaw gateway paths such as \`/zone/<child>\` or \`/home/openclaw/.openclaw/state/sandboxes/<child>\`. Direct Tool VM guest paths such as \`/workspace\` and \`/work\` are rejected at the controller boundary.
 
 workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
 hostWorkMountDir is the host realpath after controller validation.
@@ -485,8 +483,8 @@ Binary-level isolation requires different Tool VM images. Use agentToolVmProfile
 Git workflow with gateway.zoneGit:
 - Agents may inspect, stage, and commit workspace changes with git status, git add, and git commit.
 - Do not run raw git push. Tool VMs do not have GitHub credentials.
-- After committing, use the zone_git_push tool to ask the agent-vm controller to push the zone branch.
-- If zone_git_push reports divergence or rejection, stop and report the exact message.
+- After committing, ask Tool Portal for the controller-owned zone Git push capability.
+- If the controller reports divergence or rejection, stop and report the exact message.
 `,
 			),
 		},

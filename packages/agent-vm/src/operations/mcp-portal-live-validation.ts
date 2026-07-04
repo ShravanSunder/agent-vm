@@ -173,14 +173,14 @@ async function validateMcpPortalZone(
 	options: RunLiveMcpPortalValidationOptions,
 	zone: LoadedZoneConfig,
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
+	if (zone.gateway.type !== 'openclaw' || zone.toolPortal === undefined) {
 		return [];
 	}
 	let mcpConfig: Awaited<ReturnType<typeof loadMcpConfig>>;
 	let portalConfig: Awaited<ReturnType<typeof loadMcpPortalConfig>>;
 	let servers: Awaited<ReturnType<typeof resolveUpstreamServers>>;
 	try {
-		const configDir = resolveProjectCheckoutPath(options.systemConfig, zone.mcpPortal.configDir);
+		const configDir = resolveProjectCheckoutPath(options.systemConfig, zone.toolPortal.configDir);
 		[mcpConfig, portalConfig] = await Promise.all([
 			loadMcpConfig(path.join(configDir, 'mcp.config.jsonc')),
 			loadMcpPortalConfig(path.join(configDir, 'mcp-portal.config.jsonc')),

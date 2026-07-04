@@ -1,7 +1,15 @@
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+	CONTROL_PROTOCOL_VERSION,
+	type ControlEnvelope,
+} from '@agent-vm/control-protocol-contracts';
+import {
+	type GatewayControlLeaseSnapshot,
+	GatewayControlRpcCommandResultMessageSchema,
+} from '@agent-vm/gateway-control-contracts';
 import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
 import type {
 	BuildConfig,
@@ -13,16 +21,49 @@ import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import type {
+	ControlSessionClient,
+	GatewayControlLeaseRpcOperations,
+} from '../controller/control-session/index.js';
+import { resolveGatewayControlSessionMaterialPath } from '../controller/control-session/index.js';
 import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
-import { preflightGatewayZoneStart, startGatewayZone } from './gateway-zone-orchestrator.js';
+import {
+	preflightGatewayZoneStart,
+	startGatewayZone,
+	validateGatewayControlCallerContextRegistration,
+} from './gateway-zone-orchestrator.js';
+import type { GatewayControlSessionConnector } from './gateway-zone-support.js';
 
 interface DeferredPromise<TResult> {
 	readonly promise: Promise<TResult>;
 	readonly resolve: (result: TResult) => void;
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseJsonObject(rawJson: string): Record<string, unknown> {
+	const parsedJson = JSON.parse(rawJson) as unknown;
+	if (!isJsonRecord(parsedJson)) {
+		throw new Error('Expected JSON object.');
+	}
+	return parsedJson;
+}
+
+function requireObjectProperty(
+	record: Record<string, unknown>,
+	propertyName: string,
+): Record<string, unknown> {
+	const property = record[propertyName];
+	if (!isJsonRecord(property)) {
+		throw new Error(`Expected JSON object property '${propertyName}'.`);
+	}
+	return property;
 }
 
 const {
@@ -141,6 +182,7 @@ afterEach(async () => {
 	cleanupOrphanedGatewayIfPresentMock.mockClear();
 	cleanupOrphanedToolVmsIfPresentMock.mockClear();
 	preflightOrphanedGatewayCleanupIfPresentMock.mockClear();
+	vi.unstubAllEnvs();
 	await Promise.all(
 		createdDirectories
 			.splice(0)
@@ -170,6 +212,13 @@ async function createGatewayConfigPath(): Promise<string> {
 					allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
 				},
 			},
+			tools: {
+				sandbox: {
+					tools: {
+						alsoAllow: ['group:plugins'],
+					},
+				},
+			},
 		}),
 		'utf8',
 	);
@@ -182,12 +231,16 @@ async function writeMinimalMcpPortalConfigs(
 		providers: {},
 		schemaVersion: 1,
 	},
+	options: {
+		readonly portalAgentId?: string;
+	} = {},
 ): Promise<void> {
+	const portalAgentId = options.portalAgentId ?? 'main';
 	await writeFile(path.join(configDir, 'mcp.config.jsonc'), JSON.stringify(mcpConfig), 'utf8');
 	await writeFile(
 		path.join(configDir, 'mcp-portal.config.jsonc'),
 		JSON.stringify({
-			agents: { shravan: { profile: 'default' } },
+			agents: { [portalAgentId]: { profile: 'default' } },
 			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1,
 		}),
@@ -294,6 +347,12 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						runtimeRootfsSize: '12G',
 						stateDir: path.join(workingDirectoryPath, 'state', 'shravan'),
 						zoneFilesDir: path.join(workingDirectoryPath, 'zone-files', 'shravan'),
+						zoneGit: {
+							remote: {
+								repoUrl: 'ShravanSunder/zone-files',
+								branch: 'main',
+							},
+						},
 					},
 					secrets: {
 						PERPLEXITY_API_KEY: {
@@ -320,6 +379,7 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						host,
 						audience: 'gateway' as const,
 					})),
+					agents: [{ id: 'main' }],
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
 				},
@@ -348,7 +408,7 @@ function createObservabilitySystemConfig(
 	} = {},
 ): LoadedSystemConfig {
 	const { systemConfigPath, ...baseConfig } = systemConfig;
-	const zoneEnabled = options.zoneEnabled ?? true;
+	const zoneEnabled = options.zoneEnabled ?? false;
 	return createLoadedSystemConfig(
 		{
 			...baseConfig,
@@ -506,6 +566,7 @@ describe('startGatewayZone', () => {
 			},
 		};
 		const loadBuildConfig = vi.fn(async (): Promise<BuildConfig> => buildConfig);
+		vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
 
 		const systemConfig = await createSystemConfig();
 		const result = await startGatewayZone(
@@ -532,7 +593,6 @@ describe('startGatewayZone', () => {
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
 				allowedHosts: expect.arrayContaining([
-					'controller.vm.host',
 					'api.anthropic.com',
 					'api.openai.com',
 					'api.perplexity.ai',
@@ -557,8 +617,13 @@ describe('startGatewayZone', () => {
 						value: 'resolved-key',
 					},
 				},
-				tcpHosts: expect.objectContaining({
-					'controller.vm.host:18800': '127.0.0.1:18800',
+				sshEgress: expect.objectContaining({
+					agent: '/tmp/agent-vm-test-agent.sock',
+					allowedHosts: ['github.com'],
+					execPolicy: expect.any(Function),
+				}),
+				tcpHosts: expect.not.objectContaining({
+					'controller.vm.host:18800': expect.any(String),
 				}),
 				vfsMounts: expect.objectContaining({
 					'/agent-vm/logs': {
@@ -572,6 +637,39 @@ describe('startGatewayZone', () => {
 				}),
 			}),
 		);
+		const createdVmOptions = createManagedVm.mock.calls[0]?.[0] as
+			| {
+					readonly allowedHosts: readonly string[];
+					readonly sshEgress?: {
+						readonly agent?: string;
+						readonly execPolicy?: (request: {
+							readonly command: string;
+							readonly guestUsername: string;
+							readonly hostname: string;
+							readonly port: number;
+							readonly src: { readonly ip: string; readonly port: number };
+						}) => unknown;
+					};
+					readonly tcpHosts: Record<string, string>;
+			  }
+			| undefined;
+		if (createdVmOptions === undefined) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		expect(createdVmOptions.allowedHosts).not.toContain('controller.vm.host');
+		expect(createdVmOptions.sshEgress?.agent).toBe('/tmp/agent-vm-test-agent.sock');
+		await expect(
+			Promise.resolve(
+				createdVmOptions.sshEgress?.execPolicy?.({
+					command: "git-receive-pack 'shravan/zone-files.git'",
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_001 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+		expect(createdVmOptions.tcpHosts).not.toHaveProperty('controller.vm.host:18800');
 		expect(execMock).toHaveBeenCalledWith(buildExpectedOpenClawGatewayStartCommandForTest());
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{
@@ -1070,7 +1168,7 @@ describe('startGatewayZone', () => {
 		expect(buildImage).not.toHaveBeenCalled();
 	});
 
-	it('requires prepared host observability before gateway startup when policy is require-ready', async () => {
+	it('skips host observability readiness before gateway startup when no OpenClaw zone opted in', async () => {
 		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
 			controllerStartPolicy: 'require-ready',
 		});
@@ -1111,188 +1209,49 @@ describe('startGatewayZone', () => {
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
-		).rejects.toThrow(
-			'Host observability stack is not ready: collector health check failed: connection refused',
-		);
+		).rejects.toThrow('createManagedVm should not be called');
 
-		expect(taskTitles).toEqual([
-			'Preflighting gateway runtime ownership',
-			'Checking host observability stack',
-		]);
-		expect(checkObservabilityStackReadiness).toHaveBeenCalledWith({
-			config: expect.objectContaining({
-				enabled: true,
-				controllerStartPolicy: 'require-ready',
-				zones: [
-					expect.objectContaining({
-						logs: true,
-						metrics: true,
-						traces: true,
-						zoneId: 'shravan',
-					}),
-				],
+		expect(taskTitles).toContain('Preflighting gateway runtime ownership');
+		expect(taskTitles).not.toContain('Checking host observability stack');
+		expect(checkObservabilityStackReadiness).not.toHaveBeenCalled();
+		expect(buildImage).toHaveBeenCalled();
+		expect(createManagedVm).toHaveBeenCalled();
+	});
+
+	it('rejects degraded OpenClaw zone observability during hard cutover', async () => {
+		const systemConfig = await createSystemConfig();
+
+		expect(() =>
+			createObservabilitySystemConfig(systemConfig, {
+				controllerStartPolicy: 'degraded',
+				zoneEnabled: true,
 			}),
-		});
-		expect(buildImage).not.toHaveBeenCalled();
-		expect(createManagedVm).not.toHaveBeenCalled();
-		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
+		).toThrow(/observability is disabled during the Socket.IO control-plane hard cutover/u);
 	});
 
-	it('continues gateway startup and logs degradation when host observability is unavailable in degraded mode', async () => {
-		const observabilityCheck = createDeferredPromise<{
-			readonly ok: false;
-			readonly reason: string;
-			readonly status: 'unavailable';
-		}>();
-		const managedVm: ManagedVm = {
-			id: 'vm-observability-degraded',
-			close: vi.fn(async () => {}),
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28311),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28311)),
-			setIngressRoutes: vi.fn(),
-		};
-		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
-			controllerStartPolicy: 'degraded',
-		});
-		const writeLog = vi.fn();
-		const checkObservabilityStackReadiness = vi.fn(() => observabilityCheck.promise);
+	it('rejects OpenClaw zone observability even when readiness policy is off', async () => {
+		const systemConfig = await createSystemConfig();
 
-		await startGatewayZone(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-				}),
-				systemConfig,
-				writeLog,
-				zoneId: 'shravan',
-			},
-			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				checkObservabilityStackReadiness,
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
-			},
-		);
-
-		expect(checkObservabilityStackReadiness).toHaveBeenCalledTimes(1);
-		expect(writeLog).not.toHaveBeenCalled();
-		observabilityCheck.resolve({
-			ok: false,
-			reason: 'victoria-logs health check failed: connection refused',
-			status: 'unavailable',
-		});
-		await vi.waitFor(() => {
-			expect(writeLog).toHaveBeenCalledWith(
-				"Host observability stack degraded for zone 'shravan': Host observability stack is not ready: victoria-logs health check failed: connection refused",
-			);
-		});
-		expect(writeLog).toHaveBeenCalledWith(
-			"Host observability stack degraded for zone 'shravan': Host observability stack is not ready: victoria-logs health check failed: connection refused",
-		);
+		expect(() =>
+			createObservabilitySystemConfig(systemConfig, {
+				controllerStartPolicy: 'off',
+				zoneEnabled: true,
+			}),
+		).toThrow(/observability is disabled during the Socket.IO control-plane hard cutover/u);
 	});
 
-	it('skips gateway observability readiness checks when policy is off', async () => {
-		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
-			controllerStartPolicy: 'off',
-		});
-		const checkObservabilityStackReadiness = vi.fn(async () => ({
-			ok: true as const,
-			status: 'ready' as const,
-		}));
-		const managedVm: ManagedVm = {
-			id: 'vm-observability-off',
-			close: vi.fn(async () => {}),
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28312),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28312)),
-			setIngressRoutes: vi.fn(),
-		};
+	it('rejects OpenClaw zone observability before protected preflight skip can bypass it', async () => {
+		const systemConfig = await createSystemConfig();
 
-		await startGatewayZone(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-				}),
-				systemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				checkObservabilityStackReadiness,
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
-			},
-		);
-
-		expect(checkObservabilityStackReadiness).not.toHaveBeenCalled();
+		expect(() =>
+			createObservabilitySystemConfig(systemConfig, {
+				controllerStartPolicy: 'require-ready',
+				zoneEnabled: true,
+			}),
+		).toThrow(/observability is disabled during the Socket.IO control-plane hard cutover/u);
 	});
 
-	it('does not repeat the observability readiness check after protected preflight', async () => {
-		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
-			controllerStartPolicy: 'require-ready',
-		});
-		const checkObservabilityStackReadiness = vi.fn(async () => ({
-			ok: true as const,
-			status: 'ready' as const,
-		}));
-		const managedVm: ManagedVm = {
-			id: 'vm-observability-preflighted',
-			close: vi.fn(async () => {}),
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28313),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28313)),
-			setIngressRoutes: vi.fn(),
-		};
-
-		await startGatewayZone(
-			{
-				observabilityStartupCheck: 'skip',
-				secretResolver: createOpenClawSecretResolver({
-					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-				}),
-				systemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				checkObservabilityStackReadiness,
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
-			},
-		);
-
-		expect(checkObservabilityStackReadiness).not.toHaveBeenCalled();
-	});
-
-	it('preflights effective OpenClaw observability config before protected restart image work', async () => {
+	it('preflights lifecycle host state without OpenClaw observability before protected restart image work', async () => {
 		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
 			controllerStartPolicy: 'require-ready',
 		});
@@ -1328,16 +1287,7 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(preflightHostState).toHaveBeenCalledWith(
-			expect.objectContaining({
-				observability: expect.objectContaining({
-					mode: 'collector',
-					openclaw: expect.objectContaining({
-						logs: true,
-						metrics: true,
-						traces: true,
-					}),
-				}),
-			}),
+			expect.not.objectContaining({ observability: expect.anything() }),
 			expect.any(Object),
 		);
 		expect(buildImage).toHaveBeenCalled();
@@ -1599,7 +1549,7 @@ describe('startGatewayZone', () => {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const configDir = path.dirname(baseZone.gateway.config);
-		await writeMinimalMcpPortalConfigs(configDir);
+		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
 		const lifecycleZones: GatewayZoneConfig[] = [];
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp',
@@ -1623,7 +1573,7 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					agents: [{ id: 'shravan' }],
-					mcpPortal: { configDir },
+					toolPortal: { configDir },
 				},
 			},
 			{
@@ -1659,7 +1609,9 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(lifecycleZones[0]?.runtimePluginConfigs).toEqual({
-			'mcp-portal': { configDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective' },
+			gondolin: {
+				toolPortal: { configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective' },
+			},
 		});
 		expect(lifecycleZones[0]?.runtimeMcpServers).toBeUndefined();
 	});
@@ -1671,12 +1623,12 @@ describe('startGatewayZone', () => {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const configDir = path.dirname(baseZone.gateway.config);
-		await writeMinimalMcpPortalConfigs(configDir);
+		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
 		const effectiveConfigDir = path.join(
 			systemConfig.cacheDir,
 			'gateways',
 			baseZone.id,
-			'mcp-portal-effective',
+			'tool-portal-effective',
 		);
 
 		await preflightGatewayZoneStart({
@@ -1691,7 +1643,7 @@ describe('startGatewayZone', () => {
 			zoneOverride: {
 				...baseZone,
 				agents: [{ id: 'shravan' }],
-				mcpPortal: { configDir },
+				toolPortal: { configDir },
 			},
 		});
 
@@ -1706,34 +1658,38 @@ describe('startGatewayZone', () => {
 		}
 		const overlappingRef = 'op://agent-vm/shravan-perplexity/credential';
 		const configDir = path.dirname(baseZone.gateway.config);
-		await writeMinimalMcpPortalConfigs(configDir, {
-			providers: {
-				perplexity: {
-					kind: 'mcp',
-					namespace: 'perplexity',
-					secretPolicies: {
-						PERPLEXITY_API_KEY: {
-							hosts: ['api.perplexity.ai'],
-							injection: 'http-mediation',
-						},
-					},
-					transport: {
-						args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
-						command: 'npx',
-						env: {
+		await writeMinimalMcpPortalConfigs(
+			configDir,
+			{
+				providers: {
+					perplexity: {
+						kind: 'mcp',
+						namespace: 'perplexity',
+						secretPolicies: {
 							PERPLEXITY_API_KEY: {
-								ref: overlappingRef,
-								source: '1password',
+								hosts: ['api.perplexity.ai'],
+								injection: 'http-mediation',
 							},
 						},
-						kind: 'stdio',
-						networkAccess: 'declared',
-						requiredEgressHosts: ['api.perplexity.ai'],
+						transport: {
+							args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+							command: 'npx',
+							env: {
+								PERPLEXITY_API_KEY: {
+									ref: overlappingRef,
+									source: '1password',
+								},
+							},
+							kind: 'stdio',
+							networkAccess: 'declared',
+							requiredEgressHosts: ['api.perplexity.ai'],
+						},
 					},
 				},
+				schemaVersion: 1,
 			},
-			schemaVersion: 1,
-		});
+			{ portalAgentId: 'shravan' },
+		);
 		const firstResolveAllStarted = createDeferredPromise<void>();
 		const releaseFirstResolveAll = createDeferredPromise<void>();
 		const resolveSecretRef = (secretRef: SecretRef): string => {
@@ -1776,7 +1732,7 @@ describe('startGatewayZone', () => {
 			zoneOverride: {
 				...baseZone,
 				agents: [{ id: 'shravan' }],
-				mcpPortal: { configDir },
+				toolPortal: { configDir },
 			},
 		});
 		await firstResolveAllStarted.promise;
@@ -1799,7 +1755,7 @@ describe('startGatewayZone', () => {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const configDir = path.dirname(baseZone.gateway.config);
-		await writeMinimalMcpPortalConfigs(configDir);
+		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
 		const lifecycleZones: GatewayZoneConfig[] = [];
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp-native',
@@ -1823,7 +1779,7 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					agents: [{ id: 'shravan' }],
-					mcpPortal: { configDir },
+					toolPortal: { configDir },
 				},
 			},
 			{
@@ -1900,7 +1856,7 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 				zoneOverride: {
 					...baseZone,
-					mcpPortal: { configDir },
+					toolPortal: { configDir },
 				},
 			},
 			{
@@ -1961,7 +1917,7 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					egressHosts: [...baseZone.egressHosts, { audience: 'gateway', host: 'mcp.deepwiki.com' }],
-					mcpPortal: { configDir },
+					toolPortal: { configDir },
 				},
 			},
 			{
@@ -2300,7 +2256,7 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 				zoneOverride: {
 					...baseZone,
-					mcpPortal: { configDir },
+					toolPortal: { configDir },
 				},
 			},
 			{
@@ -2369,7 +2325,7 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 				zoneOverride: {
 					...baseZone,
-					mcpPortal: { configDir },
+					toolPortal: { configDir },
 				},
 			},
 			{
@@ -2644,7 +2600,7 @@ describe('startGatewayZone', () => {
 		expect(vmOptions.env).not.toHaveProperty('PERPLEXITY_API_KEY');
 	});
 
-	it('builds tcp hosts with controller and tool VM SSH entries only', async () => {
+	it('builds tcp hosts with Tool VM SSH entries only', async () => {
 		const closeMock = vi.fn(async () => {});
 		const execMock = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
 		const managedVm: ManagedVm = {
@@ -2687,7 +2643,6 @@ describe('startGatewayZone', () => {
 		}
 		const [vmOptions] = createManagedVmCall as [Record<string, unknown>];
 		expect(vmOptions.tcpHosts).toEqual({
-			'controller.vm.host:18800': '127.0.0.1:18800',
 			'tool-0.vm.host:22': '127.0.0.1:19000',
 			'tool-1.vm.host:22': '127.0.0.1:19001',
 			'tool-2.vm.host:22': '127.0.0.1:19002',
@@ -3313,5 +3268,442 @@ describe('startGatewayZone', () => {
 		);
 		expect(result.vm).toBe(managedVm);
 		expect(result.ingress).toEqual({ host: '127.0.0.1', port: 18791 });
+	});
+
+	it('provisions plugin verifier config and connects the gateway control session after ingress', async () => {
+		const taskTitles: string[] = [];
+		const controlSessionClose = vi.fn();
+		const controlSessionClient: ControlSessionClient = {
+			ready: Promise.resolve({
+				connectionId: '55555555-5555-4555-8555-555555555555',
+				controllerEpoch: 'controller-epoch-test',
+				outcome: 'accepted',
+				sessionId: '33333333-3333-4333-8333-333333333333',
+			}),
+			close: controlSessionClose,
+			emitApplicationMessage: vi.fn(async () => ({ ok: true })),
+			getDiagnostics: vi.fn(() => ({
+				accepted: true,
+				connected: true,
+				endpointPath: '/__agent-vm/gateway-control',
+				helloCount: 1,
+				ready: true,
+				transportName: 'websocket',
+			})),
+		};
+		const leaseSnapshot = {
+			agentId: 'main',
+			idleTtlMs: 120_000,
+			leaseId: 'lease-main',
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'identity-pem',
+				knownHostsLine: '',
+				port: 22,
+				user: 'root',
+			},
+			state: 'idle',
+			tcpSlot: 0,
+			transport: 'ssh-sandbox',
+			workdir: '/workspace',
+			zoneId: 'shravan',
+		} satisfies GatewayControlLeaseSnapshot;
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const gatewayControlLeaseRpc = {
+			createLease: vi.fn(async () => leaseSnapshot),
+			endLeaseUse: vi.fn(async () => undefined),
+			getLease: vi.fn(async () => undefined),
+			heartbeatLeaseUse: vi.fn(async () => undefined),
+			releaseLease: vi.fn(async () => undefined),
+			renewLease: vi.fn(async () => undefined),
+			startLeaseUse: vi.fn(async () => undefined),
+		} satisfies GatewayControlLeaseRpcOperations;
+		const pushZoneGit = vi.fn(async () => ({
+			branch: 'main',
+			localHead: 'abc123',
+			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
+			remoteHead: 'abc123',
+		}));
+		const managedVm: ManagedVm = {
+			id: 'vm-control-session',
+			close: vi.fn(async () => {}),
+			enableIngress: enableIngressMock,
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28283),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28283)),
+			setIngressRoutes: vi.fn(),
+		};
+		const systemConfig = await createSystemConfig();
+		const configuredZone = systemConfig.zones[0];
+		if (configuredZone === undefined || configuredZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const toolPortalConfigDir = path.dirname(configuredZone.gateway.config);
+		await writeMinimalMcpPortalConfigs(toolPortalConfigDir);
+		const systemConfigWithToolPortal: LoadedSystemConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...configuredZone,
+					toolPortal: { configDir: toolPortalConfigDir },
+				},
+			],
+		};
+		let connectedGatewayControlSessionOptions:
+			| Parameters<GatewayControlSessionConnector>[0]
+			| undefined;
+		const connectGatewayControlSession = vi.fn<GatewayControlSessionConnector>(
+			async (connectOptions) => {
+				connectedGatewayControlSessionOptions = connectOptions;
+				return controlSessionClient;
+			},
+		);
+
+		const result = await startGatewayZone(
+			{
+				controlSession: { controllerEpoch: 'controller-epoch-test' },
+				gatewayControlControllerHostActions: {
+					authorizeControllerHostAction: vi.fn(async () => ({ authorized: true }) as const),
+					pushZoneGit,
+				},
+				gatewayControlLeaseRpc,
+				runTask: async (title, fn) => {
+					taskTitles.push(title);
+					await fn();
+				},
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					PERPLEXITY_API_KEY: 'pplx-key',
+				}),
+				systemConfig: systemConfigWithToolPortal,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				connectGatewayControlSession,
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(connectGatewayControlSession).toHaveBeenCalledWith({
+			dispatcher: expect.objectContaining({
+				dispatch: expect.any(Function),
+				register: expect.any(Function),
+			}),
+			endpoint: {
+				host: '127.0.0.1',
+				path: '/__agent-vm/gateway-control',
+				port: 18791,
+			},
+			material: expect.objectContaining({
+				controllerEpoch: 'controller-epoch-test',
+				peerId: 'gateway-shravan',
+				zoneId: 'shravan',
+			}),
+			sessionFenceRegistry: expect.objectContaining({
+				acceptSession: expect.any(Function),
+				assertEnvelopeAccepted: expect.any(Function),
+			}),
+		});
+		const connectedOptions = connectedGatewayControlSessionOptions;
+		const connectedDispatcher = connectedOptions?.dispatcher;
+		if (connectedOptions === undefined || connectedDispatcher === undefined) {
+			throw new Error('Expected gateway control dispatcher.');
+		}
+		connectedOptions.sessionFenceRegistry?.acceptSession({
+			bootId: connectedOptions.material.bootId,
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			controllerEpoch: 'controller-epoch-test',
+			domain: 'gateway_control',
+			peerId: 'gateway-shravan',
+			sessionId: '33333333-3333-4333-8333-333333333333',
+			zoneId: 'shravan',
+		});
+		const createEnvelope = (input: {
+			readonly commandId: string;
+			readonly deliveryPolicy: 'critical_idempotent' | 'single_use_critical';
+			readonly idempotencyKey: string;
+			readonly messageId: string;
+			readonly operation:
+				| 'caller_context_register'
+				| 'lease_create'
+				| 'tool_portal_controller_host_action';
+			readonly sequence: number;
+		}): ControlEnvelope => ({
+			bootId: connectedOptions.material.bootId,
+			commandId: input.commandId,
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			controllerEpoch: 'controller-epoch-test',
+			createdAtMs: 1,
+			deliveryPolicy: input.deliveryPolicy,
+			domain: 'gateway_control',
+			idempotencyKey: input.idempotencyKey,
+			kind: 'command',
+			messageId: input.messageId,
+			operation: input.operation,
+			peerId: 'gateway-shravan',
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+			sequence: input.sequence,
+			sessionId: '33333333-3333-4333-8333-333333333333',
+			zoneId: 'shravan',
+		});
+		const registerResult = GatewayControlRpcCommandResultMessageSchema.parse(
+			await connectedDispatcher.dispatch({
+				envelope: createEnvelope({
+					commandId: '44444444-4444-4444-8444-444444444444',
+					deliveryPolicy: 'critical_idempotent',
+					idempotencyKey: 'register-context',
+					messageId: '22222222-2222-4222-8222-222222222222',
+					operation: 'caller_context_register',
+					sequence: 1,
+				}),
+				payload: {
+					kind: 'command',
+					operation: 'caller_context_register',
+					payload: {
+						adapterEvidence: {
+							agentId: 'main',
+							agentWorkspaceDir: '/home/openclaw/workspace',
+							sessionKey: 'agent:main:test-session',
+							workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+							zoneId: 'shravan',
+						},
+					},
+				},
+			}),
+		);
+		const callerContextId = registerResult.payload.callerContext?.callerContextId;
+		if (callerContextId === undefined) {
+			throw new Error('Expected caller_context_register result to include callerContextId.');
+		}
+		await connectedDispatcher.dispatch({
+			envelope: createEnvelope({
+				commandId: '55555555-5555-4555-8555-555555555555',
+				deliveryPolicy: 'critical_idempotent',
+				idempotencyKey: 'lease-create',
+				messageId: '66666666-6666-4666-8666-666666666666',
+				operation: 'lease_create',
+				sequence: 2,
+			}),
+			payload: {
+				kind: 'command',
+				operation: 'lease_create',
+				payload: {
+					callerContext: { callerContextId },
+				},
+			},
+		});
+		expect(gatewayControlLeaseRpc.createLease).toHaveBeenCalledWith({
+			callerContext: expect.objectContaining({
+				agentId: 'main',
+				callerContextId,
+				zoneId: 'shravan',
+			}),
+			payload: {
+				callerContext: { callerContextId },
+			},
+		});
+		const hostActionRegisterResult = GatewayControlRpcCommandResultMessageSchema.parse(
+			await connectedDispatcher.dispatch({
+				envelope: createEnvelope({
+					commandId: '99999999-9999-4999-8999-999999999999',
+					deliveryPolicy: 'critical_idempotent',
+					idempotencyKey: 'register-host-action-context',
+					messageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					operation: 'caller_context_register',
+					sequence: 3,
+				}),
+				payload: {
+					kind: 'command',
+					operation: 'caller_context_register',
+					payload: {
+						adapterEvidence: {
+							agentId: 'main',
+							agentWorkspaceDir: '/home/openclaw/workspace',
+							purpose: 'tool_portal_controller_host_action',
+							sessionKey: 'agent:main:test-session',
+							workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+							zoneId: 'shravan',
+						},
+					},
+				},
+			}),
+		);
+		const hostActionCallerContextId =
+			hostActionRegisterResult.payload.callerContext?.callerContextId;
+		if (hostActionCallerContextId === undefined) {
+			throw new Error(
+				'Expected host-action caller_context_register result to include callerContextId.',
+			);
+		}
+		const hostActionResult = GatewayControlRpcCommandResultMessageSchema.parse(
+			await connectedDispatcher.dispatch({
+				envelope: createEnvelope({
+					commandId: '77777777-7777-4777-8777-777777777777',
+					deliveryPolicy: 'single_use_critical',
+					idempotencyKey: 'zone-git-push',
+					messageId: '88888888-8888-4888-8888-888888888888',
+					operation: 'tool_portal_controller_host_action',
+					sequence: 4,
+				}),
+				payload: {
+					kind: 'command',
+					operation: 'tool_portal_controller_host_action',
+					payload: {
+						actionId: 'zone_git_push',
+						callerContext: { callerContextId: hostActionCallerContextId },
+						correlation: {
+							capability: {
+								name: 'zone_git_push',
+								namespace: 'controller_host_action',
+							},
+						},
+						expectedHead: 'abc123',
+					},
+				},
+			}),
+		);
+		expect(pushZoneGit).toHaveBeenCalledWith({
+			callerContext: expect.objectContaining({
+				agentId: 'main',
+				callerContextId: hostActionCallerContextId,
+				purpose: 'tool_portal_controller_host_action',
+				zoneId: 'shravan',
+			}),
+			payload: {
+				actionId: 'zone_git_push',
+				callerContext: { callerContextId: hostActionCallerContextId },
+				correlation: {
+					capability: {
+						name: 'zone_git_push',
+						namespace: 'controller_host_action',
+					},
+				},
+				expectedHead: 'abc123',
+			},
+			session: expect.objectContaining({
+				peerId: 'gateway-shravan',
+				zoneId: 'shravan',
+			}),
+		});
+		expect(hostActionResult).toMatchObject({
+			kind: 'command_result',
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				controllerHostAction: {
+					actionId: 'zone_git_push',
+					result: {
+						branch: 'main',
+						localHead: 'abc123',
+						pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
+						remoteHead: 'abc123',
+					},
+				},
+				result: 'ok',
+			},
+		});
+		expect(taskTitles).toContain('Connecting gateway control session');
+		expect(taskTitles.indexOf('Connecting gateway control session')).toBeLessThan(
+			taskTitles.indexOf('Recording gateway runtime'),
+		);
+		expect(result.controlSession).toBe(controlSessionClient);
+		expect(result.controlSessionRecoverySourceKey).toEqual({
+			bootId: connectedGatewayControlSessionOptions?.material.bootId,
+			domain: 'gateway_control',
+			gatewayVmId: 'vm-control-session',
+			generationId: connectedGatewayControlSessionOptions?.material.generationId,
+			zoneId: 'shravan',
+		});
+
+		const zone = systemConfigWithToolPortal.zones.find((candidate) => candidate.id === 'shravan');
+		if (zone?.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const effectiveConfig = JSON.parse(
+			await readFile(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
+		) as {
+			readonly plugins?: {
+				readonly entries?: {
+					readonly gondolin?: {
+						readonly config?: {
+							readonly controlSession?: {
+								readonly controllerEpoch?: string;
+								readonly peerId?: string;
+								readonly verifierPublicKeyPem?: string;
+							};
+						};
+					};
+				};
+			};
+		};
+		const controlSessionConfig = effectiveConfig.plugins?.entries?.gondolin?.config?.controlSession;
+		expect(controlSessionConfig).toMatchObject({
+			controllerEpoch: 'controller-epoch-test',
+			peerId: 'gateway-shravan',
+		});
+		expect(controlSessionConfig?.verifierPublicKeyPem).toMatch(/^-----BEGIN PUBLIC KEY-----/u);
+
+		const guestVisibleRuntimeRecordText = await readFile(
+			path.join(zone.gateway.stateDir, 'gateway-runtime.json'),
+			'utf8',
+		);
+		const guestVisibleRuntimeRecord = parseJsonObject(guestVisibleRuntimeRecordText);
+		expect(guestVisibleRuntimeRecord).not.toHaveProperty('controlSession');
+		expect(guestVisibleRuntimeRecordText).not.toContain('privateKeyPkcs8Pem');
+		expect(guestVisibleRuntimeRecordText).not.toContain('BEGIN PRIVATE KEY');
+
+		const controllerOnlyMaterialText = await readFile(
+			resolveGatewayControlSessionMaterialPath(systemConfigWithToolPortal.runtimeDir, 'shravan'),
+			'utf8',
+		);
+		const controllerOnlyMaterial = requireObjectProperty(
+			parseJsonObject(controllerOnlyMaterialText),
+			'material',
+		);
+		const connectedMaterial = connectedOptions.material;
+		expect(controllerOnlyMaterial).toMatchObject({
+			bootId: connectedMaterial.bootId,
+			controllerEpoch: connectedMaterial.controllerEpoch,
+			generationId: connectedMaterial.generationId,
+			peerId: connectedMaterial.peerId,
+			zoneId: connectedMaterial.zoneId,
+		});
+		expect(controllerOnlyMaterialText).toContain('privateKeyPkcs8Pem');
+		expect(controllerOnlyMaterialText).toContain('BEGIN PRIVATE KEY');
+	});
+
+	it('rejects caller context registration for multi-agent OpenClaw zones until agent attestation exists', async () => {
+		const systemConfig = await createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw gateway test zone.');
+		}
+		const multiAgentZone = {
+			...zone,
+			agents: [{ id: 'main' }, { id: 'second' }],
+		};
+
+		expect(() =>
+			validateGatewayControlCallerContextRegistration({
+				payload: {
+					adapterEvidence: {
+						agentId: 'second',
+						agentWorkspaceDir: '/home/openclaw/workspace-second',
+						sessionKey: 'agent:second:test-session',
+						workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
+						zoneId: 'shravan',
+					},
+				},
+				zone: multiAgentZone,
+			}),
+		).toThrow(/multi-agent OpenClaw zone/u);
 	});
 });

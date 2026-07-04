@@ -1,12 +1,8 @@
 export const gatewayInternalControllerRequestOperations = [
-	'controller-health',
-	'health-event-publish',
-	'openclaw-runtime-status',
 	'zone-git-push',
 	'lease-create',
 	'lease-get',
 	'lease-peek',
-	'lease-list',
 	'lease-renew',
 	'lease-release',
 	'lease-use-start',
@@ -17,17 +13,7 @@ export const gatewayInternalControllerRequestOperations = [
 export type GatewayInternalControllerRequestOperation =
 	(typeof gatewayInternalControllerRequestOperations)[number];
 
-export const workerInternalControllerRequestOperations = [
-	'worker-push-branches',
-	'worker-pull-default',
-] as const;
-
-export type WorkerInternalControllerRequestOperation =
-	(typeof workerInternalControllerRequestOperations)[number];
-
-export type ControllerRequestPolicyOperation =
-	| GatewayInternalControllerRequestOperation
-	| WorkerInternalControllerRequestOperation;
+export type ControllerRequestPolicyOperation = GatewayInternalControllerRequestOperation;
 
 export const dedicatedControllerRequestHealthEventOperations = [
 	'lease-heartbeat',
@@ -54,7 +40,6 @@ function isGenericControllerRequestEventOperation(
 
 export const genericControllerRequestEventOperations = [
 	...gatewayInternalControllerRequestOperations,
-	...workerInternalControllerRequestOperations,
 ].filter(isGenericControllerRequestEventOperation);
 
 export const externalControllerRoutes = [
@@ -246,30 +231,6 @@ export async function fetchControllerWithPolicy(
 }
 
 export const controllerRequestPolicies = {
-	'controller-health': {
-		idempotency: 'read',
-		maxAttempts: 1,
-		retryBaseDelayMs: 0,
-		retryEnabled: false,
-		retryStatuses: [],
-		timeoutMs: 3_000,
-	},
-	'health-event-publish': {
-		idempotency: 'safe-mutation',
-		maxAttempts: 1,
-		retryBaseDelayMs: 0,
-		retryEnabled: false,
-		retryStatuses: [],
-		timeoutMs: 3_000,
-	},
-	'openclaw-runtime-status': {
-		idempotency: 'safe-mutation',
-		maxAttempts: 30,
-		retryBaseDelayMs: 1_000,
-		retryEnabled: true,
-		retryStatuses: [429, 503, 504],
-		timeoutMs: 3_000,
-	},
 	'zone-git-push': {
 		idempotency: 'unsafe-mutation',
 		maxAttempts: 1,
@@ -295,14 +256,6 @@ export const controllerRequestPolicies = {
 		timeoutMs: 5_000,
 	},
 	'lease-peek': {
-		idempotency: 'read',
-		maxAttempts: 2,
-		retryBaseDelayMs: 250,
-		retryEnabled: true,
-		retryStatuses: [503, 504],
-		timeoutMs: 5_000,
-	},
-	'lease-list': {
 		idempotency: 'read',
 		maxAttempts: 2,
 		retryBaseDelayMs: 250,
@@ -349,21 +302,5 @@ export const controllerRequestPolicies = {
 		retryEnabled: true,
 		retryStatuses: [503, 504],
 		timeoutMs: 5_000,
-	},
-	'worker-push-branches': {
-		idempotency: 'unsafe-mutation',
-		maxAttempts: 1,
-		retryBaseDelayMs: 0,
-		retryEnabled: false,
-		retryStatuses: [],
-		timeoutMs: 120_000,
-	},
-	'worker-pull-default': {
-		idempotency: 'unsafe-mutation',
-		maxAttempts: 1,
-		retryBaseDelayMs: 0,
-		retryEnabled: false,
-		retryStatuses: [],
-		timeoutMs: 120_000,
 	},
 } satisfies Record<ControllerRequestPolicyOperation, ControllerRequestPolicy>;

@@ -4,6 +4,7 @@ import {
 	createGatewayServiceHealthMonitor,
 	type GatewayVmRecoveryResult,
 } from './gateway-service-health-monitor.js';
+import type { GatewayVmRecoverySourceKey } from './gateway-vm-recovery-policy.js';
 import { HealthEventStore } from './health-event-store.js';
 
 /* oxlint-disable eslint/no-await-in-loop -- Consecutive monitor ticks are intentionally sequential state transitions. */
@@ -17,6 +18,39 @@ const gatewayServiceAutoRestart = {
 	restartTimeoutMs: 10 * 60 * 1000,
 } as const;
 
+const gatewayRecoverySourceKey = {
+	bootId: 'gateway-boot-a',
+	domain: 'gateway_control',
+	gatewayVmId: 'gateway-vm-a',
+	generationId: 'gateway-generation-a',
+	zoneId: 'sunfam',
+} satisfies GatewayVmRecoverySourceKey;
+
+const resolveGatewayRecoverySourceKey = (): GatewayVmRecoverySourceKey => gatewayRecoverySourceKey;
+
+function createHealthEventStoreWithStaleControlSession(): HealthEventStore {
+	const healthEventStore = new HealthEventStore({
+		eventHistoryLimit: 50,
+		staleAfterMs: 30_000,
+	});
+	healthEventStore.record({
+		domain: 'gateway_control',
+		elapsedMs: 1,
+		kind: 'gateway-control-session',
+		observedAtMs: -100_000,
+		operation: 'control-session-heartbeat',
+		peerId: 'gateway-sunfam',
+		result: 'ok',
+		zoneId: 'sunfam',
+	});
+	return healthEventStore;
+}
+
+const s6bRecoveryOptions = {
+	controlSessionDeathGraceMs: 0,
+	resolveGatewayRecoverySourceKey,
+} as const;
+
 describe('createGatewayServiceHealthMonitor', () => {
 	it('records ok and failed gateway service probes', async () => {
 		const healthEventStore = new HealthEventStore({
@@ -27,16 +61,16 @@ describe('createGatewayServiceHealthMonitor', () => {
 			.fn()
 			.mockResolvedValueOnce({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'beta',
 			})
 			.mockResolvedValueOnce({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 503,
+				path: '/health',
 				zoneId: 'sunfam',
 			});
 		const monitor = createGatewayServiceHealthMonitor({
@@ -56,6 +90,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				kind: 'gateway-service-health',
 				result: 'ok',
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'beta',
 			}),
 		]);
@@ -64,6 +99,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				kind: 'gateway-service-health',
 				result: 'failed',
 				statusCode: 503,
+				path: '/health',
 				zoneId: 'sunfam',
 			}),
 		]);
@@ -124,24 +160,13 @@ describe('createGatewayServiceHealthMonitor', () => {
 		expect(unref).toHaveBeenCalledOnce();
 	});
 
-	it('restarts a gateway VM after 10 consecutive failed gateway service probes', async () => {
+	it('does not restart a gateway VM from failed gateway service probes alone', async () => {
 		let nowMs = 0;
 		const healthEventStore = new HealthEventStore({
 			eventHistoryLimit: 20,
 			staleAfterMs: 30_000,
 		});
-		const recoverGatewayVm = vi.fn(async () => ({
-			elapsedMs: 45_000,
-			leaseReleaseFailureCount: 0,
-			newBootedAt: '2026-05-27T13:01:00.000Z',
-			newHostPid: 2222,
-			newVmId: 'new-gateway-vm',
-			oldBootedAt: '2026-05-27T12:00:00.000Z',
-			oldHostPid: 1111,
-			oldVmId: 'old-gateway-vm',
-			operationId: 'sunfam-restart-018f',
-			result: 'ok' as const,
-		}));
+		const recoverGatewayVm = vi.fn();
 		const monitor = createGatewayServiceHealthMonitor({
 			gatewayServiceAutoRestart,
 			healthEventStore,
@@ -149,9 +174,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -168,39 +193,70 @@ describe('createGatewayServiceHealthMonitor', () => {
 		nowMs = 100_000;
 		await monitor.tick();
 
-		expect(recoverGatewayVm).toHaveBeenCalledOnce();
-		expect(recoverGatewayVm).toHaveBeenCalledWith({
-			consecutiveFailures: 10,
-			reason: 'gateway-service-unhealthy',
-			zoneId: 'sunfam',
-		});
-		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
-			expect.objectContaining({
-				kind: 'gateway-recovery',
-				leaseReleaseFailureCount: 0,
-				newVmId: 'new-gateway-vm',
-				oldVmId: 'old-gateway-vm',
-				operationId: 'sunfam-restart-018f',
-				result: 'ok',
-				zoneId: 'sunfam',
-			}),
-		);
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
 	});
 
-	it('restarts a gateway VM after 10 consecutive stale gateway control-link observations', async () => {
+	it('does not restart a gateway VM from stale gateway control-session observations alone', async () => {
 		let nowMs = 0;
 		const healthEventStore = new HealthEventStore({
 			eventHistoryLimit: 20,
 			staleAfterMs: 30_000,
 		});
 		healthEventStore.record({
-			controllerHost: 'controller.vm.host',
-			controllerPort: 18800,
+			domain: 'gateway_control',
 			elapsedMs: 1,
-			kind: 'gateway-control-link',
+			kind: 'gateway-control-session',
 			observedAtMs: 1_000,
-			operation: 'controller-health',
-			path: '/health',
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-sunfam',
+			result: 'ok',
+			zoneId: 'sunfam',
+		});
+		const recoverGatewayVm = vi.fn();
+		const monitor = createGatewayServiceHealthMonitor({
+			controlSessionDeathGraceMs: 0,
+			gatewayServiceAutoRestart,
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: true,
+				port: 18789,
+				statusCode: 200,
+				path: '/health',
+				zoneId: 'sunfam',
+			})),
+			recoverGatewayVm,
+			resolveGatewayRecoverySourceKey,
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		for (let index = 1; index <= 9; index += 1) {
+			nowMs = 40_000 + index * 10_000;
+			await monitor.tick();
+		}
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+
+		nowMs = 140_000;
+		await monitor.tick();
+
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+	});
+
+	it('restarts a gateway VM after control-session death grace and failed service probe corroborate', async () => {
+		let nowMs = 0;
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		healthEventStore.record({
+			domain: 'gateway_control',
+			elapsedMs: 1,
+			kind: 'gateway-control-session',
+			observedAtMs: 1_000,
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-sunfam',
 			result: 'ok',
 			zoneId: 'sunfam',
 		});
@@ -213,21 +269,24 @@ describe('createGatewayServiceHealthMonitor', () => {
 			oldBootedAt: '2026-05-27T12:00:00.000Z',
 			oldHostPid: 1111,
 			oldVmId: 'old-gateway-vm',
+			operationId: 'sunfam-restart-018f',
 			result: 'ok' as const,
 		}));
 		const monitor = createGatewayServiceHealthMonitor({
+			controlSessionDeathGraceMs: 0,
 			gatewayServiceAutoRestart,
 			healthEventStore,
 			intervalMs: 10_000,
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
-				ok: true,
-				path: '/health',
+				ok: false,
 				port: 18789,
-				statusCode: 200,
+				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
+			resolveGatewayRecoverySourceKey,
 			staleAfterMs: 30_000,
 			zoneIds: ['sunfam'],
 		});
@@ -244,12 +303,23 @@ describe('createGatewayServiceHealthMonitor', () => {
 		expect(recoverGatewayVm).toHaveBeenCalledOnce();
 		expect(recoverGatewayVm).toHaveBeenCalledWith({
 			consecutiveFailures: 10,
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			zoneId: 'sunfam',
 		});
+		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
+			expect.objectContaining({
+				kind: 'gateway-recovery',
+				leaseReleaseFailureCount: 0,
+				newVmId: 'new-gateway-vm',
+				oldVmId: 'old-gateway-vm',
+				operationId: 'sunfam-restart-018f',
+				result: 'ok',
+				zoneId: 'sunfam',
+			}),
+		);
 	});
 
-	it('does not restart when unrelated controller-request failures accumulate while gateway service and control link are healthy', async () => {
+	it('does not restart when unrelated controller-request failures accumulate while gateway service and control session are healthy', async () => {
 		let nowMs = 0;
 		const healthEventStore = new HealthEventStore({
 			eventHistoryLimit: 50,
@@ -273,9 +343,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -292,18 +362,17 @@ describe('createGatewayServiceHealthMonitor', () => {
 				kind: 'controller-request',
 				maxAttempts: 1,
 				observedAtMs: nowMs,
-				operation: 'openclaw-runtime-status',
+				operation: 'zone-git-push',
 				result: 'failed',
 				zoneId: 'sunfam',
 			});
 			healthEventStore.record({
-				controllerHost: 'controller.vm.host',
-				controllerPort: 18800,
+				domain: 'gateway_control',
 				elapsedMs: 1,
-				kind: 'gateway-control-link',
+				kind: 'gateway-control-session',
 				observedAtMs: nowMs,
-				operation: 'controller-health',
-				path: '/health',
+				operation: 'control-session-heartbeat',
+				peerId: 'gateway-sunfam',
 				result: 'ok',
 				zoneId: 'sunfam',
 			});
@@ -358,9 +427,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -410,9 +479,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -477,9 +546,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -538,9 +607,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -602,9 +671,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -662,9 +731,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -729,9 +798,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -793,9 +862,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -851,9 +920,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -883,16 +952,18 @@ describe('createGatewayServiceHealthMonitor', () => {
 			oldVmId: 'old-gateway-vm',
 			result: 'failed' as const,
 		}));
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			gatewayServiceAutoRestart,
-			healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
+			healthEventStore,
 			intervalMs: 10_000,
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -910,10 +981,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 
 	it('records a suspended recovery event after repeated failed recoveries', async () => {
 		let nowMs = 0;
-		const healthEventStore = new HealthEventStore({
-			eventHistoryLimit: 30,
-			staleAfterMs: 30_000,
-		});
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
 		const recoverGatewayVm = vi.fn(async () => ({
 			action: 'gateway-vm-restart' as const,
 			elapsedMs: 1,
@@ -922,6 +990,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			result: 'failed' as const,
 		}));
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			gatewayServiceAutoRestart: {
 				...gatewayServiceAutoRestart,
 				consecutiveFailureThreshold: 1,
@@ -932,9 +1001,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -963,10 +1032,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 
 	it('preserves cold-start action when repeated cold-start recoveries are suspended', async () => {
 		let nowMs = 0;
-		const healthEventStore = new HealthEventStore({
-			eventHistoryLimit: 30,
-			staleAfterMs: 30_000,
-		});
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
 		const recoverGatewayVm = vi.fn(async () => ({
 			action: 'gateway-vm-cold-start' as const,
 			elapsedMs: 1,
@@ -974,6 +1040,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			result: 'failed' as const,
 		}));
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			classifyRecoveryBudgetClass: () => 'gateway-vm-cold-start',
 			gatewayServiceAutoRestart: {
 				...gatewayServiceAutoRestart,
@@ -985,9 +1052,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -1017,10 +1084,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 	it('does not let a failed running restart budget suppress failed-runtime cold-start recovery', async () => {
 		let nowMs = 0;
 		let classifyCount = 0;
-		const healthEventStore = new HealthEventStore({
-			eventHistoryLimit: 30,
-			staleAfterMs: 30_000,
-		});
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
 		const recoverGatewayVm = vi
 			.fn()
 			.mockResolvedValueOnce({
@@ -1037,6 +1101,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				result: 'failed' as const,
 			});
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			classifyRecoveryBudgetClass: () => {
 				classifyCount += 1;
 				return classifyCount === 1 ? 'gateway-vm-restart' : 'gateway-vm-cold-start';
@@ -1051,9 +1116,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -1080,10 +1145,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 	it('does not attach stale restart operation ids to later suspended cold-start recovery', async () => {
 		let nowMs = 0;
 		let classifyCount = 0;
-		const healthEventStore = new HealthEventStore({
-			eventHistoryLimit: 50,
-			staleAfterMs: 30_000,
-		});
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
 		const recoverGatewayVm = vi
 			.fn()
 			.mockResolvedValueOnce({
@@ -1101,6 +1163,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				result: 'failed' as const,
 			});
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			classifyRecoveryBudgetClass: ({ reason }) => {
 				if (reason === 'agent-channel-provider-unhealthy') {
 					return 'gateway-vm-cold-start';
@@ -1127,16 +1190,16 @@ describe('createGatewayServiceHealthMonitor', () => {
 				.fn()
 				.mockResolvedValueOnce({
 					ok: false,
-					path: '/health',
 					port: 18789,
 					statusCode: 502,
+					path: '/health',
 					zoneId: 'sunfam',
 				})
 				.mockResolvedValue({
 					ok: true,
-					path: '/health',
 					port: 18789,
 					statusCode: 200,
+					path: '/health',
 					zoneId: 'sunfam',
 				}),
 			recoverGatewayVm,
@@ -1182,10 +1245,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 
 	it('does not spend failed-recovery budget when recovery is observe-only', async () => {
 		let nowMs = 0;
-		const healthEventStore = new HealthEventStore({
-			eventHistoryLimit: 30,
-			staleAfterMs: 30_000,
-		});
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
 		const recoverGatewayVm = vi.fn(async () => ({
 			action: 'observe-only' as const,
 			elapsedMs: 1,
@@ -1193,6 +1253,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			result: 'failed' as const,
 		}));
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			gatewayServiceAutoRestart: {
 				...gatewayServiceAutoRestart,
 				consecutiveFailureThreshold: 1,
@@ -1203,9 +1264,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -1226,20 +1287,19 @@ describe('createGatewayServiceHealthMonitor', () => {
 		);
 	});
 
-	it('suspends repeated failed control-link recoveries even when gateway service remains healthy', async () => {
+	it('does not spend recovery budget for failed control-session observations while gateway service remains healthy', async () => {
 		let nowMs = 0;
 		const healthEventStore = new HealthEventStore({
 			eventHistoryLimit: 30,
 			staleAfterMs: 30_000,
 		});
 		healthEventStore.record({
-			controllerHost: 'controller.vm.host',
-			controllerPort: 18800,
+			domain: 'gateway_control',
 			elapsedMs: 1,
-			kind: 'gateway-control-link',
+			kind: 'gateway-control-session',
 			observedAtMs: 1_000,
-			operation: 'controller-health',
-			path: '/health',
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-sunfam',
 			result: 'ok',
 			zoneId: 'sunfam',
 		});
@@ -1251,6 +1311,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			result: 'failed' as const,
 		}));
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			gatewayServiceAutoRestart: {
 				...gatewayServiceAutoRestart,
 				consecutiveFailureThreshold: 1,
@@ -1261,9 +1322,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: true,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -1278,15 +1339,11 @@ describe('createGatewayServiceHealthMonitor', () => {
 		nowMs += gatewayServiceAutoRestart.cooldownMs + 1;
 		await monitor.tick();
 
-		expect(recoverGatewayVm).toHaveBeenCalledTimes(2);
-		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+		expect(healthEventStore.listLatestEventsForZone('sunfam')).not.toContainEqual(
 			expect.objectContaining({
-				consecutiveFailedRecoveries: 2,
-				errorCode: 'max-failed-recoveries',
 				kind: 'gateway-recovery-suspended',
-				reason: 'gateway-control-link-unhealthy',
-				result: 'failed',
-				zoneId: 'sunfam',
+				reason: 'gateway-control-session-unhealthy',
 			}),
 		);
 	});
@@ -1296,7 +1353,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 		let resolveRecovery:
 			| ((result: Extract<GatewayVmRecoveryResult, { readonly result: 'failed' }>) => void)
 			| undefined;
-		const healthEventStore = new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 });
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
 		const recoverGatewayVm = vi.fn(
 			async () =>
 				await new Promise<Extract<GatewayVmRecoveryResult, { readonly result: 'failed' }>>(
@@ -1306,6 +1363,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				),
 		);
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			gatewayServiceAutoRestart: {
 				cooldownMs: 61 * 60 * 1000,
 				consecutiveFailureThreshold: 10,
@@ -1319,9 +1377,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -1370,7 +1428,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 		let resolveRecovery:
 			| ((result: Extract<GatewayVmRecoveryResult, { readonly result: 'failed' }>) => void)
 			| undefined;
-		const healthEventStore = new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 });
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
 		const recoverGatewayVm = vi.fn(
 			async () =>
 				await new Promise<Extract<GatewayVmRecoveryResult, { readonly result: 'failed' }>>(
@@ -1380,6 +1438,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				),
 		);
 		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
 			gatewayServiceAutoRestart: {
 				cooldownMs: 61 * 60 * 1000,
 				consecutiveFailureThreshold: 1,
@@ -1393,9 +1452,9 @@ describe('createGatewayServiceHealthMonitor', () => {
 			now: () => nowMs,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
@@ -1463,17 +1522,18 @@ describe('createGatewayServiceHealthMonitor', () => {
 				maxConsecutiveFailedRecoveries: 3,
 				restartTimeoutMs: 10 * 60 * 1000,
 			},
-			healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
+			healthEventStore: createHealthEventStoreWithStaleControlSession(),
 			intervalMs: 10_000,
 			now: () => 10_000,
 			probeZoneHealth: vi.fn(async () => ({
 				ok: false,
-				path: '/health',
 				port: 18789,
 				statusCode: 502,
+				path: '/health',
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
+			...s6bRecoveryOptions,
 			setIntervalImpl: () => ({ unref: vi.fn() }) as unknown as NodeJS.Timeout,
 			staleAfterMs: 30_000,
 			zoneIds: ['sunfam'],

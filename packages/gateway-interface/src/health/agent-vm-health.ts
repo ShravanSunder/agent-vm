@@ -6,7 +6,7 @@ import {
 
 export const agentVmHealthEventKinds = [
 	'gateway-service-health',
-	'gateway-control-link',
+	'gateway-control-session',
 	'controller-request',
 	'lease-renew',
 	'lease-heartbeat',
@@ -58,7 +58,7 @@ export type AgentChannelProviderHealthDetails = Readonly<
 
 export const gatewayRecoveryHealthReasons = [
 	'agent-channel-provider-unhealthy',
-	'gateway-control-link-unhealthy',
+	'gateway-control-session-unhealthy',
 	'gateway-service-unhealthy',
 ] as const;
 
@@ -70,12 +70,15 @@ export type GatewayRecoveryEventAction =
 	| 'operator-required';
 export type GatewayRecoveryTimeoutErrorCode = 'recovery-callback-unconfigured' | 'recovery-timeout';
 
-export const gatewayControlLinkHealthPins = {
-	controllerHost: 'controller.vm.host',
-	controllerPort: 18800,
-	operation: 'controller-health',
-	path: '/health',
-} as const;
+export const gatewayControlSessionHealthOperations = [
+	'control-session-hello',
+	'control-session-heartbeat',
+	'control-session-disconnect',
+	'control-session-reconnect',
+] as const;
+
+export type GatewayControlSessionHealthOperation =
+	(typeof gatewayControlSessionHealthOperations)[number];
 
 export type AgentVmHealthEvent =
 	| (AgentVmHealthEventBase & {
@@ -85,12 +88,14 @@ export type AgentVmHealthEvent =
 			readonly statusCode?: number | undefined;
 	  })
 	| (AgentVmHealthEventBase & {
-			readonly controllerHost: typeof gatewayControlLinkHealthPins.controllerHost;
-			readonly controllerPort: typeof gatewayControlLinkHealthPins.controllerPort;
+			readonly bootId?: string | undefined;
+			readonly connectionId?: string | undefined;
+			readonly domain: 'gateway_control';
 			readonly elapsedMs: number;
-			readonly kind: 'gateway-control-link';
-			readonly operation: typeof gatewayControlLinkHealthPins.operation;
-			readonly path: typeof gatewayControlLinkHealthPins.path;
+			readonly kind: 'gateway-control-session';
+			readonly operation: GatewayControlSessionHealthOperation;
+			readonly peerId: string;
+			readonly sessionId?: string | undefined;
 	  })
 	| (AgentVmHealthEventBase & {
 			readonly attempt: number;
@@ -235,7 +240,7 @@ export type ZoneHealthStateKind = (typeof zoneHealthStateKinds)[number];
 
 export const zoneHealthIssueKinds = [
 	'gateway-service-unhealthy',
-	'gateway-control-link-unhealthy',
+	'gateway-control-session-unhealthy',
 	'controller-request-failing',
 	'lease-heartbeat-failing',
 	'lease-renew-failing',
@@ -397,13 +402,16 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 				Number.isInteger(value.port) &&
 				optionalStatusCode(value.statusCode)
 			);
-		case 'gateway-control-link':
+		case 'gateway-control-session':
 			return (
-				value.controllerHost === gatewayControlLinkHealthPins.controllerHost &&
-				value.controllerPort === gatewayControlLinkHealthPins.controllerPort &&
+				optionalString(value.bootId) &&
+				optionalString(value.connectionId) &&
+				value.domain === 'gateway_control' &&
 				isNonNegativeFiniteNumber(value.elapsedMs) &&
-				value.operation === gatewayControlLinkHealthPins.operation &&
-				value.path === gatewayControlLinkHealthPins.path
+				isOneOf(gatewayControlSessionHealthOperations, value.operation) &&
+				typeof value.peerId === 'string' &&
+				value.peerId.length > 0 &&
+				optionalString(value.sessionId)
 			);
 		case 'controller-request':
 			return (
@@ -562,7 +570,7 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 
 export function healthEventBucketKey(event: AgentVmHealthEvent): string {
 	switch (event.kind) {
-		case 'gateway-control-link':
+		case 'gateway-control-session':
 			return `${event.zoneId}:${event.kind}`;
 		case 'gateway-service-health':
 			return `${event.zoneId}:${event.kind}`;
@@ -590,8 +598,8 @@ function failedIssueKindForEvent(event: AgentVmHealthEvent): ZoneHealthIssueKind
 	switch (event.kind) {
 		case 'gateway-service-health':
 			return 'gateway-service-unhealthy';
-		case 'gateway-control-link':
-			return 'gateway-control-link-unhealthy';
+		case 'gateway-control-session':
+			return 'gateway-control-session-unhealthy';
 		case 'controller-request':
 			return 'controller-request-failing';
 		case 'lease-heartbeat':

@@ -1,18 +1,14 @@
+import { ManagedVmExecRequestSchema as PublicManagedVmExecRequestSchema } from '@agent-vm/controller-execution-contracts/tool-vm-runner-boundary';
 import { describe, expect, it } from 'vitest';
 
-import {
-	ControllerDispatchIntentSchema,
-	CredentialedRunnerRequestSchema,
-	ManagedVmExecRequestSchema,
-} from '../index.js';
+import { ControllerDispatchIntentSchema, ManagedVmExecRequestSchema } from '../index.js';
 import {
 	createControllerDispatchIntentFixture,
-	createCredentialedRunnerRequestFixture,
 	createManagedVmExecRequestFixture,
 } from './index.js';
 
 describe('controller execution testing fixtures', () => {
-	it('exports valid controller dispatch, managed VM, and credentialed runner fixtures', () => {
+	it('exports valid controller dispatch and managed VM runner fixtures', () => {
 		expect(
 			ControllerDispatchIntentSchema.safeParse(createControllerDispatchIntentFixture()).success,
 		).toBe(true);
@@ -20,7 +16,7 @@ describe('controller execution testing fixtures', () => {
 			true,
 		);
 		expect(
-			CredentialedRunnerRequestSchema.safeParse(createCredentialedRunnerRequestFixture()).success,
+			PublicManagedVmExecRequestSchema.safeParse(createManagedVmExecRequestFixture()).success,
 		).toBe(true);
 	});
 });

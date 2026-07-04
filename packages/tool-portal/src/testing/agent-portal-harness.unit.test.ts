@@ -18,7 +18,7 @@ describe('shared agent portal harness', () => {
 					description: 'Read issue',
 					inputSchema: { properties: { number: { type: 'number' } }, type: 'object' },
 					namespace: 'github',
-					toolName: 'get_issue',
+					name: 'get_issue',
 					value: { number: 42, title: 'Harness proof' },
 				},
 			],
@@ -34,7 +34,7 @@ describe('shared agent portal harness', () => {
 					arguments: { number: 42 },
 					id: 'call-github',
 					namespace: 'github',
-					toolName: 'get_issue',
+					name: 'get_issue',
 				},
 			],
 		});

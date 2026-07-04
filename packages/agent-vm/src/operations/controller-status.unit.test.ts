@@ -316,7 +316,7 @@ describe('buildControllerStatus', () => {
 			diagnoses: {
 				shravan: {
 					...runningDiagnosis(),
-					currentRecoveryBlocker: 'gateway-control-link-unhealthy',
+					currentRecoveryBlocker: 'gateway-control-session-unhealthy',
 					selectedZoneReadiness: 'degraded',
 				},
 			},

@@ -17,11 +17,9 @@ import type { ControllerRuntimeZoneStatus } from '../operations/controller-statu
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import type { appendDurableHealthEvent } from './health/durable-health-event-log.js';
-import type {
-	createControllerService,
-	ObservedControllerLeaseCreateRequest,
-} from './http/controller-http-routes.js';
+import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
+import type { ObservedControllerLeaseCreateRequest } from './leases/observed-lease-create-request.js';
 import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
 import type { ZoneGitCapabilityStore } from './zone-git/zone-git-capability-store.js';
 import type { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
@@ -41,6 +39,7 @@ export interface ControllerRuntimeDependencies {
 	readonly appendDurableHealthEvent?: typeof appendDurableHealthEvent;
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadiness;
 	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
+	readonly controllerEpoch?: string;
 	readonly resolveControllerTelemetryIdentity?: typeof resolveControllerTelemetryIdentity;
 	readonly resolveControllerTelemetryServiceVersion?: () => Promise<string>;
 	readonly startControllerTelemetry?: typeof startControllerTelemetry;

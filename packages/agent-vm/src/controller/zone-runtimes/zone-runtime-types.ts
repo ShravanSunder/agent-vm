@@ -8,6 +8,7 @@ import type { GatewayZoneStartResult } from '../../gateway/gateway-zone-support.
 import type { ControllerRuntimeZoneStatus } from '../../operations/controller-status.js';
 import type { RunTaskFn } from '../../shared/run-task.js';
 import type { ActiveTaskRegistry } from '../active-task-registry.js';
+import type { ControlSessionClient } from '../control-session/index.js';
 import type { PullDefaultRequest, PullDefaultResult } from '../git-pull-default-operations.js';
 import type { PushBranchRequest, PushBranchResult } from '../git-push-operations.js';
 import type { LeaseManager, ToolVmProfile } from '../leases/lease-manager.js';
@@ -27,6 +28,8 @@ import type {
 export type ControllerZoneConfig = SystemConfig['zones'][number];
 
 export interface GatewayZoneRuntimeHandle {
+	readonly controlSession?: ControlSessionClient | undefined;
+	readonly controlSessionRecoverySourceKey?: GatewayZoneStartResult['controlSessionRecoverySourceKey'];
 	readonly ingress: GatewayZoneStartResult['ingress'];
 	readonly processSpec: GatewayProcessSpec;
 	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'getHostPid' | 'id'>;

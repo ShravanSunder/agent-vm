@@ -7,8 +7,6 @@ import { PushBranchesValidationError } from '../git-push-operations.js';
 import type { HealthEventStore } from '../health/health-event-store.js';
 import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
 import { writeTaskFailureSentinel } from '../task-state-reader.js';
-import { ZONE_GIT_CAPABILITY_HEADER } from '../zone-git/zone-git-capability-store.js';
-import { ZoneGitConflictError } from '../zone-git/zone-git-operations.js';
 import {
 	ControllerZoneAdminAuthError,
 	ControllerZoneConfigurationError,
@@ -35,7 +33,6 @@ import {
 	controllerPullDefaultRequestSchema,
 	controllerPushBranchesRequestSchema,
 	controllerWorkerTaskRequestSchema,
-	controllerZoneGitPushRequestSchema,
 } from './controller-request-schemas.js';
 
 class JsonBodyParseError extends Error {
@@ -381,56 +378,6 @@ export function registerControllerZoneOperationRoutes(
 			);
 			writeControllerRouteLog(
 				`zone-git-status failed for zone '${context.req.param('zoneId')}': ${responseBody.error}`,
-			);
-			return context.json(responseBody, 500);
-		}
-	});
-	app.post('/zones/:zoneId/zone-git/push', async (context) => {
-		const notReadyResponse = rejectIfRuntimeNotReady(context);
-		if (notReadyResponse) {
-			return notReadyResponse;
-		}
-		if (!operations.pushZoneGit) {
-			return context.json({ error: 'zone-git-push-unavailable' }, 405);
-		}
-		if (!operations.verifyZoneGitPushToken) {
-			return context.json({ error: 'zone-git-push-auth-unavailable' }, 405);
-		}
-		const zoneId = context.req.param('zoneId');
-		if (
-			!operations.verifyZoneGitPushToken(zoneId, context.req.header(ZONE_GIT_CAPABILITY_HEADER))
-		) {
-			return context.json({ error: 'zone-git-push-forbidden' }, 403);
-		}
-		const parsedPayload = await parseJsonBodyWithSchema(
-			context,
-			controllerZoneGitPushRequestSchema,
-			'invalid-zone-git-push-request',
-		);
-		if (!parsedPayload.ok) {
-			return parsedPayload.response;
-		}
-		try {
-			return context.json(await operations.pushZoneGit(zoneId, parsedPayload.data));
-		} catch (error) {
-			if (error instanceof ZoneGitConflictError) {
-				return context.json(
-					{
-						error: 'zone-git-push-conflict',
-						message: error.message,
-					},
-					409,
-				);
-			}
-			const runtimeStatus = zoneRuntimeErrorStatus(error);
-			if (runtimeStatus !== 500) {
-				return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
-			}
-			const responseBody = scrubErrorResponseBody(
-				buildErrorResponseBody(error, 'zone-git-push-failed'),
-			);
-			writeControllerRouteLog(
-				`zone-git-push failed for zone '${context.req.param('zoneId')}': ${responseBody.error}`,
 			);
 			return context.json(responseBody, 500);
 		}

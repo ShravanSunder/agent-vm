@@ -17,27 +17,32 @@ export const AGENT_VM_PACKAGE_NAMES = [
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/agent-vm-worker',
 	'@agent-vm/config-contracts',
+	'@agent-vm/control-protocol-contracts',
 	'@agent-vm/controller-execution-contracts',
+	'@agent-vm/gateway-control-contracts',
 	'@agent-vm/gateway-interface',
 	'@agent-vm/gondolin-adapter',
 	'@agent-vm/mcp-portal',
 	'@agent-vm/openclaw-agent-vm-plugin',
 	'@agent-vm/openclaw-gateway',
-	'@agent-vm/openclaw-mcp-portal-plugin',
 	'@agent-vm/secret-management',
 	'@agent-vm/tool-portal',
+	'@agent-vm/worker-control-contracts',
 	'@agent-vm/worker-gateway',
 ] as const;
 
 export const OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES = [
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/config-contracts',
+	'@agent-vm/control-protocol-contracts',
+	'@agent-vm/controller-execution-contracts',
+	'@agent-vm/gateway-control-contracts',
 	'@agent-vm/secret-management',
 	'@agent-vm/gondolin-adapter',
 	'@agent-vm/gateway-interface',
 	'@agent-vm/mcp-portal',
+	'@agent-vm/tool-portal',
 	'@agent-vm/openclaw-agent-vm-plugin',
-	'@agent-vm/openclaw-mcp-portal-plugin',
 ] as const;
 
 export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
@@ -415,7 +420,7 @@ export function renderOpenClawGatewayOverlay(
 			(command) => !isAgentVmLocalInstallCommand(command),
 		),
 		...renderLocalPackageInstallStartCommands(options.plan.gatewayPackages),
-		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin "$package_root/@agent-vm/openclaw-agent-vm-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-mcp-portal-plugin "$package_root/@agent-vm/openclaw-mcp-portal-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal"',
+		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin "$package_root/@agent-vm/openclaw-agent-vm-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal"',
 		renderLocalPackageCleanupCommand(options.plan.gatewayPackages),
 	];
 	return {
@@ -538,22 +543,16 @@ async function readManagedOpenClawGatewayPackageOverrides(
 		path.join(repositoryDirectory, 'packages', 'agent-vm', 'managed-images.json'),
 	);
 	const baseImages = manifest.baseImages;
-	if (typeof baseImages !== 'object' || baseImages === null || Array.isArray(baseImages)) {
+	if (!isJsonRecord(baseImages)) {
 		throw new Error('packages/agent-vm/managed-images.json must contain baseImages.');
 	}
-	const openClawGateway = (baseImages as JsonRecord)['openclaw-gateway'];
-	if (
-		typeof openClawGateway !== 'object' ||
-		openClawGateway === null ||
-		Array.isArray(openClawGateway)
-	) {
+	const openClawGateway = baseImages['openclaw-gateway'];
+	if (!isJsonRecord(openClawGateway)) {
 		throw new Error(
 			'packages/agent-vm/managed-images.json must contain baseImages.openclaw-gateway.',
 		);
 	}
-	const parsedPackageOverrides = packageOverridesSchema.safeParse(
-		(openClawGateway as JsonRecord).packageOverrides,
-	);
+	const parsedPackageOverrides = packageOverridesSchema.safeParse(openClawGateway.packageOverrides);
 	if (!parsedPackageOverrides.success) {
 		throw new Error(
 			'packages/agent-vm/managed-images.json must contain baseImages.openclaw-gateway.packageOverrides.',

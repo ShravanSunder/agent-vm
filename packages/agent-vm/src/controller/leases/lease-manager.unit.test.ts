@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { ToolVmActiveUseCorrelation } from '@agent-vm/gateway-interface';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -1227,9 +1228,17 @@ describe('createLeaseManager', () => {
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
+		const unsafeCorrelation = {
+			runId: 'run-123',
+			sessionKey: 'raw-session-key',
+			sessionKeyDigest: 'sha256:0123456789abcdef0123456789abcdef',
+			toolCallId: 'tool-call-123',
+			toolName: 'shell',
+			traceId: '0123456789abcdef0123456789abcdef',
+		} as unknown as ToolVmActiveUseCorrelation;
 
 		const startedUse = leaseManager.startActiveUse(lease.id, {
-			correlation: { toolName: 'shell' },
+			correlation: unsafeCorrelation,
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
 		const repeatedStart = leaseManager.startActiveUse(lease.id, {
@@ -1241,6 +1250,16 @@ describe('createLeaseManager', () => {
 			'01890f00-0000-7000-8000-000000000000',
 			{},
 		);
+		expect(leaseManager.getActiveUses(lease.id)).toEqual([
+			expect.objectContaining({
+				correlation: {
+					runId: 'run-123',
+					sessionKeyDigest: 'sha256:0123456789abcdef0123456789abcdef',
+					toolCallId: 'tool-call-123',
+					traceId: '0123456789abcdef0123456789abcdef',
+				},
+			}),
+		]);
 		leaseManager.endActiveUse(lease.id, '01890f00-0000-7000-8000-000000000000', {
 			outcome: 'completed',
 		});

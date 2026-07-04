@@ -155,10 +155,10 @@ function createOpenClawSystemConfig(
 						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
+					agents: [{ id: 'sun' }],
 					...(options.includeMcpPortal === true
 						? {
-								agents: [{ id: 'sun' }],
-								mcpPortal: {
+								toolPortal: {
 									configDir: path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
 								},
 							}
@@ -202,17 +202,18 @@ function createHealthyOpenClawConfig(): object {
 			},
 		},
 		plugins: {
-			allow: ['gondolin', 'memory-core', 'mcp-portal'],
+			allow: ['gondolin', 'memory-core'],
 			entries: {
-				gondolin: { enabled: true },
+				gondolin: {
+					enabled: true,
+					config: {},
+				},
 				'memory-core': { enabled: true },
-				'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 			},
 			load: {
 				paths: [
 					'/home/openclaw/.openclaw/extensions/gondolin',
 					'/pnpm/global/5/node_modules/@openclaw',
-					'/home/openclaw/.openclaw/extensions/mcp-portal',
 				],
 			},
 			slots: { memory: 'memory-core' },
@@ -313,10 +314,10 @@ function createManagedBaseOpenClawSystemConfig(
 						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
+					agents: [{ id: 'sun' }],
 					...(options.includeMcpPortal === true
 						? {
-								agents: [{ id: 'sun' }],
-								mcpPortal: {
+								toolPortal: {
 									configDir: path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
 								},
 							}
@@ -368,23 +369,7 @@ function createControllerClientStub(): ReturnType<
 		getZoneHealthSnapshot: async () => ({}),
 		getZoneServiceHealth: async () => ({}),
 		getZoneLogs: async () => ({}),
-		peekLease: async () => ({
-			agentId: 'main',
-			createdAt: 1,
-			idleTtlMs: 6_000_000,
-			lastUsedAt: 1,
-			leaseId: 'lease-123',
-			profileId: 'standard',
-			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-			tcpSlot: 0,
-			transport: 'ssh-sandbox' as const,
-			workdir: '/workspace',
-
-			zoneId: 'shravan',
-		}),
-		listLeases: async () => [],
 		refreshZoneCredentials: async () => ({}),
-		releaseLease: async () => {},
 		stopController: async () => ({}),
 		upgradeZone: async () => ({}),
 	};
@@ -1267,6 +1252,9 @@ describe('runControllerOperationCommand', () => {
 			zone.gateway.zoneGit = {
 				remote: {
 					branch: 'main',
+					defaultBranch: 'trunk',
+					protectedBranches: ['trunk'],
+					protectedBranchPatterns: ['release/*'],
 					repoUrl: 'ShravanSunder/sunfam-zone-files',
 				},
 			};

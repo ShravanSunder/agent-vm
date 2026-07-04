@@ -21,7 +21,10 @@ export type GatewayRecoveryDecisionAction =
 			readonly reason:
 				| 'recovery-disabled'
 				| 'recovery-in-flight'
+				| 'recovery-missing-source-key'
+				| 'recovery-needs-corroboration'
 				| 'recovery-unobserved'
+				| 'recovery-within-grace'
 				| 'channel-provider-unrecoverable'
 				| 'cooldown-active';
 	  };
@@ -99,8 +102,14 @@ function classifyNoRecoveryReason(
 			return 'recovery-disabled';
 		case 'in-flight':
 			return 'recovery-in-flight';
+		case 'missing-source-key':
+			return 'recovery-missing-source-key';
+		case 'needs-corroboration':
+			return 'recovery-needs-corroboration';
 		case 'unobserved':
 			return 'recovery-unobserved';
+		case 'within-grace':
+			return 'recovery-within-grace';
 		case undefined:
 			return 'recovery-unobserved';
 	}

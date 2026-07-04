@@ -3,17 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
 
 describe('resolveGondolinPluginConfig', () => {
-	it('parses the controller url and zone id from plugin config', () => {
+	it('parses the zone id from plugin config', () => {
 		expect(
 			resolveGondolinPluginConfig({
-				controllerUrl: 'http://controller.vm.host:18800',
 				profileId: 'gpu',
 				zoneGitToken: 'push-token',
 				zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 				zoneId: 'shravan',
 			}),
 		).toEqual({
-			controllerUrl: 'http://controller.vm.host:18800',
 			profileId: 'gpu',
 			zoneGitToken: 'push-token',
 			zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
@@ -21,15 +19,45 @@ describe('resolveGondolinPluginConfig', () => {
 		});
 	});
 
-	it('throws when controllerUrl is missing', () => {
-		expect(() => resolveGondolinPluginConfig({ zoneId: 'shravan' })).toThrow(
-			'Gondolin plugin config requires controllerUrl and zoneId.',
-		);
+	it('does not require the legacy controller url', () => {
+		expect(resolveGondolinPluginConfig({ zoneId: 'shravan' })).toEqual({
+			zoneId: 'shravan',
+		});
+	});
+
+	it('parses Tool Portal native tool config', () => {
+		expect(
+			resolveGondolinPluginConfig({
+				toolPortal: { configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective' },
+				zoneId: 'shravan',
+			}),
+		).toEqual({
+			toolPortal: { configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective' },
+			zoneId: 'shravan',
+		});
+	});
+
+	it('rejects the removed controller url config field', () => {
+		expect(() =>
+			resolveGondolinPluginConfig({
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			}),
+		).toThrow('Gondolin plugin config no longer accepts controllerUrl.');
 	});
 
 	it('throws when zoneId is missing', () => {
+		expect(() => resolveGondolinPluginConfig({})).toThrow(
+			'Gondolin plugin config requires zoneId.',
+		);
+	});
+
+	it('throws when Tool Portal config is malformed', () => {
 		expect(() =>
-			resolveGondolinPluginConfig({ controllerUrl: 'http://controller.vm.host:18800' }),
-		).toThrow('Gondolin plugin config requires controllerUrl and zoneId.');
+			resolveGondolinPluginConfig({
+				toolPortal: { configDir: 42 },
+				zoneId: 'shravan',
+			}),
+		).toThrow('Gondolin plugin toolPortal requires string configDir.');
 	});
 });

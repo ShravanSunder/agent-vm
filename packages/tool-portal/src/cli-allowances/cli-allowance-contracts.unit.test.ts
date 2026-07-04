@@ -18,7 +18,7 @@ const cliAllowance = CliAllowanceSchema.parse({
 	allowedSubcommands: [['calendar', 'events']],
 	approval: 'required',
 	artifacts: { mode: 'none', noFollowRequired: true },
-	capability: { namespace: 'google', toolName: 'calendar_cli' },
+	capability: { name: 'calendar_cli', namespace: 'google' },
 	cancellation: { onCancel: 'close_vm', timeoutMs: 1_000 },
 	credentialProfileId: 'google-personal',
 	custodyMode: 'ephemeral_material',

@@ -118,6 +118,23 @@ describe('gateway runtime record', () => {
 		expect(() => gatewayRuntimeRecordSchema.parse(recordWithoutProcessIdentity)).toThrow(ZodError);
 	});
 
+	it('rejects control-session signing material in guest-visible runtime records', () => {
+		expect(() =>
+			gatewayRuntimeRecordSchema.parse({
+				...buildSampleRecord(),
+				controlSession: {
+					bootId: 'boot-a',
+					controllerEpoch: 'epoch-a',
+					generationId: 'generation-a',
+					peerId: 'gateway-shravan',
+					privateKeyPkcs8Pem: '-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----',
+					verifierPublicKeyPem: '-----BEGIN PUBLIC KEY-----\npublic\n-----END PUBLIC KEY-----',
+					zoneId: 'shravan',
+				},
+			}),
+		).toThrow(ZodError);
+	});
+
 	it('writes and loads a gateway runtime record from zone state', async () => {
 		const stateDirectory = await createStateDirectory();
 		const record = buildSampleRecord();

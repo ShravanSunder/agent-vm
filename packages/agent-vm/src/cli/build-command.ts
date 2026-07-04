@@ -607,11 +607,7 @@ function formatDockerBaseDetail(options: {
 	if (options.imageTarget.source?.overlay) {
 		details.push(`overlay ${path.basename(options.imageTarget.source.overlay)}`);
 	}
-	const agentVmPackages = [
-		plan.openClawAgentVmPluginPackage,
-		plan.openClawMcpPortalPluginPackage,
-		plan.mcpPortalPackage,
-	].filter(
+	const agentVmPackages = [plan.openClawAgentVmPluginPackage, plan.mcpPortalPackage].filter(
 		(packageEntry): packageEntry is ManagedDockerfilePackagePlanEntry => packageEntry !== undefined,
 	);
 	const agentVmPackageStatus = formatAgentVmPackageStatus(agentVmPackages);

@@ -14,6 +14,7 @@ import { createEncryptedBackup } from './backup-create-operation.js';
 import { restoreEncryptedBackup } from './backup-restore-operation.js';
 
 const createdDirectories: string[] = [];
+const zoneGitTestBranch = 'agent-vm-zone-files';
 
 async function createTemporaryDirectory(): Promise<string> {
 	const temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'agent-vm-backup-zone-git-'));
@@ -73,7 +74,7 @@ async function createZoneGitFixture(): Promise<{
 	await writeFile(path.join(stateDir, 'runtime.json'), '{}\n');
 	await execa('git', ['init', '--bare', remoteUrl]);
 	await ensureZoneGitRepository({
-		branch: 'main',
+		branch: zoneGitTestBranch,
 		remoteUrl,
 		runtimeDir,
 		zoneFilesDir,
@@ -106,7 +107,7 @@ describe('createEncryptedBackup zone Git guardrails', () => {
 				stateDir: fixture.stateDir,
 				zoneFilesDir: fixture.zoneFilesDir,
 				zoneGit: {
-					branch: 'main',
+					branch: zoneGitTestBranch,
 					remoteUrl: fixture.remoteUrl,
 					runtimeDir: fixture.runtimeDir,
 					zoneFilesDir: fixture.zoneFilesDir,
@@ -135,7 +136,7 @@ describe('createEncryptedBackup zone Git guardrails', () => {
 				stateDir: fixture.stateDir,
 				zoneFilesDir: fixture.zoneFilesDir,
 				zoneGit: {
-					branch: 'main',
+					branch: zoneGitTestBranch,
 					remoteUrl: fixture.remoteUrl,
 					runtimeDir: fixture.runtimeDir,
 					zoneFilesDir: fixture.zoneFilesDir,
@@ -155,7 +156,7 @@ describe('createEncryptedBackup zone Git guardrails', () => {
 			workTree: fixture.zoneFilesDir,
 		});
 		await pushZoneGit({
-			branch: 'main',
+			branch: zoneGitTestBranch,
 			expectedHead: localHead,
 			remoteUrl: fixture.remoteUrl,
 			runtimeDir: fixture.runtimeDir,
@@ -176,7 +177,7 @@ describe('createEncryptedBackup zone Git guardrails', () => {
 			stateDir: fixture.stateDir,
 			zoneFilesDir: fixture.zoneFilesDir,
 			zoneGit: {
-				branch: 'main',
+				branch: zoneGitTestBranch,
 				remoteUrl: fixture.remoteUrl,
 				runtimeDir: fixture.runtimeDir,
 				zoneFilesDir: fixture.zoneFilesDir,
@@ -210,7 +211,7 @@ describe('createEncryptedBackup zone Git guardrails', () => {
 
 		await expect(
 			ensureZoneGitRepository({
-				branch: 'main',
+				branch: zoneGitTestBranch,
 				remoteUrl: fixture.remoteUrl,
 				runtimeDir: restoredRuntimeDir,
 				zoneFilesDir: restoredZoneFilesDir,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { createGatewayVmRecoveryTracker } from './gateway-vm-recovery-policy.js';
+import type {
+	GatewayVmRecoverySourceKey,
+	GatewayVmRecoveryTracker,
+} from './gateway-vm-recovery-policy.js';
 
 const policy = {
 	cooldownMs: 61 * 60 * 1000,
@@ -11,8 +15,32 @@ const policy = {
 	restartTimeoutMs: 10 * 60 * 1000,
 } as const;
 
+const gatewayRecoverySourceKey = {
+	bootId: 'gateway-boot-a',
+	domain: 'gateway_control',
+	gatewayVmId: 'gateway-vm-a',
+	generationId: 'gateway-generation-a',
+	zoneId: 'sunfam',
+} satisfies GatewayVmRecoverySourceKey;
+
+function primeControlSessionRecoveryDue(
+	tracker: GatewayVmRecoveryTracker,
+	options: { readonly observedAtMs?: number } = {},
+): void {
+	const observedAtMs = options.observedAtMs ?? 1_000;
+	for (let index = 1; index <= policy.consecutiveFailureThreshold; index += 1) {
+		tracker.recordGatewayControlSessionObservation({
+			controlSessionDeathGrace: 'recovery-due',
+			observedAtMs: observedAtMs + index,
+			result: 'stale',
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: gatewayRecoverySourceKey.zoneId,
+		});
+	}
+}
+
 describe('createGatewayVmRecoveryTracker', () => {
-	it('waits for 10 consecutive gateway-service failures before returning a restart decision', () => {
+	it('requires control-session death-grace evidence before gateway-service failures can restart', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
 		for (let index = 1; index <= 9; index += 1) {
@@ -22,7 +50,11 @@ describe('createGatewayVmRecoveryTracker', () => {
 					result: 'failed',
 					zoneId: 'sunfam',
 				}),
-			).toEqual({ consecutiveFailures: index, kind: 'none' });
+			).toEqual({
+				consecutiveFailures: index,
+				kind: 'none',
+				reason: 'missing-source-key',
+			});
 		}
 
 		expect(
@@ -33,8 +65,31 @@ describe('createGatewayVmRecoveryTracker', () => {
 			}),
 		).toEqual({
 			consecutiveFailures: 10,
+			kind: 'none',
+			reason: 'missing-source-key',
+		});
+
+		for (let index = 1; index <= 9; index += 1) {
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 100_000 + index,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			});
+		}
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 110_000,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 10,
 			kind: 'restart',
-			reason: 'gateway-service-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			zoneId: 'sunfam',
 		});
 	});
@@ -42,6 +97,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 	it('resets gateway-service failures after an ok probe', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
+		primeControlSessionRecoveryDue(tracker);
 		tracker.recordGatewayServiceProbe({ observedAtMs: 10_000, result: 'failed', zoneId: 'sunfam' });
 		tracker.recordGatewayServiceProbe({ observedAtMs: 20_000, result: 'failed', zoneId: 'sunfam' });
 		expect(
@@ -53,12 +109,13 @@ describe('createGatewayVmRecoveryTracker', () => {
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
-		).toEqual({ consecutiveFailures: 1, kind: 'none' });
+		).toEqual({ consecutiveFailures: 10, kind: 'none', reason: 'needs-corroboration' });
 	});
 
 	it('tracks consecutive failures independently per zone', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
+		primeControlSessionRecoveryDue(tracker);
 		for (let index = 1; index <= 9; index += 1) {
 			tracker.recordGatewayServiceProbe({
 				observedAtMs: index * 10_000,
@@ -83,7 +140,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 		).toEqual({
 			consecutiveFailures: 10,
 			kind: 'restart',
-			reason: 'gateway-service-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			zoneId: 'sunfam',
 		});
 	});
@@ -110,50 +167,114 @@ describe('createGatewayVmRecoveryTracker', () => {
 		).toEqual({ consecutiveFailures: 11, kind: 'none', reason: 'disabled' });
 	});
 
-	it('waits for 10 degraded gateway-control-link observations before returning a restart decision', () => {
+	it('requires controller probe corroboration before control-session observations can restart', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
 		expect(
-			tracker.recordGatewayControlLinkObservation({
+			tracker.recordGatewayControlSessionObservation({
 				observedAtMs: 10_000,
 				result: 'unobserved',
 				zoneId: 'sunfam',
 			}),
 		).toEqual({ consecutiveFailures: 0, kind: 'none', reason: 'unobserved' });
 
-		tracker.recordGatewayControlLinkObservation({
+		tracker.recordGatewayControlSessionObservation({
 			observedAtMs: 20_000,
 			result: 'ok',
+			sourceKey: gatewayRecoverySourceKey,
 			zoneId: 'sunfam',
 		});
 
 		for (let index = 1; index <= 9; index += 1) {
 			expect(
-				tracker.recordGatewayControlLinkObservation({
+				tracker.recordGatewayControlSessionObservation({
 					observedAtMs: 20_000 + index * 10_000,
 					result: 'stale',
+					sourceKey: gatewayRecoverySourceKey,
+					controlSessionDeathGrace: 'recovery-due',
 					zoneId: 'sunfam',
 				}),
-			).toEqual({ consecutiveFailures: index, kind: 'none' });
+			).toEqual({
+				consecutiveFailures: index,
+				kind: 'none',
+				reason: 'needs-corroboration',
+			});
 		}
 
 		expect(
-			tracker.recordGatewayControlLinkObservation({
+			tracker.recordGatewayControlSessionObservation({
 				observedAtMs: 120_000,
 				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				controlSessionDeathGrace: 'recovery-due',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({ consecutiveFailures: 10, kind: 'none', reason: 'needs-corroboration' });
+
+		for (let index = 1; index <= 9; index += 1) {
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 130_000 + index,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 140_000,
+				result: 'failed',
 				zoneId: 'sunfam',
 			}),
 		).toEqual({
 			consecutiveFailures: 10,
 			kind: 'restart',
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			zoneId: 'sunfam',
 		});
+	});
+
+	it('does not treat a within-grace control-session disconnect as recovery evidence', () => {
+		const tracker = createGatewayVmRecoveryTracker({ policy });
+
+		for (let index = 1; index <= policy.consecutiveFailureThreshold; index += 1) {
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: index,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'within-grace',
+				observedAtMs: 100_000,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
+		).toEqual({ consecutiveFailures: 1, kind: 'none', reason: 'within-grace' });
+
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				observedAtMs: 101_000,
+				result: 'ok',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
+		).toEqual({ consecutiveFailures: 0, kind: 'none' });
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 102_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({ consecutiveFailures: 11, kind: 'none', reason: 'needs-corroboration' });
 	});
 
 	it('blocks automatic restart decisions during cooldown', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
+		primeControlSessionRecoveryDue(tracker);
 		for (let index = 1; index <= 10; index += 1) {
 			tracker.recordGatewayServiceProbe({
 				observedAtMs: index * 10_000,
@@ -173,6 +294,43 @@ describe('createGatewayVmRecoveryTracker', () => {
 		).toEqual({ consecutiveFailures: 11, kind: 'none', reason: 'cooldown' });
 	});
 
+	it('requires fresh control-session corroboration after a successful recovery', () => {
+		const tracker = createGatewayVmRecoveryTracker({ policy });
+
+		primeControlSessionRecoveryDue(tracker);
+		for (let index = 1; index <= policy.consecutiveFailureThreshold; index += 1) {
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 20_000 + index,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+		tracker.markRecoveryStarted({ observedAtMs: 100_000, zoneId: 'sunfam' });
+		tracker.markRecoveryFinished({ observedAtMs: 130_000, result: 'ok', zoneId: 'sunfam' });
+
+		for (let index = 1; index <= policy.consecutiveFailureThreshold - 1; index += 1) {
+			expect(
+				tracker.recordGatewayServiceProbe({
+					observedAtMs: 140_000 + index,
+					result: 'failed',
+					zoneId: 'sunfam',
+				}),
+			).toMatchObject({ kind: 'none' });
+		}
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 150_000,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 10,
+			kind: 'none',
+			reason: 'missing-source-key',
+		});
+	});
+
 	it('keeps running restart and failed-runtime cold-start recovery budgets separate', () => {
 		const tracker = createGatewayVmRecoveryTracker({
 			policy: {
@@ -182,6 +340,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 			},
 		});
 
+		primeControlSessionRecoveryDue(tracker);
 		expect(
 			tracker.recordGatewayServiceProbe({
 				observedAtMs: 10_000,
@@ -191,7 +350,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 			}),
 		).toMatchObject({
 			kind: 'restart',
-			reason: 'gateway-service-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 		});
 		tracker.markRecoveryStarted({
 			observedAtMs: 10_000,
@@ -223,6 +382,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 	it('allows another automatic restart after one failed recovery and the 61 minute cooldown expires', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
+		primeControlSessionRecoveryDue(tracker);
 		for (let index = 1; index <= 10; index += 1) {
 			tracker.recordGatewayServiceProbe({
 				observedAtMs: index * 10_000,
@@ -247,6 +407,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 			policy: { ...policy, maxConsecutiveFailedRecoveries: 2 },
 		});
 
+		primeControlSessionRecoveryDue(tracker);
 		for (let index = 1; index <= 10; index += 1) {
 			tracker.recordGatewayServiceProbe({
 				observedAtMs: index * 10_000,
@@ -300,6 +461,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 	it('does not reset automatic restart cooldown after a healthy interlude', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
+		primeControlSessionRecoveryDue(tracker);
 		for (let index = 1; index <= 10; index += 1) {
 			tracker.recordGatewayServiceProbe({
 				observedAtMs: index * 10_000,
@@ -314,6 +476,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 			result: 'ok',
 			zoneId: 'sunfam',
 		});
+		primeControlSessionRecoveryDue(tracker, { observedAtMs: 31 * 60 * 1000 });
 
 		for (let index = 1; index <= 9; index += 1) {
 			expect(
@@ -337,6 +500,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 	it('does not return overlapping restart decisions while recovery is in flight', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
+		primeControlSessionRecoveryDue(tracker);
 		for (let index = 1; index <= 10; index += 1) {
 			tracker.recordGatewayServiceProbe({
 				observedAtMs: index * 10_000,

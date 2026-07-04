@@ -34,10 +34,10 @@ const describeOpenClawMcpPortalSmoke = runOpenClawMcpPortalSmoke ? describe : de
 const agentId = 'smoke';
 const gatewayToken = 'mcp-portal-smoke-gateway-token';
 const portalToolNames = [
-	'mcp_portal_list',
-	'mcp_portal_search',
-	'mcp_portal_describe',
-	'mcp_portal_call',
+	'tool_portal_list',
+	'tool_portal_search',
+	'tool_portal_describe',
+	'tool_portal_call',
 ] as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -57,12 +57,12 @@ async function readManagedEffectiveConfigPair(effectivePortalDir: string): Promi
 	readonly effectivePortalConfig: Record<string, unknown>;
 }> {
 	const manifest = await readJsonObjectFile(
-		path.join(effectivePortalDir, 'mcp-portal-effective-manifest.json'),
+		path.join(effectivePortalDir, 'tool-portal-effective-manifest.json'),
 	);
 	const mcpConfigFile = manifest.mcpConfigFile;
-	const portalConfigFile = manifest.portalConfigFile;
+	const portalConfigFile = manifest.toolPortalConfigFile;
 	if (typeof mcpConfigFile !== 'string' || typeof portalConfigFile !== 'string') {
-		throw new Error('Expected MCP Portal effective config manifest to name both config files.');
+		throw new Error('Expected Tool Portal effective config manifest to name both config files.');
 	}
 	return {
 		effectiveMcpConfig: await readJsonObjectFile(path.join(effectivePortalDir, mcpConfigFile)),
@@ -114,19 +114,6 @@ function parseNativePortalToolResult(value: unknown): unknown {
 	throw new Error(
 		`Expected OpenClaw tool result details or JSON content: ${JSON.stringify(value)}`,
 	);
-}
-
-function readScalarStructuredContent(result: unknown): unknown {
-	if (!isObjectRecord(result) || !Array.isArray(result.content)) {
-		throw new Error(`Expected scalar PortalCoreResult content: ${JSON.stringify(result)}`);
-	}
-	const contentBlock = result.content[0];
-	if (!isObjectRecord(contentBlock) || contentBlock.type !== 'json') {
-		throw new Error(
-			`Expected first scalar PortalCoreResult block to be JSON: ${JSON.stringify(result)}`,
-		);
-	}
-	return contentBlock.value;
 }
 
 function readSingleItem(result: unknown): Record<string, unknown> {
@@ -248,7 +235,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			harness.systemConfig.cacheDir,
 			'gateways',
 			zone.id,
-			'mcp-portal-effective',
+			'tool-portal-effective',
 		);
 		const { effectiveMcpConfig, effectivePortalConfig } =
 			await readManagedEffectiveConfigPair(effectivePortalDir);
@@ -277,28 +264,24 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		expect(effectivePortalConfig.externalAuth).toBeUndefined();
 	});
 
-	it('discovers the fake upstream namespace through mcp_portal_list', async () => {
+	it('discovers the fake upstream namespace through tool_portal_list', async () => {
 		const result = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
 				agentId,
 				args: { requests: [{ id: 'list', limit: 10 }] },
-				tool: 'mcp_portal_list',
+				tool: 'tool_portal_list',
 			}),
 		);
-		expect(readScalarStructuredContent(result)).toMatchObject({
-			ok: true,
-			results: {
-				list: {
-					ok: true,
-					output: {
-						namespaces: [fakeUpstreamNamespace],
-					},
-				},
+		expect(readSingleItem(result)).toMatchObject({
+			id: 'list',
+			status: 'ok',
+			value: {
+				namespaces: [fakeUpstreamNamespace],
 			},
 		});
 	});
 
-	it('calls read tools and blocks unsigned write tools', async () => {
+	it('calls read tools and denies non-callable write tools', async () => {
 		const readArguments = { title: 'Read from full OpenClaw smoke' };
 		const readResult = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
@@ -308,18 +291,18 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 						{
 							arguments: readArguments,
 							id: 'read',
+							name: 'read_thing',
 							namespace: fakeUpstreamNamespace,
-							toolName: 'read_thing',
 						},
 					],
 				},
-				tool: 'mcp_portal_call',
+				tool: 'tool_portal_call',
 			}),
 		);
 		expect(readSingleItem(readResult)).toMatchObject({
-			requestId: 'read',
-			status: 'success',
-			structuredContent: {
+			id: 'read',
+			status: 'ok',
+			value: {
 				namespace: fakeUpstreamNamespace,
 				result: {
 					content: [
@@ -333,7 +316,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 						ok: true,
 					},
 				},
-				toolName: 'read_thing',
+				name: 'read_thing',
 			},
 		});
 		expect(upstreamServer?.calls).toContainEqual({
@@ -342,22 +325,34 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 
 		const writeArguments = { title: 'Write from full OpenClaw smoke' };
-		await expect(
-			gatewayClient?.invokeTool({
+		const writeResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
 				agentId,
 				args: {
 					calls: [
 						{
 							arguments: writeArguments,
 							id: 'write',
+							name: 'write_thing',
 							namespace: fakeUpstreamNamespace,
-							toolName: 'write_thing',
 						},
 					],
 				},
-				tool: 'mcp_portal_call',
+				tool: 'tool_portal_call',
 			}),
-		).rejects.toThrow(/requiresApproval/u);
+		);
+		expect(writeResult).toMatchObject({
+			items: [
+				{
+					error: {
+						code: 'capability_denied',
+					},
+					id: 'write',
+					status: 'error',
+				},
+			],
+			ok: false,
+		});
 		expect(upstreamServer?.calls).not.toContainEqual({
 			argumentsValue: writeArguments,
 			name: 'write_thing',

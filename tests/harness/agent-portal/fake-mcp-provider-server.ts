@@ -3,24 +3,27 @@ import {
 	type PortalCallResult,
 	PortalCallResultSchema,
 	PortalDescribeRequestSchema,
+	type PortalDescribeResult,
 	PortalDescribeResultSchema,
+	type PortalListResult,
 	PortalListRequestSchema,
 	PortalListResultSchema,
+	type PortalSearchResult,
 	PortalSearchRequestSchema,
 	PortalSearchResultSchema,
 	type JsonObject,
 	type JsonValue,
 } from '@agent-vm/agent-portal-sdk';
 
-export type FakePortalDescribeResult = PortalCallResult;
-export type FakePortalListResult = PortalCallResult;
-export type FakePortalSearchResult = PortalCallResult;
+export type FakePortalDescribeResult = PortalDescribeResult;
+export type FakePortalListResult = PortalListResult;
+export type FakePortalSearchResult = PortalSearchResult;
 
 export interface FakeMcpProviderCapability {
 	readonly description?: string;
 	readonly inputSchema: JsonObject;
 	readonly namespace: string;
-	readonly toolName: string;
+	readonly name: string;
 	readonly value: JsonValue;
 }
 
@@ -63,7 +66,8 @@ function createListResult(
 				id: itemRequest.id,
 				status: 'ok',
 				value: {
-					tools: selectedCapabilities.map((capability) => createCapabilityDescriptor(capability)),
+					namespaces: [...new Set(selectedCapabilities.map((capability) => capability.namespace))],
+					tools: selectedCapabilities.map((capability) => createCapabilitySummary(capability)),
 				},
 			};
 		}),
@@ -86,7 +90,7 @@ function createSearchResult(
 				const queryMatches =
 					query.length === 0 ||
 					capability.namespace.toLowerCase().includes(query) ||
-					capability.toolName.toLowerCase().includes(query) ||
+					capability.name.toLowerCase().includes(query) ||
 					(capability.description?.toLowerCase().includes(query) ?? false);
 				return namespaceMatches && queryMatches;
 			});
@@ -94,7 +98,7 @@ function createSearchResult(
 				id: itemRequest.id,
 				status: 'ok',
 				value: {
-					tools: selectedCapabilities.map((capability) => createCapabilityDescriptor(capability)),
+					tools: selectedCapabilities.map((capability) => createCapabilitySummary(capability)),
 				},
 			};
 		}),
@@ -115,8 +119,7 @@ function createDescribeResult(
 					? capabilities
 					: capabilities.filter((capability) =>
 							requestedTools.some(
-								(tool) =>
-									tool.namespace === capability.namespace && tool.toolName === capability.toolName,
+								(tool) => tool.namespace === capability.namespace && tool.name === capability.name,
 							),
 						);
 			return {
@@ -139,14 +142,13 @@ function createCallResult(
 	const items = parsedRequest.calls.map((callRequest) => {
 		const capability = capabilities.find(
 			(candidate) =>
-				candidate.namespace === callRequest.namespace &&
-				candidate.toolName === callRequest.toolName,
+				candidate.namespace === callRequest.namespace && candidate.name === callRequest.name,
 		);
 		if (capability === undefined) {
 			return {
 				error: {
 					code: 'capability_denied',
-					message: `Capability ${callRequest.namespace}.${callRequest.toolName} is not available.`,
+					message: `Capability ${callRequest.namespace}.${callRequest.name} is not available.`,
 					safeDiagnostic: {
 						code: 'capability_denied',
 						level: 'warn',
@@ -171,9 +173,28 @@ function createCallResult(
 
 function createCapabilityDescriptor(capability: FakeMcpProviderCapability): JsonObject {
 	return {
-		description: capability.description ?? '',
+		annotations: {},
 		inputSchema: capability.inputSchema,
 		namespace: capability.namespace,
-		toolName: capability.toolName,
+		related: [],
+		name: capability.name,
+		toolRef: `${capability.namespace}:${capability.name}`,
+	};
+}
+
+function createCapabilitySummary(capability: FakeMcpProviderCapability): JsonObject {
+	return {
+		...(capability.description === undefined ? {} : { description: capability.description }),
+		input: {
+			optional: [],
+			propertyCount: 0,
+			required: [],
+			type:
+				typeof capability.inputSchema.type === 'string' ? capability.inputSchema.type : 'object',
+		},
+		namespace: capability.namespace,
+		safety: {},
+		name: capability.name,
+		toolRef: `${capability.namespace}:${capability.name}`,
 	};
 }

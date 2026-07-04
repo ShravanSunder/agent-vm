@@ -74,12 +74,14 @@ export type OpenClawDeploymentRequirementTarget =
 			readonly config: OpenClawDeploymentConfig;
 			readonly configPath?: string | undefined;
 			readonly kind: 'readable';
+			readonly runtimeMaterializesPortalEndpoints?: boolean;
 			readonly zoneId: string;
 	  }
 	| {
 			readonly configPath?: string | undefined;
 			readonly configReadError: string;
 			readonly kind: 'unreadable';
+			readonly runtimeMaterializesPortalEndpoints?: boolean;
 			readonly zoneId: string;
 	  };
 
@@ -182,7 +184,7 @@ function readSandboxToolPolicy(
 	return policy?.sandbox?.tools ?? {};
 }
 
-function policyListAllowsMcpPortalTools(props: {
+function policyListAllowsToolPortalTools(props: {
 	readonly emptyListAllowsAll: boolean;
 	readonly values: readonly string[] | undefined;
 }): boolean {
@@ -194,17 +196,17 @@ function policyListAllowsMcpPortalTools(props: {
 		return props.emptyListAllowsAll;
 	}
 	const exactToolNames = new Set([
-		'mcp_portal_list',
-		'mcp_portal_search',
-		'mcp_portal_describe',
-		'mcp_portal_call',
+		'tool_portal_list',
+		'tool_portal_search',
+		'tool_portal_describe',
+		'tool_portal_call',
 	]);
 	const allowedToolNames = new Set<string>();
 	for (const value of values) {
-		if (value === '*' || value === 'group:plugins' || value === 'mcp-portal') {
+		if (value === '*' || value === 'group:plugins' || value === 'tool-portal') {
 			return true;
 		}
-		if (value === 'mcp_portal_*') {
+		if (value === 'tool_portal_*') {
 			return true;
 		}
 		if (exactToolNames.has(value)) {
@@ -214,66 +216,74 @@ function policyListAllowsMcpPortalTools(props: {
 	return exactToolNames.size === allowedToolNames.size;
 }
 
-function policyAllowsMcpPortalTools(policy: OpenClawToolPolicyConfig | undefined): boolean {
+function policyAllowsToolPortalTools(policy: OpenClawToolPolicyConfig | undefined): boolean {
 	return (
-		policyListAllowsMcpPortalTools({
+		policyListAllowsToolPortalTools({
 			emptyListAllowsAll: true,
 			values: stringValues(policy?.allow),
 		}) ||
-		policyListAllowsMcpPortalTools({
+		policyListAllowsToolPortalTools({
 			emptyListAllowsAll: false,
 			values: stringValues(policy?.alsoAllow),
 		})
 	);
 }
 
-function agentSandboxPolicyAllowsMcpPortalTools(props: {
+function agentSandboxPolicyAllowsToolPortalTools(props: {
 	readonly agentConfig: OpenClawAgentConfig;
 	readonly globalTools: OpenClawToolPolicyConfig | undefined;
 }): boolean {
-	if (policyAllowsMcpPortalTools(readSandboxToolPolicy(props.agentConfig.tools))) {
+	if (policyAllowsToolPortalTools(readSandboxToolPolicy(props.agentConfig.tools))) {
 		return true;
 	}
-	return policyAllowsMcpPortalTools(readSandboxToolPolicy(props.globalTools));
+	return policyAllowsToolPortalTools(readSandboxToolPolicy(props.globalTools));
 }
 
-function sandboxPolicyAllowsMcpPortalTools(config: OpenClawDeploymentConfig): boolean {
+function sandboxPolicyAllowsToolPortalTools(config: OpenClawDeploymentConfig): boolean {
 	const defaults = config.agents?.defaults ?? {};
 	return readAgentConfigEntries(config).every(({ config: agentConfig }) => {
 		if (effectiveSandboxValue(defaults, agentConfig, 'mode') === 'off') {
 			return true;
 		}
-		return agentSandboxPolicyAllowsMcpPortalTools({
+		return agentSandboxPolicyAllowsToolPortalTools({
 			agentConfig,
 			globalTools: config.tools,
 		});
 	});
 }
 
-function hasMcpPortalPlugin(config: OpenClawDeploymentConfig): boolean {
+function hasDeprecatedMcpPortalSurface(config: OpenClawDeploymentConfig): boolean {
 	const entry = config.plugins?.entries?.['mcp-portal'];
-	return (
+	const hasPluginIdentity =
 		includesString(config.plugins?.allow, 'mcp-portal') ||
-		(isObjectRecord(entry) && entry.enabled === true)
+		(isObjectRecord(entry) && entry.enabled === true);
+	const mcp = config.mcp;
+	const servers = isObjectRecord(mcp) && isObjectRecord(mcp.servers) ? mcp.servers : {};
+	const hasOldPortalServers = Object.keys(servers).some((serverName) =>
+		serverName.startsWith('mcp_portal_'),
 	);
+	return hasPluginIdentity || hasOldPortalServers;
 }
 
 function buildSandboxPluginToolHint(config: OpenClawDeploymentConfig): string {
-	if (policyAllowsMcpPortalTools(config.tools)) {
-		return 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or mcp-portal / mcp_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.';
+	if (policyAllowsToolPortalTools(config.tools)) {
+		return 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or tool-portal / tool_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.';
 	}
-	return 'Add "group:plugins" to tools.sandbox.tools.alsoAllow so sandboxed agents can see optional plugin tools such as mcp_portal_*.';
+	return 'Add "group:plugins" to tools.sandbox.tools.alsoAllow so sandboxed agents can see optional plugin tools such as tool_portal_*.';
 }
 
 function buildSandboxPluginToolPolicyFinding(
 	target: Extract<OpenClawDeploymentRequirementTarget, { readonly kind: 'readable' }>,
 ): OpenClawDeploymentRequirementFinding {
-	const ok = !hasMcpPortalPlugin(target.config) || sandboxPolicyAllowsMcpPortalTools(target.config);
+	const shouldRequireToolPortalTools =
+		target.runtimeMaterializesPortalEndpoints === true ||
+		hasDeprecatedMcpPortalSurface(target.config);
+	const ok = !shouldRequireToolPortalTools || sandboxPolicyAllowsToolPortalTools(target.config);
 	return {
 		id: `openclaw-sandbox-plugin-tools-${target.zoneId}`,
 		ok,
 		hint: ok
-			? 'tools.sandbox.tools allows MCP Portal plugin tools for sandboxed agents.'
+			? 'tools.sandbox.tools allows Tool Portal native plugin tools for sandboxed agents.'
 			: buildSandboxPluginToolHint(target.config),
 	};
 }
@@ -376,6 +386,7 @@ export async function collectOpenClawDeploymentRequirementTargets(
 					configPath,
 					config: parseOpenClawDeploymentConfig(rawConfig),
 					kind: 'readable',
+					runtimeMaterializesPortalEndpoints: zone.toolPortal !== undefined,
 				} satisfies OpenClawDeploymentRequirementTarget;
 			} catch (error) {
 				return {
@@ -383,6 +394,7 @@ export async function collectOpenClawDeploymentRequirementTargets(
 					configPath,
 					configReadError: error instanceof Error ? error.message : String(error),
 					kind: 'unreadable',
+					runtimeMaterializesPortalEndpoints: zone.toolPortal !== undefined,
 				} satisfies OpenClawDeploymentRequirementTarget;
 			}
 		}),

@@ -5,7 +5,7 @@ import {
 } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LeaseClient, OpenClawGondolinLeaseRequest } from './controller-lease-client.js';
+import type { LeaseClient, OpenClawGondolinLeaseRequest } from './lease-client-contract.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 const openClawToolVmWorkspaceMount = '/workspace';

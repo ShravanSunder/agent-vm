@@ -11,6 +11,7 @@ import { defaultCliDependencies, type CliIo } from './agent-vm-cli-support.js';
 import { runZoneGitCommand } from './zone-git-commands.js';
 
 const createdDirectories: string[] = [];
+const zoneGitTestBranch = 'agent-vm-zone-files';
 
 function createIo(outputs: string[]): CliIo {
 	return {
@@ -87,7 +88,10 @@ function createSystemConfig(options: {
 					zoneGit: {
 						remote: {
 							repoUrl: options.remoteUrl,
-							branch: 'main',
+							branch: zoneGitTestBranch,
+							defaultBranch: 'trunk',
+							protectedBranches: ['trunk'],
+							protectedBranchPatterns: ['release/*'],
 						},
 					},
 				},

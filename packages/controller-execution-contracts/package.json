@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/controller-execution-contracts",
-	"version": "0.0.102",
+	"version": "0.0.108",
 	"description": "Zod contracts for controller-owned portal execution boundaries.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -32,9 +32,9 @@
 			"types": "./dist/controller-host-action-boundary/index.d.ts",
 			"import": "./dist/controller-host-action-boundary/index.js"
 		},
-		"./credentialed-runner-boundary": {
-			"types": "./dist/credentialed-runner-boundary/index.d.ts",
-			"import": "./dist/credentialed-runner-boundary/index.js"
+		"./tool-vm-runner-boundary": {
+			"types": "./dist/tool-vm-runner-boundary/index.d.ts",
+			"import": "./dist/tool-vm-runner-boundary/index.js"
 		},
 		"./testing": {
 			"types": "./dist/testing/index.d.ts",

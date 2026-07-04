@@ -87,17 +87,7 @@ All routes are served by Hono on the configured `host.controllerPort` (default 1
 | Method | Path | Description | Response |
 |--------|------|-------------|----------|
 | `GET` | `/health` | Liveness probe | `{ ok, port }` |
-| `POST` | `/zones/:zoneId/health-events` | Record one zone-scoped health event from a gateway VM or controller observer | `{ ok: true }` |
 | `GET` | `/zones/:zoneId/health-snapshot` | Read the current in-memory zone health snapshot | Discriminated snapshot body |
-| `POST` | `/lease` | Create a tool VM lease | Lease with SSH access details |
-| `GET` | `/lease/:leaseId` | Read a lease without extending its idle timer | Lease with SSH identity PEM |
-| `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | Lease summary without SSH identity PEM |
-| `POST` | `/lease/:leaseId/renew` | Renew an idle cached lease | Lease with SSH identity PEM |
-| `POST` | `/lease/:leaseId/uses` | Start an in-flight Tool VM use with a UUIDv7 use id | `{ useId, expiresAt, heartbeatAfterMs }` |
-| `POST` | `/lease/:leaseId/uses/:useId/heartbeat` | Heartbeat an in-flight Tool VM use | `{ expiresAt, heartbeatAfterMs }` |
-| `DELETE` | `/lease/:leaseId/uses/:useId` | End an in-flight Tool VM use | 204 No Content |
-| `GET` | `/leases` | List all active leases | Array of lease summaries |
-| `DELETE` | `/lease/:leaseId` | Release a lease, destroy its VM | 204 No Content |
 
 ### Zone Operation Routes (controller-zone-operation-routes.ts)
 
@@ -117,8 +107,6 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
-| `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push task branches from the host | Worker |
-| `POST` | `/zones/:zoneId/tasks/:taskId/pull-default` | Refresh a repo's default branch from the host | Worker |
 | `POST` | `/stop-controller` | Graceful shutdown | Both |
 
 Request bodies are validated with Zod schemas (`controller-request-schemas.ts`). Invalid payloads return 400 with structured `error` and `issues` fields.
@@ -162,16 +150,14 @@ agent-vm controller
   |-- probes gateway-service through the zone runtime health check
   |     -> gateway-service-health
   |
-gateway VM / gateway plugin
-  |-- calls GET /health over controller.vm.host:18800
-  |     -> gateway-control-link
-  |-- may POST /zones/:zoneId/health-events when it has a stable source
+controller -> gateway VM private ingress
+  |-- Socket.IO control session
+  |     -> gateway-control-session
+  |-- gateway_control_rpc health_event
   |     -> agent-channel-provider-health
-  |
-lease routes
-  |-- POST /lease/:leaseId/renew
+  |-- gateway_control_rpc lease_renew
   |     -> lease-renew
-  |-- POST /lease/:leaseId/uses/:useId/heartbeat
+  |-- gateway_control_rpc lease_use_heartbeat
   |     -> lease-heartbeat
   |
 Tool VM SSH guard
@@ -179,16 +165,16 @@ Tool VM SSH guard
         -> tool-vm-ssh
   |
 automatic gateway VM restart
-  |-- repeated gateway-service or gateway-control-link failures
+  |-- repeated gateway-service or control-session failures
         -> gateway-recovery
 ```
 
-`lease-heartbeat` is the user-facing name for
-`POST /lease/:leaseId/uses/:useId/heartbeat`. It keeps an in-flight Tool VM use
-alive and touches the lease when successful. `lease-renew` keeps an idle cached
-lease alive before reuse. Both can extend lease state, but they diagnose
-different paths: heartbeat means "an active operation still exists"; renew
-means "a cached lease can be reused."
+`lease-heartbeat` is the user-facing name for the active-use heartbeat sent over
+`gateway_control_rpc`. It keeps an in-flight Tool VM use alive and touches the
+lease when successful. `lease-renew` keeps an idle cached lease alive before
+reuse. Both can extend lease state, but they diagnose different paths:
+heartbeat means "an active operation still exists"; renew means "a cached lease
+can be reused."
 
 Bounded controller communication is operation-specific, not globally
 aggressive. Health probes use short timeouts and no retry. Git push/pull and
@@ -196,9 +182,9 @@ lease-create operations use longer timeouts because normal work can legitimately
 take longer. Unsafe mutations are not retried without an idempotency proof.
 
 For OpenClaw zones, the controller can automatically recover a gateway when the
-host-side gateway-service probe, the in-VM gateway-control-link observation, or
-a generic channel-provider health event fails repeatedly. The default running
-gateway trigger is 10 consecutive degraded gateway-service/control-link
+host-side gateway-service probe, the control session, or a generic
+channel-provider health event fails repeatedly. The default running gateway
+trigger is 10 consecutive degraded gateway-service/control-session
 observations, a 61 minute per-zone cooldown, and a 10 minute recovery deadline.
 Generic channel-provider health has its own policy: `unhealthy-recoverable`
 degrades readiness/status by default and feeds recovery only when
@@ -241,12 +227,14 @@ the zone runtime.
 
 ## Lease Manager
 
-The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM leases. It is the bridge between the HTTP API and the Gondolin VM layer.
+The lease manager (`lease-manager.ts`) creates, tracks, and releases Tool VM
+leases. In managed gateway mode it is driven by gateway-control RPC handlers,
+not by VM-facing public HTTP lease routes.
 
 ### Lease Lifecycle
 
 ```
-  POST /lease { zoneId, agentId, sessionKey, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
+  gateway_control_rpc lease_create { callerContextId, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
     |
     v
   resolveLeaseWorkMountDir()
@@ -277,7 +265,7 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |     vm.close() (if created) then tcpPool.release(slot)
     |
     v
-  DELETE /lease/:leaseId
+  gateway_control_rpc lease_release
     |
     v
   releaseLease()
@@ -293,14 +281,14 @@ identity file, user), `createdAt`, `lastUsedAt`, and `effectiveIdleTtlMs`. The
 lease manager does not clean work mount files on release; OpenClaw-selected
 lease work mounts are owned by the caller that supplied `workMountDir`.
 
-`GET /lease/:leaseId` and `GET /lease/:leaseId/peek` are read-only. Lease-level
-idle renewal is `POST /lease/:leaseId/renew`. In-flight work uses
-`POST /lease/:leaseId/uses`, periodic use heartbeats, and
-`DELETE /lease/:leaseId/uses/:useId`; those active uses prevent idle reaping
-while the command or file-bridge operation is still running. Use ids are
-caller-issued UUIDv7 values so retries can be idempotent without another
-round-trip. Ended uses leave short tombstones so a duplicate start after a
-completed use is rejected instead of resurrecting old work.
+Operator-visible lease counts are exposed through controller status and health
+snapshot diagnostics. Managed gateway leases are otherwise created, renewed,
+and released through the gateway control session. In-flight work uses active-use
+start, heartbeat, and end messages; those active uses prevent idle reaping while
+the command or file-bridge operation is still running. Use ids are caller-issued
+UUIDv7 values so retries can be idempotent without another round-trip. Ended
+uses leave short tombstones so a duplicate
+start after a completed use is rejected instead of resurrecting old work.
 
 `workMountDir` is a gateway VM path, not a host path and not a `system.json`
 field. It must name a concrete child path below `/zone` or

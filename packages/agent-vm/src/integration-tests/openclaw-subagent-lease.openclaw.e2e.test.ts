@@ -3,9 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { type ManagedVm } from '@agent-vm/gondolin-adapter';
-import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import type { ControlSessionClient } from '../controller/control-session/control-session-client.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinE2e,
@@ -18,6 +18,7 @@ import {
 	type E2eHarnessRuntime,
 	useLocalOpenClawGatewayImagePackages,
 } from './e2e-harness.js';
+import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawSubagentE2e =
@@ -27,6 +28,7 @@ const agentId = 'smoke';
 const gatewayToken = 'subagent-lease-smoke-gateway-token';
 const mockOpenAiPort = 18231;
 const subagentE2eResultPrefix = 'AGENT_VM_SUBAGENT_E2E_RESULT ';
+const defaultFlapCount = 3;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -36,11 +38,19 @@ interface OpenClawSubagentSpawnProbeResult {
 	readonly agentResponse: unknown;
 	readonly childSessionKey: string;
 	readonly contextWorkspaceDir: string;
+	readonly diagnostics?: OpenClawSubagentSpawnProbeDiagnostics;
 	readonly error?: string;
 	readonly historyResponse: unknown;
 	readonly runId: string;
 	readonly waitResponse: unknown;
 	readonly status: 'accepted' | 'error';
+}
+
+interface OpenClawSubagentSpawnProbeDiagnostics {
+	readonly gatewayErrLogTail?: string;
+	readonly gatewayLogTail?: string;
+	readonly mockOpenAiRequestLog?: string;
+	readonly mockOpenAiServerLog?: string;
 }
 
 interface ObservedLeaseCreateRequest {
@@ -52,6 +62,18 @@ interface ObservedLeaseCreateRequest {
 
 function shellSingleQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function positiveIntegerFromEnv(envName: string, defaultValue: number): number {
+	const rawValue = process.env[envName];
+	if (rawValue === undefined || rawValue.length === 0) {
+		return defaultValue;
+	}
+	const parsedValue = Number(rawValue);
+	if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+		throw new Error(`${envName} must be a positive integer.`);
+	}
+	return parsedValue;
 }
 
 function parseSubagentSpawnProbeResult(stdout: string): OpenClawSubagentSpawnProbeResult {
@@ -79,6 +101,9 @@ function parseSubagentSpawnProbeResult(stdout: string): OpenClawSubagentSpawnPro
 		childSessionKey: parsed.childSessionKey,
 		contextWorkspaceDir:
 			typeof parsed.contextWorkspaceDir === 'string' ? parsed.contextWorkspaceDir : '',
+		...(isObjectRecord(parsed.diagnostics)
+			? { diagnostics: parsed.diagnostics as OpenClawSubagentSpawnProbeDiagnostics }
+			: {}),
 		...(typeof parsed.error === 'string' ? { error: parsed.error } : {}),
 		historyResponse: parsed.historyResponse,
 		runId: parsed.runId,
@@ -296,63 +321,105 @@ NODE`;
 	}
 }
 
-async function readControllerLeases(controllerUrl: string): Promise<unknown> {
-	const response = await fetch(`${controllerUrl}/leases`);
+async function readControllerStatus(controllerUrl: string): Promise<unknown> {
+	const response = await fetch(`${controllerUrl}/controller-status`);
 	if (!response.ok) {
-		throw new Error(`Controller /leases returned HTTP ${String(response.status)}.`);
+		throw new Error(`Controller /controller-status returned HTTP ${String(response.status)}.`);
 	}
 	return await response.json();
 }
 
-async function requestControllerLease(options: {
-	readonly controllerUrl: string;
-	readonly zoneId: string;
-}): Promise<void> {
-	const response = await fetch(`${options.controllerUrl}/lease`, {
-		body: JSON.stringify({
-			agentId,
-			agentWorkspaceDir: '/zone/agents/smoke',
-			profileId: 'standard',
-			sessionKey: `agent:${agentId}:parent-smoke`,
-			workMountDir: '/zone/agents/smoke',
-			zoneId: options.zoneId,
-		}),
-		headers: { 'content-type': 'application/json' },
-		method: 'POST',
-	});
-	if (!response.ok) {
+function activeLeaseCountFromControllerStatus(statusPayload: unknown, zoneId: string): number {
+	if (!isObjectRecord(statusPayload) || !Array.isArray(statusPayload.zones)) {
+		throw new Error('Expected controller-status response with zones array.');
+	}
+	const zoneStatus = statusPayload.zones.find(
+		(zone): zone is { readonly activeLeaseCount: number; readonly id: string } =>
+			isObjectRecord(zone) && zone.id === zoneId && typeof zone.activeLeaseCount === 'number',
+	);
+	if (zoneStatus === undefined) {
+		throw new Error(`Expected controller-status response for zone '${zoneId}'.`);
+	}
+	return zoneStatus.activeLeaseCount;
+}
+
+async function restartOpenClawGatewayProcess(gatewayVm: ManagedVm): Promise<void> {
+	const result = await gatewayVm.exec(`
+set -eu
+port_hex="$(printf '%04X' 18789)"
+socket_inode="$(awk -v port=":$port_hex" '$2 ~ port && $4 == "0A" { print $10; exit }' /proc/net/tcp /proc/net/tcp6 2>/dev/null || true)"
+gateway_pid=""
+if [ -n "$socket_inode" ]; then
+  for fd in /proc/[0-9]*/fd/*; do
+    target="$(readlink "$fd" 2>/dev/null || true)"
+    if [ "$target" = "socket:[$socket_inode]" ]; then
+      gateway_pid="$(echo "$fd" | cut -d / -f 3)"
+      break
+    fi
+  done
+fi
+if [ -z "$gateway_pid" ]; then
+  echo "no openclaw gateway process found" >&2
+  exit 1
+fi
+kill -KILL "$gateway_pid"
+for _attempt in $(seq 1 90); do
+  readyz_code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/readyz 2>/dev/null || true)"
+  if [ "$readyz_code" = "200" ]; then
+    echo "supervisor restarted openclaw gateway after pid $gateway_pid"
+    exit 0
+  fi
+  sleep 1
+done
+echo "openclaw gateway did not restart after killing pid $gateway_pid" >&2
+tail -n 80 /agent-vm/logs/gateway-boot-latest.log >&2 || true
+exit 1
+`);
+	if (result.exitCode !== 0) {
 		throw new Error(
-			`Parent lease request failed HTTP ${String(response.status)}: ${await response.text()}`,
+			`OpenClaw gateway process restart failed with exit ${String(result.exitCode)}.\nstdout:\n${
+				result.stdout
+			}\nstderr:\n${result.stderr}`,
 		);
 	}
 }
 
-async function publishOpenClawRuntimeStatus(options: {
-	readonly controllerUrl: string;
-	readonly openClawConfigPath: string;
-	readonly zoneId: string;
+async function waitForControlSessionReconnected(options: {
+	readonly controlSession: ControlSessionClient;
+	readonly minimumHelloCount: number;
+	readonly timeoutMs: number;
 }): Promise<void> {
-	const parsedConfig: unknown = JSON.parse(await fs.readFile(options.openClawConfigPath, 'utf8'));
-	if (!isObjectRecord(parsedConfig)) {
-		throw new Error(`Expected OpenClaw smoke config at ${options.openClawConfigPath}.`);
+	const deadlineMs = Date.now() + options.timeoutMs;
+	while (Date.now() < deadlineMs) {
+		const diagnostics = options.controlSession.getDiagnostics();
+		if (
+			diagnostics.connected &&
+			diagnostics.helloCount >= options.minimumHelloCount &&
+			diagnostics.lastHelloResponse?.outcome === 'accepted' &&
+			diagnostics.transportName === 'websocket'
+		) {
+			return;
+		}
+		await waitForProtocolRetryInterval(1_000);
 	}
-	const response = await fetch(
-		`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/openclaw-runtime-status`,
-		{
-			body: JSON.stringify(
-				buildOpenClawRuntimeStatusReport({
-					config: parsedConfig,
-					zoneId: options.zoneId,
-				}),
-			),
-			headers: { 'content-type': 'application/json' },
-			method: 'POST',
-		},
+	throw new Error(
+		`Timed out waiting for control-session accepted reconnect hello count >= ${String(options.minimumHelloCount)}; diagnostics: ${JSON.stringify(options.controlSession.getDiagnostics())}`,
 	);
-	if (!response.ok) {
-		throw new Error(
-			`OpenClaw runtime status publish failed HTTP ${String(response.status)}: ${await response.text()}`,
-		);
+}
+
+async function runRepeatedGatewayFlaps(options: {
+	readonly controlSession: ControlSessionClient;
+	readonly flapCount: number;
+	readonly gatewayVm: ManagedVm;
+}): Promise<void> {
+	for (let flapIndex = 0; flapIndex < options.flapCount; flapIndex += 1) {
+		const helloCountBeforeFlap = options.controlSession.getDiagnostics().helloCount;
+		await restartOpenClawGatewayProcess(options.gatewayVm);
+		await waitForControlSessionReconnected({
+			controlSession: options.controlSession,
+			minimumHelloCount: helloCountBeforeFlap + 1,
+			timeoutMs: 120_000,
+		});
 	}
 }
 
@@ -386,6 +453,7 @@ export OPENCLAW_SUBAGENT_SMOKE_MARKER=${shellSingleQuote(options.marker)}
 cd "$OPENCLAW_PACKAGE_ROOT"
 node --input-type=module <<'NODE'
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 
 const packageRoot = process.env.OPENCLAW_PACKAGE_ROOT;
 const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
@@ -396,6 +464,25 @@ const marker = process.env.OPENCLAW_SUBAGENT_SMOKE_MARKER;
 
 if (!packageRoot || !gatewayToken || !guestPort || !agentId || !contextWorkspaceDir || !marker) {
 	throw new Error('Missing OpenClaw subagent e2e environment.');
+}
+
+function readTailIfExists(filePath, maxChars = 12000) {
+	try {
+		const content = fs.readFileSync(filePath, 'utf8');
+		return content.length > maxChars ? content.slice(content.length - maxChars) : content;
+	} catch {
+		return undefined;
+	}
+}
+
+function collectProbeDiagnostics() {
+	const home = process.env.HOME || '/root';
+	return {
+		gatewayErrLogTail: readTailIfExists(home + '/.openclaw/logs/gateway.err.log'),
+		gatewayLogTail: readTailIfExists(home + '/.openclaw/logs/gateway.log'),
+		mockOpenAiRequestLog: readTailIfExists('/tmp/agent-vm-subagent-mock-openai-requests.jsonl'),
+		mockOpenAiServerLog: readTailIfExists('/tmp/agent-vm-subagent-mock-openai.log'),
+	};
 }
 
 function readWebSocketText(data) {
@@ -643,6 +730,7 @@ console.log('AGENT_VM_SUBAGENT_E2E_RESULT ' + JSON.stringify({
 	agentResponse,
 	childSessionKey: spawnResult.childSessionKey,
 	contextWorkspaceDir,
+	diagnostics: collectProbeDiagnostics(),
 	error: spawnResult.error,
 	historyResponse,
 	runId: spawnResult.runId,
@@ -666,6 +754,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 	let project: OpenClawE2eProject | undefined;
 	let gatewayVm: ManagedVm | undefined;
 	let gatewayGuestListenPort: number | undefined;
+	let gatewayControlSession: ControlSessionClient | undefined;
 	const observedLeaseRequests: ObservedLeaseCreateRequest[] = [];
 
 	beforeAll(async () => {
@@ -723,6 +812,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 				const result = await startGatewayZone(startGatewayOptions);
 				gatewayVm = result.vm;
 				gatewayGuestListenPort = result.processSpec.guestListenPort;
+				gatewayControlSession = result.controlSession;
 				result.vm.setIngressRoutes([
 					{
 						port: result.processSpec.guestListenPort,
@@ -749,24 +839,24 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 		}
 	});
 
-	it('runs a same-agent subagent without sending /workspace as controller workMountDir', async () => {
-		if (gatewayVm === undefined || gatewayGuestListenPort === undefined || harness === undefined) {
+	it('keeps Tool VM subagent SSH path working after repeated control-session flaps', async () => {
+		if (
+			gatewayVm === undefined ||
+			gatewayGuestListenPort === undefined ||
+			gatewayControlSession === undefined ||
+			harness === undefined
+		) {
 			throw new Error('Expected smoke harness to be initialized.');
 		}
+		await runRepeatedGatewayFlaps({
+			controlSession: gatewayControlSession,
+			flapCount: positiveIntegerFromEnv('AGENT_VM_OPENCLAW_FLAP_COUNT', defaultFlapCount),
+			gatewayVm,
+		});
 		await startMockOpenAiServerInGateway({
 			gatewayVm,
 			port: mockOpenAiPort,
 		});
-		await publishOpenClawRuntimeStatus({
-			controllerUrl: harness.controllerUrl,
-			openClawConfigPath: harness.systemConfig.zones[0]?.gateway.config ?? '',
-			zoneId: 'subagent-lease-smoke',
-		});
-		await requestControllerLease({
-			controllerUrl: harness.controllerUrl,
-			zoneId: 'subagent-lease-smoke',
-		});
-		observedLeaseRequests.length = 0;
 
 		const spawnResults: OpenClawSubagentSpawnProbeResult[] = [];
 		for (const contextWorkspaceDir of ['/workspace', '/workspace/subdir', '/work/tmp']) {
@@ -791,13 +881,10 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			);
 		}
 
-		const leasePayload = await readControllerLeases(harness.controllerUrl);
-		expect(JSON.stringify(leasePayload)).toContain(`"agentId":"${agentId}"`);
+		const controllerStatusPayload = await readControllerStatus(harness.controllerUrl);
 		expect(
-			Array.isArray(leasePayload)
-				? leasePayload.filter((lease) => isObjectRecord(lease) && lease.agentId === agentId)
-				: [],
-		).toHaveLength(1);
+			activeLeaseCountFromControllerStatus(controllerStatusPayload, 'subagent-lease-smoke'),
+		).toBe(1);
 		expect(observedLeaseRequests).toEqual(
 			Array.from({ length: spawnResults.length }, () => ({
 				agentId,

@@ -1,12 +1,15 @@
 /* oxlint-disable eslint/no-await-in-loop -- e2e steps must be sequential against live VMs */
-import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-plugin';
 import { execa } from 'execa';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { ensureZoneGitRepository } from '../controller/zone-git/zone-git-operations.js';
+import {
+	ensureZoneGitRepository,
+	getZoneGitStatus,
+} from '../controller/zone-git/zone-git-operations.js';
+import { resolveZoneGitPaths } from '../controller/zone-git/zone-git-paths.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
 	canRunGondolinE2e,
@@ -16,8 +19,8 @@ import {
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
-	type OpenClawE2eProject,
 	type E2eHarnessRuntime,
+	type OpenClawE2eProject,
 	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
 } from './e2e-harness.js';
@@ -26,197 +29,106 @@ const architecture = currentE2eArchitecture();
 const runOpenClawZoneGitSmoke =
 	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
 const describeOpenClawZoneGitSmoke = runOpenClawZoneGitSmoke ? describe : describe.skip;
-
-interface ControllerLeaseResponse {
-	readonly leaseId: string;
-	readonly ssh: {
-		readonly identityPem: string;
-	};
-	readonly workdir: string;
-}
-
-interface ControllerLeasePeekResponse {
-	readonly ssh: {
-		readonly host: string;
-		readonly port: number;
-		readonly user: string;
-	};
-}
+const portalToolNames = [
+	'tool_portal_list',
+	'tool_portal_search',
+	'tool_portal_describe',
+	'tool_portal_call',
+] as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function assertControllerLeaseResponse(
-	payload: unknown,
-): asserts payload is ControllerLeaseResponse {
-	if (typeof payload !== 'object' || payload === null) {
-		throw new Error('Lease response must be an object.');
+async function allowPortalNativeToolsInOpenClawConfig(configPath: string): Promise<void> {
+	const parsed: unknown = JSON.parse(await readFile(configPath, 'utf8'));
+	if (!isObjectRecord(parsed)) {
+		throw new Error('Expected OpenClaw zone Git smoke config to be a JSON object.');
 	}
-	const response = payload as Partial<ControllerLeaseResponse>;
-	if (
-		typeof response.leaseId !== 'string' ||
-		typeof response.workdir !== 'string' ||
-		typeof response.ssh !== 'object' ||
-		response.ssh === null ||
-		typeof response.ssh.identityPem !== 'string'
-	) {
-		throw new Error(`Lease response had unexpected shape: ${JSON.stringify(payload)}`);
-	}
-	if ('scopeKey' in payload) {
-		throw new Error(`Lease response must not expose scopeKey: ${JSON.stringify(payload)}`);
-	}
+	const tools = isObjectRecord(parsed.tools) ? parsed.tools : {};
+	const existingAllow = Array.isArray(tools.allow)
+		? tools.allow.filter((tool): tool is string => typeof tool === 'string')
+		: [];
+	parsed.tools = {
+		...tools,
+		allow: [...new Set([...existingAllow, ...portalToolNames])],
+	};
+	await writeFile(configPath, `${JSON.stringify(parsed, null, '\t')}\n`, 'utf8');
 }
 
-function assertControllerLeasePeekResponse(
-	payload: unknown,
-): asserts payload is ControllerLeasePeekResponse {
-	if (typeof payload !== 'object' || payload === null) {
-		throw new Error('Lease peek response must be an object.');
-	}
-	const response = payload as Partial<ControllerLeasePeekResponse>;
-	if (
-		typeof response.ssh !== 'object' ||
-		response.ssh === null ||
-		typeof response.ssh.host !== 'string' ||
-		typeof response.ssh.port !== 'number' ||
-		typeof response.ssh.user !== 'string'
-	) {
-		throw new Error(`Lease peek response had unexpected shape: ${JSON.stringify(payload)}`);
-	}
-}
-
-async function readJsonResponse(response: Response): Promise<unknown> {
-	const responseBody = await response.text();
-	if (!response.ok) {
-		throw new Error(`HTTP ${String(response.status)}: ${responseBody}`);
-	}
-	return JSON.parse(responseBody) as unknown;
-}
-
-function parseUnknownJson(text: string): unknown {
-	return JSON.parse(text) as unknown;
-}
-
-async function readToolVmRuntimeRecordPayloads(stateDir: string): Promise<readonly unknown[]> {
-	const toolLeasesDir = path.join(stateDir, 'tool-leases');
-	const entries = await readdir(toolLeasesDir);
-	return await Promise.all(
-		entries
-			.filter((entry) => entry.endsWith('.json'))
-			.map(async (entry) =>
-				parseUnknownJson(await readFile(path.join(toolLeasesDir, entry), 'utf8')),
-			),
-	);
-}
-
-async function requestZoneGitLease(options: {
-	readonly controllerUrl: string;
-	readonly zoneId: string;
-}): Promise<ControllerLeaseResponse> {
-	const response = await fetch(`${options.controllerUrl}/lease`, {
-		body: JSON.stringify({
-			agentId: 'smoke',
-			agentWorkspaceDir: '/zone/agents/smoke',
-			profileId: 'standard',
-			sessionKey: 'agent:smoke:zone-git-smoke',
-			workMountDir: '/zone/agents/smoke',
-			zoneId: options.zoneId,
-		}),
-		headers: { 'content-type': 'application/json' },
-		method: 'POST',
-	});
-	const payload = await readJsonResponse(response);
-	assertControllerLeaseResponse(payload);
-	return payload;
-}
-
-async function publishOpenClawRuntimeStatus(options: {
-	readonly controllerUrl: string;
-	readonly openClawConfigPath: string;
-	readonly zoneId: string;
+async function writeZoneGitToolPortalConfigs(options: {
+	readonly agentId: string;
+	readonly configDir: string;
 }): Promise<void> {
-	const parsedConfig: unknown = JSON.parse(await readFile(options.openClawConfigPath, 'utf8'));
-	if (!isObjectRecord(parsedConfig)) {
-		throw new Error(`Expected OpenClaw smoke config at ${options.openClawConfigPath}.`);
+	await writeFile(
+		path.join(options.configDir, 'mcp.config.jsonc'),
+		`${JSON.stringify({ providers: {}, schemaVersion: 1 }, null, '\t')}\n`,
+		'utf8',
+	);
+	await writeFile(
+		path.join(options.configDir, 'mcp-portal.config.jsonc'),
+		`${JSON.stringify(
+			{
+				agents: { [options.agentId]: { profile: 'smoke' } },
+				profiles: {
+					smoke: {
+						namespaces: {
+							controller_host_action: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['zone_git_push'] },
+								},
+								tools: { allow: ['zone_git_push'] },
+							},
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+}
+
+function parseNativePortalToolResult(value: unknown): unknown {
+	if (!isObjectRecord(value) || value.ok !== true || !isObjectRecord(value.result)) {
+		throw new Error(`Expected successful OpenClaw /tools/invoke result: ${JSON.stringify(value)}`);
 	}
-	const response = await fetch(
-		`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/openclaw-runtime-status`,
-		{
-			body: JSON.stringify(
-				buildOpenClawRuntimeStatusReport({
-					config: parsedConfig,
-					zoneId: options.zoneId,
-				}),
-			),
-			headers: { 'content-type': 'application/json' },
-			method: 'POST',
-		},
+	const details = value.result.details;
+	if (details !== undefined) {
+		return details;
+	}
+	const content = value.result.content;
+	if (typeof content === 'string') {
+		return JSON.parse(content) as unknown;
+	}
+	throw new Error(
+		`Expected OpenClaw tool result details or JSON content: ${JSON.stringify(value)}`,
 	);
-	await readJsonResponse(response);
 }
 
-async function peekLease(options: {
-	readonly controllerUrl: string;
-	readonly leaseId: string;
-}): Promise<ControllerLeasePeekResponse> {
-	const response = await fetch(`${options.controllerUrl}/lease/${options.leaseId}/peek`);
-	const payload = await readJsonResponse(response);
-	assertControllerLeasePeekResponse(payload);
-	return payload;
+function readSingleItem(result: unknown): Record<string, unknown> {
+	if (!isObjectRecord(result) || !Array.isArray(result.items) || result.items.length !== 1) {
+		throw new Error(`Expected Portal result with exactly one item: ${JSON.stringify(result)}`);
+	}
+	const item = result.items[0];
+	if (!isObjectRecord(item)) {
+		throw new Error(`Expected Portal item object: ${JSON.stringify(result)}`);
+	}
+	return item;
 }
 
-async function createSshIdentityFile(options: {
-	readonly identityPem: string;
-	readonly tempRoot: string;
-}): Promise<string> {
-	const identityFilePath = path.join(options.tempRoot, 'zone-git-smoke-identity.pem');
-	await writeFile(identityFilePath, options.identityPem, { encoding: 'utf8', mode: 0o600 });
-	await chmod(identityFilePath, 0o600);
-	return identityFilePath;
+function expectSingleItemStatusOk(result: unknown): Record<string, unknown> {
+	const item = readSingleItem(result);
+	if (item.status !== 'ok') {
+		throw new Error(`Expected Portal item status ok: ${JSON.stringify(item)}`);
+	}
+	return item;
 }
 
-async function execSsh(options: {
-	readonly command: string;
-	readonly identityFilePath: string;
-	readonly ssh: ControllerLeasePeekResponse['ssh'];
-}): Promise<string> {
-	const result = await execa(
-		'ssh',
-		[
-			'-p',
-			String(options.ssh.port),
-			'-i',
-			options.identityFilePath,
-			'-o',
-			'StrictHostKeyChecking=no',
-			'-o',
-			'UserKnownHostsFile=/dev/null',
-			'-o',
-			'BatchMode=yes',
-			'-o',
-			'ConnectTimeout=10',
-			`${options.ssh.user}@${options.ssh.host}`,
-			options.command,
-		],
-		{ timeout: 60_000 },
-	);
-	return result.stdout.trim();
-}
-
-async function execGitInToolVm(options: {
-	readonly command: string;
-	readonly identityFilePath: string;
-	readonly ssh: ControllerLeasePeekResponse['ssh'];
-}): Promise<string> {
-	return await execSsh({
-		command: `git -C /zone/agents/smoke ${options.command}`,
-		identityFilePath: options.identityFilePath,
-		ssh: options.ssh,
-	});
-}
-
-describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
+describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git legacy surface', () => {
 	let harness: E2eHarnessRuntime | undefined;
 	let project: OpenClawE2eProject | undefined;
 
@@ -230,11 +142,12 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		}
 	});
 
-	it('lets an agent commit in /zone and push through the OpenClaw zone_git_push tool', async () => {
+	it('replaces the old direct zone_git_push model tool with Tool Portal controller_host_action', async () => {
 		const repoRoot = path.resolve(process.cwd());
+		const agentId = 'smoke';
 
 		project = await scaffoldOpenClawE2eProject({
-			agents: ['smoke'],
+			agents: [agentId],
 			architecture,
 			prefix: 'openclaw-zone-git-e2e-',
 			zoneId: 'zone-git-smoke',
@@ -251,7 +164,15 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			repoRoot,
 			systemConfig: project.systemConfig,
 		});
+		const toolPortalConfigDir = path.dirname(project.zone.gateway.config);
+		project.zone.toolPortal = { configDir: toolPortalConfigDir };
+		await allowPortalNativeToolsInOpenClawConfig(project.zone.gateway.config);
+		await writeZoneGitToolPortalConfigs({
+			agentId,
+			configDir: toolPortalConfigDir,
+		});
 		const remoteGitDir = path.join(project.tempRoot, 'zone-files-remote.git');
+		const zoneGitBranch = 'agent/zone-files';
 		await execa('git', ['init', '--bare', remoteGitDir]);
 		project.systemConfig.host.githubToken = {
 			source: 'environment',
@@ -259,7 +180,10 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		};
 		project.zone.gateway.zoneGit = {
 			remote: {
-				branch: 'main',
+				branch: zoneGitBranch,
+				defaultBranch: 'main',
+				protectedBranches: ['main'],
+				protectedBranchPatterns: ['release/*'],
 				repoUrl: remoteGitDir,
 			},
 		};
@@ -267,12 +191,50 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			recursive: true,
 		});
 		await ensureZoneGitRepository({
-			branch: 'main',
+			branch: zoneGitBranch,
 			remoteUrl: remoteGitDir,
 			runtimeDir: project.systemConfig.runtimeDir,
 			zoneFilesDir: project.zone.gateway.zoneFilesDir,
 			zoneId: project.zone.id,
 		});
+		const proofFilePath = path.join(
+			project.zone.gateway.zoneFilesDir,
+			'agents',
+			agentId,
+			'zone-git-proof.txt',
+		);
+		await writeFile(proofFilePath, 'zone git push through Tool Portal\n', 'utf8');
+		const zoneGitPaths = resolveZoneGitPaths({
+			runtimeDir: project.systemConfig.runtimeDir,
+			zoneId: project.zone.id,
+		});
+		await execa('git', [
+			`--git-dir=${zoneGitPaths.hostGitDir}`,
+			`--work-tree=${project.zone.gateway.zoneFilesDir}`,
+			'add',
+			'.',
+		]);
+		await execa('git', [
+			`--git-dir=${zoneGitPaths.hostGitDir}`,
+			`--work-tree=${project.zone.gateway.zoneFilesDir}`,
+			'-c',
+			'user.name=Agent VM E2E',
+			'-c',
+			'user.email=agent-vm-e2e@example.invalid',
+			'commit',
+			'-m',
+			'test: zone git tool portal push',
+		]);
+		const zoneGitStatus = await getZoneGitStatus({
+			branch: zoneGitBranch,
+			remoteUrl: remoteGitDir,
+			runtimeDir: project.systemConfig.runtimeDir,
+			zoneFilesDir: project.zone.gateway.zoneFilesDir,
+			zoneId: project.zone.id,
+		});
+		if (zoneGitStatus.localHead === null) {
+			throw new Error('Expected zone Git repository to have a local commit before push.');
+		}
 		await prepareGatewayE2eProjectImages({ project });
 
 		harness = await startE2eControllerRuntime({
@@ -292,82 +254,6 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		if (!gatewayIngress) {
 			throw new Error('OpenClaw gateway smoke did not expose an ingress URL.');
 		}
-		await publishOpenClawRuntimeStatus({
-			controllerUrl: harness.controllerUrl,
-			openClawConfigPath: project.zone.gateway.config,
-			zoneId: project.zone.id,
-		});
-
-		const lease = await requestZoneGitLease({
-			controllerUrl: harness.controllerUrl,
-			zoneId: project.zone.id,
-		});
-		expect(lease.workdir).toBe('/zone/agents/smoke');
-		const runtimeRecords = await readToolVmRuntimeRecordPayloads(project.zone.gateway.stateDir);
-		const matchingRecord = runtimeRecords.find(
-			(record) => isObjectRecord(record) && record.leaseId === lease.leaseId,
-		);
-		expect(matchingRecord).toMatchObject({
-			agentId: 'smoke',
-			leaseId: lease.leaseId,
-		});
-		for (const runtimeRecord of runtimeRecords) {
-			expect(JSON.stringify(runtimeRecord)).not.toContain('"scopeKey"');
-		}
-		const leasePeek = await peekLease({
-			controllerUrl: harness.controllerUrl,
-			leaseId: lease.leaseId,
-		});
-		expect(JSON.stringify(leasePeek)).not.toContain('"scopeKey"');
-		const identityFilePath = await createSshIdentityFile({
-			identityPem: lease.ssh.identityPem,
-			tempRoot: project.tempRoot,
-		});
-
-		await expect(
-			execGitInToolVm({
-				command: 'rev-parse --show-toplevel',
-				identityFilePath,
-				ssh: leasePeek.ssh,
-			}),
-		).resolves.toBe('/zone');
-		await expect(
-			execSsh({
-				command: 'test -z "${AGENT_VM_TEST_ZONE_GIT_TOKEN:-}" && test -z "${GITHUB_TOKEN:-}"',
-				identityFilePath,
-				ssh: leasePeek.ssh,
-			}),
-		).resolves.toBe('');
-		await execGitInToolVm({
-			command: 'config user.email smoke@example.com',
-			identityFilePath,
-			ssh: leasePeek.ssh,
-		});
-		await execGitInToolVm({
-			command: 'config user.name zone-git-smoke',
-			identityFilePath,
-			ssh: leasePeek.ssh,
-		});
-		await execSsh({
-			command: "printf 'zone git smoke\\n' > /zone/agents/smoke/SMOKE.md",
-			identityFilePath,
-			ssh: leasePeek.ssh,
-		});
-		await execGitInToolVm({
-			command: 'add SMOKE.md',
-			identityFilePath,
-			ssh: leasePeek.ssh,
-		});
-		await execGitInToolVm({
-			command: "commit -m 'docs: smoke zone git'",
-			identityFilePath,
-			ssh: leasePeek.ssh,
-		});
-		const localHead = await execGitInToolVm({
-			command: 'rev-parse HEAD',
-			identityFilePath,
-			ssh: leasePeek.ssh,
-		});
 
 		const gatewayClient = createGatewayApiClient({
 			gatewayUrl: `http://${gatewayIngress.host}:${String(gatewayIngress.port)}`,
@@ -375,25 +261,54 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		});
 		await expect(
 			gatewayClient.invokeTool({
-				agentId: 'smoke',
-				args: { expectedHead: localHead },
+				agentId,
+				args: { expectedHead: 'legacy-zone-git-head' },
 				tool: 'zone_git_push',
 			}),
-		).resolves.toBeTruthy();
-
-		const remoteHead = (
-			await execa('git', ['--git-dir', remoteGitDir, 'rev-parse', 'refs/heads/main'])
-		).stdout.trim();
-		expect(remoteHead).toBe(localHead);
-
-		const statusPayload = await readJsonResponse(
-			await fetch(`${harness.controllerUrl}/zones/${project.zone.id}/zone-git/status`),
+		).rejects.toThrow(/Gateway API returned status/u);
+		const listResult = parseNativePortalToolResult(
+			await gatewayClient.invokeTool({
+				agentId,
+				args: { requests: [{ id: 'list-actions' }] },
+				tool: 'tool_portal_list',
+			}),
 		);
-		expect(statusPayload).toMatchObject({
-			aheadOfRemote: 0,
-			dirty: false,
-			localHead,
-			remoteHead: localHead,
+		expect(readSingleItem(listResult)).toMatchObject({
+			id: 'list-actions',
+			status: 'ok',
+			value: {
+				namespaces: ['controller_host_action'],
+				tools: [{ name: 'zone_git_push' }],
+			},
+		});
+
+		const pushResult = parseNativePortalToolResult(
+			await gatewayClient.invokeTool({
+				agentId,
+				args: {
+					calls: [
+						{
+							arguments: { expectedHead: zoneGitStatus.localHead },
+							id: 'push-zone',
+							name: 'zone_git_push',
+							namespace: 'controller_host_action',
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+		);
+		expect(expectSingleItemStatusOk(pushResult)).toMatchObject({
+			id: 'push-zone',
+			status: 'ok',
+			value: {
+				actionId: 'zone_git_push',
+				result: {
+					branch: zoneGitBranch,
+					localHead: zoneGitStatus.localHead,
+					remoteHead: zoneGitStatus.localHead,
+				},
+			},
 		});
 	}, 900_000);
 });

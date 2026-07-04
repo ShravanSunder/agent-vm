@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 
+import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
 import { targetsAudience, vmAudienceValues } from '@agent-vm/gateway-interface';
 import type {
 	EgressHostConfig,
@@ -301,12 +302,53 @@ const gitBranchNameSchema = z
 		'git branch must be a safe branch name without spaces, control characters, traversal, refspec, or glob metacharacters',
 	);
 
+const gitBranchPatternSchema = z
+	.string()
+	.min(1)
+	.regex(
+		/^(?!\/)(?!.*(?:^|\/)\.)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*[\\\s~^:?[])(?!.*\/$)(?!.*\.lock$)[A-Za-z0-9._/*-]+$/u,
+		'git branch pattern must be a safe branch pattern without spaces, control characters, traversal, refspec, or glob metacharacters',
+	);
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function gitBranchPatternMatches(pattern: string, branch: string): boolean {
+	const regex = new RegExp(`^${pattern.split('*').map(escapeRegExp).join('.*')}$`, 'u');
+	return regex.test(branch);
+}
+
 const zoneGitRemoteSchema = z
 	.object({
 		repoUrl: z.string().min(1),
-		branch: gitBranchNameSchema.default('main'),
+		branch: gitBranchNameSchema.default('agent/zone-files'),
+		defaultBranch: gitBranchNameSchema.default('main'),
+		protectedBranches: z.array(gitBranchNameSchema).default([]),
+		protectedBranchPatterns: z.array(gitBranchPatternSchema).default([]),
 	})
-	.strict();
+	.strict()
+	.superRefine((remote, context) => {
+		const protectedBranches = new Set([
+			'main',
+			'master',
+			remote.defaultBranch,
+			...remote.protectedBranches,
+		]);
+		if (
+			protectedBranches.has(remote.branch) ||
+			remote.protectedBranchPatterns.some((pattern) =>
+				gitBranchPatternMatches(pattern, remote.branch),
+			)
+		) {
+			context.addIssue({
+				code: 'custom',
+				message:
+					'zoneGit.remote.branch must be a non-protected branch; choose a branch outside defaultBranch, protectedBranches, and protectedBranchPatterns',
+				path: ['branch'],
+			});
+		}
+	});
 
 const zoneGitSchema = z
 	.object({
@@ -405,6 +447,7 @@ const leaseIdleTtlSchema = z
 	.strict();
 
 const defaultControllerHealthConfig = {
+	controlSessionDeathGraceMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
 	enabled: true,
 	eventHistoryLimit: 500,
 	gatewayServiceAutoRestart: {
@@ -422,8 +465,6 @@ const defaultControllerHealthConfig = {
 		maxConsecutiveFailedRecoveries: 3,
 		restartTimeoutMs: 10 * 60 * 1000,
 	},
-	gatewayControlLinkBackoffCeilingMs: 120_000,
-	gatewayControlLinkIntervalMs: 10_000,
 	gatewayServiceIntervalMs: 10_000,
 	staleAfterMs: 30_000,
 } as const;
@@ -501,6 +542,11 @@ const gatewayServiceAutoRestartSchema = z
 
 const controllerHealthSchema = z
 	.object({
+		controlSessionDeathGraceMs: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.controlSessionDeathGraceMs),
 		enabled: z.boolean().default(defaultControllerHealthConfig.enabled),
 		eventHistoryLimit: z
 			.number()
@@ -510,16 +556,6 @@ const controllerHealthSchema = z
 		gatewayServiceAutoRestart: gatewayServiceAutoRestartSchema.default(
 			defaultControllerHealthConfig.gatewayServiceAutoRestart,
 		),
-		gatewayControlLinkBackoffCeilingMs: z
-			.number()
-			.int()
-			.positive()
-			.default(defaultControllerHealthConfig.gatewayControlLinkBackoffCeilingMs),
-		gatewayControlLinkIntervalMs: z
-			.number()
-			.int()
-			.positive()
-			.default(defaultControllerHealthConfig.gatewayControlLinkIntervalMs),
 		gatewayServiceIntervalMs: z
 			.number()
 			.int()
@@ -527,20 +563,7 @@ const controllerHealthSchema = z
 			.default(defaultControllerHealthConfig.gatewayServiceIntervalMs),
 		staleAfterMs: z.number().int().positive().default(defaultControllerHealthConfig.staleAfterMs),
 	})
-	.strict()
-	.superRefine((healthConfig, context) => {
-		if (
-			healthConfig.gatewayControlLinkBackoffCeilingMs >= healthConfig.gatewayControlLinkIntervalMs
-		) {
-			return;
-		}
-		context.addIssue({
-			code: z.ZodIssueCode.custom,
-			message:
-				'gatewayControlLinkBackoffCeilingMs must be greater than or equal to gatewayControlLinkIntervalMs.',
-			path: ['gatewayControlLinkBackoffCeilingMs'],
-		});
-	});
+	.strict();
 
 const controllerConfigSchema = z
 	.object({
@@ -602,7 +625,7 @@ const zoneAgentSchema = z
 	})
 	.strict();
 
-const zoneMcpConfigSchema = z
+const zoneToolPortalConfigSchema = z
 	.object({
 		configDir: z.string().min(1),
 	})
@@ -822,7 +845,7 @@ const systemConfigSchema = z
 						agents: z.array(zoneAgentSchema).optional(),
 						adminAccess: zoneAdminAccessSchema.optional(),
 						gateway: zoneGatewaySchema,
-						mcpPortal: zoneMcpConfigSchema.optional(),
+						toolPortal: zoneToolPortalConfigSchema.optional(),
 						resources: zoneResourcesPolicySchema.optional(),
 						secrets: z.record(secretNameSchema, secretReferenceSchema),
 						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
@@ -925,6 +948,13 @@ const systemConfigSchema = z
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: `Zone '${zone.id}' observability requires host.observability.enabled to be true.`,
+					path: ['zones', zoneIndex, 'observability'],
+				});
+			}
+			if (zone.observability?.enabled === true) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' observability is disabled during the Socket.IO control-plane hard cutover until a non-raw-tcp OpenClaw telemetry path is accepted.`,
 					path: ['zones', zoneIndex, 'observability'],
 				});
 			}
@@ -1125,11 +1155,11 @@ const systemConfigSchema = z
 			}
 			if (
 				zone.gateway.type !== 'openclaw' &&
-				(zoneAgents.length > 0 || zone.mcpPortal !== undefined)
+				(zoneAgents.length > 0 || zone.toolPortal !== undefined)
 			) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Worker zone '${zone.id}' must not declare agents or mcpPortal.`,
+					message: `Worker zone '${zone.id}' must not declare agents or toolPortal.`,
 					path: ['zones', zoneIndex],
 				});
 			}
@@ -1162,6 +1192,13 @@ const systemConfigSchema = z
 					code: z.ZodIssueCode.custom,
 					message: `OpenClaw zone '${zone.id}' must declare agentToolVmProfiles, even when it is empty.`,
 					path: ['zones', zoneIndex, 'agentToolVmProfiles'],
+				});
+			}
+			if (zone.gateway.type === 'openclaw' && zoneAgentIds.size === 0) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `OpenClaw zone '${zone.id}' must declare at least one trusted agent.`,
+					path: ['zones', zoneIndex, 'agents'],
 				});
 			}
 			const seenAgentIds = new Set<string>();
@@ -1198,14 +1235,20 @@ const systemConfigSchema = z
 			}
 			if (zone.gateway.type === 'openclaw') {
 				for (const [agentId, toolVmProfileId] of Object.entries(zone.agentToolVmProfiles ?? {})) {
-					if (config.toolVmProfiles[toolVmProfileId]) {
-						continue;
+					if (!zoneAgentIds.has(agentId)) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references undeclared agent '${agentId}'.`,
+							path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
+						});
 					}
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references unknown toolVmProfile '${toolVmProfileId}'.`,
-						path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
-					});
+					if (!config.toolVmProfiles[toolVmProfileId]) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references unknown toolVmProfile '${toolVmProfileId}'.`,
+							path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
+						});
+					}
 				}
 			}
 
@@ -1446,9 +1489,9 @@ function resolveRelativePaths(
 		zones: config.zones.map((zone) => ({
 			...zone,
 			gateway: resolveZoneGatewayPaths(zone.gateway),
-			...(zone.mcpPortal === undefined
+			...(zone.toolPortal === undefined
 				? {}
-				: { mcpPortal: { configDir: resolvePath(zone.mcpPortal.configDir) } }),
+				: { toolPortal: { configDir: resolvePath(zone.toolPortal.configDir) } }),
 		})),
 		toolVmProfiles: Object.fromEntries(
 			Object.entries(config.toolVmProfiles).map(([profileId, profile]) => [

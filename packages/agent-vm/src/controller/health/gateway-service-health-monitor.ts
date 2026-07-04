@@ -5,17 +5,25 @@ import type {
 } from '@agent-vm/gateway-interface';
 
 import {
+	classifyControlSessionDeathGrace,
+	recordControlSessionDisconnected,
+	recordControlSessionReconnected,
+	type ControlSessionDeathGraceState,
+} from '../control-session/control-session-death-grace.js';
+import {
 	deriveChannelProviderRecoveryObservation,
 	type AgentChannelProviderHealthEvent,
 } from './channel-provider-recovery-observation.js';
 import {
 	createGatewayVmRecoveryTracker,
 	defaultGatewayVmChannelProviderRecoveryPolicy,
+	type GatewayVmRecoveryCorroborationState,
 	type GatewayVmAutoRecoveryPolicy,
 	type GatewayVmRecoveryBudgetClass,
 	type GatewayVmRecoveryDecision,
 	type GatewayVmRecoveryObservationResult,
 	type GatewayVmRecoveryReason,
+	type GatewayVmRecoverySourceKey,
 } from './gateway-vm-recovery-policy.js';
 import type { HealthEventStore } from './health-event-store.js';
 
@@ -108,6 +116,7 @@ export interface CreateGatewayServiceHealthMonitorOptions {
 	readonly classifyRecoveryBudgetClass?:
 		| ((request: ClassifyRecoveryBudgetClassRequest) => GatewayVmRecoveryBudgetClass)
 		| undefined;
+	readonly controlSessionDeathGraceMs?: number | undefined;
 	readonly gatewayServiceAutoRestart: GatewayVmAutoRecoveryPolicy;
 	readonly healthEventStore: HealthEventStore;
 	readonly intervalMs: number;
@@ -115,6 +124,14 @@ export interface CreateGatewayServiceHealthMonitorOptions {
 	readonly probeZoneHealth: (zoneId: string) => Promise<GatewayServiceHealthProbeResult>;
 	readonly recoverGatewayVm?:
 		| ((request: GatewayVmRecoveryRequest) => Promise<GatewayVmRecoveryResult>)
+		| undefined;
+	readonly resolveGatewayRecoverySourceKey?:
+		| ((request: {
+				readonly latestControlSessionEvent?:
+					| (AgentVmHealthEvent & { readonly kind: 'gateway-control-session' })
+					| undefined;
+				readonly zoneId: string;
+		  }) => GatewayVmRecoverySourceKey | undefined)
 		| undefined;
 	readonly setIntervalImpl?:
 		| ((callback: () => void | Promise<void>, delayMs: number) => NodeJS.Timeout)
@@ -170,6 +187,7 @@ export function createGatewayServiceHealthMonitor(
 	let timer: NodeJS.Timeout | undefined;
 	let runningTick: Promise<void> | undefined;
 	const recoveredChannelProviderEventKeys = new Set<string>();
+	const controlSessionDeathGraceByZoneId = new Map<string, ControlSessionDeathGraceState>();
 	let stopped = false;
 
 	const classifyRecoveryBudgetClass = (
@@ -187,22 +205,57 @@ export function createGatewayServiceHealthMonitor(
 		}
 	};
 
-	const classifyGatewayControlLinkObservation = (props: {
+	const classifyGatewayControlSessionObservation = (props: {
 		readonly nowMs: number;
 		readonly zoneId: string;
-	}): GatewayVmRecoveryObservationResult => {
+	}): {
+		readonly deathGrace: GatewayVmRecoveryCorroborationState | undefined;
+		readonly latestEvent?:
+			| (AgentVmHealthEvent & { readonly kind: 'gateway-control-session' })
+			| undefined;
+		readonly result: GatewayVmRecoveryObservationResult;
+	} => {
 		const controlLinkEvent = options.healthEventStore
 			.listLatestEventsForZone(props.zoneId)
-			.find((event): event is AgentVmHealthEvent & { readonly kind: 'gateway-control-link' } => {
-				return event.kind === 'gateway-control-link';
+			.find((event): event is AgentVmHealthEvent & { readonly kind: 'gateway-control-session' } => {
+				return event.kind === 'gateway-control-session';
 			});
 		if (!controlLinkEvent) {
-			return 'unobserved';
+			return { deathGrace: undefined, result: 'unobserved' };
 		}
-		if (props.nowMs - controlLinkEvent.observedAtMs > options.staleAfterMs) {
-			return 'stale';
+		const result =
+			props.nowMs - controlLinkEvent.observedAtMs > options.staleAfterMs
+				? 'stale'
+				: controlLinkEvent.result;
+		if (result === 'ok') {
+			controlSessionDeathGraceByZoneId.set(
+				props.zoneId,
+				recordControlSessionReconnected({
+					previousState: controlSessionDeathGraceByZoneId.get(props.zoneId) ?? {
+						kind: 'connected',
+					},
+				}),
+			);
+			return { deathGrace: 'connected', latestEvent: controlLinkEvent, result };
 		}
-		return controlLinkEvent.result;
+		const deathGraceState = recordControlSessionDisconnected({
+			nowMs: props.nowMs,
+			previousState: controlSessionDeathGraceByZoneId.get(props.zoneId) ?? { kind: 'connected' },
+		});
+		controlSessionDeathGraceByZoneId.set(props.zoneId, deathGraceState);
+		const deathGraceClassification = classifyControlSessionDeathGrace({
+			...(options.controlSessionDeathGraceMs === undefined
+				? {}
+				: { graceMs: options.controlSessionDeathGraceMs }),
+			nowMs: props.nowMs,
+			state: deathGraceState,
+		});
+		return {
+			deathGrace:
+				deathGraceClassification.kind === 'recovery_due' ? 'recovery-due' : 'within-grace',
+			latestEvent: controlLinkEvent,
+			result,
+		};
 	};
 
 	const latestChannelProviderHealthEvents = (
@@ -383,33 +436,58 @@ export function createGatewayServiceHealthMonitor(
 			reason: props.reason,
 			zoneId: props.zoneId,
 		});
-		const decision =
-			props.reason === 'gateway-service-unhealthy'
-				? recoveryTracker.recordGatewayServiceProbe({
-						observedAtMs: props.observedAtMs,
-						recoveryBudgetClass,
-						result: props.serviceProbeResult,
+		const controlSessionObservation =
+			props.serviceProbeResult === 'ok' || props.reason === 'gateway-service-unhealthy'
+				? classifyGatewayControlSessionObservation({
+						nowMs: props.observedAtMs,
 						zoneId: props.zoneId,
 					})
-				: recoveryTracker.recordGatewayControlLinkObservation({
+				: { deathGrace: undefined, result: 'unobserved' as const };
+		const sourceKey = options.resolveGatewayRecoverySourceKey?.({
+			latestControlSessionEvent: controlSessionObservation.latestEvent,
+			zoneId: props.zoneId,
+		});
+		const controlSessionDecision =
+			props.reason === 'gateway-service-unhealthy' &&
+			controlSessionObservation.result !== 'unobserved'
+				? recoveryTracker.recordGatewayControlSessionObservation({
+						controlSessionDeathGrace: controlSessionObservation.deathGrace,
 						observedAtMs: props.observedAtMs,
 						recoveryBudgetClass,
-						result:
-							props.serviceProbeResult === 'ok'
-								? classifyGatewayControlLinkObservation({
-										nowMs: props.observedAtMs,
-										zoneId: props.zoneId,
-									})
-								: 'unobserved',
+						result: controlSessionObservation.result,
+						...(sourceKey === undefined ? {} : { sourceKey }),
 						zoneId: props.zoneId,
-					});
+					})
+				: undefined;
+		const decision =
+			controlSessionDecision?.kind === 'suspended'
+				? controlSessionDecision
+				: props.reason === 'gateway-service-unhealthy'
+					? recoveryTracker.recordGatewayServiceProbe({
+							observedAtMs: props.observedAtMs,
+							recoveryBudgetClass,
+							result: props.serviceProbeResult,
+							...(sourceKey === undefined ? {} : { sourceKey }),
+							zoneId: props.zoneId,
+						})
+					: recoveryTracker.recordGatewayControlSessionObservation({
+							controlSessionDeathGrace: controlSessionObservation.deathGrace,
+							observedAtMs: props.observedAtMs,
+							recoveryBudgetClass,
+							result: controlSessionObservation.result,
+							...(sourceKey === undefined ? {} : { sourceKey }),
+							zoneId: props.zoneId,
+						});
 
 		if (decision.kind === 'suspended') {
 			recordGatewayRecoverySuspendedEvent({
 				consecutiveFailedRecoveries: decision.consecutiveFailedRecoveries,
 				consecutiveFailures: decision.consecutiveFailures,
 				observedAtMs: props.observedAtMs,
-				reason: props.reason,
+				reason:
+					controlSessionDecision?.kind === 'suspended'
+						? 'gateway-control-session-unhealthy'
+						: props.reason,
 				action: recoveryActionForBudgetClass(recoveryBudgetClass),
 				zoneId: decision.zoneId,
 			});
@@ -591,7 +669,7 @@ export function createGatewayServiceHealthMonitor(
 						if (serviceProbeResult === 'ok') {
 							await maybeRecoverGatewayVm({
 								observedAtMs,
-								reason: 'gateway-control-link-unhealthy',
+								reason: 'gateway-control-session-unhealthy',
 								serviceProbeResult,
 								zoneId: result.zoneId,
 							});

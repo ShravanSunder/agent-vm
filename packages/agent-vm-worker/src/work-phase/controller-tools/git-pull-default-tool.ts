@@ -2,13 +2,11 @@ import { execa } from 'execa';
 
 import type { RepoLocation } from '../../shared/repo-location.js';
 import type { ToolDefinition } from '../../work-executor/executor-interface.js';
+import { buildSafeGitEnvironment, currentBranch, selectRepo } from './controller-tool-support.js';
 import {
-	buildSafeGitEnvironment,
-	currentBranch,
-	isControllerToolFailure,
-	postControllerJson,
-	selectRepo,
-} from './controller-tool-support.js';
+	WorkerControlRpcCommandError,
+	type WorkerControlControllerToolsClient,
+} from './worker-control-rpc-client.js';
 
 const GIT_TOOL_TIMEOUT_MS = 30_000;
 
@@ -174,10 +172,9 @@ function shouldResetWorktreeAfterControllerPull(result: PullDefaultToolControlle
 }
 
 export interface CreateGitPullDefaultToolProps {
-	readonly controllerBaseUrl: string;
-	readonly zoneId: string;
 	readonly taskId: string;
 	readonly repos: readonly RepoLocation[];
+	readonly workerControlClient: WorkerControlControllerToolsClient;
 }
 
 export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): ToolDefinition {
@@ -237,18 +234,24 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 				};
 			}
 
-			const result = await postControllerJson({
-				url: `${props.controllerBaseUrl}/zones/${props.zoneId}/tasks/${props.taskId}/pull-default`,
-				operation: 'worker-pull-default',
-				body: {
+			let result: unknown;
+			try {
+				result = await props.workerControlClient.gitPullDefault({
 					repoUrl: selected.repo.repoUrl,
 					currentBranch: currentBranchResult.branch,
 					currentHead: currentHeadResult.stdout.trim(),
+					taskId: props.taskId,
 					worktreeDirty: statusResult.stdout.trim().length > 0,
-				},
-			});
-			if (isControllerToolFailure(result)) {
-				return { type: 'pull-default', success: false, artifact: result.artifact };
+				});
+			} catch (error) {
+				if (error instanceof WorkerControlRpcCommandError) {
+					return { type: 'pull-default', success: false, artifact: error.message };
+				}
+				return {
+					type: 'pull-default',
+					success: false,
+					artifact: `Worker control git_pull_default failed: ${error instanceof Error ? error.message : String(error)}`,
+				};
 			}
 			const pullResult = parseControllerPullDefaultResult(result);
 			if (!pullResult) {

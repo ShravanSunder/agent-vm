@@ -8,11 +8,12 @@ export type ToolVmActiveUseOutcome =
 	| 'timed-out';
 
 export interface ToolVmActiveUseCorrelation {
-	readonly agentId?: string | undefined;
-	readonly sessionId?: string | undefined;
-	readonly sessionKey?: string | undefined;
+	readonly messageId?: string | undefined;
+	readonly requestId?: string | undefined;
+	readonly runId?: string | undefined;
+	readonly sessionKeyDigest?: string | undefined;
 	readonly toolCallId?: string | undefined;
-	readonly toolName?: string | undefined;
+	readonly traceId?: string | undefined;
 }
 
 export type ToolVmSshOperationPhase =
@@ -125,6 +126,35 @@ export function createToolVmActiveUseId(): string {
 
 export function isToolVmActiveUseId(value: string): boolean {
 	return validateUuid(value) && uuidVersion(value) === 7;
+}
+
+export function normalizeToolVmActiveUseCorrelation(
+	correlation: unknown,
+): ToolVmActiveUseCorrelation | undefined {
+	if (!isToolVmActiveUseCorrelationRecord(correlation)) {
+		return undefined;
+	}
+	const getString = (key: keyof ToolVmActiveUseCorrelation): string | undefined => {
+		const value = correlation[key];
+		return typeof value === 'string' && value.length > 0 ? value : undefined;
+	};
+	const normalizedCorrelation = {
+		...(getString('messageId') !== undefined ? { messageId: getString('messageId') } : {}),
+		...(getString('requestId') !== undefined ? { requestId: getString('requestId') } : {}),
+		...(getString('runId') !== undefined ? { runId: getString('runId') } : {}),
+		...(getString('sessionKeyDigest') !== undefined
+			? { sessionKeyDigest: getString('sessionKeyDigest') }
+			: {}),
+		...(getString('toolCallId') !== undefined ? { toolCallId: getString('toolCallId') } : {}),
+		...(getString('traceId') !== undefined ? { traceId: getString('traceId') } : {}),
+	} satisfies ToolVmActiveUseCorrelation;
+	return Object.keys(normalizedCorrelation).length > 0 ? normalizedCorrelation : undefined;
+}
+
+function isToolVmActiveUseCorrelationRecord(
+	value: unknown,
+): value is Readonly<Record<keyof ToolVmActiveUseCorrelation, unknown>> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export async function createToolVmActiveUseHandle(

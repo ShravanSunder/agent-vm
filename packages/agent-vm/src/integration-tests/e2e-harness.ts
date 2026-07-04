@@ -107,6 +107,7 @@ const e2eTempRootPrefixes = [
 	'agent-vm-gateway-e2e-project-',
 	'agent-vm-e2e-harness-',
 	'openclaw-control-link-e2e-',
+	'openclaw-control-session-e2e-',
 	'openclaw-mcp-portal-e2e-',
 	'openclaw-subagent-lease-e2e-',
 	'openclaw-zone-git-e2e-',
@@ -1005,6 +1006,16 @@ function createLocalDockerPackageTarball(props: {
 	};
 }
 
+async function packLocalAgentVmPackageTarball(options: {
+	readonly packageName: string;
+	readonly repoRoot: string;
+}): Promise<string> {
+	return await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', options.packageName),
+		packageName: options.packageName,
+	});
+}
+
 function localDockerPackageDependencyName(tarball: LocalDockerPackageTarball): string {
 	return `@agent-vm/${tarball.packageName}`;
 }
@@ -1047,6 +1058,7 @@ function renderLocalDockerPackageInstallLines(
 }
 
 async function useLocalToolVmMcpPortalPackageTarballs(options: {
+	readonly localAgentPortalSdkTarballPath: string;
 	readonly localConfigContractsTarballPath: string;
 	readonly localMcpPortalTarballPath: string;
 	readonly localSecretManagementTarballPath: string;
@@ -1068,6 +1080,10 @@ async function useLocalToolVmMcpPortalPackageTarballs(options: {
 			await fs.rm(dockerContextDirectory, { force: true, recursive: true });
 			await fs.mkdir(dockerContextDirectory, { recursive: true });
 			const localPackageTarballs = [
+				createLocalDockerPackageTarball({
+					packageName: 'agent-portal-sdk',
+					sourcePath: options.localAgentPortalSdkTarballPath,
+				}),
 				createLocalDockerPackageTarball({
 					packageName: 'config-contracts',
 					sourcePath: options.localConfigContractsTarballPath,
@@ -1110,20 +1126,25 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 	readonly repoRoot: string;
 	readonly systemConfig: LoadedSystemConfig;
 }): Promise<void> {
-	const localConfigContractsTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'config-contracts'),
+	const localAgentPortalSdkTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'agent-portal-sdk',
+		repoRoot: options.repoRoot,
+	});
+	const localConfigContractsTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'config-contracts',
+		repoRoot: options.repoRoot,
 	});
-	const localSecretManagementTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'secret-management'),
+	const localSecretManagementTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'secret-management',
+		repoRoot: options.repoRoot,
 	});
-	const localMcpPortalTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'mcp-portal'),
+	const localMcpPortalTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'mcp-portal',
+		repoRoot: options.repoRoot,
 	});
 	try {
 		await useLocalToolVmMcpPortalPackageTarballs({
+			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localMcpPortalTarballPath,
 			localSecretManagementTarballPath,
@@ -1132,6 +1153,7 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 		});
 	} finally {
 		await removeE2eLocalPackageTarballs([
+			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
 			localMcpPortalTarballPath,
@@ -1283,36 +1305,56 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		'gateways',
 		`${options.profileName}-local-packages`,
 	);
-	const localConfigContractsTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'config-contracts'),
+	const localAgentPortalSdkTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'agent-portal-sdk',
+		repoRoot: options.repoRoot,
+	});
+	const localConfigContractsTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'config-contracts',
+		repoRoot: options.repoRoot,
 	});
-	const localSecretManagementTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'secret-management'),
+	const localSecretManagementTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'secret-management',
+		repoRoot: options.repoRoot,
 	});
-	const localGondolinAdapterTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'gondolin-adapter'),
+	const localGondolinAdapterTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'gondolin-adapter',
+		repoRoot: options.repoRoot,
 	});
-	const localGatewayInterfaceTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'gateway-interface'),
+	const localGatewayInterfaceTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'gateway-interface',
+		repoRoot: options.repoRoot,
 	});
-	const localMcpPortalTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'mcp-portal'),
+	const localControlProtocolContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'control-protocol-contracts',
+		repoRoot: options.repoRoot,
+	});
+	const localControllerExecutionContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'controller-execution-contracts',
+		repoRoot: options.repoRoot,
+	});
+	const localGatewayControlContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gateway-control-contracts',
+		repoRoot: options.repoRoot,
+	});
+	const localMcpPortalTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'mcp-portal',
+		repoRoot: options.repoRoot,
 	});
-	const localOpenClawAgentVmPluginTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-agent-vm-plugin'),
+	const localToolPortalTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'tool-portal',
+		repoRoot: options.repoRoot,
+	});
+	const localOpenClawAgentVmPluginTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'openclaw-agent-vm-plugin',
-	});
-	const localOpenClawMcpPortalPluginTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-mcp-portal-plugin'),
-		packageName: 'openclaw-mcp-portal-plugin',
+		repoRoot: options.repoRoot,
 	});
 	try {
 		const localPackageTarballs = [
+			createLocalDockerPackageTarball({
+				packageName: 'agent-portal-sdk',
+				sourcePath: localAgentPortalSdkTarballPath,
+			}),
 			createLocalDockerPackageTarball({
 				packageName: 'config-contracts',
 				sourcePath: localConfigContractsTarballPath,
@@ -1330,16 +1372,28 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 				sourcePath: localGatewayInterfaceTarballPath,
 			}),
 			createLocalDockerPackageTarball({
+				packageName: 'control-protocol-contracts',
+				sourcePath: localControlProtocolContractsTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'controller-execution-contracts',
+				sourcePath: localControllerExecutionContractsTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'gateway-control-contracts',
+				sourcePath: localGatewayControlContractsTarballPath,
+			}),
+			createLocalDockerPackageTarball({
 				packageName: 'mcp-portal',
 				sourcePath: localMcpPortalTarballPath,
 			}),
 			createLocalDockerPackageTarball({
-				packageName: 'openclaw-agent-vm-plugin',
-				sourcePath: localOpenClawAgentVmPluginTarballPath,
+				packageName: 'tool-portal',
+				sourcePath: localToolPortalTarballPath,
 			}),
 			createLocalDockerPackageTarball({
-				packageName: 'openclaw-mcp-portal-plugin',
-				sourcePath: localOpenClawMcpPortalPluginTarballPath,
+				packageName: 'openclaw-agent-vm-plugin',
+				sourcePath: localOpenClawAgentVmPluginTarballPath,
 			}),
 		] satisfies readonly LocalDockerPackageTarball[];
 
@@ -1353,6 +1407,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 			tarballs: localPackageTarballs,
 		});
 		await useLocalToolVmMcpPortalPackageTarballs({
+			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localMcpPortalTarballPath,
 			localSecretManagementTarballPath,
@@ -1373,8 +1428,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 				'    global_package_root="$(pnpm root -g)" && \\',
 				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
 				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
-				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin && \\',
-				'    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" /home/openclaw/.openclaw/extensions/mcp-portal',
+				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
 				'',
 			].join('\n'),
 			'utf8',
@@ -1384,13 +1438,17 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		delete gatewayProfile.source;
 	} finally {
 		await removeE2eLocalPackageTarballs([
+			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
 			localGondolinAdapterTarballPath,
 			localGatewayInterfaceTarballPath,
+			localControlProtocolContractsTarballPath,
+			localControllerExecutionContractsTarballPath,
+			localGatewayControlContractsTarballPath,
 			localMcpPortalTarballPath,
+			localToolPortalTarballPath,
 			localOpenClawAgentVmPluginTarballPath,
-			localOpenClawMcpPortalPluginTarballPath,
 		]);
 	}
 }
@@ -1411,24 +1469,60 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		'gateways',
 		`${options.profileName}-local-plugin`,
 	);
-	const localSecretManagementTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'secret-management'),
+	const localAgentPortalSdkTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'agent-portal-sdk',
+		repoRoot: options.repoRoot,
+	});
+	const localConfigContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'config-contracts',
+		repoRoot: options.repoRoot,
+	});
+	const localSecretManagementTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'secret-management',
+		repoRoot: options.repoRoot,
 	});
-	const localGondolinAdapterTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'gondolin-adapter'),
+	const localGondolinAdapterTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'gondolin-adapter',
+		repoRoot: options.repoRoot,
 	});
-	const localGatewayInterfaceTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'gateway-interface'),
+	const localGatewayInterfaceTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'gateway-interface',
+		repoRoot: options.repoRoot,
 	});
-	const localOpenClawAgentVmPluginTarballPath = await packLocalPackageTarball({
-		packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-agent-vm-plugin'),
+	const localControlProtocolContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'control-protocol-contracts',
+		repoRoot: options.repoRoot,
+	});
+	const localControllerExecutionContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'controller-execution-contracts',
+		repoRoot: options.repoRoot,
+	});
+	const localGatewayControlContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gateway-control-contracts',
+		repoRoot: options.repoRoot,
+	});
+	const localMcpPortalTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'mcp-portal',
+		repoRoot: options.repoRoot,
+	});
+	const localToolPortalTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'tool-portal',
+		repoRoot: options.repoRoot,
+	});
+	const localOpenClawAgentVmPluginTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'openclaw-agent-vm-plugin',
+		repoRoot: options.repoRoot,
 	});
 	try {
 		const localPackageTarballs = [
+			createLocalDockerPackageTarball({
+				packageName: 'agent-portal-sdk',
+				sourcePath: localAgentPortalSdkTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'config-contracts',
+				sourcePath: localConfigContractsTarballPath,
+			}),
 			createLocalDockerPackageTarball({
 				packageName: 'secret-management',
 				sourcePath: localSecretManagementTarballPath,
@@ -1440,6 +1534,26 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 			createLocalDockerPackageTarball({
 				packageName: 'gateway-interface',
 				sourcePath: localGatewayInterfaceTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'control-protocol-contracts',
+				sourcePath: localControlProtocolContractsTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'controller-execution-contracts',
+				sourcePath: localControllerExecutionContractsTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'gateway-control-contracts',
+				sourcePath: localGatewayControlContractsTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'mcp-portal',
+				sourcePath: localMcpPortalTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'tool-portal',
+				sourcePath: localToolPortalTarballPath,
 			}),
 			createLocalDockerPackageTarball({
 				packageName: 'openclaw-agent-vm-plugin',
@@ -1480,9 +1594,16 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		delete gatewayProfile.source;
 	} finally {
 		await removeE2eLocalPackageTarballs([
+			localAgentPortalSdkTarballPath,
+			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
 			localGondolinAdapterTarballPath,
 			localGatewayInterfaceTarballPath,
+			localControlProtocolContractsTarballPath,
+			localControllerExecutionContractsTarballPath,
+			localGatewayControlContractsTarballPath,
+			localMcpPortalTarballPath,
+			localToolPortalTarballPath,
 			localOpenClawAgentVmPluginTarballPath,
 		]);
 	}
@@ -1525,6 +1646,33 @@ export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string)
 		packageDirectory: path.join(repoRoot, 'packages', 'agent-vm-worker'),
 		packageName: 'agent-vm-worker',
 	});
+}
+
+export interface LocalWorkerPackageTarball {
+	readonly packageName: string;
+	readonly sourcePath: string;
+}
+
+export async function prepareLocalWorkerPackageSetForGatewayImage(
+	repoRoot: string,
+): Promise<readonly LocalWorkerPackageTarball[]> {
+	const packageNames = [
+		'agent-vm-worker',
+		'control-protocol-contracts',
+		'gateway-interface',
+		'gondolin-adapter',
+		'secret-management',
+		'worker-control-contracts',
+	] as const;
+	return await Promise.all(
+		packageNames.map(async (packageName) => ({
+			packageName,
+			sourcePath: await packLocalAgentVmPackageTarball({
+				packageName,
+				repoRoot,
+			}),
+		})),
+	);
 }
 
 export async function scaffoldWorkerE2eProject(options: {
@@ -1622,7 +1770,7 @@ export async function writeOpenClawMcpPortalE2eConfigs(options: {
 						namespaces: {
 							[options.namespace]: {
 								calls: {
-									requiresApproval: { allow: ['write_thing'] },
+									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['read_thing'] },
 								},
 								tools: { allow: ['read_thing', 'write_thing'] },

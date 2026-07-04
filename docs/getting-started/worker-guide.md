@@ -143,7 +143,8 @@ curl -X POST http://localhost:18800/zones/dev-worker/worker-tasks \
    while keeping repo files on VM-local rootfs/COW under `/work/repos/<repoId>`
 5. Submits task to worker inside VM
 6. Worker runs 6-phase pipeline → see [architecture/agent-worker-gateway.md](../architecture/agent-worker-gateway.md)
-7. Worker calls controller's push-branches endpoint → controller pushes from host
+7. Worker sends a `worker_control_rpc` git-push intent → controller validates
+   the active task and pushes from host
 8. Worker runs `gh pr create` after the push succeeds
 9. VM destroyed, selected repo resource providers stopped, runtime work cleaned up
 

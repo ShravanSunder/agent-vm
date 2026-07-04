@@ -7,7 +7,7 @@ export default defineConfig({
 		'src/index.ts',
 		'src/controller-dispatch-boundary/index.ts',
 		'src/controller-host-action-boundary/index.ts',
-		'src/credentialed-runner-boundary/index.ts',
+		'src/tool-vm-runner-boundary/index.ts',
 		'src/testing/index.ts',
 	],
 	format: 'esm',

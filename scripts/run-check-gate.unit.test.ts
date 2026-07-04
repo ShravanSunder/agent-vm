@@ -47,17 +47,21 @@ describe('check gate plan', () => {
 		const plan = createCheckGatePlan();
 
 		expect(plan.map((phase) => phase.name)).toEqual([
+			'build artifacts',
 			'fast independent checks',
 			'heavy static checks',
 		]);
-		expect(plan[0]?.commands.map((command) => command.id)).toEqual([
+		expect(plan[0]?.commands.map((command) => command.id)).toEqual(['build']);
+		expect(plan[1]?.commands.map((command) => command.id)).toEqual([
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
 			'portal-architecture',
+			'portal-exports',
+			'lint',
 			'format',
 		]);
-		expect(plan[1]?.commands.map((command) => command.id)).toEqual([
+		expect(plan[2]?.commands.map((command) => command.id)).toEqual([
 			'type-aware-lint',
 			'typecheck',
 		]);
@@ -94,18 +98,24 @@ describe('check gate runner', () => {
 		});
 
 		expect(summary.ok).toBe(true);
-		expect(startedCommandIds.slice(0, 5)).toEqual([
+		expect(startedCommandIds.slice(0, 1)).toEqual(['build']);
+		expect(startedCommandIds.slice(1, 8)).toEqual([
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
 			'portal-architecture',
+			'portal-exports',
+			'lint',
 			'format',
 		]);
-		expect(completedCommandIds.slice(0, 5)).toEqual([
+		expect(completedCommandIds.slice(0, 1)).toEqual(['build']);
+		expect(completedCommandIds.slice(1, 8)).toEqual([
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
 			'portal-architecture',
+			'portal-exports',
+			'lint',
 			'format',
 		]);
 		expect(heavyPhaseStartOrder).toEqual(['type-aware-lint', 'typecheck']);
@@ -129,10 +139,13 @@ describe('check gate runner', () => {
 
 		expect(summary.ok).toBe(false);
 		expect(runCommandIds).toEqual([
+			'build',
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
 			'portal-architecture',
+			'portal-exports',
+			'lint',
 			'format',
 		]);
 	});

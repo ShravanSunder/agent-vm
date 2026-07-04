@@ -11,13 +11,14 @@ import {
 } from './mcp-portal-effective-config.js';
 
 const createdDirectories: string[] = [];
-const effectiveConfigManifestFileName = 'mcp-portal-effective-manifest.json';
+const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
 type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType<typeof vi.fn> };
 
 interface TestEffectiveConfigManifest {
 	readonly mcpConfigFile: string;
 	readonly portalConfigFile: string;
 	readonly schemaVersion: 1;
+	readonly toolPortalConfigFile: string;
 }
 
 afterAll(async () => {
@@ -58,21 +59,24 @@ async function readEffectiveConfigManifest(
 		manifest === null ||
 		!('schemaVersion' in manifest) ||
 		!('mcpConfigFile' in manifest) ||
-		!('portalConfigFile' in manifest)
+		!('portalConfigFile' in manifest) ||
+		!('toolPortalConfigFile' in manifest)
 	) {
 		throw new Error('test effective config manifest has unexpected shape');
 	}
 	const schemaVersion = manifest.schemaVersion;
 	const mcpConfigFile = manifest.mcpConfigFile;
 	const portalConfigFile = manifest.portalConfigFile;
+	const toolPortalConfigFile = manifest.toolPortalConfigFile;
 	if (
 		schemaVersion !== 1 ||
 		typeof mcpConfigFile !== 'string' ||
-		typeof portalConfigFile !== 'string'
+		typeof portalConfigFile !== 'string' ||
+		typeof toolPortalConfigFile !== 'string'
 	) {
 		throw new Error('test effective config manifest has unexpected shape');
 	}
-	return { mcpConfigFile, portalConfigFile, schemaVersion };
+	return { mcpConfigFile, portalConfigFile, schemaVersion, toolPortalConfigFile };
 }
 
 const emptySecretResolver = {
@@ -150,7 +154,7 @@ describe('MCP Portal effective config file materialization', () => {
 		const result = await resolveMcpPortalEffectiveConfig({
 			authoredConfigDir: authoredDir,
 			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 			secretResolver,
 			zoneId: 'shravan',
 		});
@@ -177,13 +181,30 @@ describe('MCP Portal effective config file materialization', () => {
 				},
 				schemaVersion: 1,
 			},
+			portalConfig: {
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							linear: {
+								calls: {
+									requiresApproval: { allow: [], deny: [] },
+									withoutApproval: { allow: '*', deny: [] },
+								},
+								tools: { allow: '*', deny: [] },
+							},
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
 		});
 		const effectiveDir = path.join(authoredDir, 'effective');
 
 		await writeMcpPortalEffectiveConfig({
 			authoredConfigDir: authoredDir,
 			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 			secretResolver: emptySecretResolver,
 			zoneId: 'shravan',
 		});
@@ -191,11 +212,15 @@ describe('MCP Portal effective config file materialization', () => {
 
 		expect(manifest.mcpConfigFile).toMatch(/^mcp\.config\.[0-9a-f-]+\.jsonc$/u);
 		expect(manifest.portalConfigFile).toMatch(/^mcp-portal\.config\.[0-9a-f-]+\.jsonc$/u);
+		expect(manifest.toolPortalConfigFile).toMatch(/^tool-portal\.config\.[0-9a-f-]+\.jsonc$/u);
 		await expect(
 			readFile(path.join(effectiveDir, manifest.mcpConfigFile), 'utf8'),
 		).resolves.toContain('linear');
 		await expect(
 			readFile(path.join(effectiveDir, manifest.portalConfigFile), 'utf8'),
 		).resolves.toContain('shravan');
+		await expect(
+			readFile(path.join(effectiveDir, manifest.toolPortalConfigFile), 'utf8'),
+		).resolves.toContain('"backend"');
 	});
 });

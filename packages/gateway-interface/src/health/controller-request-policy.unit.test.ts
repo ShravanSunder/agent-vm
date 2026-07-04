@@ -9,7 +9,6 @@ import {
 	genericControllerRequestEventOperations,
 	type ControllerRequestPolicy,
 	type ControllerRequestPolicyTransportError,
-	workerInternalControllerRequestOperations,
 } from './controller-request-policy.js';
 
 type AssertControllerRequestPolicy<TPolicy extends ControllerRequestPolicy> = TPolicy;
@@ -53,14 +52,16 @@ export type InvalidRetryEnabledEmptyStatusesPolicy = AssertControllerRequestPoli
 }>;
 
 describe('controller request policies', () => {
-	it('covers every in-VM gateway and worker controller operation', () => {
+	it('covers every remaining in-VM gateway controller operation', () => {
 		const policyOperations = Object.keys(controllerRequestPolicies).toSorted();
-		const expectedOperations = [
-			...gatewayInternalControllerRequestOperations,
-			...workerInternalControllerRequestOperations,
-		].toSorted();
+		const expectedOperations = [...gatewayInternalControllerRequestOperations].toSorted();
 
 		expect(policyOperations).toEqual(expectedOperations);
+		expect(gatewayInternalControllerRequestOperations).not.toContain('lease-list');
+		expect(genericControllerRequestEventOperations).not.toContain('lease-list');
+		expect(controllerRequestPolicies).not.toHaveProperty('lease-list');
+		expect(controllerRequestPolicies).not.toHaveProperty('worker-push-branches');
+		expect(controllerRequestPolicies).not.toHaveProperty('worker-pull-default');
 	});
 
 	it('keeps external controller routes out of the in-VM policy table', () => {

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	createToolPortalControllerHostActionProjection,
 	createToolPortalMcpProjection,
+	ToolPortalControllerHostActionProjectionSchema,
 	toolPortalConfigSchema,
 	ToolPortalMcpProjectionSchema,
 } from './tool-portal-config.js';
@@ -14,7 +16,7 @@ const validToolPortalConfig = {
 		'code-builder': {
 			capabilities: {
 				github: {
-					backend: { kind: 'mcp' },
+					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: ['create_issue'], deny: [] },
 						withoutApproval: { allow: ['get_issue'], deny: [] },
@@ -70,6 +72,48 @@ describe('tool portal config contract', () => {
 		).toBe(false);
 	});
 
+	it('accepts only hard-cutover Tool Portal backend kinds', () => {
+		for (const acceptedBackendKind of [
+			'mcp_provider',
+			'tool_vm_runner',
+			'controller_host_action',
+		]) {
+			expect(
+				toolPortalConfigSchema.safeParse({
+					...validToolPortalConfig,
+					profiles: {
+						'code-builder': {
+							capabilities: {
+								github: {
+									...validToolPortalConfig.profiles['code-builder'].capabilities.github,
+									backend: { kind: acceptedBackendKind },
+								},
+							},
+						},
+					},
+				}).success,
+			).toBe(true);
+		}
+
+		for (const legacyBackendKind of ['mcp', 'credentialed_runner']) {
+			expect(
+				toolPortalConfigSchema.safeParse({
+					...validToolPortalConfig,
+					profiles: {
+						'code-builder': {
+							capabilities: {
+								github: {
+									...validToolPortalConfig.profiles['code-builder'].capabilities.github,
+									backend: { kind: legacyBackendKind },
+								},
+							},
+						},
+					},
+				}).success,
+			).toBe(false);
+		}
+	});
+
 	it('rejects overlapping approval selectors inside one capability policy', () => {
 		expect(
 			toolPortalConfigSchema.safeParse({
@@ -78,7 +122,7 @@ describe('tool portal config contract', () => {
 					'code-builder': {
 						capabilities: {
 							github: {
-								backend: { kind: 'mcp' },
+								backend: { kind: 'mcp_provider' },
 								calls: {
 									requiresApproval: { allow: ['create_issue'], deny: [] },
 									withoutApproval: { allow: ['create_issue'], deny: [] },
@@ -98,7 +142,7 @@ describe('tool portal config contract', () => {
 					'code-builder': {
 						capabilities: {
 							github: {
-								backend: { kind: 'mcp' },
+								backend: { kind: 'mcp_provider' },
 								calls: {
 									requiresApproval: { allow: ['create_issue'], deny: [] },
 									withoutApproval: { allow: '*', deny: [] },
@@ -127,6 +171,27 @@ describe('tool portal config contract', () => {
 						withoutApproval: { allow: ['get_issue'], deny: [] },
 					},
 					tools: { allow: ['get_issue', 'create_issue'], deny: ['delete_repo'] },
+				},
+			},
+			profile: 'code-builder',
+		});
+	});
+
+	it('builds a controller host action projection containing only controller capabilities', () => {
+		const projection = createToolPortalControllerHostActionProjection({
+			agentId: 'agent-a',
+			config: toolPortalConfigSchema.parse(validToolPortalConfig),
+		});
+
+		expect(ToolPortalControllerHostActionProjectionSchema.parse(projection)).toEqual({
+			agentId: 'agent-a',
+			namespaces: {
+				local: {
+					calls: {
+						requiresApproval: { allow: ['push_branch'], deny: [] },
+						withoutApproval: { allow: [], deny: [] },
+					},
+					tools: { allow: ['push_branch'], deny: [] },
 				},
 			},
 			profile: 'code-builder',

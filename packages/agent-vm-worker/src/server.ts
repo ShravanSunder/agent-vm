@@ -3,6 +3,10 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 
+import {
+	WORKER_CONTROL_READY_PATH,
+	type WorkerControlService,
+} from './control-session/worker-control-service.js';
 import { repoLocationSchema } from './shared/repo-location.js';
 import { writeStderr } from './shared/stderr.js';
 import { isTerminal } from './state/task-state.js';
@@ -46,6 +50,14 @@ export interface ServerDeps {
 		readonly provider: string;
 		readonly model: string;
 	};
+	readonly workerControlService?:
+		| Pick<WorkerControlService, 'issueCredentialForReadyHeaders'>
+		| undefined;
+}
+
+function requestUrlHasQueryParameters(url: string): boolean {
+	const parsedUrl = new URL(url, 'http://worker.local');
+	return [...parsedUrl.searchParams.keys()].length > 0;
 }
 
 export function createApp(deps: ServerDeps): Hono {
@@ -60,6 +72,33 @@ export function createApp(deps: ServerDeps): Hono {
 			executor: deps.getExecutorInfo(),
 		}),
 	);
+
+	app.get(WORKER_CONTROL_READY_PATH, (context) => {
+		const service = deps.workerControlService;
+		if (service === undefined) {
+			context.header('cache-control', 'no-store');
+			return context.json({ error: 'worker-control-unavailable' }, 503);
+		}
+		try {
+			context.header('cache-control', 'no-store');
+			if (requestUrlHasQueryParameters(context.req.url)) {
+				return context.json({ error: 'worker-control-unauthorized' }, 401);
+			}
+			return context.json(service.issueCredentialForReadyHeaders(context.req.raw.headers));
+		} catch (error) {
+			context.header('cache-control', 'no-store');
+			if (error instanceof Error && /unauthorized/u.test(error.message)) {
+				return context.json({ error: 'worker-control-unauthorized' }, 401);
+			}
+			return context.json(
+				{
+					error: 'worker-control-credential-unavailable',
+					message: error instanceof Error ? error.message : 'credential unavailable',
+				},
+				429,
+			);
+		}
+	});
 
 	app.post(
 		'/tasks',

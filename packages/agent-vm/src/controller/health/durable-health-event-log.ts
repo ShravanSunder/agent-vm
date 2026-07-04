@@ -110,7 +110,7 @@ function operationIdForHealthEvent(event: AgentVmHealthEvent): string | undefine
 		case 'gateway-recovery-suspended':
 			return event.operationId;
 		case 'controller-request':
-		case 'gateway-control-link':
+		case 'gateway-control-session':
 		case 'gateway-plugin-health':
 		case 'gateway-service-health':
 		case 'lease-heartbeat':

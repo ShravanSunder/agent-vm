@@ -1,0 +1,269 @@
+{
+	"call": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"calls": {
+				"minItems": 1,
+				"maxItems": 50,
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"arguments": {
+							"$ref": "#/$defs/__schema0"
+						},
+						"id": {
+							"type": "string",
+							"minLength": 1
+						},
+						"namespace": {
+							"type": "string",
+							"minLength": 1
+						},
+						"name": {
+							"type": "string",
+							"minLength": 1
+						}
+					},
+					"required": ["arguments", "id", "namespace", "name"],
+					"additionalProperties": false
+				}
+			},
+			"requestId": {
+				"type": "string",
+				"minLength": 1
+			}
+		},
+		"required": ["calls"],
+		"additionalProperties": false,
+		"$defs": {
+			"__schema0": {
+				"type": "object",
+				"propertyNames": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"additionalProperties": {
+					"$ref": "#/$defs/__schema1"
+				}
+			},
+			"__schema1": {
+				"anyOf": [
+					{
+						"type": "string",
+						"maxLength": 65536
+					},
+					{
+						"type": "number"
+					},
+					{
+						"type": "boolean"
+					},
+					{
+						"type": "null"
+					},
+					{
+						"maxItems": 1000,
+						"type": "array",
+						"items": {
+							"$ref": "#/$defs/__schema1"
+						}
+					},
+					{
+						"$ref": "#/$defs/__schema0"
+					}
+				]
+			}
+		}
+	},
+	"describe": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"requestId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"requests": {
+				"minItems": 1,
+				"maxItems": 50,
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"minLength": 1
+						},
+						"includeJsonSchema": {
+							"default": true,
+							"type": "boolean"
+						},
+						"includeRelated": {
+							"default": true,
+							"type": "boolean"
+						},
+						"includeTypescriptHelper": {
+							"default": false,
+							"type": "boolean"
+						},
+						"includeZod": {
+							"default": false,
+							"type": "boolean"
+						},
+						"refs": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"tools": {
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"namespace": {
+										"type": "string",
+										"minLength": 1
+									},
+									"name": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": ["namespace", "name"],
+								"additionalProperties": false
+							}
+						}
+					},
+					"required": ["id"],
+					"additionalProperties": false
+				}
+			}
+		},
+		"required": ["requests"],
+		"additionalProperties": false
+	},
+	"list": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"requestId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"requests": {
+				"minItems": 1,
+				"maxItems": 50,
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"cursor": {
+							"type": "string",
+							"pattern": "^\\d+$"
+						},
+						"id": {
+							"type": "string",
+							"minLength": 1
+						},
+						"limit": {
+							"default": 20,
+							"type": "integer",
+							"exclusiveMinimum": 0,
+							"maximum": 100
+						},
+						"namespaces": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"refs": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"tools": {
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"namespace": {
+										"type": "string",
+										"minLength": 1
+									},
+									"name": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": ["namespace", "name"],
+								"additionalProperties": false
+							}
+						}
+					},
+					"required": ["id"],
+					"additionalProperties": false
+				}
+			}
+		},
+		"required": ["requests"],
+		"additionalProperties": false
+	},
+	"search": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"requestId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"requests": {
+				"minItems": 1,
+				"maxItems": 50,
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"id": {
+							"type": "string",
+							"minLength": 1
+						},
+						"limit": {
+							"default": 10,
+							"type": "integer",
+							"exclusiveMinimum": 0,
+							"maximum": 50
+						},
+						"namespaces": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							}
+						},
+						"query": {
+							"type": "string"
+						},
+						"schemaDetail": {
+							"default": "summary",
+							"type": "string",
+							"enum": ["none", "summary", "full"]
+						}
+					},
+					"required": ["id"],
+					"additionalProperties": false
+				}
+			}
+		},
+		"required": ["requests"],
+		"additionalProperties": false
+	}
+}

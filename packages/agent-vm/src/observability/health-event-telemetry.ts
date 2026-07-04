@@ -91,7 +91,7 @@ function addKindSpecificAttributes(
 			attributes['agent_vm.controller.attempt'] = event.attempt;
 			attributes['agent_vm.controller.max_attempts'] = event.maxAttempts;
 			return;
-		case 'gateway-control-link':
+		case 'gateway-control-session':
 			attributes['agent_vm.gateway.operation'] = event.operation;
 			return;
 		case 'gateway-plugin-health':

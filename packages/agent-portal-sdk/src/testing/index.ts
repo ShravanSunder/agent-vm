@@ -13,7 +13,7 @@ export interface CreatePortalCallRequestFixtureProps {
 	readonly id?: string;
 	readonly namespace?: string;
 	readonly requestId?: string;
-	readonly toolName?: string;
+	readonly name?: string;
 }
 
 export interface CreatePortalCallResultFixtureProps {
@@ -30,7 +30,7 @@ export function createPortalCallRequestFixture(
 				arguments: props.arguments ?? {},
 				id: props.id ?? 'call-1',
 				namespace: props.namespace ?? 'github',
-				toolName: props.toolName ?? 'get_issue',
+				name: props.name ?? 'get_issue',
 			},
 		],
 		requestId: props.requestId,

@@ -158,4 +158,53 @@ describe('createWorkerZoneRuntime destroy orchestration', () => {
 			globalThis.fetch = originalFetch;
 		}
 	});
+
+	it('drains active worker tasks during controller shutdown', async () => {
+		const activeTask = createActiveWorkerTask('task-1', {
+			host: '127.0.0.1',
+			port: 18881,
+		});
+		const beginZoneDestroy = vi.fn();
+		const clear = vi.fn();
+		const endZoneDestroy = vi.fn();
+		const originalFetch = globalThis.fetch;
+		const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+		globalThis.fetch = fetchMock;
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: {
+				activateReservation: vi.fn(),
+				beginZoneDestroy,
+				clear,
+				countOccupiedForZone: vi.fn(() => 1),
+				endZoneDestroy,
+				get: vi.fn(),
+				listForZone: vi.fn(() => [activeTask]),
+				releaseReservation: vi.fn(),
+				setWorkerIngress: vi.fn(),
+				tryReserve: vi.fn(() => 'reservation-1'),
+			},
+			controllerGithubToken: null,
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: workerZone,
+		});
+
+		try {
+			await runtime.shutdown();
+
+			expect(beginZoneDestroy).toHaveBeenCalledWith('worker-zone');
+			expect(fetchMock).toHaveBeenCalledWith(
+				'http://127.0.0.1:18881/tasks/task-1/close',
+				expect.objectContaining({ method: 'POST' }),
+			);
+			expect(clear).toHaveBeenCalledWith('worker-zone', 'task-1');
+			expect(endZoneDestroy).toHaveBeenCalledWith('worker-zone');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
 });

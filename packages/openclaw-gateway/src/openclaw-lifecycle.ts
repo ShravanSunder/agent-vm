@@ -13,13 +13,17 @@ import type {
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	composeNodeOptions,
-	controllerVmHost,
 	FORCE_IPV4_EGRESS_NODE_OPTIONS,
 	gatewayVmAllowedHosts,
 	mergeRuntimeGatewaySecrets,
+	normalizeGitReposForSshReadAllowlist,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
-import { writeFileAtomically } from '@agent-vm/gondolin-adapter';
+import {
+	createGitReadOnlySshEgressOptions,
+	type ManagedSshEgressOptions,
+	writeFileAtomically,
+} from '@agent-vm/gondolin-adapter';
 import {
 	redactOnePasswordReferences,
 	type SecretRef,
@@ -47,6 +51,7 @@ const openClawGatewayGuestPath =
 const diagnosticsOtelPluginId = 'diagnostics-otel';
 const diagnosticsOtelPackageName = '@openclaw/diagnostics-otel';
 const diagnosticsOtelGlobalPackageVmPath = '/pnpm/global/5/node_modules/@openclaw/diagnostics-otel';
+const deprecatedMcpPortalPluginId = 'mcp-portal';
 const openClawInstalledPluginDirectoryName = 'plugins';
 const openClawInstalledPluginIndexFileName = 'installs.json';
 
@@ -72,31 +77,45 @@ function setTcpHost(tcpHosts: Record<string, string>, key: string, target: strin
 
 function buildGatewayTcpHosts(
 	zone: GatewayZoneConfig,
-	controllerPort: number,
 	tcpPool: { readonly basePort: number; readonly size: number },
 ): Record<string, string> {
 	const tcpHosts: Record<string, string> = {};
-	setTcpHost(tcpHosts, `${controllerVmHost}:18800`, `127.0.0.1:${controllerPort}`);
 
 	for (let slot = 0; slot < tcpPool.size; slot += 1) {
 		setTcpHost(tcpHosts, `tool-${slot}.vm.host:22`, `127.0.0.1:${tcpPool.basePort + slot}`);
 	}
 
 	if (zone.observability?.mode === 'collector') {
-		const { collector } = zone.observability;
-		setTcpHost(
-			tcpHosts,
-			`${collector.host}:${String(collector.grpcPort)}`,
-			`${collector.targetHost}:${String(collector.targetGrpcPort)}`,
-		);
-		setTcpHost(
-			tcpHosts,
-			`${collector.host}:${String(collector.httpPort)}`,
-			`${collector.targetHost}:${String(collector.targetHttpPort)}`,
+		throw new Error(
+			[
+				'OpenClaw collector-mode observability is disabled for managed gateway VMs.',
+				'The Socket.IO control-plane hard cutover forbids collector raw tcpHosts without an accepted replacement or exception.',
+			].join(' '),
 		);
 	}
 
 	return tcpHosts;
+}
+
+function createManagedGitReadOnlySshEgressOptions(options: {
+	readonly gitReadAllowlistRepos: readonly string[] | undefined;
+}): ManagedSshEgressOptions | undefined {
+	const agent = process.env.SSH_AUTH_SOCK;
+	if (agent === undefined || agent.length === 0) {
+		return undefined;
+	}
+	const normalizedAllowlist = normalizeGitReposForSshReadAllowlist(options.gitReadAllowlistRepos);
+	if (
+		normalizedAllowlist.allowedHosts.length === 0 ||
+		normalizedAllowlist.allowedRepos.length === 0
+	) {
+		return undefined;
+	}
+	return createGitReadOnlySshEgressOptions({
+		agent,
+		allowedHosts: normalizedAllowlist.allowedHosts,
+		allowedRepos: normalizedAllowlist.allowedRepos,
+	});
 }
 
 function buildOpenClawBootstrapCommand(
@@ -551,15 +570,6 @@ function buildEffectiveSecretsConfig(
 	};
 }
 
-function buildEffectiveMcpPortalPluginConfig(
-	_existingPluginConfig: Record<string, unknown>,
-	runtimeConfig: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
-	return {
-		...runtimeConfig,
-	};
-}
-
 function appendUniqueStrings(
 	existingValues: readonly string[],
 	additionalValues: readonly string[],
@@ -581,15 +591,68 @@ function buildDiagnosticsOtelManagedInstallRecord(): Record<string, unknown> {
 	};
 }
 
+function omitPluginConfigEntry(
+	config: Record<string, unknown>,
+	pluginId: string,
+): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(config).filter(([key]) => key !== pluginId));
+}
+
+function stripDeprecatedMcpPortalLoadConfig(loadConfig: unknown): unknown {
+	if (!isObjectRecord(loadConfig)) {
+		return loadConfig;
+	}
+	const paths = Array.isArray(loadConfig.paths)
+		? loadConfig.paths.filter(
+				(value): value is string =>
+					typeof value === 'string' && !value.includes(deprecatedMcpPortalPluginId),
+			)
+		: undefined;
+	return {
+		...loadConfig,
+		...(paths === undefined ? {} : { paths }),
+	};
+}
+
+function stripDeprecatedMcpPortalPluginConfig(
+	pluginsConfig: Record<string, unknown>,
+): Record<string, unknown> {
+	const allow = Array.isArray(pluginsConfig.allow)
+		? pluginsConfig.allow.filter(
+				(value): value is string =>
+					typeof value === 'string' && value !== deprecatedMcpPortalPluginId,
+			)
+		: undefined;
+	const entries = isObjectRecord(pluginsConfig.entries)
+		? omitPluginConfigEntry(pluginsConfig.entries, deprecatedMcpPortalPluginId)
+		: undefined;
+	const installs = isObjectRecord(pluginsConfig.installs)
+		? omitPluginConfigEntry(pluginsConfig.installs, deprecatedMcpPortalPluginId)
+		: undefined;
+	const load = stripDeprecatedMcpPortalLoadConfig(pluginsConfig.load);
+	return {
+		...pluginsConfig,
+		...(allow === undefined ? {} : { allow }),
+		...(entries === undefined ? {} : { entries }),
+		...(installs === undefined ? {} : { installs }),
+		...(load === undefined ? {} : { load }),
+	};
+}
+
 function buildEffectivePluginsConfig(
 	parsedBaseConfig: Record<string, unknown>,
 	runtimePluginConfigs: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
 	options: { readonly includeManagedDiagnosticsOtelInstall: boolean },
 ): Record<string, unknown> {
 	const existingPluginsConfig = isObjectRecord(parsedBaseConfig.plugins)
-		? parsedBaseConfig.plugins
+		? stripDeprecatedMcpPortalPluginConfig(parsedBaseConfig.plugins)
 		: {};
 	const runtimePluginIds = Object.keys(runtimePluginConfigs ?? {});
+	if (runtimePluginIds.includes(deprecatedMcpPortalPluginId)) {
+		throw new Error(
+			'managed OpenClaw does not accept runtime mcp-portal plugin config; use Tool Portal through the managed gondolin plugin',
+		);
+	}
 	const existingAllowConfig = Array.isArray(existingPluginsConfig.allow)
 		? existingPluginsConfig.allow.filter((value): value is string => typeof value === 'string')
 		: [];
@@ -613,13 +676,10 @@ function buildEffectivePluginsConfig(
 		const existingPluginConfig = isObjectRecord(existingEntryConfig.config)
 			? existingEntryConfig.config
 			: {};
-		const config =
-			pluginId === 'mcp-portal'
-				? buildEffectiveMcpPortalPluginConfig(existingPluginConfig, runtimeConfig)
-				: {
-						...existingPluginConfig,
-						...runtimeConfig,
-					};
+		const config = {
+			...existingPluginConfig,
+			...runtimeConfig,
+		};
 		runtimeEntriesConfig[pluginId] = {
 			...existingEntryConfig,
 			config,
@@ -643,6 +703,49 @@ function buildEffectivePluginsConfig(
 			...existingEntriesConfig,
 			...runtimeEntriesConfig,
 		},
+	};
+}
+
+function managedToolPortalConfigDir(
+	runtimePluginConfigs: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
+): string | undefined {
+	const gondolinConfig = runtimePluginConfigs?.gondolin;
+	if (!isObjectRecord(gondolinConfig)) {
+		return undefined;
+	}
+	const toolPortalConfig = gondolinConfig.toolPortal;
+	if (!isObjectRecord(toolPortalConfig)) {
+		return undefined;
+	}
+	return typeof toolPortalConfig.configDir === 'string' ? toolPortalConfig.configDir : undefined;
+}
+
+function managedToolPortalEffectiveConfigMount(options: {
+	readonly gatewayCacheDir: string;
+	readonly runtimePluginConfigs:
+		| Readonly<Record<string, Readonly<Record<string, unknown>>>>
+		| undefined;
+}):
+	| {
+			readonly guestPath: string;
+			readonly hostPath: string;
+	  }
+	| undefined {
+	const configDir = managedToolPortalConfigDir(options.runtimePluginConfigs);
+	if (configDir === undefined) {
+		return undefined;
+	}
+	const relativeConfigPath = path.posix.relative(openClawCacheDirVmPath, configDir);
+	if (
+		relativeConfigPath.length === 0 ||
+		relativeConfigPath.startsWith('..') ||
+		path.posix.isAbsolute(relativeConfigPath)
+	) {
+		return undefined;
+	}
+	return {
+		guestPath: configDir,
+		hostPath: path.join(options.gatewayCacheDir, relativeConfigPath),
 	};
 }
 
@@ -916,16 +1019,10 @@ async function buildEffectiveOpenClawConfigContent(zone: GatewayZoneConfig): Pro
 					}
 				: {}),
 			gondolin: {
-				controllerUrl: `http://${controllerVmHost}:18800`,
-				gatewayControlLinkMonitor: {
-					baseIntervalMs: 10_000,
-					enabled: true,
-					maxIntervalMs: 120_000,
-				},
-				zoneId: zone.id,
 				...(isObjectRecord(zone.runtimePluginConfigs?.gondolin)
 					? zone.runtimePluginConfigs.gondolin
 					: {}),
+				zoneId: zone.id,
 			},
 		};
 		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
@@ -1028,7 +1125,6 @@ export const openclawLifecycle: GatewayLifecycle = {
 	},
 
 	buildVmSpec({
-		controllerPort,
 		gatewayCacheDir,
 		projectNamespace,
 		resolvedSecrets,
@@ -1053,6 +1149,13 @@ export const openclawLifecycle: GatewayLifecycle = {
 			environmentSecrets,
 			'openclaw-vm-runtime-raw-env-secrets',
 		);
+		const sshEgress = createManagedGitReadOnlySshEgressOptions({
+			gitReadAllowlistRepos: zone.gitReadAllowlistRepos,
+		});
+		const toolPortalEffectiveConfigMount = managedToolPortalEffectiveConfigMount({
+			gatewayCacheDir,
+			runtimePluginConfigs: zone.runtimePluginConfigs,
+		});
 
 		return {
 			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
@@ -1086,7 +1189,8 @@ export const openclawLifecycle: GatewayLifecycle = {
 				? { runtimeRootfsSize: zone.gateway.runtimeRootfsSize }
 				: {}),
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
-			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),
+			...(sshEgress === undefined ? {} : { sshEgress }),
+			tcpHosts: buildGatewayTcpHosts(zone, tcpPool),
 			websocketUpgrades: zone.websocketUpgrades ?? [],
 			vfsMounts: {
 				'/home/openclaw/.openclaw/config': {
@@ -1097,6 +1201,14 @@ export const openclawLifecycle: GatewayLifecycle = {
 					hostPath: gatewayCacheDir,
 					kind: 'realfs',
 				},
+				...(toolPortalEffectiveConfigMount === undefined
+					? {}
+					: {
+							[toolPortalEffectiveConfigMount.guestPath]: {
+								hostPath: toolPortalEffectiveConfigMount.hostPath,
+								kind: 'realfs-readonly',
+							},
+						}),
 				'/home/openclaw/.openclaw/state': {
 					hostPath: zone.gateway.stateDir,
 					kind: 'realfs',

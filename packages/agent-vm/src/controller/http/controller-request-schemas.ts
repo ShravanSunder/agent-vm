@@ -67,11 +67,12 @@ export const controllerLeaseCreateRequestSchema = z.strictObject({
 export const controllerStartActiveUseRequestSchema = z.strictObject({
 	correlation: z
 		.strictObject({
-			agentId: z.string().min(1).optional(),
-			sessionId: z.string().min(1).optional(),
-			sessionKey: z.string().min(1).optional(),
+			messageId: z.string().min(1).optional(),
+			requestId: z.string().min(1).optional(),
+			runId: z.string().min(1).optional(),
+			sessionKeyDigest: z.string().min(1).optional(),
 			toolCallId: z.string().min(1).optional(),
-			toolName: z.string().min(1).optional(),
+			traceId: z.string().min(1).optional(),
 		})
 		.optional(),
 	report: controllerToolVmActiveUseOperationReportSchema.optional(),

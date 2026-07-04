@@ -19,9 +19,11 @@ import {
 	type IngressRoute as GondolinIngressRoute,
 	type ShadowPredicate,
 	type ShadowProviderOptions,
+	type SshOptions,
 	type VMOptions,
 	type VmFs as GondolinVmFs,
 	type VirtualProvider,
+	getInfoFromSshExecRequest,
 } from '@earendil-works/gondolin';
 
 import {
@@ -53,8 +55,16 @@ export type ManagedExecOptions = GondolinExecOptions;
 export type ManagedExecProcess = GondolinExecProcess;
 export type ManagedExecResult = GondolinExecResult;
 export type ManagedVmFs = GondolinVmFs;
+export type ManagedSshEgressOptions = SshOptions;
 
 export type IngressRoute = GondolinIngressRoute;
+
+export interface GitReadOnlySshEgressOptions {
+	readonly allowedHosts: readonly string[];
+	readonly allowedRepos?: readonly string[];
+	readonly agent?: string;
+	readonly knownHostsFile?: SshOptions['knownHostsFile'];
+}
 
 export interface SshAccess {
 	readonly host: string;
@@ -119,6 +129,7 @@ export interface CreateVmOptions {
 	readonly secrets: Record<string, MediatedSecretSpec>;
 	readonly vfsMounts: Record<string, VfsMountSpec>;
 	readonly tcpHosts?: Record<string, string>;
+	readonly sshEgress?: ManagedSshEgressOptions;
 	readonly env?: Record<string, string>;
 	readonly sessionLabel?: string;
 	readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
@@ -468,6 +479,53 @@ function mergeUniqueHosts(
 	return mergedHosts;
 }
 
+function normalizeGitRepoPath(repoPath: string): string {
+	return repoPath.replace(/^\/+/u, '').replace(/\.git$/u, '');
+}
+
+export function createGitReadOnlySshEgressOptions(
+	options: GitReadOnlySshEgressOptions,
+): ManagedSshEgressOptions {
+	const allowedRepos =
+		options.allowedRepos === undefined
+			? undefined
+			: new Set(options.allowedRepos.map((repoPath) => normalizeGitRepoPath(repoPath)));
+
+	return {
+		allowedHosts: [...options.allowedHosts],
+		...(options.agent ? { agent: options.agent } : {}),
+		...(options.knownHostsFile ? { knownHostsFile: options.knownHostsFile } : {}),
+		execPolicy: (request) => {
+			const gitExec = getInfoFromSshExecRequest(request);
+			if (!gitExec) {
+				return {
+					allow: false,
+					message: 'agent-vm: non-git SSH exec is denied',
+				};
+			}
+			if (gitExec.service === 'git-receive-pack') {
+				return {
+					allow: false,
+					message: 'agent-vm: git push over guest SSH is denied',
+				};
+			}
+			if (gitExec.service !== 'git-upload-pack') {
+				return {
+					allow: false,
+					message: 'agent-vm: unsupported git SSH service is denied',
+				};
+			}
+			if (allowedRepos && !allowedRepos.has(normalizeGitRepoPath(gitExec.repo))) {
+				return {
+					allow: false,
+					message: 'agent-vm: git repository is not allowlisted for guest SSH reads',
+				};
+			}
+			return { allow: true };
+		},
+	};
+}
+
 function createInternalTcpHostPolicy(
 	rules: readonly InternalTcpHostRule[],
 ): HttpHooks['isIpAllowed'] | undefined {
@@ -496,6 +554,7 @@ export async function createManagedVm(
 ): Promise<ManagedVm> {
 	dependencies.configureHostNetworkDefaults?.();
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
+	const hasSshEgress = options.sshEgress !== undefined && options.sshEgress.allowedHosts.length > 0;
 	const internalTcpHostRules = deriveInternalTcpHostRules(options.tcpHosts);
 	const allowedHosts = mergeUniqueHosts(
 		options.allowedHosts,
@@ -530,7 +589,7 @@ export async function createManagedVm(
 				fuseMount: '/data',
 				mounts: createVfsMounts(options.vfsMounts, dependencies),
 			},
-			...(hasTcpHosts
+			...(hasTcpHosts || hasSshEgress
 				? {
 						dns: {
 							mode: 'synthetic',
@@ -538,9 +597,14 @@ export async function createManagedVm(
 							syntheticIPv6: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 							syntheticHostMapping: 'per-host',
 						},
-						tcp: {
-							hosts: options.tcpHosts,
-						},
+						...(hasSshEgress ? { ssh: options.sshEgress } : {}),
+						...(hasTcpHosts
+							? {
+									tcp: {
+										hosts: options.tcpHosts,
+									},
+								}
+							: {}),
 					}
 				: {}),
 		});

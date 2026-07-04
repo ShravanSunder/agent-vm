@@ -116,7 +116,7 @@ zoneFilesDir                        system.json host config            durable R
 /zone                               OpenClaw gateway VM                RealFS -> zoneFilesDir
                                     durable zone files                 shared, backed up
 
-workMountDir                        POST /lease request                gateway VM path, untrusted input
+workMountDir                        gateway_control_rpc lease_create   gateway VM path, untrusted input
                                     chosen by OpenClaw/plugin          must be child of /zone or sandboxes
 
 /home/openclaw/.openclaw/state/

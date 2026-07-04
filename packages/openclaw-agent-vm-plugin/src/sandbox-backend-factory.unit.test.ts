@@ -5,7 +5,7 @@ import {
 } from '@agent-vm/gateway-interface';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ControllerLeaseRequestError, type LeaseClient } from './controller-lease-client.js';
+import { ControllerLeaseRequestError, type LeaseClient } from './lease-client-contract.js';
 import {
 	createGondolinSandboxBackendFactory,
 	createGondolinSandboxBackendManager,
@@ -313,10 +313,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 					...createActiveUseLeaseClientMethods(),
 					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
-					publishOpenClawRuntimeStatus,
 					releaseLease: async () => {},
 					requestLease,
 				}),
+				publishOpenClawRuntimeStatus,
 				runRemoteShellScript,
 			},
 		);
@@ -1443,8 +1443,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('finalizeExec publishes Tool VM SSH finalize health', async () => {
-		const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true })));
-		vi.stubGlobal('fetch', fetchMock);
+		const publishHealthEvent = vi.fn(async () => {});
 		const factory = createGondolinSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
@@ -1463,6 +1462,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize-health')),
 				}),
+				publishHealthEvent,
 				runRemoteShellScript: vi.fn(),
 			},
 		);
@@ -1487,26 +1487,20 @@ describe('createGondolinSandboxBackendFactory', () => {
 			token: execSpec.finalizeToken,
 		});
 
-		const fetchCall = fetchMock.mock.calls[0];
-		expect(fetchCall?.[0]).toBe('http://controller.vm.host:18800/zones/shravan/health-events');
-		const init = fetchCall?.[1];
-		if (typeof init?.body !== 'string') {
-			throw new TypeError('Expected health publish request body to be a string.');
-		}
-		const event: unknown = JSON.parse(init.body);
-		expect(event).toMatchObject({
-			agentId: 'main',
-			kind: 'tool-vm-ssh',
-			leaseId: testToolVmLeaseId('lease-finalize-health'),
-			operation: 'finalize',
-			result: 'ok',
-			zoneId: 'shravan',
-		});
+		expect(publishHealthEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'main',
+				kind: 'tool-vm-ssh',
+				leaseId: testToolVmLeaseId('lease-finalize-health'),
+				operation: 'finalize',
+				result: 'ok',
+				zoneId: 'shravan',
+			}),
+		);
 	});
 
 	it('finalizeExec does not wait for Tool VM SSH finalize health publishing', async () => {
-		const fetchMock = vi.fn<typeof fetch>(async () => new Promise<Response>(() => {}));
-		vi.stubGlobal('fetch', fetchMock);
+		const publishHealthEvent = vi.fn(async () => new Promise<void>(() => {}));
 		const factory = createGondolinSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
@@ -1525,6 +1519,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize-health')),
 				}),
+				publishHealthEvent,
 				runRemoteShellScript: vi.fn(),
 			},
 		);
@@ -1550,9 +1545,12 @@ describe('createGondolinSandboxBackendFactory', () => {
 				token: execSpec.finalizeToken,
 			}),
 		).resolves.toBeUndefined();
-		expect(fetchMock).toHaveBeenCalledWith(
-			'http://controller.vm.host:18800/zones/shravan/health-events',
-			expect.any(Object),
+		expect(publishHealthEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: 'tool-vm-ssh',
+				operation: 'finalize',
+				zoneId: 'shravan',
+			}),
 		);
 	});
 

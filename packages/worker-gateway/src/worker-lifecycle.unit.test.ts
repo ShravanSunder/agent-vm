@@ -1,5 +1,5 @@
 import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { workerLifecycle } from './worker-lifecycle.js';
 
@@ -24,6 +24,10 @@ const zone: GatewayZoneConfig = {
 		},
 	},
 };
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 describe('workerLifecycle', () => {
 	it('does not support interactive auth', () => {
@@ -52,7 +56,7 @@ describe('workerLifecycle', () => {
 		expect(vmSpec.vfsMounts['/workspace']).toBeUndefined();
 		expect(vmSpec.environment.OPENAI_API_KEY).toBe('openai-token');
 		expect(vmSpec.environment.AGENT_VM_ZONE_ID).toBe('shravan');
-		expect(vmSpec.environment.CONTROLLER_BASE_URL).toBe('http://controller.vm.host:18800');
+		expect(vmSpec.environment.CONTROLLER_BASE_URL).toBeUndefined();
 		expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
 		expect(vmSpec.environment.PATH).toBe(
 			'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
@@ -69,8 +73,119 @@ describe('workerLifecycle', () => {
 		expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
 		expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
 		expect(vmSpec.environment.pnpm_config_store_dir).toBe('/work/cache/pnpm/store');
+		expect(vmSpec.allowedHosts).toEqual(['api.openai.com']);
+		expect(vmSpec.allowedHosts).not.toContain('controller.vm.host');
 		expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
-		expect(vmSpec.tcpHosts['controller.vm.host:18800']).toBe('127.0.0.1:18800');
+		expect(vmSpec.tcpHosts['controller.vm.host:18800']).toBeUndefined();
+		expect(vmSpec.tcpHosts).toEqual({});
+	});
+
+	it('denies Worker Git SSH reads when no trusted repo allowlist is available', async () => {
+		vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+
+		const vmSpec = workerLifecycle.buildVmSpec({
+			controllerPort: 18800,
+			gatewayCacheDir: '/host/cache/gateways/shravan',
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
+			runtimeDir: '/host/runtime',
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			zone,
+		});
+
+		expect(vmSpec.sshEgress).toBeUndefined();
+	});
+
+	it('allows only trusted Worker Git SSH reads from prepared repos', async () => {
+		vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+
+		const vmSpec = workerLifecycle.buildVmSpec({
+			controllerPort: 18800,
+			gatewayCacheDir: '/host/cache/gateways/shravan',
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
+			runtimeDir: '/host/runtime',
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			zone: {
+				...zone,
+				gitReadAllowlistRepos: ['ssh://git@git.example.com/org/repo.git'],
+			},
+		});
+
+		expect(vmSpec.sshEgress?.allowedHosts).toEqual(['git.example.com']);
+		expect(vmSpec.sshEgress?.agent).toBe('/tmp/agent-vm-test-agent.sock');
+		if (!vmSpec.sshEgress?.execPolicy) {
+			throw new Error('Expected Worker gateway read-only Git SSH policy');
+		}
+		await expect(
+			Promise.resolve(
+				vmSpec.sshEgress.execPolicy({
+					command: "git-upload-pack 'org/repo.git'",
+					guestUsername: 'git',
+					hostname: 'git.example.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_000 },
+				}),
+			),
+		).resolves.toEqual({ allow: true });
+		await expect(
+			Promise.resolve(
+				vmSpec.sshEgress.execPolicy({
+					command: "git-upload-pack 'org/other-private.git'",
+					guestUsername: 'git',
+					hostname: 'git.example.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_003 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+		await expect(
+			Promise.resolve(
+				vmSpec.sshEgress.execPolicy({
+					command: "git-receive-pack 'org/repo.git'",
+					guestUsername: 'git',
+					hostname: 'git.example.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_001 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+		await expect(
+			Promise.resolve(
+				vmSpec.sshEgress.execPolicy({
+					command: 'bash',
+					guestUsername: 'git',
+					hostname: 'git.example.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_002 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+	});
+
+	it('omits Worker SSH egress when no host SSH agent is available', () => {
+		vi.stubEnv('SSH_AUTH_SOCK', '');
+
+		const vmSpec = workerLifecycle.buildVmSpec({
+			controllerPort: 18800,
+			gatewayCacheDir: '/host/cache/gateways/shravan',
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
+			runtimeDir: '/host/runtime',
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			zone,
+		});
+
+		expect(vmSpec.sshEgress).toBeUndefined();
 	});
 
 	it('keeps Tool VM audience secrets out of worker gateway env and mediation', () => {
@@ -125,7 +240,8 @@ describe('workerLifecycle', () => {
 				value: 'github-token',
 			},
 		});
-		expect(vmSpec.allowedHosts).toEqual(['controller.vm.host', 'api.openai.com', 'api.github.com']);
+		expect(vmSpec.allowedHosts).toEqual(['api.openai.com', 'api.github.com']);
+		expect(vmSpec.allowedHosts).not.toContain('controller.vm.host');
 	});
 
 	it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
@@ -174,11 +290,13 @@ describe('workerLifecycle', () => {
 		});
 
 		expect(processSpec.bootstrapCommand).not.toContain('npm install -g --force @openai/codex');
-		expect(processSpec.bootstrapCommand).not.toContain('npm install');
+		expect(processSpec.bootstrapCommand).not.toContain(' npm install');
 		expect(processSpec.bootstrapCommand).toContain('PNPM_HOME=/pnpm');
 		expect(processSpec.bootstrapCommand).toContain('PATH=/pnpm:$PATH');
 		expect(processSpec.bootstrapCommand).toContain('mkdir -p /work/repos /work/tmp');
 		expect(processSpec.bootstrapCommand).toContain('/work/cache/pnpm/store');
+		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker-packages/package.json');
+		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker-packages/node_modules');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker.tgz');
 		expect(processSpec.bootstrapCommand).toContain(
 			'worker_package_root="$(pnpm root -g --silent)"',

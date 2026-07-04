@@ -27,5 +27,17 @@ export function egressHostsForAudience(
 }
 
 export function gatewayVmAllowedHosts(egressHosts: readonly EgressHostConfig[]): readonly string[] {
-	return Array.from(new Set([controllerVmHost, ...egressHostsForAudience(egressHosts, 'gateway')]));
+	return Array.from(
+		new Set(
+			egressHostsForAudience(egressHosts, 'gateway').filter((host) => host !== controllerVmHost),
+		),
+	);
+}
+
+export function workerVmAllowedHosts(egressHosts: readonly EgressHostConfig[]): readonly string[] {
+	return Array.from(
+		new Set(
+			egressHostsForAudience(egressHosts, 'gateway').filter((host) => host !== controllerVmHost),
+		),
+	);
 }

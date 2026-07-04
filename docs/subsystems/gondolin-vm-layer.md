@@ -185,12 +185,15 @@ Only hosts in the `allowedHosts` list can be reached. Requests to unlisted hosts
 
 ## TCP Host Mapping
 
-TCP host mapping lets processes inside the VM reach host-side TCP services via synthetic DNS hostnames. This is how gateway VMs talk to the agent-vm controller and how OpenClaw Gateways reach Tool VM SSH ports.
+TCP host mapping lets processes inside the VM reach selected host-side TCP
+services via synthetic DNS hostnames. In the managed control-plane cutover, this
+is reserved for OpenClaw gateway access to Tool VM SSH ports. Gateway and Worker
+control traffic uses controller-initiated Gondolin ingress WebSocket upgrades
+instead of raw mapped TCP.
 
 ```
   Inside VM                          Host Side
   ---------                          ---------
-  controller.vm.host:18800   ------> 127.0.0.1:18800   (agent-vm controller HTTP API)
   tool-0.vm.host:22          ------> 127.0.0.1:19000   (tool VM 0 SSH)
   tool-1.vm.host:22          ------> 127.0.0.1:19001   (tool VM 1 SSH)
 ```
@@ -203,27 +206,22 @@ When `tcpHosts` is provided in `CreateVmOptions`, the adapter configures:
 
 The IPv4-mapped AAAA answer is an SSRF-validation compatibility value, not a
 promise of general guest IPv6 egress. Raw TCP mappings such as
-`controller.vm.host` and `tool-0.vm.host` still depend on the per-host IPv4
-answer because Gondolin derives mapped-TCP identity from the synthetic IPv4
-host map. WebSocket traffic uses Gondolin's HTTP upgrade bridge and the
-`websocketUpgrades` policy instead of raw TCP mappings.
+`tool-0.vm.host` still depend on the per-host IPv4 answer because Gondolin
+derives mapped-TCP identity from the synthetic IPv4 host map. WebSocket traffic
+uses Gondolin's HTTP upgrade bridge and the `websocketUpgrades` policy instead
+of raw TCP mappings.
 
 `allowedInternalHosts` is a Gondolin HTTP-hook escape hatch, not the fix for
 Discord media SSRF failures. It can relax Gondolin's host-side HTTP internal-IP
 block for matching request hostnames, but it does not change OpenClaw's own
 Discord media SSRF resolver and does not apply to raw mapped TCP.
 
-Worker VMs only map the agent-vm controller endpoint. OpenClaw Gateway VMs map
-the agent-vm controller plus all Tool VM SSH slots from the TCP pool.
+Worker VMs do not map the agent-vm controller endpoint for control traffic.
+OpenClaw Gateway VMs map Tool VM SSH slots from the TCP pool.
 
-These are two separate raw TCP paths:
+The managed raw TCP exception is Tool VM SSH:
 
 ```text
-gateway VM -> agent-vm controller
-  controller.vm.host:18800 -> 127.0.0.1:<host controller port>
-  Used by lease create, lease-renew, lease-heartbeat, health-event publish,
-  runtime status publish, and gateway-control-link probes.
-
 gateway VM -> Tool VM SSH
   tool-<slot>.vm.host:22 -> 127.0.0.1:<tcpPool slot port>
   Used by OpenClaw command execution, filesystem bridge operations, finalize,

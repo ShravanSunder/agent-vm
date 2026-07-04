@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
 	createToolVmLeaseId,
 	isToolVmActiveUseId,
+	normalizeToolVmActiveUseCorrelation,
 	type EndToolVmActiveUseRequest,
 	type HeartbeatToolVmActiveUseRequest,
 	type HeartbeatToolVmActiveUseResponse,
@@ -799,8 +800,9 @@ export function createLeaseManager(options: {
 				);
 			}
 			const now = options.now();
+			const correlation = normalizeToolVmActiveUseCorrelation(request.correlation);
 			const activeUse = {
-				...(request.correlation ? { correlation: request.correlation } : {}),
+				...(correlation ? { correlation } : {}),
 				expiresAt: now + toolVmUsePolicy.heartbeatStaleMs,
 				lastHeartbeatAt: now,
 				...(request.report === undefined ? {} : { latestReport: request.report }),

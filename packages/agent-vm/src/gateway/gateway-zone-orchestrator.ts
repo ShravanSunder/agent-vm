@@ -13,6 +13,19 @@ import {
 } from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
+import {
+	buildGatewayControlEndpoint,
+	buildGatewayControlRuntimePluginConfig,
+	connectGatewayControlSession,
+	createControlSessionDispatcher,
+	createControlSessionFenceRegistry,
+	createGatewayControlCallerContextRegistry,
+	createGatewayControlDomainHandler,
+	createGatewayControlSessionMaterial,
+	writeGatewayControlSessionMaterial,
+	type GatewayControlCallerContextRegisterPayload,
+	type GatewayControlSessionMaterial,
+} from '../controller/control-session/index.js';
 import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
 import {
 	createObservabilityRuntimeConfig,
@@ -42,6 +55,8 @@ import {
 	findGatewayZone,
 	mapSystemGatewayZoneToLifecycleZone,
 	type GatewayZone,
+	type GatewayControlSessionConnector,
+	type GatewayControlSessionMaterialFactory,
 	type GatewayManagedVmFactoryOptions,
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
@@ -57,11 +72,39 @@ const defaultGatewayReadinessMaxAttempts = Math.ceil(
 	defaultGatewayReadinessTimeoutMs / defaultGatewayReadinessRetryDelayMs,
 );
 
+export function validateGatewayControlCallerContextRegistration(options: {
+	readonly payload: GatewayControlCallerContextRegisterPayload;
+	readonly zone: GatewayZone;
+}): void {
+	const evidence = options.payload.adapterEvidence;
+	const configuredAgentIds = new Set((options.zone.agents ?? []).map((agent) => agent.id));
+	if (configuredAgentIds.size === 0 || !configuredAgentIds.has(evidence.agentId)) {
+		throw new Error(
+			`Gateway control caller context rejected undeclared OpenClaw agent '${evidence.agentId}'.`,
+		);
+	}
+	if (configuredAgentIds.size !== 1) {
+		throw new Error(
+			`Gateway control caller context rejected multi-agent OpenClaw zone '${options.zone.id}' until controller-signed agent attestation is implemented.`,
+		);
+	}
+	if (
+		evidence.purpose === 'tool_portal_controller_host_action' &&
+		options.zone.toolPortal === undefined
+	) {
+		throw new Error(
+			'Gateway control caller context rejected Tool Portal host action without zone Tool Portal config.',
+		);
+	}
+}
+
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadinessDefault;
 	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
 	readonly cleanupOrphanedToolVmsIfPresent?: typeof cleanupOrphanedToolVmsIfPresent;
+	readonly connectGatewayControlSession?: GatewayControlSessionConnector;
 	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
+	readonly createGatewayControlSessionMaterial?: GatewayControlSessionMaterialFactory;
 	readonly gatewayReadinessMaxAttempts?: number;
 	readonly gatewayReadinessRetryDelayMs?: number;
 	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
@@ -71,6 +114,10 @@ export interface GatewayManagerDependencies extends GatewayImageBuilderDependenc
 	readonly readProcessIdentity?: (
 		pid: number,
 	) => Promise<{ readonly command: string; readonly lstart: string } | null>;
+	readonly writeGatewayControlSessionMaterial?: (
+		runtimeDirectory: string,
+		material: GatewayControlSessionMaterial,
+	) => Promise<void>;
 	readonly writeGatewayRuntimeRecord?: (
 		stateDirectory: string,
 		record: GatewayRuntimeRecord,
@@ -111,6 +158,36 @@ function stableJson(value: unknown): string {
 			.join(',')}}`;
 	}
 	return JSON.stringify(value) ?? 'undefined';
+}
+
+function mergeRuntimePluginConfigs(
+	base: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
+	override: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
+): Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined {
+	if (base === undefined) {
+		return override;
+	}
+	if (override === undefined) {
+		return base;
+	}
+	const mergedEntries: Record<string, Readonly<Record<string, unknown>>> = { ...base };
+	for (const [pluginId, pluginConfig] of Object.entries(override)) {
+		mergedEntries[pluginId] = {
+			...mergedEntries[pluginId],
+			...pluginConfig,
+		};
+	}
+	return mergedEntries;
+}
+
+function buildControlSessionRuntimePluginConfigs(options: {
+	readonly material: ReturnType<typeof createGatewayControlSessionMaterial>;
+}): Readonly<Record<string, Readonly<Record<string, unknown>>>> {
+	return {
+		gondolin: {
+			controlSession: buildGatewayControlRuntimePluginConfig(options.material),
+		},
+	};
 }
 
 function secretRefCacheKey(secretRef: SecretRef): string {
@@ -433,7 +510,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 	>
 > {
 	const zone = props.zone;
-	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
+	if (zone.gateway.type !== 'openclaw' || zone.toolPortal === undefined) {
 		return {};
 	}
 	const allowedRawEnvSecretNames = [
@@ -444,18 +521,20 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		props.cacheDir,
 		'gateways',
 		zone.id,
-		'mcp-portal-effective',
+		'tool-portal-effective',
 	);
-	const effectiveVmConfigDir = '/home/openclaw/.openclaw/cache/mcp-portal-effective';
+	const effectiveVmConfigDir = '/home/openclaw/.openclaw/cache/tool-portal-effective';
 	const buildEffectiveConfig =
 		props.writeEffectiveConfig === false
 			? preflightMcpPortalEffectiveConfig
 			: writeMcpPortalEffectiveConfig;
 	const materialization = await buildEffectiveConfig({
-		authoredConfigDir: zone.mcpPortal.configDir,
+		authoredConfigDir: zone.toolPortal.configDir,
 		effectiveHostConfigDir,
 		effectiveVmConfigDir,
 		allowedRawEnvSecretNames,
+		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
+		includeZoneGitControllerHostAction: zone.gateway.zoneGit !== undefined,
 		secretResolver: props.secretResolver,
 		zoneId: zone.id,
 	});
@@ -472,7 +551,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		runtimeEnvironment: materialization.runtimeEnvironment,
 		runtimeMediatedSecrets: materialization.runtimeMediatedSecrets,
 		runtimePluginConfigs: {
-			'mcp-portal': materialization.pluginConfig,
+			gondolin: { toolPortal: materialization.pluginConfig },
 		},
 	};
 }
@@ -550,9 +629,20 @@ async function preflightGatewayZoneStartPrerequisites(
 	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone, {
 		hostObservability: options.systemConfig.host.observability,
 	});
+	const controlSessionMaterial =
+		zone.gateway.type === 'openclaw' && options.controlSession !== undefined
+			? createGatewayControlSessionMaterial({
+					controllerEpoch: options.controlSession.controllerEpoch,
+					zoneId: zone.id,
+				})
+			: undefined;
+	const controlSessionRuntimePluginConfigs =
+		controlSessionMaterial === undefined
+			? undefined
+			: buildControlSessionRuntimePluginConfigs({ material: controlSessionMaterial });
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 	const cachingSecretResolver = createPreflightCachingSecretResolver(options.secretResolver);
-	const [mcpPortalMaterialization] = await Promise.all([
+	const [toolPortalMaterialization] = await Promise.all([
 		buildRuntimeMcpPortalMaterialization({
 			cacheDir: options.systemConfig.cacheDir,
 			secretResolver: cachingSecretResolver.resolver,
@@ -566,26 +656,29 @@ async function preflightGatewayZoneStartPrerequisites(
 			zoneId: zone.id,
 		}),
 	]);
+	const runtimePluginConfigs = mergeRuntimePluginConfigs(
+		mergeRuntimePluginConfigs(
+			toolPortalMaterialization.runtimePluginConfigs,
+			options.runtimePluginConfigs,
+		),
+		controlSessionRuntimePluginConfigs,
+	);
 	const lifecycleZone = {
 		...mappedLifecycleZone,
-		...mcpPortalMaterialization,
-		egressHosts: mcpPortalMaterialization.egressHosts ?? mappedLifecycleZone.egressHosts,
+		...toolPortalMaterialization,
+		egressHosts: toolPortalMaterialization.egressHosts ?? mappedLifecycleZone.egressHosts,
+		...(options.gitReadAllowlistRepos === undefined
+			? {}
+			: { gitReadAllowlistRepos: options.gitReadAllowlistRepos }),
 		...(options.runtimeEnvironment === undefined
 			? {}
 			: {
 					runtimeEnvironment: {
-						...mcpPortalMaterialization.runtimeEnvironment,
+						...toolPortalMaterialization.runtimeEnvironment,
 						...options.runtimeEnvironment,
 					},
 				}),
-		...(options.runtimePluginConfigs === undefined
-			? {}
-			: {
-					runtimePluginConfigs: {
-						...mcpPortalMaterialization.runtimePluginConfigs,
-						...options.runtimePluginConfigs,
-					},
-				}),
+		...(runtimePluginConfigs === undefined ? {} : { runtimePluginConfigs }),
 	};
 	if (zone.gateway.type === 'openclaw') {
 		await assertOpenClawToolVmRequirements({ ...options.systemConfig, zones: [zone] }, zone.id);
@@ -604,6 +697,17 @@ export async function startGatewayZone(
 	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone, {
 		hostObservability: options.systemConfig.host.observability,
 	});
+	const controlSessionMaterial =
+		zone.gateway.type === 'openclaw' && options.controlSession !== undefined
+			? (dependencies.createGatewayControlSessionMaterial ?? createGatewayControlSessionMaterial)({
+					controllerEpoch: options.controlSession.controllerEpoch,
+					zoneId: zone.id,
+				})
+			: undefined;
+	const controlSessionRuntimePluginConfigs =
+		controlSessionMaterial === undefined
+			? undefined
+			: buildControlSessionRuntimePluginConfigs({ material: controlSessionMaterial });
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 
 	// Phase A: prove ownership before doing any other startup work.
@@ -699,7 +803,7 @@ export async function startGatewayZone(
 	// All four branches operate on disjoint host paths. Secret work is shared
 	// through the preflight cache so overlapping refs await one in-flight
 	// underlying resolution:
-	//   - mcpPortalMaterialization writes $cacheDir/gateways/$zoneId/mcp-portal-effective/
+	//   - mcpPortalMaterialization writes $cacheDir/gateways/$zoneId/tool-portal-effective/
 	//   - assertions reads $zone.gateway.config (pure validation)
 	//   - resolveZoneSecrets reads zone.secrets
 	//   - image is the prebuilt Phase B image whenever protected preflight ran
@@ -764,7 +868,7 @@ export async function startGatewayZone(
 	// other reasons are lost (only the first reaches the caller). Background
 	// completion of the other branches is harmless — no Phase B branch
 	// produces a host-visible resource that needs cleanup.
-	const [mcpPortalMaterialization, , resolvedSecrets, image] = await Promise.all([
+	const [toolPortalMaterialization, , resolvedSecrets, image] = await Promise.all([
 		mcpPortalMaterializationPromise,
 		assertionsPromise,
 		resolvedSecretsPromise,
@@ -778,26 +882,29 @@ export async function startGatewayZone(
 	} else {
 		await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
 	}
+	const runtimePluginConfigs = mergeRuntimePluginConfigs(
+		mergeRuntimePluginConfigs(
+			toolPortalMaterialization.runtimePluginConfigs,
+			options.runtimePluginConfigs,
+		),
+		controlSessionRuntimePluginConfigs,
+	);
 	const lifecycleZone = {
 		...mappedLifecycleZone,
-		...mcpPortalMaterialization,
-		egressHosts: mcpPortalMaterialization.egressHosts ?? mappedLifecycleZone.egressHosts,
+		...toolPortalMaterialization,
+		egressHosts: toolPortalMaterialization.egressHosts ?? mappedLifecycleZone.egressHosts,
+		...(options.gitReadAllowlistRepos === undefined
+			? {}
+			: { gitReadAllowlistRepos: options.gitReadAllowlistRepos }),
 		...(options.runtimeEnvironment === undefined
 			? {}
 			: {
 					runtimeEnvironment: {
-						...mcpPortalMaterialization.runtimeEnvironment,
+						...toolPortalMaterialization.runtimeEnvironment,
 						...options.runtimeEnvironment,
 					},
 				}),
-		...(options.runtimePluginConfigs === undefined
-			? {}
-			: {
-					runtimePluginConfigs: {
-						...mcpPortalMaterialization.runtimePluginConfigs,
-						...options.runtimePluginConfigs,
-					},
-				}),
+		...(runtimePluginConfigs === undefined ? {} : { runtimePluginConfigs }),
 	};
 	await fs.mkdir(zone.gateway.stateDir, { recursive: true });
 	if (zone.gateway.type === 'openclaw') {
@@ -857,6 +964,7 @@ export async function startGatewayZone(
 				}),
 				secrets: vmSpec.mediatedSecrets,
 				sessionLabel: vmSpec.sessionLabel,
+				...(vmSpec.sshEgress ? { sshEgress: vmSpec.sshEgress } : {}),
 				tcpHosts,
 				vfsMounts,
 			}),
@@ -907,7 +1015,64 @@ export async function startGatewayZone(
 				? {}
 				: { upstreamResponseTimeoutMs: zone.gateway.ingress.upstreamResponseTimeoutMs }),
 		});
+		const controlSession =
+			controlSessionMaterial === undefined
+				? undefined
+				: await runTaskWithResult(runTaskStep, 'Connecting gateway control session', async () => {
+						const sessionFenceRegistry = createControlSessionFenceRegistry();
+						const dispatcher = createControlSessionDispatcher({ sessionFenceRegistry });
+						dispatcher.register(
+							'gateway_control',
+							createGatewayControlDomainHandler({
+								callerContexts: createGatewayControlCallerContextRegistry(),
+								...(options.gatewayControlControllerHostActions === undefined
+									? {}
+									: {
+											controllerHostActions: options.gatewayControlControllerHostActions,
+										}),
+								...(options.gatewayControlLeaseRpc === undefined
+									? {}
+									: { leaseRpc: options.gatewayControlLeaseRpc }),
+								...(options.healthEventStore === undefined
+									? {}
+									: {
+											recordHealthEvent: (event) => {
+												options.healthEventStore?.record(event);
+											},
+										}),
+								...(options.openClawRuntimeStatusStore === undefined
+									? {}
+									: {
+											recordRuntimeStatus: (report) => {
+												options.openClawRuntimeStatusStore?.record(report);
+											},
+										}),
+								session: {
+									bootId: controlSessionMaterial.bootId,
+									controllerEpoch: controlSessionMaterial.controllerEpoch,
+									peerId: controlSessionMaterial.peerId,
+									zoneId: controlSessionMaterial.zoneId,
+								},
+								validateCallerContextRegistration: (payload) => {
+									validateGatewayControlCallerContextRegistration({ payload, zone });
+								},
+							}),
+						);
+						return await (
+							dependencies.connectGatewayControlSession ?? connectGatewayControlSession
+						)({
+							dispatcher,
+							endpoint: buildGatewayControlEndpoint(ingress),
+							material: controlSessionMaterial,
+							sessionFenceRegistry,
+						});
+					});
 		await runTaskStep('Recording gateway runtime', async () => {
+			if (controlSessionMaterial !== undefined) {
+				await (
+					dependencies.writeGatewayControlSessionMaterial ?? writeGatewayControlSessionMaterial
+				)(options.systemConfig.runtimeDir, controlSessionMaterial);
+			}
 			await (dependencies.writeGatewayRuntimeRecord ?? writeGatewayRuntimeRecord)(
 				zone.gateway.stateDir,
 				await buildGatewayRuntimeRecord({
@@ -926,6 +1091,18 @@ export async function startGatewayZone(
 			);
 		});
 		return {
+			...(controlSession === undefined ? {} : { controlSession }),
+			...(controlSessionMaterial === undefined
+				? {}
+				: {
+						controlSessionRecoverySourceKey: {
+							bootId: controlSessionMaterial.bootId,
+							domain: 'gateway_control',
+							gatewayVmId: managedVm.id,
+							generationId: controlSessionMaterial.generationId,
+							zoneId: controlSessionMaterial.zoneId,
+						},
+					}),
 			image,
 			ingress,
 			processSpec,

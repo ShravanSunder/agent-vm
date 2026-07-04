@@ -57,6 +57,13 @@ const controllerGitPullBaseSchema = z.object({
 	repoUrl: z.string().min(1),
 });
 
+const workerControlFindingSchema = z.object({
+	id: z.string().min(1),
+	ok: z.boolean(),
+	safeMessage: z.string().min(1).optional(),
+	severity: z.enum(['info', 'warning', 'error']).optional(),
+});
+
 export const taskEventSchema = z.discriminatedUnion('event', [
 	z.object({
 		event: z.literal('task-accepted'),
@@ -168,6 +175,30 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		attempts: z.number().int().nonnegative(),
 		message: z.string(),
 		retryAfterSeconds: z.number().int().positive().optional(),
+	}),
+	z.object({
+		event: z.literal('worker-control-runtime-observation'),
+		observedAtMs: z.number().int().positive(),
+		sessionState: z
+			.enum([
+				'unknown',
+				'connecting',
+				'ready',
+				'reconnecting',
+				'stale',
+				'rejected',
+				'generation_mismatch',
+				'failed',
+				'closed',
+			])
+			.optional(),
+		state: z.enum(['running', 'closing', 'closed', 'failed']).optional(),
+	}),
+	z.object({
+		event: z.literal('worker-control-runtime-status'),
+		findings: z.array(workerControlFindingSchema),
+		observedAtMs: z.number().int().positive(),
+		statusKind: z.string().min(1),
 	}),
 	z.object({
 		event: z.literal('task-completed'),

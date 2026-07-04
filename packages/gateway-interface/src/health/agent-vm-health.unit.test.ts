@@ -10,15 +10,14 @@ import {
 } from './agent-vm-health.js';
 
 describe('agent-vm health events', () => {
-	it('accepts zone-scoped gateway control-link events with controller endpoint literals', () => {
+	it('accepts zone-scoped gateway control-session events with control-session identity', () => {
 		const event = {
-			controllerHost: 'controller.vm.host',
-			controllerPort: 18800,
+			domain: 'gateway_control',
 			elapsedMs: 12,
-			kind: 'gateway-control-link',
+			kind: 'gateway-control-session',
 			observedAtMs: 1_000,
-			operation: 'controller-health',
-			path: '/health',
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-beta',
 			result: 'ok',
 			zoneId: 'beta',
 		} satisfies AgentVmHealthEvent;
@@ -27,7 +26,7 @@ describe('agent-vm health events', () => {
 		expect(
 			isAgentVmHealthEvent({
 				...event,
-				controllerHost: 'wrong.vm.host',
+				peerId: '',
 			}),
 		).toBe(false);
 	});
@@ -180,7 +179,7 @@ describe('agent-vm health events', () => {
 			oldBootedAt: '2026-05-27T12:00:00.000Z',
 			oldHostPid: 1111,
 			oldVmId: 'old-gateway-vm',
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			result: 'ok',
 			zoneId: 'sunfam',
 		} satisfies AgentVmHealthEvent;
@@ -205,7 +204,7 @@ describe('agent-vm health events', () => {
 			oldHostPid: 1111,
 			oldVmId: 'old-gateway-vm',
 			operationId: 'sunfam-restart-018f',
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			result: 'ok',
 			zoneId: 'sunfam',
 		} satisfies AgentVmHealthEvent;
@@ -225,7 +224,7 @@ describe('agent-vm health events', () => {
 			newHostPid: 2222,
 			newVmId: 'new-gateway-vm',
 			observedAtMs: 1_000,
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			result: 'ok',
 			zoneId: 'sunfam',
 		} satisfies AgentVmHealthEvent;
@@ -249,7 +248,7 @@ describe('agent-vm health events', () => {
 			oldBootedAt: '2026-05-27T12:00:00.000Z',
 			oldHostPid: 1111,
 			oldVmId: 'old-gateway-vm',
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			result: 'ok',
 			zoneId: 'sunfam',
 		};

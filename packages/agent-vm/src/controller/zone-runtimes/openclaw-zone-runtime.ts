@@ -7,6 +7,7 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runGatewayHealthCheck } from '../../gateway/gateway-health-check.js';
 import { GatewayOwnershipUnsafeError } from '../../gateway/gateway-ownership-evidence.js';
+import { cleanupOrphanedGatewayIfPresent as cleanupOrphanedGatewayIfPresentDefault } from '../../gateway/gateway-recovery.js';
 import { deleteGatewayRuntimeRecord as deleteGatewayRuntimeRecordDefault } from '../../gateway/gateway-runtime-record.js';
 import {
 	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
@@ -21,6 +22,7 @@ import { runControllerDestroy as runControllerDestroyDefault } from '../../opera
 import { runControllerUpgrade as runControllerUpgradeDefault } from '../../operations/upgrade-zone.js';
 import { runControllerLogs as runControllerLogsDefault } from '../../operations/zone-logs.js';
 import { isProcessAlive as defaultIsProcessAlive } from '../../shared/managed-vm-process.js';
+import { deleteGatewayControlSessionMaterial as deleteGatewayControlSessionMaterialDefault } from '../control-session/gateway-control-session-material-store.js';
 import type { LeaseManager } from '../leases/lease-manager.js';
 import {
 	appendGatewayLifecycleOperationRecord as appendGatewayLifecycleOperationRecordDefault,
@@ -55,7 +57,12 @@ type OpenClawZoneConfig = ControllerZoneConfig & {
 export interface CreateOpenClawZoneRuntimeOptions {
 	readonly clearTimeoutImpl?: ((timer: NodeJS.Timeout) => void) | undefined;
 	readonly closeGatewayTimeoutMs?: number | undefined;
+	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresentDefault;
 	readonly createFreshSecretResolver?: (() => Promise<SecretResolver>) | undefined;
+	readonly deleteGatewayControlSessionMaterial?: (
+		runtimeDirectory: string,
+		zoneId: string,
+	) => Promise<void>;
 	readonly deleteGatewayRuntimeRecord?: (stateDirectory: string) => Promise<void>;
 	readonly appendGatewayLifecycleOperationRecord?: (
 		record: GatewayLifecycleOperationRecord,
@@ -571,6 +578,7 @@ export function createOpenClawZoneRuntime(
 	): Promise<void> => {
 		let timeout: NodeJS.Timeout | undefined;
 		try {
+			activeGateway.controlSession?.close();
 			await Promise.race([
 				activeGateway.vm.close(),
 				new Promise<never>((_resolve, reject) => {
@@ -589,6 +597,51 @@ export function createOpenClawZoneRuntime(
 				clearTimeoutImpl(timeout);
 			}
 		}
+	};
+
+	const deleteGatewayRuntimeArtifacts = async (): Promise<void> => {
+		await (options.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
+			options.zone.gateway.stateDir,
+		);
+		await (
+			options.deleteGatewayControlSessionMaterial ?? deleteGatewayControlSessionMaterialDefault
+		)(options.systemConfig.runtimeDir, options.zone.id);
+	};
+
+	const tryAutoRecoveryHostTermination = async (props: {
+		readonly activeGateway: GatewayZoneRuntimeHandle;
+		readonly closeError: unknown;
+		readonly next: 'stopped' | 'starting';
+		readonly operationTrigger: GatewayLifecycleOperationTrigger;
+	}): Promise<boolean> => {
+		if (props.operationTrigger !== 'auto-recovery' || props.next !== 'starting') {
+			return false;
+		}
+		const cleanupResult = await (
+			options.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresentDefault
+		)({
+			configuredIngressPort: props.activeGateway.ingress.port,
+			expectedConfigPath: options.systemConfig.systemConfigPath,
+			expectedControllerPort: options.systemConfig.host.controllerPort,
+			mode: 'in-process-recovery',
+			projectNamespace: options.systemConfig.host.projectNamespace,
+			stateDir: options.zone.gateway.stateDir,
+			zoneId: options.zone.id,
+		});
+		if (!cleanupResult.cleanedUp) {
+			if (cleanupResult.cleanupWarning !== undefined) {
+				writeOpenClawZoneRuntimeLog(
+					`auto-recovery host termination skipped for zone '${options.zone.id}': ${cleanupResult.cleanupWarning}`,
+				);
+			}
+			return false;
+		}
+		writeOpenClawZoneRuntimeLog(
+			cleanupResult.killedPid === null
+				? `auto-recovery recovered gateway VM close timeout for zone '${options.zone.id}' after persisted runtime record proved the old VM process was already gone.`
+				: `auto-recovery recovered gateway VM close timeout for zone '${options.zone.id}' by terminating identity-fenced gateway pid ${String(cleanupResult.killedPid)} after graceful close failed: ${formatUnknownError(props.closeError)}`,
+		);
+		return true;
 	};
 
 	const abortIfLifecycleGenerationStale = async (props: {
@@ -648,7 +701,20 @@ export function createOpenClawZoneRuntime(
 					operationTrigger,
 					previousGateway: gatewayIdentityFor(previousGateway),
 				});
-				await closeGatewayWithDeadline(activeGateway);
+				try {
+					await closeGatewayWithDeadline(activeGateway);
+				} catch (error) {
+					if (
+						!(await tryAutoRecoveryHostTermination({
+							activeGateway,
+							closeError: error,
+							next,
+							operationTrigger,
+						}))
+					) {
+						throw error;
+					}
+				}
 				await recordLifecycleOperation({
 					kind: 'vm-close-finished',
 					operationId,
@@ -656,9 +722,7 @@ export function createOpenClawZoneRuntime(
 					previousGateway: gatewayIdentityFor(previousGateway),
 				});
 			}
-			await (options.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
-				options.zone.gateway.stateDir,
-			);
+			await deleteGatewayRuntimeArtifacts();
 			await recordLifecycleOperation({
 				kind: 'runtime-record-deleted',
 				operationId,
@@ -715,9 +779,7 @@ export function createOpenClawZoneRuntime(
 				try {
 					await closeGatewayWithDeadline(startedGateway);
 					if (lifecycleGeneration === expectedGeneration + 1) {
-						await (options.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
-							options.zone.gateway.stateDir,
-						);
+						await deleteGatewayRuntimeArtifacts();
 						await recordLifecycleOperation({
 							currentGateway: gatewayIdentityFor(startedGateway),
 							kind: 'runtime-record-deleted',

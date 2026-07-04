@@ -215,7 +215,7 @@ function formatCollectorHttpEndpoint(config: EnabledObservabilityRuntimeConfig):
 function shouldEmitHealthEventSpan(event: AgentVmHealthEvent): boolean {
 	switch (event.kind) {
 		case 'controller-request':
-		case 'gateway-control-link':
+		case 'gateway-control-session':
 		case 'gateway-recovery':
 		case 'gateway-recovery-suspended':
 		case 'lease-heartbeat':

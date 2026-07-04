@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { loadJsonConfigFile } from './json-config-file.js';
+
 export const toolPortalToolSelectorSchema = z
 	.object({
 		allow: z.union([z.literal('*'), z.array(z.string().min(1))]),
@@ -28,9 +30,9 @@ export const toolPortalCallPolicySchema = z
 export type ToolPortalCallPolicy = z.infer<typeof toolPortalCallPolicySchema>;
 
 export const toolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
-	z.object({ kind: z.literal('mcp') }).strict(),
+	z.object({ kind: z.literal('mcp_provider') }).strict(),
 	z.object({ kind: z.literal('controller_host_action') }).strict(),
-	z.object({ kind: z.literal('credentialed_runner') }).strict(),
+	z.object({ kind: z.literal('tool_vm_runner') }).strict(),
 ]);
 
 export type ToolPortalBackendBinding = z.infer<typeof toolPortalBackendBindingSchema>;
@@ -91,6 +93,10 @@ export const toolPortalConfigSchema = z
 
 export type ToolPortalConfig = z.infer<typeof toolPortalConfigSchema>;
 
+export async function loadToolPortalConfig(configPath: string): Promise<ToolPortalConfig> {
+	return toolPortalConfigSchema.parse(await loadJsonConfigFile(configPath));
+}
+
 export const ToolPortalMcpProjectionNamespaceSchema = z
 	.object({
 		calls: toolPortalCallPolicySchema,
@@ -111,6 +117,28 @@ export const ToolPortalMcpProjectionSchema = z
 	.strict();
 
 export type ToolPortalMcpProjection = z.infer<typeof ToolPortalMcpProjectionSchema>;
+
+export const ToolPortalControllerHostActionProjectionNamespaceSchema =
+	ToolPortalMcpProjectionNamespaceSchema;
+
+export type ToolPortalControllerHostActionProjectionNamespace = z.infer<
+	typeof ToolPortalControllerHostActionProjectionNamespaceSchema
+>;
+
+export const ToolPortalControllerHostActionProjectionSchema = z
+	.object({
+		agentId: z.string().min(1),
+		namespaces: z.record(
+			z.string().min(1),
+			ToolPortalControllerHostActionProjectionNamespaceSchema,
+		),
+		profile: z.string().min(1),
+	})
+	.strict();
+
+export type ToolPortalControllerHostActionProjection = z.infer<
+	typeof ToolPortalControllerHostActionProjectionSchema
+>;
 
 export interface CreateToolPortalMcpProjectionProps {
 	readonly agentId: string;
@@ -134,7 +162,7 @@ export function createToolPortalMcpProjection(
 
 	const namespaces = Object.fromEntries(
 		Object.entries(profileConfig.capabilities)
-			.filter(([, capabilityPolicy]) => capabilityPolicy.backend.kind === 'mcp')
+			.filter(([, capabilityPolicy]) => capabilityPolicy.backend.kind === 'mcp_provider')
 			.map(([namespace, capabilityPolicy]) => [
 				namespace,
 				{
@@ -145,6 +173,45 @@ export function createToolPortalMcpProjection(
 	);
 
 	return ToolPortalMcpProjectionSchema.parse({
+		agentId: props.agentId,
+		namespaces,
+		profile: agentConfig.profile,
+	});
+}
+
+export interface CreateToolPortalControllerHostActionProjectionProps {
+	readonly agentId: string;
+	readonly config: ToolPortalConfig;
+}
+
+export function createToolPortalControllerHostActionProjection(
+	props: CreateToolPortalControllerHostActionProjectionProps,
+): ToolPortalControllerHostActionProjection {
+	const agentConfig = props.config.agents[props.agentId];
+	if (agentConfig === undefined) {
+		throw new Error(`Tool Portal agent "${props.agentId}" is not configured.`);
+	}
+
+	const profileConfig = props.config.profiles[agentConfig.profile];
+	if (profileConfig === undefined) {
+		throw new Error(
+			`Tool Portal agent "${props.agentId}" references missing profile "${agentConfig.profile}".`,
+		);
+	}
+
+	const namespaces = Object.fromEntries(
+		Object.entries(profileConfig.capabilities)
+			.filter(([, capabilityPolicy]) => capabilityPolicy.backend.kind === 'controller_host_action')
+			.map(([namespace, capabilityPolicy]) => [
+				namespace,
+				{
+					calls: capabilityPolicy.calls,
+					tools: capabilityPolicy.tools,
+				},
+			]),
+	);
+
+	return ToolPortalControllerHostActionProjectionSchema.parse({
 		agentId: props.agentId,
 		namespaces,
 		profile: agentConfig.profile,

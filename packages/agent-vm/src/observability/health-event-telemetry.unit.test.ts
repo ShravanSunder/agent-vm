@@ -58,11 +58,13 @@ describe('mapHealthEventToTelemetry', () => {
 
 	it('ignores non-string error codes defensively', () => {
 		const event = {
+			domain: 'gateway_control',
 			elapsedMs: 12,
 			errorCode: null,
-			kind: 'gateway-control-link',
+			kind: 'gateway-control-session',
 			observedAtMs: 1_781_445_000_000,
-			operation: 'controller-health',
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-beta',
 			result: 'failed',
 			zoneId: 'beta',
 		} as unknown as AgentVmHealthEvent;
@@ -71,8 +73,8 @@ describe('mapHealthEventToTelemetry', () => {
 
 		expect(telemetry.log.attributes).not.toHaveProperty('error.type');
 		expect(telemetry.log.attributes).toMatchObject({
-			'agent_vm.gateway.operation': 'controller-health',
-			'agent_vm.health.kind': 'gateway-control-link',
+			'agent_vm.gateway.operation': 'control-session-heartbeat',
+			'agent_vm.health.kind': 'gateway-control-session',
 			'agent_vm.health.result': 'failed',
 		});
 	});

@@ -6,12 +6,31 @@ import type {
 } from '@agent-vm/gateway-interface';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import type {
+	ControlSessionClient,
+	ControlSessionDispatcher,
+	ControlSessionFenceRegistry,
+	GatewayControlControllerHostActionOperations,
+	GatewayControlLeaseRpcOperations,
+	GatewayControlSessionMaterial,
+} from '../controller/control-session/index.js';
+import type { GatewayVmRecoverySourceKey } from '../controller/health/gateway-vm-recovery-policy.js';
+import type { HealthEventStore } from '../controller/health/health-event-store.js';
+import type { OpenClawRuntimeStatusStore } from '../controller/openclaw-runtime-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 
 export type GatewayZone = SystemConfig['zones'][number];
 
 export interface StartGatewayZoneOptions {
+	readonly controlSession?: {
+		readonly controllerEpoch: string;
+	};
 	readonly environmentOverride?: Record<string, string>;
+	readonly gatewayControlControllerHostActions?: GatewayControlControllerHostActionOperations;
+	readonly gatewayControlLeaseRpc?: GatewayControlLeaseRpcOperations;
+	readonly gitReadAllowlistRepos?: readonly string[];
+	readonly healthEventStore?: HealthEventStore;
+	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
 	readonly observabilityStartupCheck?: 'default' | 'skip';
 	readonly prebuiltImage?: import('@agent-vm/gondolin-adapter').BuildImageResult | undefined;
 	readonly runTask?: RunTaskFn;
@@ -27,6 +46,8 @@ export interface StartGatewayZoneOptions {
 }
 
 export interface GatewayZoneStartResult {
+	readonly controlSession?: ControlSessionClient | undefined;
+	readonly controlSessionRecoverySourceKey?: GatewayVmRecoverySourceKey | undefined;
 	readonly image: import('@agent-vm/gondolin-adapter').BuildImageResult;
 	readonly ingress: {
 		readonly host: string;
@@ -36,6 +57,22 @@ export interface GatewayZoneStartResult {
 	readonly vm: import('@agent-vm/gondolin-adapter').ManagedVm;
 	readonly zone: GatewayZone;
 }
+
+export type GatewayControlSessionMaterialFactory = (options: {
+	readonly controllerEpoch: string;
+	readonly zoneId: string;
+}) => GatewayControlSessionMaterial;
+
+export type GatewayControlSessionConnector = (options: {
+	readonly dispatcher?: ControlSessionDispatcher;
+	readonly endpoint: {
+		readonly host: string;
+		readonly path: string;
+		readonly port: number;
+	};
+	readonly material: GatewayControlSessionMaterial;
+	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
+}) => Promise<ControlSessionClient>;
 
 export interface GatewayBuildImageOptions {
 	readonly buildConfig: unknown;
@@ -168,6 +205,9 @@ export function mapSystemGatewayZoneToLifecycleZone(
 	return {
 		id: zone.id,
 		...(zone.agents === undefined ? {} : { agents: zone.agents }),
+		...(zone.gateway.type === 'openclaw' && zone.gateway.zoneGit !== undefined
+			? { gitReadAllowlistRepos: [zone.gateway.zoneGit.remote.repoUrl] }
+			: {}),
 		gateway:
 			zone.gateway.type === 'openclaw'
 				? {
@@ -187,7 +227,7 @@ export function mapSystemGatewayZoneToLifecycleZone(
 		secrets: zone.secrets,
 		egressHosts: zone.egressHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
-		...(zone.mcpPortal === undefined ? {} : { mcpPortal: zone.mcpPortal }),
+		...(zone.toolPortal === undefined ? {} : { toolPortal: zone.toolPortal }),
 		...(observability === undefined ? {} : { observability }),
 		...(zone.websocketUpgrades === undefined ? {} : { websocketUpgrades: zone.websocketUpgrades }),
 	};

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	ControllerDispatchIntentSchema,
 	ControllerHostActionRequestSchema,
-	CredentialedRunnerRequestSchema,
 	ManagedVmArtifactReadRequestSchema,
 	ManagedVmExecRequestSchema,
 } from './index.js';
@@ -16,40 +15,8 @@ const validTrustedScope = {
 const validDispatchIntent = {
 	auditCorrelationId: 'audit-1',
 	canonicalArguments: { title: 'Fix deploy' },
-	capability: { namespace: 'github', toolName: 'create_issue' },
+	capability: { name: 'create_issue', namespace: 'github' },
 	trustedScope: validTrustedScope,
-};
-
-const validFingerprint = {
-	agentId: 'agent-a',
-	artifactIntentHash: 'artifact-hash',
-	backendBindingRevision: 'backend-rev',
-	canonicalArgumentHash: 'args-hash',
-	capability: { namespace: 'github', toolName: 'create_issue' },
-	catalogRevision: 'catalog-rev',
-	custodyMode: 'ephemeral_material',
-	egressPolicyHash: 'egress-hash',
-	executableTemplateRevision: 'template-rev',
-	outputPolicyHash: 'output-hash',
-	policyRevision: 'policy-rev',
-};
-
-const validCliInvocation = {
-	artifacts: { mode: 'none', noFollowRequired: true },
-	argv: ['issue', 'create'],
-	cancellation: { onCancel: 'close_vm', timeoutMs: 1_000 },
-	cwd: { kind: 'workspace_root' },
-	egress: { allowedHosts: ['api.github.com'], denyEndpointOverrides: true },
-	environment: { allowedVariables: [], deniedPatterns: [], mode: 'empty' },
-	executablePath: '/usr/local/bin/gh',
-	fingerprint: validFingerprint,
-	output: {
-		modelVisibleStderr: 'safe_summary',
-		redactionProfile: 'default',
-		stderrMaxBytes: 1024,
-		stdoutMaxBytes: 1024,
-		truncationMode: 'truncate',
-	},
 };
 
 describe('controller execution contracts', () => {
@@ -74,6 +41,15 @@ describe('controller execution contracts', () => {
 				}).success,
 			).toBe(false);
 		}
+	});
+
+	it('rejects legacy toolName capability references in dispatch intent', () => {
+		expect(
+			ControllerDispatchIntentSchema.safeParse({
+				...validDispatchIntent,
+				capability: { namespace: 'github', toolName: 'create_issue' },
+			}).success,
+		).toBe(false);
 	});
 
 	it('requires strict ManagedVm exec requests with no shell or PTY', () => {
@@ -167,24 +143,6 @@ describe('controller execution contracts', () => {
 				artifactId: 'artifact-1',
 				maxBytes: 16 * 1024 * 1024 + 1,
 				noFollow: true,
-			}).success,
-		).toBe(false);
-	});
-
-	it('keeps credentialed runner requests contract-only and fingerprinted', () => {
-		expect(
-			CredentialedRunnerRequestSchema.parse({
-				credentialProfileId: 'github-ci',
-				dispatch: validDispatchIntent,
-				invocation: validCliInvocation,
-			}),
-		).toMatchObject({ credentialProfileId: 'github-ci' });
-
-		expect(
-			CredentialedRunnerRequestSchema.safeParse({
-				credentialProfileId: 'github-ci',
-				dispatch: validDispatchIntent,
-				invocation: { ...validCliInvocation, env: { GITHUB_TOKEN: 'raw' } },
 			}).success,
 		).toBe(false);
 	});

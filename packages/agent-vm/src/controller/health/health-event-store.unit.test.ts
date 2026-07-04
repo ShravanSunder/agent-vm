@@ -3,15 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { HealthEventStore } from './health-event-store.js';
 
-function gatewayControlLinkEvent(overrides: Partial<AgentVmHealthEvent> = {}): AgentVmHealthEvent {
+function gatewayControlSessionEvent(
+	overrides: Partial<AgentVmHealthEvent> = {},
+): AgentVmHealthEvent {
 	return {
-		controllerHost: 'controller.vm.host',
-		controllerPort: 18800,
+		domain: 'gateway_control',
 		elapsedMs: 12,
-		kind: 'gateway-control-link',
+		kind: 'gateway-control-session',
 		observedAtMs: 1_000,
-		operation: 'controller-health',
-		path: '/health',
+		operation: 'control-session-heartbeat',
+		peerId: 'gateway-beta',
 		result: 'ok',
 		zoneId: 'beta',
 		...overrides,
@@ -22,11 +23,11 @@ describe('HealthEventStore', () => {
 	it('keeps the latest event per zone and health bucket', () => {
 		const store = new HealthEventStore({ eventHistoryLimit: 10, staleAfterMs: 30_000 });
 
-		store.record(gatewayControlLinkEvent({ observedAtMs: 1_000, result: 'failed' }));
-		store.record(gatewayControlLinkEvent({ observedAtMs: 2_000, result: 'ok' }));
+		store.record(gatewayControlSessionEvent({ observedAtMs: 1_000, result: 'failed' }));
+		store.record(gatewayControlSessionEvent({ observedAtMs: 2_000, result: 'ok' }));
 
 		expect(store.listLatestEventsForZone('beta')).toEqual([
-			gatewayControlLinkEvent({ observedAtMs: 2_000, result: 'ok' }),
+			gatewayControlSessionEvent({ observedAtMs: 2_000, result: 'ok' }),
 		]);
 		expect(store.deriveSnapshot({ nowMs: 3_000, zoneId: 'beta' })).toMatchObject({
 			kind: 'ok',
@@ -37,18 +38,17 @@ describe('HealthEventStore', () => {
 	it('bounds retained event history independently from latest state', () => {
 		const store = new HealthEventStore({ eventHistoryLimit: 2, staleAfterMs: 30_000 });
 
-		store.record(gatewayControlLinkEvent({ observedAtMs: 1_000 }));
+		store.record(gatewayControlSessionEvent({ observedAtMs: 1_000 }));
 		store.record(
-			gatewayControlLinkEvent({
+			gatewayControlSessionEvent({
 				kind: 'gateway-service-health',
 				observedAtMs: 2_000,
-				path: '/health',
 				port: 18789,
 				statusCode: 200,
 			}),
 		);
 		store.record(
-			gatewayControlLinkEvent({
+			gatewayControlSessionEvent({
 				gatewayService: 'openclaw',
 				kind: 'gateway-plugin-health',
 				observedAtMs: 3_000,
@@ -93,7 +93,7 @@ describe('HealthEventStore', () => {
 			eventHistoryLimit: 10,
 			staleAfterMs: 30_000,
 		});
-		const event = gatewayControlLinkEvent({ observedAtMs: 4_000 });
+		const event = gatewayControlSessionEvent({ observedAtMs: 4_000 });
 
 		store.record(event);
 		await store.flushDurableWrites();
@@ -112,7 +112,7 @@ describe('HealthEventStore', () => {
 			eventHistoryLimit: 10,
 			staleAfterMs: 30_000,
 		});
-		const event = gatewayControlLinkEvent({ observedAtMs: 5_000, result: 'failed' });
+		const event = gatewayControlSessionEvent({ observedAtMs: 5_000, result: 'failed' });
 
 		store.record(event);
 		await expect(store.flushDurableWrites()).resolves.toBeUndefined();
@@ -130,7 +130,7 @@ describe('HealthEventStore', () => {
 			healthEventSinks: [{ record }],
 			staleAfterMs: 30_000,
 		});
-		const event = gatewayControlLinkEvent({ observedAtMs: 5_500 });
+		const event = gatewayControlSessionEvent({ observedAtMs: 5_500 });
 
 		store.record(event);
 
@@ -154,7 +154,7 @@ describe('HealthEventStore', () => {
 			],
 			staleAfterMs: 30_000,
 		});
-		const event = gatewayControlLinkEvent({ observedAtMs: 5_700, result: 'failed' });
+		const event = gatewayControlSessionEvent({ observedAtMs: 5_700, result: 'failed' });
 
 		store.record(event);
 		await expect(store.flushHealthEventSinks()).resolves.toBeUndefined();

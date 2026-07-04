@@ -53,6 +53,9 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
         "audience": "gateway"
       }
     },
+    "agents": [
+      { "id": "shravan" }
+    ],
     "egressHosts": [
       { "host": "api.anthropic.com", "audience": "both" },
       { "host": "api.openai.com", "audience": "both" },
@@ -169,16 +172,19 @@ The gateway stays running until you stop it or the controller shuts down.
 
 ## Tool VMs and Leases
 
-When the agent needs to run code, OpenClaw requests a tool VM lease from the controller:
+When the agent needs to run code, OpenClaw asks the managed Gondolin plugin for a
+Tool VM capability. The controller owns lease authority and talks to the gateway
+over the private control session exposed through Gondolin ingress:
 
 ```
-  OpenClaw (inside gateway VM)
-       |
-       | POST /lease { zoneId, agentId, sessionKey, workMountDir }
-       v
   Controller
        |
-       | Resolves hostWorkMountDir, allocates TCP slot, boots tool VM
+       | Socket.IO over Gondolin ingress
+       | gateway_control_rpc lease_create / lease_use_*
+       v
+  OpenClaw gateway plugin
+       |
+       | receives SSH lease capability only
        v
   Tool VM (Zone 3 — untrusted)
        | /workspace mounted, no raw secrets, scoped mediated placeholders only
@@ -250,8 +256,7 @@ The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
 `web_fetch`, `message`, and `group:plugins` so sandboxed sessions can see web
 tools when the deployment later configures a search or fetch provider, can
 explicitly send channel replies when OpenClaw uses `message_tool_only` group
-reply delivery, and can see optional plugin-owned tools such as MCP Portal's
-`mcp_portal_*` tools.
+reply delivery, and can see optional plugin-owned Tool Portal tools.
 
 ---
 

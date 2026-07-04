@@ -203,12 +203,12 @@ describe('GatewayRecoveryErrorCode', () => {
 	it('stays derived from shared recovery reasons instead of loose strings', () => {
 		expect(gatewayRecoveryHealthReasons).toEqual([
 			'agent-channel-provider-unhealthy',
-			'gateway-control-link-unhealthy',
+			'gateway-control-session-unhealthy',
 			'gateway-service-unhealthy',
 		]);
 		expectTypeOf<GatewayRecoveryErrorCode>().toEqualTypeOf<
 			| 'agent-channel-provider-unhealthy'
-			| 'gateway-control-link-unhealthy'
+			| 'gateway-control-session-unhealthy'
 			| 'gateway-service-unhealthy'
 		>();
 	});

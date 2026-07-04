@@ -141,12 +141,13 @@ const resolvedSecrets: Record<string, string> = {
 function createZone(overrides?: {
 	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
 	readonly gateway?: Partial<OpenClawGatewayConfig>;
-	readonly mcpPortal?: GatewayZoneConfig['mcpPortal'];
+	readonly toolPortal?: GatewayZoneConfig['toolPortal'];
 	readonly runtimeMcpServers?: GatewayZoneConfig['runtimeMcpServers'];
 	readonly runtimeEnvironment?: GatewayZoneConfig['runtimeEnvironment'];
 	readonly runtimeMediatedSecrets?: GatewayZoneConfig['runtimeMediatedSecrets'];
 	readonly observability?: GatewayZoneConfig['observability'];
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
+	readonly gitReadAllowlistRepos?: GatewayZoneConfig['gitReadAllowlistRepos'];
 	readonly withoutAuthProfilesRef?: boolean;
 	readonly secrets?: GatewayZoneConfig['secrets'];
 	readonly websocketUpgrades?: GatewayZoneConfig['websocketUpgrades'];
@@ -185,7 +186,8 @@ function createZone(overrides?: {
 			...overrides?.gateway,
 		},
 		id: 'shravan',
-		...(overrides?.mcpPortal ? { mcpPortal: overrides.mcpPortal } : {}),
+		agents: [{ id: 'shravan' }],
+		...(overrides?.toolPortal ? { toolPortal: overrides.toolPortal } : {}),
 		...(overrides?.observability ? { observability: overrides.observability } : {}),
 		secrets: overrides?.secrets ?? {
 			DISCORD_BOT_TOKEN: {
@@ -209,6 +211,9 @@ function createZone(overrides?: {
 			},
 		},
 		defaultToolVmProfile: 'standard',
+		...(overrides?.gitReadAllowlistRepos
+			? { gitReadAllowlistRepos: overrides.gitReadAllowlistRepos }
+			: {}),
 		...(overrides?.runtimeEnvironment ? { runtimeEnvironment: overrides.runtimeEnvironment } : {}),
 		...(overrides?.runtimeMediatedSecrets
 			? { runtimeMediatedSecrets: overrides.runtimeMediatedSecrets }
@@ -635,11 +640,7 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.NODE_OPTIONS).toBe(
 				'--dns-result-order=ipv4first --no-network-family-autoselection',
 			);
-			expect(vmSpec.allowedHosts).toEqual([
-				'controller.vm.host',
-				'api.openai.com',
-				'api.perplexity.ai',
-			]);
+			expect(vmSpec.allowedHosts).toEqual(['api.openai.com', 'api.perplexity.ai']);
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
 				kind: 'realfs',
@@ -661,14 +662,13 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.vfsMounts['/home/openclaw/workspace']).toBeUndefined();
 			expect(vmSpec.vfsMounts['/var/lib/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
-				'controller.vm.host:18800': '127.0.0.1:18800',
 				'tool-0.vm.host:22': '127.0.0.1:19000',
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
 			expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
 		});
 
-		it('maps host observability collector endpoints into the gateway VM tcp hosts', () => {
+		it('mounts managed Tool Portal effective config read-only when configured', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -680,19 +680,39 @@ describe('openclawLifecycle', () => {
 					size: 2,
 				},
 				zone: createZone({
-					observability: createObservabilityConfig(),
+					runtimePluginConfigs: {
+						gondolin: {
+							toolPortal: {
+								configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+							},
+						},
+					},
 				}),
 			});
 
-			expect(vmSpec.tcpHosts).toMatchObject({
-				'otel-collector.observability.vm.host:4317': '127.0.0.1:24317',
-				'otel-collector.observability.vm.host:4318': '127.0.0.1:24318',
+			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/cache/tool-portal-effective']).toEqual({
+				hostPath: '/host/cache/gateways/shravan/tool-portal-effective',
+				kind: 'realfs-readonly',
 			});
-			expect(vmSpec.allowedHosts).toEqual([
-				'controller.vm.host',
-				'api.openai.com',
-				'api.perplexity.ai',
-			]);
+		});
+
+		it('rejects collector-mode observability before creating raw collector tcp hosts', () => {
+			expect(() =>
+				openclawLifecycle.buildVmSpec({
+					controllerPort: 18800,
+					gatewayCacheDir: '/host/cache/gateways/shravan',
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					resolvedSecrets,
+					runtimeDir: '/host/runtime',
+					tcpPool: {
+						basePort: 19000,
+						size: 2,
+					},
+					zone: createZone({
+						observability: createObservabilityConfig(),
+					}),
+				}),
+			).toThrow(/collector-mode observability.*raw tcpHosts/u);
 		});
 
 		it('carries websocket upgrade URL policy into the gateway VM spec', () => {
@@ -727,6 +747,113 @@ describe('openclawLifecycle', () => {
 			});
 
 			expect(vmSpec.websocketUpgrades).toEqual(websocketUpgrades);
+		});
+
+		it('denies Git SSH reads when no trusted repo allowlist is available', async () => {
+			vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone(),
+			});
+
+			expect(vmSpec.sshEgress).toBeUndefined();
+		});
+
+		it('allows only trusted Git SSH reads from the gateway VM spec', async () => {
+			vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone({
+					gitReadAllowlistRepos: ['ssh://git@git.example.com/shravan/zone-files.git'],
+				}),
+			});
+
+			expect(vmSpec.sshEgress?.allowedHosts).toEqual(['git.example.com']);
+			expect(vmSpec.sshEgress?.agent).toBe('/tmp/agent-vm-test-agent.sock');
+			if (!vmSpec.sshEgress?.execPolicy) {
+				throw new Error('Expected OpenClaw gateway read-only Git SSH policy');
+			}
+			await expect(
+				Promise.resolve(
+					vmSpec.sshEgress.execPolicy({
+						command: "git-upload-pack 'shravan/zone-files.git'",
+						guestUsername: 'git',
+						hostname: 'git.example.com',
+						port: 22,
+						src: { ip: '198.18.0.2', port: 48_000 },
+					}),
+				),
+			).resolves.toEqual({ allow: true });
+			await expect(
+				Promise.resolve(
+					vmSpec.sshEgress.execPolicy({
+						command: "git-upload-pack 'shravan/other-private.git'",
+						guestUsername: 'git',
+						hostname: 'git.example.com',
+						port: 22,
+						src: { ip: '198.18.0.2', port: 48_003 },
+					}),
+				),
+			).resolves.toMatchObject({ allow: false });
+			await expect(
+				Promise.resolve(
+					vmSpec.sshEgress.execPolicy({
+						command: "git-receive-pack 'shravan/zone-files.git'",
+						guestUsername: 'git',
+						hostname: 'git.example.com',
+						port: 22,
+						src: { ip: '198.18.0.2', port: 48_001 },
+					}),
+				),
+			).resolves.toMatchObject({ allow: false });
+			await expect(
+				Promise.resolve(
+					vmSpec.sshEgress.execPolicy({
+						command: 'bash',
+						guestUsername: 'git',
+						hostname: 'github.com',
+						port: 22,
+						src: { ip: '198.18.0.2', port: 48_002 },
+					}),
+				),
+			).resolves.toMatchObject({ allow: false });
+		});
+
+		it('omits OpenClaw SSH egress when no host SSH agent is available', () => {
+			vi.stubEnv('SSH_AUTH_SOCK', '');
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone(),
+			});
+
+			expect(vmSpec.sshEgress).toBeUndefined();
 		});
 
 		it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
@@ -1096,7 +1223,6 @@ describe('openclawLifecycle', () => {
 								gondolin: {
 									enabled: true,
 									config: {
-										controllerUrl: 'http://controller.vm.host:18800',
 										zoneId: 'shravan',
 									},
 								},
@@ -1178,12 +1304,6 @@ describe('openclawLifecycle', () => {
 						gondolin: {
 							enabled: true,
 							config: {
-								controllerUrl: 'http://controller.vm.host:18800',
-								gatewayControlLinkMonitor: {
-									baseIntervalMs: 10_000,
-									enabled: true,
-									maxIntervalMs: 120_000,
-								},
 								zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 								zoneId: 'shravan',
 							},
@@ -1203,6 +1323,8 @@ describe('openclawLifecycle', () => {
 			expect(
 				(await stat(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).mode & 0o777,
 			).toBe(0o600);
+			expect(effectiveOpenClawConfigContent).not.toContain('controller.vm.host:18800');
+			expect(effectiveOpenClawConfigContent).not.toContain('"controllerUrl"');
 			await expect(
 				readFile(
 					path.join(zone.gateway.stateDir, 'agents', 'main', 'agent', 'auth-profiles.json'),
@@ -1265,7 +1387,7 @@ describe('openclawLifecycle', () => {
 			).resolves.toBe('{"profiles":["shravan-inline"]}');
 		});
 
-		it('injects MCP Portal configDir and replaces stale plugin config', async () => {
+		it('strips stale MCP Portal plugin config from the managed effective config', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-mcp-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
@@ -1299,10 +1421,7 @@ describe('openclawLifecycle', () => {
 					stateDir: path.join(tempDirectory, 'state'),
 					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
-				mcpPortal: { configDir: configDirectory },
-				runtimePluginConfigs: {
-					'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' },
-				},
+				toolPortal: { configDir: configDirectory },
 			});
 			const secretResolver: SecretResolver = {
 				resolve: async (secretRef) => {
@@ -1323,18 +1442,66 @@ describe('openclawLifecycle', () => {
 				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
 				'utf8',
 			);
-			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
-				plugins: {
-					entries: {
-						'mcp-portal': {
-							config: { configDir: '/home/openclaw/.openclaw/config' },
-						},
-					},
-				},
-			});
+			const effectiveOpenClawConfig = JSON.parse(effectiveOpenClawConfigContent) as {
+				readonly plugins?: {
+					readonly allow?: readonly string[];
+					readonly entries?: Record<string, unknown>;
+				};
+			};
+			expect(effectiveOpenClawConfig.plugins?.allow).not.toContain('mcp-portal');
+			expect(effectiveOpenClawConfig.plugins?.entries?.['mcp-portal']).toBeUndefined();
+			expect(effectiveOpenClawConfigContent).not.toContain('mcp-portal');
 			expect(effectiveOpenClawConfigContent).not.toContain('stale-portal-binary');
 			expect(effectiveOpenClawConfigContent).not.toContain('binPath');
 			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
+		});
+
+		it('rejects runtime MCP Portal plugin config for managed OpenClaw', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-mcp-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						plugins: {
+							allow: ['gondolin'],
+							entries: { gondolin: { enabled: true } },
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				toolPortal: { configDir: configDirectory },
+				runtimePluginConfigs: {
+					'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' },
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				/managed OpenClaw does not accept runtime mcp-portal plugin config/u,
+			);
 		});
 
 		it('resolves all per-agent auth profiles before writing files', async () => {

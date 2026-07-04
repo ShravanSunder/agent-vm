@@ -1,4 +1,5 @@
 import type { WorkerConfig } from '../config/worker-config.js';
+import type { WorkerControlService } from '../control-session/worker-control-service.js';
 import type { RepoLocation } from '../shared/repo-location.js';
 import type { TaskStatus } from '../state/task-event-types.js';
 import type { TaskState } from '../state/task-state.js';
@@ -13,6 +14,10 @@ export interface CreateTaskInput {
 export interface CoordinatorDeps {
 	readonly config: WorkerConfig;
 	readonly workDir?: string;
+	readonly workerControlService?: Pick<
+		WorkerControlService,
+		'emitApplicationMessage' | 'getAcceptedSession' | 'nextPeerSequence'
+	>;
 }
 
 export interface Coordinator {

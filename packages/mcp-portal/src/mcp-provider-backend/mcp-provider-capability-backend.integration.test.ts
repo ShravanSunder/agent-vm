@@ -43,8 +43,10 @@ describe('MCP provider capability backend integration', () => {
 				enabledNamespacesByAgent: {},
 				hiddenToolsByAgent: {},
 			},
-			approval: (calls) => ({
-				decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
+			approval: (approvalCalls) => ({
+				decisionsByCallId: Object.fromEntries(
+					approvalCalls.map((call) => [call.id, { kind: 'allow' }]),
+				),
 			}),
 			catalogTtlMs: 60_000,
 			runtime: {
@@ -78,7 +80,7 @@ describe('MCP provider capability backend integration', () => {
 					arguments: { title: 'read me' },
 					id: 'read-thing',
 					namespace: fakeUpstreamNamespace,
-					toolName: 'read_thing',
+					name: 'read_thing',
 				},
 			],
 		});
@@ -88,7 +90,7 @@ describe('MCP provider capability backend integration', () => {
 					arguments: { title: 'write me' },
 					id: 'write-thing',
 					namespace: fakeUpstreamNamespace,
-					toolName: 'write_thing',
+					name: 'write_thing',
 				},
 			],
 		});
@@ -101,7 +103,7 @@ describe('MCP provider capability backend integration', () => {
 					value: {
 						namespace: fakeUpstreamNamespace,
 						result: { structuredContent: { name: 'read_thing', ok: true } },
-						toolName: 'read_thing',
+						name: 'read_thing',
 					},
 				},
 			],

@@ -170,6 +170,37 @@ describe('git-push-operations', () => {
 		);
 	});
 
+	it('refuses stale expectedHead before pushing', async () => {
+		mockGitSuccess();
+
+		const result = await pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [
+				{
+					branchName: 'agent/task-1',
+					expectedHead: 'stale-sha',
+					repoUrl: 'https://github.com/acme/widgets.git',
+				},
+			],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toEqual({
+			branch: 'agent/task-1',
+			error:
+				"Refusing to push: local HEAD 'local-sha' does not match expectedHead 'stale-sha'. Refresh task state before retrying.",
+			localHead: 'local-sha',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			success: false,
+		});
+		expect(
+			execaMock.mock.calls.some((call) => {
+				const args = call[1];
+				return Array.isArray(args) && extractGitArgs(args)[0] === 'push';
+			}),
+		).toBe(false);
+	});
+
 	it('retries git commands that terminate without an exit code', async () => {
 		vi.useFakeTimers();
 		let defaultFetchAttempts = 0;

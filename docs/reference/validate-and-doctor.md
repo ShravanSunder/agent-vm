@@ -75,8 +75,8 @@ It checks:
   configs, using `op whoami` under an isolated service-account environment.
 - OpenClaw CLI availability for OpenClaw zones.
 - OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
-- OpenClaw MCP Portal plugin wiring and plugin approval routing for OpenClaw
-  zones.
+- OpenClaw Tool Portal native tool wiring through the `gondolin` plugin and
+  plugin approval routing for OpenClaw zones.
 - OpenClaw Tool VM profile mappings, per-agent auth profile entries, sandbox
   seed entries, and loaded Tool VM mediated secret access entries are visible as
   named inventory checks.

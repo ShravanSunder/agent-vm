@@ -8,13 +8,46 @@ import { JsonValueSchema } from '../../contract-primitives/models/json-value-sch
 
 export const JsonSchemaDocumentSchema = z.record(z.string(), JsonValueSchema);
 
+export const ToolSchemaSummarySchema = z
+	.object({
+		optional: z.array(z.string()),
+		propertyCount: z.number().int().nonnegative(),
+		required: z.array(z.string()),
+		type: z.string().min(1),
+	})
+	.strict();
+
+export type ToolSchemaSummary = z.infer<typeof ToolSchemaSummarySchema>;
+
+export const ToolSafetySummarySchema = z
+	.object({
+		destructiveHint: z.boolean().optional(),
+		readOnlyHint: z.boolean().optional(),
+	})
+	.strict();
+
+export type ToolSafetySummary = z.infer<typeof ToolSafetySummarySchema>;
+
+export const ToolSchemaHintSchema = z
+	.object({
+		message: z.string().max(500),
+		next: z.enum(['call_ready', 'describe_before_call']),
+	})
+	.strict();
+
+export type ToolSchemaHint = z.infer<typeof ToolSchemaHintSchema>;
+
 export const CapabilitySummarySchema = z
 	.object({
-		approval: z.enum(['not_required', 'required', 'conditional']),
-		description: z.string(),
-		name: CapabilityNameSchema,
+		description: z.string().optional(),
+		input: ToolSchemaSummarySchema,
 		namespace: NamespaceNameSchema,
-		title: z.string().min(1),
+		output: ToolSchemaSummarySchema.optional(),
+		safety: ToolSafetySummarySchema,
+		schemaHint: ToolSchemaHintSchema.optional(),
+		title: z.string().min(1).optional(),
+		name: CapabilityNameSchema,
+		toolRef: z.string().min(1),
 	})
 	.strict();
 
@@ -48,17 +81,27 @@ export const SafeCallingHintSchema = z
 
 export type SafeCallingHint = z.infer<typeof SafeCallingHintSchema>;
 
+export const CapabilitySearchMatchSchema = CapabilitySummarySchema.extend({
+	inputSchema: JsonSchemaDocumentSchema.optional(),
+	outputSchema: JsonSchemaDocumentSchema.optional(),
+	relationshipHints: z.array(JsonValueSchema).optional(),
+	schemaFieldMatches: z.array(JsonValueSchema).optional(),
+}).strict();
+
+export type CapabilitySearchMatch = z.infer<typeof CapabilitySearchMatchSchema>;
+
 export const CapabilityDescriptorSchema = z
 	.object({
-		approval: z.enum(['not_required', 'required', 'conditional']),
-		description: z.string(),
-		inputJsonSchema: JsonSchemaDocumentSchema,
-		name: CapabilityNameSchema,
+		annotations: JsonSchemaDocumentSchema.default({}),
+		inputSchema: JsonSchemaDocumentSchema.optional(),
 		namespace: NamespaceNameSchema,
-		outputJsonSchema: JsonSchemaDocumentSchema.optional(),
-		result: ResultExpectationSchema,
-		safeCallingHints: z.array(SafeCallingHintSchema),
-		title: z.string().min(1),
+		outputSchema: JsonSchemaDocumentSchema.optional(),
+		related: z.array(JsonValueSchema).default([]),
+		schemaHint: ToolSchemaHintSchema.optional(),
+		name: CapabilityNameSchema,
+		toolRef: z.string().min(1),
+		typescriptHelper: z.string().optional(),
+		zod: JsonSchemaDocumentSchema.optional(),
 	})
 	.strict();
 

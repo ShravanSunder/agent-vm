@@ -1,0 +1,227 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+	createGatewayControlCallerContextRegistry,
+	digestGatewayControlSessionKey,
+} from './gateway-control-caller-context.js';
+
+const acceptedSession = {
+	bootId: 'boot-a',
+	connectionId: 'connection-a',
+	controllerEpoch: 'epoch-a',
+	peerId: 'gateway-zone-a',
+	sessionId: 'session-a',
+	zoneId: 'zone-a',
+};
+
+const registerPayload = {
+	adapterEvidence: {
+		agentId: 'main',
+		agentWorkspaceDir: '/home/openclaw/workspace',
+		sessionKey: 'agent:main:test-session',
+		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+		zoneId: 'zone-a',
+	},
+};
+
+describe('gateway control caller context registry', () => {
+	it('issues an opaque context id and stores only a sessionKey digest', () => {
+		const registry = createGatewayControlCallerContextRegistry({
+			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+		});
+
+		const context = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+
+		expect(context).toEqual({
+			agentId: 'main',
+			agentWorkspaceDir: '/home/openclaw/workspace',
+			bootId: 'boot-a',
+			callerContextId: '44444444-4444-4444-8444-444444444444',
+			connectionId: 'connection-a',
+			controllerEpoch: 'epoch-a',
+			peerId: 'gateway-zone-a',
+			purpose: 'tool_vm_lease',
+			sessionId: 'session-a',
+			sessionKeyDigest: digestGatewayControlSessionKey('agent:main:test-session'),
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+			zoneId: 'zone-a',
+		});
+		expect(JSON.stringify(context)).not.toContain('agent:main:test-session');
+		expect(registry.resolve(context.callerContextId)).toEqual(context);
+	});
+
+	it('does not reuse the same evidence across a new gateway boot', () => {
+		let nextContextId = 0;
+		const registry = createGatewayControlCallerContextRegistry({
+			createCallerContextId: () => {
+				nextContextId += 1;
+				return `44444444-4444-4444-8444-${String(nextContextId).padStart(12, '0')}`;
+			},
+		});
+
+		const firstContext = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+		const secondContext = registry.register({
+			payload: registerPayload,
+			session: {
+				...acceptedSession,
+				bootId: 'boot-b',
+			},
+		});
+
+		expect(secondContext.callerContextId).not.toBe(firstContext.callerContextId);
+		expect(registry.resolve(firstContext.callerContextId)).toBeUndefined();
+		expect(registry.resolve(secondContext.callerContextId)).toEqual(secondContext);
+	});
+
+	it('does not reuse the same evidence across a new accepted control session', () => {
+		let nextContextId = 0;
+		const registry = createGatewayControlCallerContextRegistry({
+			createCallerContextId: () => {
+				nextContextId += 1;
+				return `44444444-4444-4444-8444-${String(nextContextId).padStart(12, '0')}`;
+			},
+		});
+
+		const firstContext = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+		const secondContext = registry.register({
+			payload: registerPayload,
+			session: {
+				...acceptedSession,
+				connectionId: 'connection-b',
+				sessionId: 'session-b',
+			},
+		});
+
+		expect(secondContext.callerContextId).not.toBe(firstContext.callerContextId);
+		expect(registry.resolve(firstContext.callerContextId)).toBeUndefined();
+		expect(registry.resolve(secondContext.callerContextId)).toEqual(secondContext);
+	});
+
+	it('evicts completed caller contexts so the hard cap is not a steady-state failure', () => {
+		let nextContextId = 0;
+		const registry = createGatewayControlCallerContextRegistry({
+			createCallerContextId: () => {
+				nextContextId += 1;
+				return `44444444-4444-4444-8444-${String(nextContextId).padStart(12, '0')}`;
+			},
+			maxContexts: 1,
+		});
+
+		const firstContext = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+		registry.release(firstContext.callerContextId);
+
+		const secondContext = registry.register({
+			payload: {
+				adapterEvidence: {
+					...registerPayload.adapterEvidence,
+					sessionKey: 'agent:main:second-session',
+				},
+			},
+			session: acceptedSession,
+		});
+
+		expect(secondContext.callerContextId).not.toBe(firstContext.callerContextId);
+		expect(registry.resolve(firstContext.callerContextId)).toBeUndefined();
+	});
+
+	it('dedupes the same evidence within the accepted session', () => {
+		const registry = createGatewayControlCallerContextRegistry({
+			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+		});
+
+		const firstContext = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+		const secondContext = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+
+		expect(secondContext.callerContextId).toBe(firstContext.callerContextId);
+	});
+
+	it('rejects new caller contexts after the registry cap is reached', () => {
+		const registry = createGatewayControlCallerContextRegistry({
+			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+			maxContexts: 1,
+		});
+
+		registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+
+		expect(() =>
+			registry.register({
+				payload: {
+					adapterEvidence: {
+						...registerPayload.adapterEvidence,
+						sessionKey: 'agent:main:second-session',
+					},
+				},
+				session: acceptedSession,
+			}),
+		).toThrow(/caller context registry limit exceeded/u);
+	});
+
+	it('rejects registration evidence for a different zone', () => {
+		const registry = createGatewayControlCallerContextRegistry();
+
+		expect(() =>
+			registry.register({
+				payload: {
+					adapterEvidence: {
+						...registerPayload.adapterEvidence,
+						zoneId: 'other-zone',
+					},
+				},
+				session: acceptedSession,
+			}),
+		).toThrow(/zoneId mismatch/u);
+	});
+
+	it('rejects registration evidence with a malformed session key', () => {
+		const registry = createGatewayControlCallerContextRegistry();
+
+		expect(() =>
+			registry.register({
+				payload: {
+					adapterEvidence: {
+						...registerPayload.adapterEvidence,
+						sessionKey: 'not-agent-shaped',
+					},
+				},
+				session: acceptedSession,
+			}),
+		).toThrow(/sessionKey is not agent-shaped/u);
+	});
+
+	it('rejects registration evidence when agentId does not match the session key', () => {
+		const registry = createGatewayControlCallerContextRegistry();
+
+		expect(() =>
+			registry.register({
+				payload: {
+					adapterEvidence: {
+						...registerPayload.adapterEvidence,
+						agentId: 'other-agent',
+					},
+				},
+				session: acceptedSession,
+			}),
+		).toThrow(/agentId does not match sessionKey agent/u);
+	});
+});

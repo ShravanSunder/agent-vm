@@ -88,7 +88,10 @@ async function resolveZoneGitConfig(options: {
 	}
 	return {
 		branch: zone.gateway.zoneGit.remote.branch,
+		defaultBranch: zone.gateway.zoneGit.remote.defaultBranch,
 		githubToken,
+		protectedBranches: zone.gateway.zoneGit.remote.protectedBranches,
+		protectedBranchPatterns: zone.gateway.zoneGit.remote.protectedBranchPatterns,
 		remoteUrl: zone.gateway.zoneGit.remote.repoUrl,
 		runtimeDir: options.systemConfig.runtimeDir,
 		zoneFilesDir: zone.gateway.zoneFilesDir,

@@ -422,7 +422,7 @@ describe('startE2eControllerRuntime', () => {
 		]);
 	});
 
-	it('writes a local OpenClaw gateway smoke Dockerfile that installs both portal packages', async () => {
+	it('writes a local OpenClaw gateway smoke Dockerfile without the old MCP Portal plugin identity', async () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
 		const systemConfig = createMinimalOpenClawSystemConfig();
@@ -432,11 +432,16 @@ describe('startE2eControllerRuntime', () => {
 			source: { kind: 'managedBase', base: 'openclaw-gateway' },
 		};
 
+		await createFakeAgentPortalSdkPackage(repoRoot);
+		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinAdapterPackage(repoRoot);
 		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeControlProtocolContractsPackage(repoRoot);
+		await createFakeControllerExecutionContractsPackage(repoRoot);
+		await createFakeGatewayControlContractsPackage(repoRoot);
+		await createFakeToolPortalPackage(repoRoot);
 		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
-		await createFakePackageDist(repoRoot, 'openclaw-mcp-portal-plugin', 'mcp-portal');
 		await createFakePortalDist(repoRoot);
 
 		await useLocalOpenClawGatewayImagePackages({
@@ -455,6 +460,9 @@ describe('startE2eControllerRuntime', () => {
 		);
 		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
 		expect(dockerfile).toContain(
+			'COPY agent-vm-agent-portal-sdk-0.0.0-smoke.tgz /tmp/agent-vm-agent-portal-sdk-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
 			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
@@ -467,19 +475,29 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-gateway-interface-0.0.0-smoke.tgz /tmp/agent-vm-gateway-interface-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
+			'COPY agent-vm-control-protocol-contracts-0.0.0-smoke.tgz /tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-controller-execution-contracts-0.0.0-smoke.tgz /tmp/agent-vm-controller-execution-contracts-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-gateway-control-contracts-0.0.0-smoke.tgz /tmp/agent-vm-gateway-control-contracts-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
 			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-tool-portal-0.0.0-smoke.tgz /tmp/agent-vm-tool-portal-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
 			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
 		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz',
-		);
+		expect(dockerfile).not.toContain('agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz');
 		expect(dockerfile).toContain('pnpm install --prod --ignore-scripts');
 		expect(dockerfile).toContain('@agent-vm/config-contracts');
+		expect(dockerfile).toContain('@agent-vm/agent-portal-sdk');
 		expect(dockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
 		expect(dockerfile).toContain('@agent-vm/mcp-portal');
-		expect(dockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
 		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(dockerfile).toContain('"openclaw": "2026.6.8"');
 		expect(dockerfile).toContain('"@openclaw/codex": "2026.6.8"');
@@ -495,7 +513,7 @@ describe('startE2eControllerRuntime', () => {
 			'ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm"',
 		);
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/gondolin');
-		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
+		expect(dockerfile).not.toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
 		expect(dockerfile).not.toContain('portal-server.js');
 		expect(dockerfile).not.toContain('/work/repo/packages/mcp-portal');
 		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
@@ -515,6 +533,9 @@ describe('startE2eControllerRuntime', () => {
 			throw new Error('Expected local OpenClaw gateway helper to set Tool VM dockerfile path.');
 		}
 		const toolVmDockerfile = await fs.readFile(toolVmDockerfilePath, 'utf8');
+		expect(toolVmDockerfile).toContain(
+			'COPY agent-vm-agent-portal-sdk-0.0.0-smoke.tgz /tmp/agent-vm-agent-portal-sdk-0.0.0-smoke.tgz',
+		);
 		expect(toolVmDockerfile).toContain(
 			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
 		);
@@ -556,9 +577,16 @@ describe('startE2eControllerRuntime', () => {
 		};
 		const originalToolVmProfile = { ...systemConfig.imageProfiles.toolVms.tool };
 
+		await createFakeAgentPortalSdkPackage(repoRoot);
+		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinAdapterPackage(repoRoot);
 		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeControlProtocolContractsPackage(repoRoot);
+		await createFakeControllerExecutionContractsPackage(repoRoot);
+		await createFakeGatewayControlContractsPackage(repoRoot);
+		await createFakePortalDist(repoRoot);
+		await createFakeToolPortalPackage(repoRoot);
 		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
 
 		await useLocalOpenClawPluginGatewayImage({
@@ -574,10 +602,28 @@ describe('startE2eControllerRuntime', () => {
 		}
 		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
 		expect(dockerfile).toContain(
+			'COPY agent-vm-agent-portal-sdk-0.0.0-smoke.tgz /tmp/agent-vm-agent-portal-sdk-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-control-protocol-contracts-0.0.0-smoke.tgz /tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
 			'COPY agent-vm-gateway-interface-0.0.0-smoke.tgz /tmp/agent-vm-gateway-interface-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
 			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-gateway-control-contracts-0.0.0-smoke.tgz /tmp/agent-vm-gateway-control-contracts-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-tool-portal-0.0.0-smoke.tgz /tmp/agent-vm-tool-portal-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(dockerfile).toContain('"openclaw": "2026.6.8"');
@@ -592,7 +638,8 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).toContain(
 			'ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm"',
 		);
-		expect(dockerfile).not.toContain('agent-vm-mcp-portal-0.0.0-smoke.tgz');
+		expect(dockerfile).toContain('@agent-vm/control-protocol-contracts');
+		expect(dockerfile).toContain('file:/tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz');
 		expect(dockerfile).not.toContain('agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz');
 		expect(systemConfig.imageProfiles.toolVms.tool).toEqual(originalToolVmProfile);
 	});
@@ -603,6 +650,7 @@ describe('startE2eControllerRuntime', () => {
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		const originalGatewayProfile = { ...systemConfig.imageProfiles.gateways.openclaw };
 
+		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
 		await createFakePortalDist(repoRoot);
 
@@ -621,6 +669,9 @@ describe('startE2eControllerRuntime', () => {
 			path.join(temporaryRoot, 'vm-images', 'tool-vms', 'tool-local-mcp-portal', 'Dockerfile'),
 		);
 		const toolVmDockerfile = await fs.readFile(toolVmDockerfilePath, 'utf8');
+		expect(toolVmDockerfile).toContain(
+			'COPY agent-vm-agent-portal-sdk-0.0.0-smoke.tgz /tmp/agent-vm-agent-portal-sdk-0.0.0-smoke.tgz',
+		);
 		expect(toolVmDockerfile).toContain(
 			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
 		);
@@ -646,6 +697,7 @@ describe('startE2eControllerRuntime', () => {
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		const packageDir = path.join(repoRoot, 'packages', 'mcp-portal');
 
+		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
 		await fs.mkdir(packageDir, { recursive: true });
@@ -1143,7 +1195,7 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 
 async function createFakePackageDist(
 	repoRoot: string,
-	packageName: 'openclaw-agent-vm-plugin' | 'openclaw-mcp-portal-plugin',
+	packageName: 'openclaw-agent-vm-plugin',
 	pluginId: string,
 ): Promise<void> {
 	const packageDir = path.join(repoRoot, 'packages', packageName);
@@ -1172,14 +1224,50 @@ async function createFakePackageDist(
 	await fs.writeFile(path.join(distDir, 'index.js'), 'export default {};\n', 'utf8');
 }
 
+async function createFakeSimplePackage(
+	repoRoot: string,
+	packageName: string,
+	dependencies: Readonly<Record<string, string>> = {},
+): Promise<void> {
+	const packageDir = path.join(repoRoot, 'packages', packageName);
+	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
+	await fs.writeFile(
+		path.join(packageDir, 'package.json'),
+		`${JSON.stringify(
+			{
+				...(Object.keys(dependencies).length > 0 ? { dependencies } : {}),
+				name: `@agent-vm/${packageName}`,
+				version: '0.0.0-smoke',
+				files: ['dist'],
+				type: 'module',
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+}
+
+async function createFakeAgentPortalSdkPackage(repoRoot: string): Promise<void> {
+	await createFakeSimplePackage(repoRoot, 'agent-portal-sdk');
+}
+
 async function createFakePortalDist(repoRoot: string): Promise<void> {
+	await createFakeAgentPortalSdkPackage(repoRoot);
 	await createFakeConfigContractsPackage(repoRoot);
+	await createFakeSecretsPackage(repoRoot);
 	const packageDir = path.join(repoRoot, 'packages', 'mcp-portal');
 	await fs.mkdir(packageDir, { recursive: true });
 	await fs.writeFile(
 		path.join(packageDir, 'package.json'),
 		`${JSON.stringify(
 			{
+				dependencies: {
+					'@agent-vm/agent-portal-sdk': '0.0.0-smoke',
+					'@agent-vm/config-contracts': '0.0.0-smoke',
+					'@agent-vm/secret-management': '0.0.0-smoke',
+				},
 				name: '@agent-vm/mcp-portal',
 				version: '0.0.0-smoke',
 				files: ['dist'],
@@ -1278,4 +1366,27 @@ async function createFakeGatewayInterfacePackage(repoRoot: string): Promise<void
 		'utf8',
 	);
 	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+}
+
+async function createFakeControlProtocolContractsPackage(repoRoot: string): Promise<void> {
+	await createFakeSimplePackage(repoRoot, 'control-protocol-contracts');
+}
+
+async function createFakeControllerExecutionContractsPackage(repoRoot: string): Promise<void> {
+	await createFakeSimplePackage(repoRoot, 'controller-execution-contracts');
+}
+
+async function createFakeGatewayControlContractsPackage(repoRoot: string): Promise<void> {
+	await createFakeSimplePackage(repoRoot, 'gateway-control-contracts', {
+		'@agent-vm/control-protocol-contracts': '0.0.0-smoke',
+	});
+}
+
+async function createFakeToolPortalPackage(repoRoot: string): Promise<void> {
+	await createFakeSimplePackage(repoRoot, 'tool-portal', {
+		'@agent-vm/agent-portal-sdk': '0.0.0-smoke',
+		'@agent-vm/config-contracts': '0.0.0-smoke',
+		'@agent-vm/controller-execution-contracts': '0.0.0-smoke',
+		'@agent-vm/mcp-portal': '0.0.0-smoke',
+	});
 }

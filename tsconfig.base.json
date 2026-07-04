@@ -48,6 +48,9 @@
 			"@agent-vm/agent-portal-sdk/testing": ["./packages/agent-portal-sdk/src/testing/index.ts"],
 			"@agent-vm/agent-vm": ["./packages/agent-vm/src/index.ts"],
 			"@agent-vm/config-contracts": ["./packages/config-contracts/src/index.ts"],
+			"@agent-vm/control-protocol-contracts": [
+				"./packages/control-protocol-contracts/src/index.ts"
+			],
 			"@agent-vm/controller-execution-contracts": [
 				"./packages/controller-execution-contracts/src/index.ts"
 			],
@@ -57,14 +60,15 @@
 			"@agent-vm/controller-execution-contracts/controller-host-action-boundary": [
 				"./packages/controller-execution-contracts/src/controller-host-action-boundary/index.ts"
 			],
-			"@agent-vm/controller-execution-contracts/credentialed-runner-boundary": [
-				"./packages/controller-execution-contracts/src/credentialed-runner-boundary/index.ts"
+			"@agent-vm/controller-execution-contracts/tool-vm-runner-boundary": [
+				"./packages/controller-execution-contracts/src/tool-vm-runner-boundary/index.ts"
 			],
 			"@agent-vm/controller-execution-contracts/testing": [
 				"./packages/controller-execution-contracts/src/testing/index.ts"
 			],
 			"@agent-vm/gondolin-adapter": ["./packages/gondolin-adapter/src/index.ts"],
 			"@agent-vm/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
+			"@agent-vm/gateway-control-contracts": ["./packages/gateway-control-contracts/src/index.ts"],
 			"@agent-vm/gateway-interface": ["./packages/gateway-interface/src/index.ts"],
 			"@agent-vm/openclaw-agent-vm-plugin": ["./packages/openclaw-agent-vm-plugin/src/index.ts"],
 			"@agent-vm/mcp-portal": ["./packages/mcp-portal/src/index.ts"],
@@ -87,9 +91,6 @@
 			"@agent-vm/mcp-portal/testing/fake-upstream-mcp-server": [
 				"./packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts"
 			],
-			"@agent-vm/openclaw-mcp-portal-plugin": [
-				"./packages/openclaw-mcp-portal-plugin/src/index.ts"
-			],
 			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
 			"@agent-vm/secret-management": ["./packages/secret-management/src/index.ts"],
 			"@agent-vm/tool-portal": ["./packages/tool-portal/src/index.ts"],
@@ -97,6 +98,7 @@
 				"./packages/tool-portal/src/in-process-entrypoint/index.ts"
 			],
 			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"],
+			"@agent-vm/worker-control-contracts": ["./packages/worker-control-contracts/src/index.ts"],
 			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
 		}
 	}

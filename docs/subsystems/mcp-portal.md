@@ -2,13 +2,13 @@
 
 [Overview](../README.md) > Subsystems > MCP Portal
 
-MCP Portal is an agent-facing MCP-specific tool facade and an upstream MCP
-client aggregator. Managed OpenClaw uses native OpenClaw tools that call
-`@agent-vm/mcp-portal/core` inside the gateway VM. External MCP clients use the
-separate `mcp-portal mcp-proxy serve` adapter.
+MCP Portal is an MCP-specific provider backend and upstream MCP client
+aggregator. Managed OpenClaw reaches MCP-backed capabilities through Tool
+Portal. External MCP clients use the separate `mcp-portal mcp-proxy serve`
+adapter.
 
 Tool Portal is a separate cross-backend facade. It can expose MCP-backed
-capabilities, controller-owned host actions, and future credentialed runner
+capabilities, controller-owned host actions, and Tool VM runner-backed
 capabilities through the same portal-neutral list/search/describe/call
 vocabulary. When Tool Portal exposes MCP-backed capabilities, it composes MCP
 Portal through `@agent-vm/mcp-portal/mcp-provider-backend`; it does not call or
@@ -16,10 +16,10 @@ register the native `mcp_portal_*` model tool names.
 
 ## Model
 
-Each OpenClaw agent calls the same four native portal tools. The plugin resolves
-the agent from OpenClaw's trusted `ctx.agentId` and the loaded
-`mcp-portal.config.jsonc`; the model never sends `agentId` as a portal tool
-argument. Each tool call gets a runtime scope. The agent scope owns:
+Each Tool Portal call gets a runtime scope. For managed OpenClaw, the plugin
+resolves the agent from OpenClaw's trusted `ctx.agentId` and the loaded portal
+configuration; the model never sends `agentId` as a portal tool argument. The
+agent scope owns:
 
 - the OpenClaw-provided agent identity
 - the allowed namespace/tool policy
@@ -58,14 +58,19 @@ composition helpers. Its config schema and JSON Schema artifact are available
 from `@agent-vm/config-contracts`, but `tool-portal.config.jsonc` is not yet a
 live deployment-loaded `agent-vm validate` surface.
 
-## Agent-Facing Tools
+## Standalone MCP Portal Agent-Facing Tools
 
-The agent sees only:
+In standalone MCP Portal mode, the agent sees only:
 
 - `mcp_portal_list`
 - `mcp_portal_search`
 - `mcp_portal_describe`
 - `mcp_portal_call`
+
+Managed OpenClaw agents do not see these native MCP Portal tools. Managed
+OpenClaw exposes `tool_portal_list`, `tool_portal_search`,
+`tool_portal_describe`, and `tool_portal_call`; Tool Portal delegates
+MCP-backed capabilities to MCP Portal as an internal backend.
 
 Calls use `namespace + toolName` as the canonical identity. `toolRef` is a
 stable reference for links, cursors, caches, and exact lookup; it does not
@@ -194,12 +199,13 @@ provider secrets must be named intentionally in `zones[].gateway.rawEnvSecrets`.
 
 Managed OpenClaw gateway mode does not start a portal HTTP server, does not open
 guest port `18790`, and does not require `MCP_PORTAL_SERVER_SECRET`. The
-OpenClaw plugin registers native `mcp_portal_*` tools and calls `/core` directly
-with trusted OpenClaw context. `agent-vm` materializes effective MCP Portal
-config before gateway boot and injects only the runtime environment needed by
-configured upstream providers. Generated provider-secret environment names are
-provider-scoped, such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION`, so two upstream
-providers can use the same authored header or env key without colliding.
+OpenClaw plugin registers Tool Portal tools; MCP Portal is used as the
+MCP-provider backend inside that portal stack. `agent-vm` materializes effective
+MCP Portal config before gateway boot and injects only the runtime environment
+needed by configured upstream providers. Generated provider-secret environment
+names are provider-scoped, such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION`, so two
+upstream providers can use the same authored header or env key without
+colliding.
 
 External `/mcp-proxy` mode is different: `mcp-portal mcp-proxy serve` runs on the
 operator host, resolves its configured auth secrets at process startup, and
@@ -241,15 +247,15 @@ When a batch mixes approval-free calls with approval-required calls:
 - the whole outer `mcp_portal_call` is not converted into one approval prompt
 
 Agents should retry only the approval-required calls in a separate
-`mcp_portal_call` batch. In OpenClaw native plugin mode, a homogeneous
-approval-required batch triggers the OpenClaw plugin approval prompt. After the
-operator approves it, the plugin injects a short-lived server-only
+`mcp_portal_call` batch. In standalone MCP Portal native-tool mode, a
+homogeneous approval-required batch triggers the plugin approval prompt. After
+the operator approves it, the plugin injects a short-lived server-only
 `portalApprovalToken`, and MCP Portal core verifies the token before executing
 the gated calls.
 
 The token is bound to the approved agent id, exact namespace/tool names, and
-argument hashes. It is short-lived and single-use in both direct MCP proxy mode
-and OpenClaw native plugin mode. This preserves parallel safe reads while
+argument hashes. It is short-lived and single-use in standalone MCP Portal
+direct proxy mode. This preserves parallel safe reads while
 keeping writes and sensitive calls behind the configured approval policy.
 
 V1 redacts credential-shaped values from portal outputs and errors. Tool
@@ -262,8 +268,8 @@ and content-policy filtering.
 
 ### Runtime diagnostics
 
-MCP Portal returns one result shape in both OpenClaw native plugin mode and
-direct MCP proxy mode:
+MCP Portal returns one result shape in both managed OpenClaw Tool Portal backend
+mode and standalone direct MCP proxy mode:
 
 ```json
 {
@@ -282,8 +288,8 @@ direct MCP proxy mode:
 }
 ```
 
-OpenClaw native tools return this value in `details`. Direct MCP proxy tools
-return the same value as JSON text content. Use
+Managed Tool Portal tools return this value in `details`. Direct MCP proxy
+tools return the same value as JSON text content. Use
 `agent-vm validate --mcp-live` after changing providers, secrets, or profile
 tool names.
 
@@ -294,7 +300,7 @@ approval.
 ## Deferred Tool Portal Surfaces
 
 The current Tool Portal slice does not expose shell CLIs, a Tool Portal MCP
-proxy, an HTTP API, an OpenClaw Tool Portal adapter, credentialed runner
+proxy, an HTTP API, an OpenClaw Tool Portal adapter, generic Tool VM runner
 execution, controller host-action execution, or broad VM artifact publication.
 CLI allowance schemas and validators are contract-only: they parse and validate
 argv-shaped intent but do not execute subprocesses or mount credentials.
@@ -303,12 +309,14 @@ argv-shaped intent but do not execute subprocesses or mount credentials.
 
 `packages/agent-vm/src/integration-tests/openclaw-mcp-portal.openclaw.e2e.test.ts`
 boots a real controller, a real OpenClaw gateway VM, the OpenClaw plugin loader,
-native MCP Portal tools, and a fake upstream MCP server. Run it explicitly:
+managed Tool Portal tools, MCP Portal as the MCP-provider backend, and a fake
+upstream MCP server. Run it explicitly:
 
 ```bash
 mise exec -- pnpm test:e2e:openclaw
 ```
 
-The e2e proof shows the gateway can load the plugin, register native portal tools,
-discover fake upstream tools, call read-only tools, and reject approval-gated
-writes without approval. It intentionally avoids real upstream credentials.
+The e2e proof shows the gateway can load the plugin, register managed Tool
+Portal tools, discover fake upstream tools, call read-only tools, and reject
+approval-gated writes without approval. It intentionally avoids real upstream
+credentials.

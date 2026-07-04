@@ -1,0 +1,45 @@
+{
+	"name": "@agent-vm/worker-control-contracts",
+	"version": "0.0.108",
+	"description": "Worker control domain contracts for agent-vm Socket.IO sessions.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/worker-control-contracts"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"prepack": "pnpm -C ../.. build",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "pnpm test:unit",
+		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/worker-control-contracts/src"
+	},
+	"dependencies": {
+		"@agent-vm/control-protocol-contracts": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.5"
+	}
+}

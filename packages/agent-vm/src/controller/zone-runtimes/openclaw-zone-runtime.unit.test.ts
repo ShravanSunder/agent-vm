@@ -1238,6 +1238,79 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		});
 	});
 
+	it('uses identity-fenced runtime-record cleanup when auto-recovery restart close times out', async () => {
+		type RuntimeOptions = Parameters<typeof createOpenClawZoneRuntimeImpl>[0];
+		type CleanupGateway = NonNullable<RuntimeOptions['cleanupOrphanedGatewayIfPresent']>;
+		let gatewayStartCount = 0;
+		const oldGatewayClose = vi.fn(async () => {
+			throw new Error('gateway close timed out');
+		});
+		const cleanupOrphanedGatewayIfPresent = vi.fn(
+			async (
+				cleanupOptions: Parameters<CleanupGateway>[0],
+			): Promise<Awaited<ReturnType<CleanupGateway>>> => {
+				expect(cleanupOptions).toMatchObject({
+					configuredIngressPort: 18_791,
+					expectedConfigPath: loadedSystemConfig.systemConfigPath,
+					expectedControllerPort: loadedSystemConfig.host.controllerPort,
+					mode: 'in-process-recovery',
+					projectNamespace: loadedSystemConfig.host.projectNamespace,
+					stateDir: getOpenClawZone().gateway.stateDir,
+					zoneId: 'shravan',
+				});
+				return { cleanedUp: true, killedPid: 48_285 };
+			},
+		);
+		const runtime = createOpenClawZoneRuntime({
+			cleanupOrphanedGatewayIfPresent,
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async () => {
+				gatewayStartCount += 1;
+				const hostPid = 48_284 + gatewayStartCount;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18_791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18_789,
+						healthCheck: { type: 'http', port: 18_789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: gatewayStartCount === 1 ? oldGatewayClose : vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18_791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getHostPid: () => hostPid,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(gatewayStartCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		const restartResult = await runtime.restart({ operationTrigger: 'auto-recovery' });
+
+		expect(restartResult).toMatchObject({ leaseReleaseFailureCount: 0 });
+		expect(oldGatewayClose).toHaveBeenCalledOnce();
+		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledOnce();
+		expect(runtime.getSnapshot()).toMatchObject({
+			gateway: { vm: { hostPid: 48_286, id: 'gateway-vm-2' } },
+			lifecycleState: 'running',
+		});
+	});
+
 	it('rejects normal gateway access while restart is closing the old gateway', async () => {
 		let gatewayStartCount = 0;
 		const oldGatewayCloseDeferred = createDeferredPromise<void>();

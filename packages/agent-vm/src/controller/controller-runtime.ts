@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
@@ -24,6 +25,9 @@ import { checkObservabilityStackReadiness as checkObservabilityStackReadinessDef
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 import { ActiveTaskRegistry } from './active-task-registry.js';
+import { authorizeGatewayControlControllerHostAction } from './control-session/gateway-control-controller-host-action-authorization.js';
+import type { GatewayControlControllerHostActionOperations } from './control-session/gateway-control-domain-handler.js';
+import { createGatewayControlLeaseRpcOperations } from './control-session/index.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
@@ -59,7 +63,9 @@ import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
 import { createLeaseManager } from './leases/lease-manager.js';
+import { createOpenClawToolVmLeaseCreateOptionsResolver } from './leases/openclaw-tool-vm-lease-create-options.js';
 import { createTcpPool } from './leases/tcp-pool.js';
+import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from './worker-task-runner.js';
 import { ZoneGitCapabilityStore } from './zone-git/zone-git-capability-store.js';
@@ -170,16 +176,10 @@ function buildOpenClawRuntimePluginConfig(options: {
 	const zoneGitRuntimePluginConfig = options.zoneGitCapabilityStore.buildRuntimePluginConfig(
 		options.zoneId,
 	);
-	const healthConfig = resolveControllerHealthConfig(options.systemConfig);
 	return {
 		...zoneGitRuntimePluginConfig,
 		gondolin: {
 			...zoneGitRuntimePluginConfig.gondolin,
-			gatewayControlLinkMonitor: {
-				baseIntervalMs: healthConfig.gatewayControlLinkIntervalMs,
-				enabled: healthConfig.enabled,
-				maxIntervalMs: healthConfig.gatewayControlLinkBackoffCeilingMs,
-			},
 		},
 	};
 }
@@ -320,7 +320,7 @@ function hasGatewayRuntimeHealthIssue(
 	options: { readonly nowMs: number; readonly staleAfterMs: number },
 ): boolean {
 	return events.some((event) => {
-		if (event.kind !== 'gateway-control-link' && event.kind !== 'gateway-service-health') {
+		if (event.kind !== 'gateway-control-session' && event.kind !== 'gateway-service-health') {
 			return false;
 		}
 		return (
@@ -358,7 +358,10 @@ function resolveZoneGitOperationConfig(options: {
 	}
 	return {
 		branch: zone.gateway.zoneGit.remote.branch,
+		defaultBranch: zone.gateway.zoneGit.remote.defaultBranch,
 		githubToken: options.controllerGithubToken,
+		protectedBranches: zone.gateway.zoneGit.remote.protectedBranches,
+		protectedBranchPatterns: zone.gateway.zoneGit.remote.protectedBranchPatterns,
 		remoteUrl: zone.gateway.zoneGit.remote.repoUrl,
 		runtimeDir: options.systemConfig.runtimeDir,
 		zoneFilesDir: zone.gateway.zoneFilesDir,
@@ -373,6 +376,7 @@ export async function startControllerRuntime(
 	const hostNetworkDefaults = (
 		dependencies.configureHostNetworkDefaults ?? configureHostNetworkDefaults
 	)();
+	const controllerEpoch = dependencies.controllerEpoch ?? randomUUID();
 	writeControllerRuntimeLog(
 		`Host network defaults: dnsResultOrder=${hostNetworkDefaults.dnsResultOrder} autoSelectFamily=${hostNetworkDefaults.autoSelectFamily}`,
 	);
@@ -493,6 +497,66 @@ export async function startControllerRuntime(
 		systemConfigPath: options.systemConfig.systemConfigPath,
 		tcpPool,
 	});
+	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore({ nowMs: now });
+	const resolveOpenClawToolVmLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
+		...(options.systemConfig.leaseIdleTtl === undefined
+			? {}
+			: { leaseIdleTtlPolicy: options.systemConfig.leaseIdleTtl }),
+		openClawRuntimeStatusStore,
+		secretResolver,
+		systemConfig: options.systemConfig,
+	});
+	const gatewayControlLeaseRpc = createGatewayControlLeaseRpcOperations({
+		leaseManager,
+		...(dependencies.onLeaseCreateRequest
+			? { onLeaseCreateRequest: dependencies.onLeaseCreateRequest }
+			: {}),
+		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
+		resolveLeaseCreateOptions: async ({ callerContext, payload }) =>
+			await resolveOpenClawToolVmLeaseCreateOptions({
+				authorityContext: callerContext,
+				requestedIdleTtlMs: payload.idleTtlHintMs,
+			}),
+	});
+	const pushZoneGitFromController = async (
+		zoneId: string,
+		input: { readonly expectedHead: string },
+	): Promise<Awaited<ReturnType<typeof pushZoneGit>>> =>
+		await zoneGitOperationLocks.runExclusive(
+			zoneId,
+			async () =>
+				await pushZoneGit({
+					...resolveZoneGitOperationConfig({
+						controllerGithubToken,
+						systemConfig: options.systemConfig,
+						zoneId,
+					}),
+					expectedHead: input.expectedHead,
+				}),
+		);
+	const gatewayControlControllerHostActions: GatewayControlControllerHostActionOperations = {
+		authorizeControllerHostAction: async ({ callerContext, payload, session }) =>
+			await authorizeGatewayControlControllerHostAction({
+				callerContext,
+				payload,
+				session,
+				systemConfig: options.systemConfig,
+			}),
+		pushZoneGit: async ({ payload, session }) => {
+			const result = await pushZoneGitFromController(session.zoneId, {
+				expectedHead: payload.expectedHead,
+			});
+			return {
+				branch: result.branch,
+				localHead: result.localHead,
+				pushedCommits: result.pushedCommits.map((commit) => ({
+					sha: commit.sha,
+					subject: commit.subject,
+				})),
+				remoteHead: result.remoteHead,
+			};
+		},
+	};
 	const idleReaper = createIdleReaper({
 		getLeases: () =>
 			leaseManager.listLeases().map((lease) => ({
@@ -581,6 +645,7 @@ export async function startControllerRuntime(
 							)(
 								{
 									...preflightOptions,
+									controlSession: { controllerEpoch },
 									runtimeEnvironment,
 									runtimePluginConfigs,
 									writeLog: writeControllerRuntimeLog,
@@ -590,6 +655,7 @@ export async function startControllerRuntime(
 						},
 						restartGatewayZone: async (zoneId, startOptions) => {
 							const startGatewayZoneOptions = {
+								controlSession: { controllerEpoch },
 								...(startOptions?.observabilityStartupCheck
 									? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
 									: {}),
@@ -597,6 +663,10 @@ export async function startControllerRuntime(
 									? { prebuiltImage: startOptions.prebuiltImage }
 									: {}),
 								runTask: runTaskStep,
+								gatewayControlControllerHostActions,
+								gatewayControlLeaseRpc,
+								healthEventStore,
+								openClawRuntimeStatusStore,
 								runtimeEnvironment: {
 									...zoneGitCapabilityStore.buildRuntimeEnvironment(zoneId),
 									...startOptions?.runtimeEnvironment,
@@ -634,6 +704,7 @@ export async function startControllerRuntime(
 					? createWorkerZoneRuntime({
 							activeTaskRegistry,
 							...(process.env.CALLER_URL ? { callerUrl: process.env.CALLER_URL } : {}),
+							controllerEpoch,
 							controllerGithubToken,
 							...(dependencies.executeWorkerTask
 								? { executeWorkerTask: dependencies.executeWorkerTask }
@@ -726,7 +797,7 @@ export async function startControllerRuntime(
 						);
 						const latestGatewayRuntimeHealthEvents = latestHealthEvents.filter(
 							(event) =>
-								event.kind === 'gateway-control-link' || event.kind === 'gateway-service-health',
+								event.kind === 'gateway-control-session' || event.kind === 'gateway-service-health',
 						);
 						const channelProviderPlane =
 							latestChannelProviderEvents.length === 0
@@ -795,18 +866,7 @@ export async function startControllerRuntime(
 			input: { readonly branches: readonly PushBranchRequest[] },
 		) => await registry.getWorkerRuntime(zoneId).pushTaskBranches(taskId, input),
 		pushZoneGit: async (zoneId: string, input: { readonly expectedHead: string }) =>
-			await zoneGitOperationLocks.runExclusive(
-				zoneId,
-				async () =>
-					await pushZoneGit({
-						...resolveZoneGitOperationConfig({
-							controllerGithubToken,
-							systemConfig: options.systemConfig,
-							zoneId,
-						}),
-						expectedHead: input.expectedHead,
-					}),
-			),
+			await pushZoneGitFromController(zoneId, input),
 		verifyZoneGitPushToken: (zoneId: string, token: string | undefined) =>
 			zoneGitCapabilityStore.verifyTokenForZone(zoneId, token),
 		stopController,
@@ -851,6 +911,7 @@ export async function startControllerRuntime(
 		...(dependencies.onLeaseCreateRequest
 			? { onLeaseCreateRequest: dependencies.onLeaseCreateRequest }
 			: {}),
+		openClawRuntimeStatusStore,
 		operations,
 		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
 		runtimeReadiness: () => runtimeReadiness.get(),
@@ -929,6 +990,7 @@ export async function startControllerRuntime(
 				...(dependencies.clearIntervalImpl
 					? { clearIntervalImpl: dependencies.clearIntervalImpl }
 					: {}),
+				controlSessionDeathGraceMs: controllerHealthConfig.controlSessionDeathGraceMs,
 				gatewayServiceAutoRestart: controllerHealthConfig.gatewayServiceAutoRestart,
 				healthEventStore,
 				classifyRecoveryBudgetClass,
@@ -950,6 +1012,19 @@ export async function startControllerRuntime(
 					};
 				},
 				recoverGatewayVm,
+				resolveGatewayRecoverySourceKey: ({ zoneId }) => {
+					try {
+						const lifecycleState = registry.getOpenClawRuntime(zoneId).getLifecycleState();
+						if (lifecycleState.kind === 'running' || lifecycleState.kind === 'running-degraded') {
+							return lifecycleState.gateway.controlSessionRecoverySourceKey;
+						}
+					} catch (error) {
+						writeControllerRuntimeLog(
+							`Gateway recovery source key resolution failed for zone '${zoneId}': ${formatUnknownError(error)}`,
+						);
+					}
+					return undefined;
+				},
 				...(dependencies.setIntervalImpl ? { setIntervalImpl: dependencies.setIntervalImpl } : {}),
 				staleAfterMs: controllerHealthConfig.staleAfterMs,
 				zoneIds: registry.selectedZoneIds.filter((zoneId) => {

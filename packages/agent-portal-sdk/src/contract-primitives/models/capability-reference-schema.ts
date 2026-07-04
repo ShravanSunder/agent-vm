@@ -6,7 +6,7 @@ export const CapabilityNameSchema = z.string().min(1);
 export const CapabilityReferenceSchema = z
 	.object({
 		namespace: NamespaceNameSchema,
-		toolName: CapabilityNameSchema,
+		name: CapabilityNameSchema,
 	})
 	.strict();
 

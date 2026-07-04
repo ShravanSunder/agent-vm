@@ -4,8 +4,10 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export type CheckGateCommandId =
+	| 'build'
 	| 'package-versions'
 	| 'portal-architecture'
+	| 'portal-exports'
 	| 'zod-version'
 	| 'test-taxonomy'
 	| 'format'
@@ -61,6 +63,17 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 		{
 			commands: [
 				{
+					args: ['run', 'build'],
+					command: 'pnpm',
+					id: 'build',
+					label: 'workspace build',
+				},
+			],
+			name: 'build artifacts',
+		},
+		{
+			commands: [
+				{
 					args: ['run', 'check:package-versions'],
 					command: 'pnpm',
 					id: 'package-versions',
@@ -83,6 +96,18 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					command: 'pnpm',
 					id: 'portal-architecture',
 					label: 'portal architecture audit',
+				},
+				{
+					args: ['run', 'test:portal-exports'],
+					command: 'pnpm',
+					id: 'portal-exports',
+					label: 'portal package export audit',
+				},
+				{
+					args: ['run', 'lint'],
+					command: 'pnpm',
+					id: 'lint',
+					label: 'lint',
 				},
 				{
 					args: ['run', 'fmt:check'],

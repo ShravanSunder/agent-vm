@@ -43,12 +43,39 @@ import { compileResourceOverlay } from '../resources/resource-compiler.js';
 import { resolveTaskResources } from '../resources/resource-resolver.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
+import {
+	buildWorkerControlEndpoint,
+	buildWorkerControlEnvironment,
+	connectWorkerControlSession as connectWorkerControlSessionDefault,
+	createControlSessionDispatcher,
+	createControlSessionFenceRegistry,
+	createWorkerControlDomainHandler,
+	createWorkerControlSessionMaterial,
+	recordControlSessionDisconnected,
+	recordControlSessionReconnected,
+	classifyControlSessionDeathGrace,
+	type ControlSessionDeathGraceState,
+	type ControlSessionClient,
+	type WorkerControlRpcOperations,
+} from './control-session/index.js';
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
 	buildResolvedRuntimeResources,
 	buildRuntimeInstructions,
 } from './runtime-instructions-builder.js';
 import { buildTaskConfigFromPreparedInput } from './task-config-builder.js';
+
+const workerPackageTarballsEnv = 'AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON';
+
+const workerPackageTarballSchema = z
+	.object({
+		packageName: z.string().min(1),
+		sourcePath: z.string().min(1),
+	})
+	.strict();
+
+const workerPackageTarballsSchema = z.array(workerPackageTarballSchema).min(1);
+type WorkerPackageTarball = z.infer<typeof workerPackageTarballSchema>;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -243,6 +270,58 @@ async function copyLocalWorkerTarballIfConfigured(stateDir: string): Promise<voi
 	await fs.copyFile(localWorkerTarballPath, path.join(stateDir, 'agent-vm-worker.tgz'));
 }
 
+function localWorkerPackageDependencyName(packageName: string): string {
+	return packageName.startsWith('@') ? packageName : `@agent-vm/${packageName}`;
+}
+
+function parseWorkerPackageTarballsEnv(rawTarballs: string): readonly WorkerPackageTarball[] {
+	const parsedJson: unknown = JSON.parse(rawTarballs);
+	return workerPackageTarballsSchema.parse(parsedJson);
+}
+
+function renderWorkerPackageTarballsManifest(tarballs: readonly WorkerPackageTarball[]): string {
+	const dependencies: Record<string, string> = {};
+	for (const tarball of tarballs) {
+		dependencies[localWorkerPackageDependencyName(tarball.packageName)] =
+			`file:/state/agent-vm-worker-packages/${path.basename(tarball.sourcePath)}`;
+	}
+	return `${JSON.stringify(
+		{
+			private: true,
+			dependencies,
+			pnpm: {
+				overrides: dependencies,
+			},
+		},
+		null,
+		2,
+	)}\n`;
+}
+
+async function copyLocalWorkerPackageTarballsIfConfigured(stateDir: string): Promise<void> {
+	const rawTarballs = process.env[workerPackageTarballsEnv];
+	if (rawTarballs === undefined || rawTarballs.length === 0) {
+		return;
+	}
+
+	const tarballs = parseWorkerPackageTarballsEnv(rawTarballs);
+	const packageDirectory = path.join(stateDir, 'agent-vm-worker-packages');
+	await fs.mkdir(packageDirectory, { recursive: true });
+	await Promise.all(
+		tarballs.map(async (tarball) => {
+			await fs.copyFile(
+				tarball.sourcePath,
+				path.join(packageDirectory, path.basename(tarball.sourcePath)),
+			);
+		}),
+	);
+	await fs.writeFile(
+		path.join(packageDirectory, 'package.json'),
+		renderWorkerPackageTarballsManifest(tarballs),
+		'utf8',
+	);
+}
+
 async function writeAgentRuntimeFiles(
 	agentVmDir: string,
 	files: Readonly<Record<string, string>>,
@@ -337,6 +416,7 @@ export async function preStartGateway(
 		await fs.mkdir(stateDir, { recursive: true });
 		await fs.mkdir(agentVmDir, { recursive: true });
 		await copyLocalWorkerTarballIfConfigured(stateDir);
+		await copyLocalWorkerPackageTarballsIfConfigured(stateDir);
 
 		const gitdirsRoot = path.join(taskRuntimeRoot, 'gitdirs');
 		const metadataRoot = path.join(taskRuntimeRoot, 'repo-metadata');
@@ -721,6 +801,11 @@ export interface PrepareWorkerTaskOptions {
 export interface ExecuteWorkerTaskOptions {
 	readonly secretResolver: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
+	readonly controlSession?: {
+		readonly controllerEpoch: string;
+		readonly operations: WorkerControlRpcOperations;
+	};
+	readonly connectWorkerControlSession?: typeof connectWorkerControlSessionDefault;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
 	readonly timeoutMs?: number;
@@ -743,6 +828,37 @@ const defaultWorkerTaskPollClock: WorkerTaskPollClock = {
 		await new Promise((resolve) => setTimeout(resolve, durationMs));
 	},
 };
+
+function classifyWorkerControlSessionHealth(options: {
+	readonly controlSession: ControlSessionClient | undefined;
+	readonly deathGraceState: ControlSessionDeathGraceState;
+	readonly nowMs: number;
+	readonly taskId: string;
+}): ControlSessionDeathGraceState {
+	if (options.controlSession === undefined) {
+		return options.deathGraceState;
+	}
+	const diagnostics = options.controlSession.getDiagnostics();
+	if (diagnostics.ready) {
+		return recordControlSessionReconnected({
+			previousState: options.deathGraceState,
+		});
+	}
+	const disconnectedState = recordControlSessionDisconnected({
+		nowMs: options.nowMs,
+		previousState: options.deathGraceState,
+	});
+	const classification = classifyControlSessionDeathGrace({
+		nowMs: options.nowMs,
+		state: disconnectedState,
+	});
+	if (classification.kind === 'recovery_due') {
+		throw new Error(
+			`Worker control session for task ${options.taskId} exceeded death grace after ${String(classification.elapsedMs)}ms; worker VM recovery is required.`,
+		);
+	}
+	return disconnectedState;
+}
 
 export async function prepareWorkerTask(
 	options: PrepareWorkerTaskOptions,
@@ -833,13 +949,29 @@ export async function executeWorkerTask(
 	options: ExecuteWorkerTaskOptions,
 ): Promise<WorkerTaskResult> {
 	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+	let controlSession: ControlSessionClient | undefined;
+	let workerControlDeathGraceState: ControlSessionDeathGraceState = { kind: 'connected' };
 	let result: WorkerTaskResult | undefined;
 	let primaryError: Error | undefined;
+	const workerControlMaterial =
+		options.controlSession === undefined
+			? undefined
+			: createWorkerControlSessionMaterial({
+					controllerEpoch: options.controlSession.controllerEpoch,
+					taskId: prepared.taskId,
+					zoneId: prepared.zoneId,
+				});
 
 	try {
 		gateway = await startGatewayZone({
-			environmentOverride: prepared.preStartResult.environment,
+			environmentOverride: {
+				...prepared.preStartResult.environment,
+				...(workerControlMaterial === undefined
+					? {}
+					: buildWorkerControlEnvironment(workerControlMaterial)),
+			},
 			secretResolver: options.secretResolver,
+			gitReadAllowlistRepos: prepared.preStartResult.repos.map((repo) => repo.repoUrl),
 			systemConfig: options.systemConfig,
 			tcpHostsOverride: prepared.preStartResult.tcpHosts,
 			vfsMountsOverride: prepared.preStartResult.vfsMounts,
@@ -849,6 +981,46 @@ export async function executeWorkerTask(
 		await options.onWorkerTaskIngress?.(prepared.zoneId, prepared.taskId, gateway.ingress);
 
 		const baseUrl = `http://${gateway.ingress.host}:${gateway.ingress.port}`;
+		if (workerControlMaterial !== undefined && options.controlSession !== undefined) {
+			const sessionFenceRegistry = createControlSessionFenceRegistry();
+			const dispatcher = createControlSessionDispatcher({ sessionFenceRegistry });
+			dispatcher.register(
+				'worker_control',
+				createWorkerControlDomainHandler({
+					authenticatedTask: { taskId: prepared.taskId },
+					observations: {
+						onCapacitySnapshot: async () => {},
+						onRuntimeObservation: async (payload) => {
+							await prepared.recordEvent({
+								event: 'worker-control-runtime-observation',
+								observedAtMs: payload.observedAtMs,
+								...(payload.sessionState === undefined
+									? {}
+									: { sessionState: payload.sessionState }),
+								...(payload.state === undefined ? {} : { state: payload.state }),
+							});
+						},
+						onRuntimeStatus: async (payload) => {
+							await prepared.recordEvent({
+								event: 'worker-control-runtime-status',
+								findings: payload.findings,
+								observedAtMs: payload.observedAtMs,
+								statusKind: payload.statusKind,
+							});
+						},
+					},
+					operations: options.controlSession.operations,
+				}),
+			);
+			controlSession = await (
+				options.connectWorkerControlSession ?? connectWorkerControlSessionDefault
+			)({
+				dispatcher,
+				endpoint: buildWorkerControlEndpoint(gateway.ingress),
+				material: workerControlMaterial,
+				sessionFenceRegistry,
+			});
+		}
 		await fetchJson(`${baseUrl}/tasks`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
@@ -916,6 +1088,12 @@ export async function executeWorkerTask(
 				};
 				break;
 			}
+			workerControlDeathGraceState = classifyWorkerControlSessionHealth({
+				controlSession,
+				deathGraceState: workerControlDeathGraceState,
+				nowMs: pollClock.now(),
+				taskId: prepared.taskId,
+			});
 			// The sleep is part of the serial poll loop and cannot be parallelized.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			await pollClock.sleep(pollIntervalMs);
@@ -929,6 +1107,11 @@ export async function executeWorkerTask(
 	}
 
 	const cleanupErrors: Error[] = [];
+	try {
+		controlSession?.close();
+	} catch (error) {
+		cleanupErrors.push(toError(error));
+	}
 	try {
 		await gateway?.vm.close();
 	} catch (error) {

@@ -256,7 +256,7 @@ async function addMcpPortalReferencesToOpenClawFixture(rootPath: string): Promis
 		}
 		const zone = firstZone as Record<string, unknown>;
 		zone.agents = [{ id: 'shravan' }];
-		zone.mcpPortal = { configDir: './gateways/shravan' };
+		zone.toolPortal = { configDir: './gateways/shravan' };
 	});
 }
 
@@ -279,6 +279,13 @@ async function writeMcpPortalConfigFiles(rootPath: string, profileName: string):
 async function writeMcpPortalConfigWithProvider(
 	rootPath: string,
 	provider: unknown,
+	calls: {
+		readonly requiresApproval: { readonly allow: '*' | readonly string[] };
+		readonly withoutApproval: { readonly allow: '*' | readonly string[] };
+	} = {
+		requiresApproval: { allow: [] },
+		withoutApproval: { allow: '*' },
+	},
 ): Promise<void> {
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
 		providers: { tavily: provider },
@@ -290,10 +297,7 @@ async function writeMcpPortalConfigWithProvider(
 			default: {
 				namespaces: {
 					tavily: {
-						calls: {
-							requiresApproval: { allow: '*' },
-							withoutApproval: { allow: [] },
-						},
+						calls,
 						tools: { allow: '*' },
 					},
 				},
@@ -1150,7 +1154,7 @@ describe('runConfigValidation', () => {
 			result.checks.find((check) => check.name === 'openclaw-sandbox-plugin-tools-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or mcp-portal / mcp_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.',
+			hint: 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or tool-portal / tool_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.',
 		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
@@ -1250,9 +1254,48 @@ describe('runConfigValidation', () => {
 
 		expect(result.ok).toBe(false);
 		expect(
-			result.checks.find((check) => check.name === 'mcp-portal-effective-config-shravan'),
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
 		).toMatchObject({
 			hint: expect.stringContaining('must declare networkAccess'),
+			ok: false,
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('rejects managed OpenClaw MCP Portal calls that require approval', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithProvider(
+			temporaryDirectoryPath,
+			{
+				kind: 'mcp',
+				namespace: 'tavily',
+				transport: {
+					args: ['-y', 'tavily-mcp'],
+					command: 'npx',
+					kind: 'stdio',
+					networkAccess: 'none',
+				},
+			},
+			{
+				requiresApproval: { allow: '*' },
+				withoutApproval: { allow: [] },
+			},
+		);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
+		).toMatchObject({
+			hint: expect.stringContaining('does not support calls.requiresApproval'),
 			ok: false,
 		});
 

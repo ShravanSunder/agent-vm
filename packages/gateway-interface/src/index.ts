@@ -9,6 +9,7 @@ export {
 	gatewayVmAllowedHosts,
 	targetsAudience,
 	vmAudienceValues,
+	workerVmAllowedHosts,
 } from './audience.js';
 export {
 	createWebSocketUpgradeRequestGuard,
@@ -18,7 +19,7 @@ export {
 	agentVmHealthEventKinds,
 	agentVmHealthResultKinds,
 	deriveZoneHealthSnapshot,
-	gatewayControlLinkHealthPins,
+	gatewayControlSessionHealthOperations,
 	gatewayRecoveryHealthReasons,
 	healthEventBucketKey,
 	isAgentVmHealthEvent,
@@ -26,14 +27,19 @@ export {
 	zoneHealthStateKinds,
 } from './health/agent-vm-health.js';
 export {
+	normalizeGitHubRepoForSshReadAllowlist,
+	normalizeGitHubReposForSshReadAllowlist,
+	normalizeGitRepoForSshReadAllowlist,
+	normalizeGitReposForSshReadAllowlist,
+	type NormalizedGitSshReadAllowlist,
+	type NormalizedGitSshReadAllowlistEntry,
+} from './git-read-allowlist.js';
+export {
 	controllerRequestPolicies,
 	ControllerRequestPolicyTransportError,
 	drainControllerResponseBody,
 	externalControllerRoutes,
-	fetchControllerWithPolicy,
-	gatewayInternalControllerRequestOperations,
 	genericControllerRequestEventOperations,
-	workerInternalControllerRequestOperations,
 } from './health/controller-request-policy.js';
 export { composeNodeOptions, FORCE_IPV4_EGRESS_NODE_OPTIONS } from './force-ipv4-egress.js';
 export type { EgressHostConfig, RuntimeVmAudience, VmAudience } from './audience.js';
@@ -47,6 +53,7 @@ export type {
 	AgentChannelProviderHealthDetails,
 	AgentChannelProviderHealthKind,
 	DeriveZoneHealthSnapshotOptions,
+	GatewayControlSessionHealthOperation,
 	GatewayRecoveryEventAction,
 	GatewayRecoveryHealthReason,
 	GatewayRecoveryTimeoutErrorCode,
@@ -62,10 +69,7 @@ export type {
 	ControllerRequestPolicyTransportErrorCode,
 	ControllerRequestPolicyOperation,
 	ExternalControllerRoute,
-	FetchControllerWithPolicyOptions,
-	GatewayInternalControllerRequestOperation,
 	GenericControllerRequestEventOperation,
-	WorkerInternalControllerRequestOperation,
 } from './health/controller-request-policy.js';
 export type {
 	BuildGatewayVmSpecOptions,
@@ -91,6 +95,7 @@ export {
 	createToolVmActiveUseHandle,
 	createToolVmActiveUseId,
 	isToolVmActiveUseId,
+	normalizeToolVmActiveUseCorrelation,
 } from './tool-vm-active-use.js';
 export {
 	OPENCLAW_STATE_SANDBOXES_VM_ROOT,

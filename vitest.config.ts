@@ -60,8 +60,8 @@ export default defineConfig({
 			),
 			'@agent-vm/agent-vm': repoPath('packages/agent-vm/src/index.ts'),
 			'@agent-vm/config-contracts': repoPath('packages/config-contracts/src/index.ts'),
-			'@agent-vm/controller-execution-contracts': repoPath(
-				'packages/controller-execution-contracts/src/index.ts',
+			'@agent-vm/control-protocol-contracts': repoPath(
+				'packages/control-protocol-contracts/src/index.ts',
 			),
 			'@agent-vm/controller-execution-contracts/controller-dispatch-boundary': repoPath(
 				'packages/controller-execution-contracts/src/controller-dispatch-boundary/index.ts',
@@ -69,14 +69,20 @@ export default defineConfig({
 			'@agent-vm/controller-execution-contracts/controller-host-action-boundary': repoPath(
 				'packages/controller-execution-contracts/src/controller-host-action-boundary/index.ts',
 			),
-			'@agent-vm/controller-execution-contracts/credentialed-runner-boundary': repoPath(
-				'packages/controller-execution-contracts/src/credentialed-runner-boundary/index.ts',
+			'@agent-vm/controller-execution-contracts/tool-vm-runner-boundary': repoPath(
+				'packages/controller-execution-contracts/src/tool-vm-runner-boundary/index.ts',
 			),
 			'@agent-vm/controller-execution-contracts/testing': repoPath(
 				'packages/controller-execution-contracts/src/testing/index.ts',
 			),
+			'@agent-vm/controller-execution-contracts': repoPath(
+				'packages/controller-execution-contracts/src/index.ts',
+			),
 			'@agent-vm/gondolin-adapter': repoPath('packages/gondolin-adapter/src/index.ts'),
 			'@agent-vm/agent-vm-worker': repoPath('packages/agent-vm-worker/src/index.ts'),
+			'@agent-vm/gateway-control-contracts': repoPath(
+				'packages/gateway-control-contracts/src/index.ts',
+			),
 			'@agent-vm/gateway-interface': repoPath('packages/gateway-interface/src/index.ts'),
 			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
 				'packages/openclaw-agent-vm-plugin/src/index.ts',
@@ -104,10 +110,10 @@ export default defineConfig({
 				'packages/mcp-portal/src/portal-auth/hmac-token.ts',
 			),
 			'@agent-vm/mcp-portal': repoPath('packages/mcp-portal/src/index.ts'),
-			'@agent-vm/openclaw-mcp-portal-plugin': repoPath(
-				'packages/openclaw-mcp-portal-plugin/src/index.ts',
-			),
 			'@agent-vm/openclaw-gateway': repoPath('packages/openclaw-gateway/src/index.ts'),
+			'@agent-vm/worker-control-contracts': repoPath(
+				'packages/worker-control-contracts/src/index.ts',
+			),
 			'@agent-vm/worker-gateway': repoPath('packages/worker-gateway/src/index.ts'),
 			'@agent-vm/tool-portal': repoPath('packages/tool-portal/src/index.ts'),
 			'@agent-vm/tool-portal/in-process-entrypoint': repoPath(

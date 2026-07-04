@@ -3,10 +3,13 @@ import {
 	type PortalCallResult,
 	PortalCallResultSchema,
 	PortalDescribeRequestSchema,
+	type PortalDescribeResult,
 	PortalDescribeResultSchema,
 	PortalListRequestSchema,
+	type PortalListResult,
 	PortalListResultSchema,
 	PortalSearchRequestSchema,
+	type PortalSearchResult,
 	PortalSearchResultSchema,
 	JsonValueSchema,
 	type PortalError,
@@ -15,11 +18,18 @@ import {
 	type JsonValue,
 } from '@agent-vm/agent-portal-sdk';
 import {
+	type FormattedSecretValue,
+	loadMcpConfig,
 	type ToolPortalMcpProjection,
 	ToolPortalMcpProjectionSchema,
 	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 
+import {
+	createPortalCore,
+	createUpstreamMcpClientRuntime,
+	resolveUpstreamServers,
+} from '../core/index.js';
 import type {
 	PortalBatchDiagnostic,
 	PortalBatchResult,
@@ -41,25 +51,109 @@ export interface McpProviderCapabilityBackend {
 	readonly describe: (
 		request: unknown,
 		options?: McpProviderCapabilityBackendCallOptions,
-	) => Promise<PortalCallResult>;
+	) => Promise<PortalDescribeResult>;
 	readonly list: (
 		request: unknown,
 		options?: McpProviderCapabilityBackendCallOptions,
-	) => Promise<PortalCallResult>;
+	) => Promise<PortalListResult>;
 	readonly search: (
 		request: unknown,
 		options?: McpProviderCapabilityBackendCallOptions,
-	) => Promise<PortalCallResult>;
+	) => Promise<PortalSearchResult>;
 }
 
 export interface CreateMcpProviderCapabilityBackendProps {
 	readonly core: PortalCore;
 	readonly projection: ToolPortalMcpProjection;
+	readonly sessionKey?: string;
+}
+
+export interface ManagedMcpProviderBackendFactory {
+	readonly close: () => Promise<void>;
+	readonly createBackend: (
+		projection: ToolPortalMcpProjection,
+		options?: { readonly sessionKey?: string },
+	) => McpProviderCapabilityBackend;
+	readonly retireSession: (sessionKey: string) => Promise<void>;
+}
+
+export interface CreateManagedMcpProviderBackendFactoryProps {
+	readonly mcpConfigPath: string;
+	readonly resolveSecret: (secret: FormattedSecretValue) => Promise<string>;
 }
 
 type PreflightCallDecision =
 	| { readonly kind: 'allow' }
 	| { readonly code: 'approval_required' | 'capability_denied'; readonly kind: 'error' };
+
+export async function createManagedMcpProviderBackendFactory(
+	props: CreateManagedMcpProviderBackendFactoryProps,
+): Promise<ManagedMcpProviderBackendFactory> {
+	const mcpConfig = await loadMcpConfig(props.mcpConfigPath);
+	const upstreamServers = await resolveUpstreamServers({
+		config: mcpConfig,
+		resolveSecret: props.resolveSecret,
+	});
+	const upstreamRuntime = createUpstreamMcpClientRuntime({ servers: upstreamServers });
+	const core = createPortalCore({
+		accessPolicy: {
+			defaultPolicy: 'allow-all',
+			enabledNamespacesByAgent: {},
+			hiddenToolsByAgent: {},
+		},
+		approval: (approvalCalls) => ({
+			decisionsByCallId: Object.fromEntries(
+				approvalCalls.map((call) => [call.id, { kind: 'allow' }]),
+			),
+		}),
+		catalogTtlMs: 60_000,
+		runtime: {
+			callUpstreamTool: upstreamRuntime.callTool,
+			closeAgentScope: upstreamRuntime.closeAgentScope,
+			closeSession: upstreamRuntime.closeSession,
+			listTools: upstreamRuntime.listTools,
+		},
+		upstreamNamespaces: upstreamServers.map((server) => server.namespace),
+	});
+	const agentIdsBySessionKey = new Map<string, Set<string>>();
+	return {
+		close: async () => await core.close(),
+		createBackend: (projection, backendOptions = {}): McpProviderCapabilityBackend => {
+			const parsedProjection = ToolPortalMcpProjectionSchema.parse(projection);
+			if (backendOptions.sessionKey !== undefined) {
+				const agentIds = agentIdsBySessionKey.get(backendOptions.sessionKey) ?? new Set<string>();
+				agentIds.add(parsedProjection.agentId);
+				agentIdsBySessionKey.set(backendOptions.sessionKey, agentIds);
+			}
+			return createMcpProviderCapabilityBackend({
+				core,
+				projection: parsedProjection,
+				...(backendOptions.sessionKey === undefined
+					? {}
+					: { sessionKey: backendOptions.sessionKey }),
+			});
+		},
+		retireSession: async (sessionKey) => {
+			const agentIds = agentIdsBySessionKey.get(sessionKey);
+			if (agentIds === undefined) {
+				return;
+			}
+			agentIdsBySessionKey.delete(sessionKey);
+			await Promise.all(
+				[...agentIds].map(async (agentId) => {
+					await core.invalidateSession(
+						core.createAgentScope({
+							agentId,
+							agentScopeId: `mcp-provider:${agentId}`,
+							sessionKey,
+							source: 'openclaw-trusted',
+						}),
+					);
+				}),
+			);
+		},
+	};
+}
 
 export function createMcpProviderCapabilityBackend(
 	props: CreateMcpProviderCapabilityBackendProps,
@@ -68,6 +162,7 @@ export function createMcpProviderCapabilityBackend(
 	const scope = props.core.createAgentScope({
 		agentId: projection.agentId,
 		agentScopeId: `mcp-provider:${projection.agentId}`,
+		...(props.sessionKey === undefined ? {} : { sessionKey: props.sessionKey }),
 		source: 'openclaw-trusted',
 	});
 
@@ -75,11 +170,11 @@ export function createMcpProviderCapabilityBackend(
 		async call(request, options): Promise<PortalCallResult> {
 			const parsedRequest = PortalCallRequestSchema.parse(request);
 			const preflightItems = new Map<string, PortalCallResult['items'][number]>();
-			const executableCalls: Array<(typeof parsedRequest.calls)[number]> = [];
+			const executableCalls: (typeof parsedRequest.calls)[number][] = [];
 			for (const callRequest of parsedRequest.calls) {
 				const decision = preflightCallDecision(projection, {
 					namespace: callRequest.namespace,
-					toolName: callRequest.toolName,
+					toolName: callRequest.name,
 				});
 				if (decision.kind === 'allow') {
 					executableCalls.push(callRequest);
@@ -91,7 +186,7 @@ export function createMcpProviderCapabilityBackend(
 						code: decision.code,
 						id: callRequest.id,
 						namespace: callRequest.namespace,
-						toolName: callRequest.toolName,
+						name: callRequest.name,
 					}),
 				);
 			}
@@ -101,12 +196,19 @@ export function createMcpProviderCapabilityBackend(
 			if (executableCalls.length > 0) {
 				const coreResult = await callCore({
 					core: props.core,
-					input: { calls: executableCalls },
+					input: {
+						calls: executableCalls.map((callRequest) => ({
+							arguments: callRequest.arguments,
+							id: callRequest.id,
+							namespace: callRequest.namespace,
+							toolName: callRequest.name,
+						})),
+					},
 					...(options?.signal !== undefined ? { signal: options.signal } : {}),
 					scope,
 					toolName: 'mcp_portal_call',
 				});
-				const normalizedCoreResult = normalizeCoreItemResult(coreResult);
+				const normalizedCoreResult = normalizeCoreItemResult(coreResult, projection);
 				for (const item of normalizedCoreResult.items) {
 					coreItems.set(item.id, item);
 				}
@@ -123,7 +225,7 @@ export function createMcpProviderCapabilityBackend(
 							code: 'execution_failed',
 							id: callRequest.id,
 							namespace: callRequest.namespace,
-							toolName: callRequest.toolName,
+							name: callRequest.name,
 						}),
 				),
 				ok: parsedRequest.calls.every((callRequest) => {
@@ -132,17 +234,35 @@ export function createMcpProviderCapabilityBackend(
 				}),
 			});
 		},
-		async describe(request, options): Promise<PortalCallResult> {
+		async describe(request, options): Promise<PortalDescribeResult> {
 			const parsedRequest = PortalDescribeRequestSchema.parse(request);
 			const projectedRequest = {
-				requests: parsedRequest.requests.map((itemRequest) => ({
-					...itemRequest,
-					...(itemRequest.tools === undefined
-						? {}
-						: {
-								tools: itemRequest.tools.filter((tool) => capabilityVisible(projection, tool)),
-							}),
-				})),
+				requests: parsedRequest.requests.map((itemRequest) => {
+					const projectedItemRequest: Record<string, unknown> = {
+						id: itemRequest.id,
+						includeJsonSchema: itemRequest.includeJsonSchema,
+						includeRelated: itemRequest.includeRelated,
+						includeTypescriptHelper: itemRequest.includeTypescriptHelper,
+						includeZod: itemRequest.includeZod,
+					};
+					if (itemRequest.refs !== undefined) {
+						projectedItemRequest.refs = itemRequest.refs;
+					}
+					if (itemRequest.tools !== undefined) {
+						projectedItemRequest.tools = itemRequest.tools
+							.filter((tool) =>
+								capabilityVisible(projection, {
+									namespace: tool.namespace,
+									toolName: tool.name,
+								}),
+							)
+							.map((tool) => ({
+								namespace: tool.namespace,
+								toolName: tool.name,
+							}));
+					}
+					return projectedItemRequest;
+				}),
 			};
 			const coreResult = await callCore({
 				core: props.core,
@@ -153,7 +273,7 @@ export function createMcpProviderCapabilityBackend(
 			});
 			return PortalDescribeResultSchema.parse(normalizeScalarBatchResult(coreResult, projection));
 		},
-		async list(request, options): Promise<PortalCallResult> {
+		async list(request, options): Promise<PortalListResult> {
 			const parsedRequest = PortalListRequestSchema.parse(request);
 			const projectedBatch = projectNamespaceFilteredRequests({
 				emptyValue: { namespaces: [], tools: [] },
@@ -176,7 +296,7 @@ export function createMcpProviderCapabilityBackend(
 				}),
 			);
 		},
-		async search(request, options): Promise<PortalCallResult> {
+		async search(request, options): Promise<PortalSearchResult> {
 			const parsedRequest = PortalSearchRequestSchema.parse(request);
 			const projectedBatch = projectNamespaceFilteredRequests({
 				emptyValue: { tools: [] },
@@ -313,6 +433,28 @@ function preflightCallDecision(
 	return { code: 'capability_denied', kind: 'error' };
 }
 
+interface McpToolRecord extends Readonly<Record<string, unknown>> {
+	readonly namespace: string;
+	readonly toolName: string;
+}
+
+function isMcpToolRecord(value: unknown): value is McpToolRecord {
+	return (
+		isRecord(value) && typeof value.namespace === 'string' && typeof value.toolName === 'string'
+	);
+}
+
+function publicToolRecordFromMcpToolRecord(tool: McpToolRecord): Readonly<Record<string, unknown>> {
+	const publicToolRecord: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(tool)) {
+		if (key !== 'toolName') {
+			publicToolRecord[key] = value;
+		}
+	}
+	publicToolRecord.name = tool.toolName;
+	return publicToolRecord;
+}
+
 function normalizeScalarBatchResult(
 	coreResult: PortalCoreResult | null,
 	projection: ToolPortalMcpProjection,
@@ -331,14 +473,19 @@ function normalizeScalarBatchResult(
 	});
 }
 
-function normalizeCoreItemResult(coreResult: PortalCoreResult): PortalCallResult {
+function normalizeCoreItemResult(
+	coreResult: PortalCoreResult,
+	projection: ToolPortalMcpProjection,
+): PortalCallResult {
 	return PortalCallResultSchema.parse({
 		items: coreResult.items.map((item) => {
 			if (item.status === 'success') {
 				return {
 					id: item.requestId,
 					status: 'ok',
-					value: jsonValueFromUnknown(item.structuredContent ?? item.content),
+					value: isRecord(item.structuredContent)
+						? filterProjectedCapabilityValues(item.structuredContent, projection)
+						: jsonValueFromUnknown(item.structuredContent ?? item.content),
 				};
 			}
 			return {
@@ -391,26 +538,51 @@ function normalizePortalToolResultItem(
 }
 
 function portalBatchResultFromStructuredContent(value: unknown): PortalBatchResult {
-	if (!isRecord(value) || !isRecord(value.results)) {
+	if (!isPortalBatchResult(value)) {
 		throw new Error('MCP Portal core scalar result did not contain a batch result.');
 	}
-	return value as unknown as PortalBatchResult;
+	return value;
+}
+
+function isPortalBatchResult(value: unknown): value is PortalBatchResult {
+	return (
+		isRecord(value) &&
+		Array.isArray(value.diagnostics) &&
+		Array.isArray(value.errors) &&
+		typeof value.ok === 'boolean' &&
+		isPortalToolResultMap(value.results)
+	);
+}
+
+function isPortalToolResultMap(
+	value: unknown,
+): value is Readonly<Record<string, PortalToolResult>> {
+	return isRecord(value) && Object.values(value).every(isPortalToolResult);
+}
+
+function isPortalToolResult(value: unknown): value is PortalToolResult {
+	if (!isRecord(value) || !isRecord(value.input) || typeof value.ok !== 'boolean') {
+		return false;
+	}
+	if (value.ok) {
+		return isRecord(value.output);
+	}
+	return Object.hasOwn(value, 'error');
 }
 
 function filterProjectedCapabilityValues(
 	value: Readonly<Record<string, unknown>>,
 	projection: ToolPortalMcpProjection,
 ): JsonValue {
+	if (isMcpToolRecord(value)) {
+		return jsonValueFromUnknown(publicToolRecordFromMcpToolRecord(value));
+	}
 	const tools = value.tools;
 	if (!Array.isArray(tools)) {
 		return jsonValueFromUnknown(value);
 	}
-	const filteredTools = tools.filter((tool) => {
-		if (
-			!isRecord(tool) ||
-			typeof tool.namespace !== 'string' ||
-			typeof tool.toolName !== 'string'
-		) {
+	const filteredTools = tools.filter((tool): tool is McpToolRecord => {
+		if (!isMcpToolRecord(tool)) {
 			return false;
 		}
 		return capabilityVisible(projection, {
@@ -431,25 +603,25 @@ function filterProjectedCapabilityValues(
 					].toSorted(),
 				}
 			: {}),
-		tools: filteredTools,
+		tools: filteredTools.map(publicToolRecordFromMcpToolRecord),
 	});
 }
 
 function errorItem(props: {
 	readonly code: 'approval_required' | 'capability_denied' | 'execution_failed';
 	readonly id: string;
+	readonly name: string;
 	readonly namespace: string;
-	readonly toolName: string;
 }): PortalCallResult['items'][number] {
 	return {
 		error: {
 			code: props.code,
 			message:
 				props.code === 'approval_required'
-					? `Ask operator to approve ${props.namespace}.${props.toolName}.`
+					? `Ask operator to approve ${props.namespace}.${props.name}.`
 					: props.code === 'capability_denied'
-						? `Capability ${props.namespace}.${props.toolName} is not allowed.`
-						: `Capability ${props.namespace}.${props.toolName} did not return a result.`,
+						? `Capability ${props.namespace}.${props.name} is not allowed.`
+						: `Capability ${props.namespace}.${props.name} did not return a result.`,
 			safeDiagnostic: safeDiagnosticForCode(props.code),
 		},
 		id: props.id,

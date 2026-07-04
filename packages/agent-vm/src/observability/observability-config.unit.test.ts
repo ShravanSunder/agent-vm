@@ -94,6 +94,16 @@ function createConfig(): SystemConfigInput {
 	};
 }
 
+function createConfigWithoutZoneObservability(): SystemConfigInput {
+	const configInput = createConfig();
+	const firstZone = configInput.zones[0];
+	if (!firstZone) {
+		throw new Error('Expected test zone.');
+	}
+	delete firstZone.observability;
+	return configInput;
+}
+
 describe('createObservabilityRuntimeConfig', () => {
 	test('returns disabled when host observability is not enabled', () => {
 		const configInput = createConfig();
@@ -110,8 +120,8 @@ describe('createObservabilityRuntimeConfig', () => {
 		expect(createObservabilityRuntimeConfig(loadedConfig)).toEqual({ enabled: false });
 	});
 
-	test('normalizes host observability paths and supported OpenClaw zones', () => {
-		const loadedConfig = createLoadedSystemConfig(createConfig(), {
+	test('normalizes host observability paths without raw-tcp OpenClaw zone telemetry', () => {
+		const loadedConfig = createLoadedSystemConfig(createConfigWithoutZoneObservability(), {
 			systemConfigPath: '/tmp/config/system.json',
 		});
 
@@ -139,23 +149,12 @@ describe('createObservabilityRuntimeConfig', () => {
 			waitOnBuild: true,
 			controllerStartPolicy: 'degraded',
 			startupCheckTimeoutMs: 30_000,
-			zones: [
-				{
-					zoneId: 'sunfam',
-					serviceName: 'agent-vm-openclaw-sunfam',
-					traces: true,
-					metrics: true,
-					logs: true,
-					sampleRate: 1,
-					flushIntervalMs: 10_000,
-					diagnosticsFlags: [],
-				},
-			],
+			zones: [],
 		});
 	});
 
 	test('normalizes external observability without managed stack storage', () => {
-		const configInput = createConfig();
+		const configInput = createConfigWithoutZoneObservability();
 		configInput.host.observability = {
 			enabled: true,
 			stack: {
@@ -187,18 +186,7 @@ describe('createObservabilityRuntimeConfig', () => {
 			waitOnBuild: true,
 			controllerStartPolicy: 'degraded',
 			startupCheckTimeoutMs: 30_000,
-			zones: [
-				{
-					zoneId: 'sunfam',
-					serviceName: 'agent-vm-openclaw-sunfam',
-					traces: true,
-					metrics: true,
-					logs: true,
-					sampleRate: 1,
-					flushIntervalMs: 10_000,
-					diagnosticsFlags: [],
-				},
-			],
+			zones: [],
 		});
 		expect('dataDir' in runtimeConfig).toBe(false);
 		expect('retention' in runtimeConfig).toBe(false);

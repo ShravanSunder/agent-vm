@@ -18,6 +18,7 @@ import type { PinnedRealFsRoot } from './pinned-realfs.js';
 import {
 	SYNTHETIC_DNS_IPV4_BENCHMARK,
 	SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
+	createGitReadOnlySshEgressOptions,
 	createManagedVm,
 	type ManagedVmDependencies,
 	type ManagedVmInstance,
@@ -319,6 +320,132 @@ describe('createManagedVm', () => {
 				}),
 			),
 		).resolves.toBe(false);
+	});
+
+	it('passes SSH egress config into Gondolin VM options and enables synthetic DNS', async () => {
+		let capturedVmOptions: VMOptions | undefined;
+		const sshEgress = createGitReadOnlySshEgressOptions({
+			allowedHosts: ['github.com'],
+			allowedRepos: ['acme/widgets.git'],
+		});
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
+				capturedVmOptions = vmOptions;
+				return createFakeVmInstance();
+			}),
+		});
+
+		await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				env: {},
+				imagePath: '',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				sshEgress,
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(capturedVmOptions?.dns).toEqual({
+			mode: 'synthetic',
+			syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
+			syntheticIPv6: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
+			syntheticHostMapping: 'per-host',
+		});
+		expect(capturedVmOptions?.ssh).toBe(sshEgress);
+		expect(capturedVmOptions?.tcp).toBeUndefined();
+	});
+
+	it('allows git-upload-pack while denying receive-pack and non-git SSH exec', async () => {
+		const sshEgress = createGitReadOnlySshEgressOptions({
+			allowedHosts: ['github.com'],
+			allowedRepos: ['acme/widgets.git'],
+		});
+		if (!sshEgress.execPolicy) {
+			throw new Error('Expected git read-only SSH exec policy');
+		}
+
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-upload-pack 'acme/widgets.git'",
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_000 },
+				}),
+			),
+		).resolves.toEqual({ allow: true });
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-receive-pack 'acme/widgets.git'",
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_001 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-upload-pack 'acme/other.git'",
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_002 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: 'bash',
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_003 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+	});
+
+	it('keeps generic SSH repo allowlists case-sensitive', async () => {
+		const sshEgress = createGitReadOnlySshEgressOptions({
+			allowedHosts: ['git.example.com'],
+			allowedRepos: ['Team/Repo.git'],
+		});
+		if (!sshEgress.execPolicy) {
+			throw new Error('Expected git read-only SSH exec policy');
+		}
+
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-upload-pack 'Team/Repo.git'",
+					guestUsername: 'git',
+					hostname: 'git.example.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_000 },
+				}),
+			),
+		).resolves.toEqual({ allow: true });
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-upload-pack 'team/repo.git'",
+					guestUsername: 'git',
+					hostname: 'git.example.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_001 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
 	});
 
 	it('does not turn public raw TCP hosts into HTTP allowed hosts', async () => {

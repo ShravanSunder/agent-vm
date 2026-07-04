@@ -322,13 +322,29 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 				true,
 			);
 
-			const leasesResponse = await fetch(`http://127.0.0.1:${runtime.controllerPort}/leases`);
-			expect(leasesResponse.status).toBe(200);
-			const leasesBody = await leasesResponse.json();
-			if (!Array.isArray(leasesBody)) {
-				throw new Error('Expected leases array');
+			const controllerStatusResponse = await fetch(
+				`http://127.0.0.1:${runtime.controllerPort}/controller-status`,
+			);
+			expect(controllerStatusResponse.status).toBe(200);
+			const controllerStatusBody = await controllerStatusResponse.json();
+			if (
+				typeof controllerStatusBody !== 'object' ||
+				controllerStatusBody === null ||
+				!Array.isArray((controllerStatusBody as { readonly zones?: unknown }).zones)
+			) {
+				throw new Error('Expected controller status zones array');
 			}
-			expect(leasesBody.length).toBeGreaterThan(0);
+			const zones = (
+				controllerStatusBody as {
+					readonly zones: readonly { readonly activeLeaseCount?: unknown }[];
+				}
+			).zones;
+			expect(
+				zones.some(
+					(statusZone) =>
+						typeof statusZone.activeLeaseCount === 'number' && statusZone.activeLeaseCount > 0,
+				),
+			).toBe(true);
 		} finally {
 			await runtime?.close();
 			if (previousOpToken === undefined) {

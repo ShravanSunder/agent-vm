@@ -220,10 +220,12 @@ function createObservabilitySystemConfig(
 	options: {
 		readonly prepareOnBuild?: boolean;
 		readonly stackMode?: 'external' | 'managed';
+		readonly zoneEnabled?: boolean;
 	} = {},
 ): LoadedSystemConfig {
 	const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
 	const stackMode = options.stackMode ?? 'managed';
+	const zoneEnabled = options.zoneEnabled ?? false;
 	const hostObservability =
 		stackMode === 'managed'
 			? {
@@ -264,15 +266,19 @@ function createObservabilitySystemConfig(
 			},
 			zones: baseConfig.zones.map((zone) => ({
 				...zone,
-				observability: {
-					enabled: true,
-					openclaw: {
-						serviceName: `agent-vm-openclaw-${zone.id}`,
-						traces: true,
-						metrics: true,
-						logs: true,
-					},
-				},
+				...(zoneEnabled
+					? {
+							observability: {
+								enabled: true,
+								openclaw: {
+									serviceName: `agent-vm-openclaw-${zone.id}`,
+									traces: true,
+									metrics: true,
+									logs: true,
+								},
+							},
+						}
+					: {}),
 			})),
 		},
 		{ systemConfigPath: '/project/config/system.json' },
@@ -350,8 +356,10 @@ describe('runBuildCommand', () => {
 		expect(pluginSyncs).toEqual(['/project']);
 	});
 
-	it('prepares configured observability after image preparation', async () => {
+	it('skips managed host observability preparation when no OpenClaw zone opted in', async () => {
 		const events: string[] = [];
+		const prepareObservabilityStack =
+			vi.fn<NonNullable<BuildCommandDependencies['prepareObservabilityStack']>>();
 		const dependencies: BuildCommandDependencies = {
 			runTask: async (title, fn) => {
 				events.push(`task:${title}`);
@@ -368,14 +376,7 @@ describe('runBuildCommand', () => {
 					imagePath: '/cache/abc123',
 				};
 			},
-			prepareObservabilityStack: async (options) => {
-				events.push(`observability:${String(options.wait)}`);
-				return {
-					collectorConfigPath: '/runtime/observability/otel-collector-config.yaml',
-					composePath: '/runtime/observability/docker-compose.observability.yml',
-					status: options.wait ? 'ready' : 'started',
-				};
-			},
+			prepareObservabilityStack,
 			resolveProjectRootFromDockerfile: async () => '/project',
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
 			syncBundledOpenClawPlugin: noOpPluginSync,
@@ -384,7 +385,8 @@ describe('runBuildCommand', () => {
 
 		await runBuildCommand({ systemConfig: createObservabilitySystemConfig() }, dependencies);
 
-		expect(events.indexOf('observability:true')).toBeGreaterThan(events.indexOf('gondolin'));
+		expect(events.indexOf('task:Observability stack')).toBeGreaterThan(events.indexOf('gondolin'));
+		expect(prepareObservabilityStack).not.toHaveBeenCalled();
 	});
 
 	it('skips build-time observability when disabled by config', async () => {
@@ -867,7 +869,7 @@ describe('runBuildCommand', () => {
 		);
 	});
 
-	it('adds diagnostics OTEL OpenClaw package when a managed openclaw profile serves an observability zone', async () => {
+	it('does not add diagnostics OTEL OpenClaw package without accepted zone telemetry', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
 		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
@@ -938,10 +940,10 @@ describe('runBuildCommand', () => {
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
 		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/diagnostics-otel": "2026.6.8"');
+		expect(generatedDockerfile).not.toContain('"@openclaw/diagnostics-otel": "2026.6.8"');
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
-		expect(generatedDockerfile).toContain(
+		expect(generatedDockerfile).not.toContain(
 			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/diagnostics-otel "$global_package_root/@openclaw/diagnostics-otel"',
 		);
 		expect(generatedDockerfile).not.toContain('openclaw-diagnostics-otel.tgz');

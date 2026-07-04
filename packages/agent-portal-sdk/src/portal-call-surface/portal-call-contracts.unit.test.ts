@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -26,6 +28,10 @@ import {
 	PortalSearchRequestSchema,
 } from './index.js';
 
+async function readJsonSchemaArtifact(relativePath: string): Promise<unknown> {
+	return JSON.parse(await readFile(new URL(relativePath, import.meta.url), 'utf8')) as unknown;
+}
+
 describe('portal call surface contracts', () => {
 	it('rejects hidden backend and approval fields before dispatch', () => {
 		expect(
@@ -35,7 +41,7 @@ describe('portal call surface contracts', () => {
 						arguments: { title: 'Fix deploy' },
 						id: 'call-1',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 				portalApprovalToken: 'model-visible-token',
@@ -50,7 +56,7 @@ describe('portal call surface contracts', () => {
 						backendKind: 'ssh-sandbox',
 						id: 'call-1',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 			}).success,
@@ -79,7 +85,7 @@ describe('portal call surface contracts', () => {
 						arguments: ['not-object'],
 						id: 'call-1',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 			}).success,
@@ -92,7 +98,7 @@ describe('portal call surface contracts', () => {
 			arguments: {},
 			id: `call-${index}`,
 			namespace: 'github',
-			toolName: 'get_issue',
+			name: 'get_issue',
 		}));
 
 		expect(
@@ -104,12 +110,12 @@ describe('portal call surface contracts', () => {
 		expect(
 			PortalDescribeRequestSchema.parse({
 				requestId: 'batch-1',
-				requests: [{ id: 'item', tools: [{ namespace: 'github', toolName: 'get_issue' }] }],
+				requests: [{ id: 'item', tools: [{ namespace: 'github', name: 'get_issue' }] }],
 			}),
 		).toMatchObject({ requestId: 'batch-1' });
 		expect(
 			PortalCallRequestSchema.parse({
-				calls: [{ arguments: {}, id: 'call-1', namespace: 'github', toolName: 'get_issue' }],
+				calls: [{ arguments: {}, id: 'call-1', namespace: 'github', name: 'get_issue' }],
 				requestId: 'batch-1',
 			}),
 		).toMatchObject({ requestId: 'batch-1' });
@@ -140,12 +146,12 @@ describe('portal call surface contracts', () => {
 			{
 				duplicatePayload: {
 					calls: [
-						{ arguments: {}, id: 'same', namespace: 'github', toolName: 'get_issue' },
-						{ arguments: {}, id: 'same', namespace: 'github', toolName: 'get_issue' },
+						{ arguments: {}, id: 'same', namespace: 'github', name: 'get_issue' },
+						{ arguments: {}, id: 'same', namespace: 'github', name: 'get_issue' },
 					],
 				},
 				reservedPayload: {
-					calls: [{ arguments: {}, id: '__proto__', namespace: 'github', toolName: 'get_issue' }],
+					calls: [{ arguments: {}, id: '__proto__', namespace: 'github', name: 'get_issue' }],
 				},
 				schema: PortalCallRequestSchema,
 			},
@@ -234,7 +240,7 @@ describe('portal call surface contracts', () => {
 						arguments: { body: 'x'.repeat(JsonStringMaxLength + 1) },
 						id: 'call-1',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 			}).success,
@@ -246,7 +252,7 @@ describe('portal call surface contracts', () => {
 						arguments: { items: Array.from({ length: JsonArrayMaxItems + 1 }, () => null) },
 						id: 'call-1',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 			}).success,
@@ -263,7 +269,7 @@ describe('portal call surface contracts', () => {
 						),
 						id: 'call-1',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 			}).success,
@@ -275,7 +281,7 @@ describe('portal call surface contracts', () => {
 						arguments: { ['x'.repeat(JsonObjectKeyMaxLength + 1)]: null },
 						id: 'call-1',
 						namespace: 'github',
-						toolName: 'create_issue',
+						name: 'create_issue',
 					},
 				],
 			}).success,
@@ -284,7 +290,7 @@ describe('portal call surface contracts', () => {
 
 	it('exports useful testing fixtures instead of empty public testing modules', () => {
 		expect(createPortalCallRequestFixture()).toMatchObject({
-			calls: [{ id: 'call-1', namespace: 'github', toolName: 'get_issue' }],
+			calls: [{ id: 'call-1', namespace: 'github', name: 'get_issue' }],
 		});
 		expect(createPortalCallResultFixture()).toMatchObject({
 			items: [{ id: 'call-1', status: 'ok' }],
@@ -295,19 +301,16 @@ describe('portal call surface contracts', () => {
 	it('exports the first-slice public SDK contract surfaces', () => {
 		expect(
 			CapabilityDescriptorSchema.parse({
-				approval: 'not_required',
-				description: 'Read GitHub issue metadata.',
-				inputJsonSchema: { type: 'object' },
-				name: 'get_issue',
+				annotations: {},
+				inputSchema: { type: 'object' },
 				namespace: 'github',
-				result: {
-					canReturnArtifacts: false,
-					canStream: false,
-					kind: 'json',
-					truncation: 'possible',
+				related: [],
+				schemaHint: {
+					message: 'Full input schema included.',
+					next: 'call_ready',
 				},
-				safeCallingHints: [{ code: 'read_only', message: 'No external write.' }],
-				title: 'Get Issue',
+				name: 'get_issue',
+				toolRef: 'github:get_issue',
 			}),
 		).toMatchObject({ namespace: 'github' });
 		expect(
@@ -365,9 +368,12 @@ describe('portal call surface contracts', () => {
 		).toMatchObject({ kind: 'diagnostic' });
 	});
 
-	it('generates JSON Schema from the Zod request contracts', () => {
+	it('exports JSON Schemas matching the reviewed static artifact', async () => {
 		const schemas = createPortalCallSurfaceJsonSchemas();
 
+		await expect(
+			readJsonSchemaArtifact('./portal-call-json-schema.snapshot.json'),
+		).resolves.toEqual(schemas);
 		expect(schemas.call).toEqual(z.toJSONSchema(PortalCallRequestSchema, { io: 'input' }));
 		expect(JSON.stringify(schemas.call)).toContain('"maxItems":50');
 		expect(schemas.describe).toEqual(z.toJSONSchema(PortalDescribeRequestSchema, { io: 'input' }));

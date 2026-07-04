@@ -14,7 +14,7 @@ export type GatewayLifecycleErrorCode =
 	| 'record-write-failed'
 	| 'old-gateway-not-running'
 	| 'vm-process-missing'
-	| 'gateway-control-link-unhealthy'
+	| 'gateway-control-session-unhealthy'
 	| 'gateway-service-unhealthy'
 	| 'agent-channel-provider-unhealthy'
 	| 'owner-unsafe'

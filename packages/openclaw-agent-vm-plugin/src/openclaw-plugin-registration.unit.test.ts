@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -11,6 +12,29 @@ import defaultPlugin, {
 import type { OpenClawSandboxFsBridge } from './sandbox-backend-factory.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+const TOOL_PORTAL_NATIVE_TOOL_NAMES = [
+	'tool_portal_list',
+	'tool_portal_search',
+	'tool_portal_describe',
+	'tool_portal_call',
+] as const;
+
+function createControlSessionPluginConfig(): {
+	readonly bootId: string;
+	readonly controllerEpoch: string;
+	readonly generationId: string;
+	readonly peerId: string;
+	readonly verifierPublicKeyPem: string;
+} {
+	const { publicKey } = generateKeyPairSync('ed25519');
+	return {
+		bootId: 'gateway-boot-a',
+		controllerEpoch: 'controller-epoch-a',
+		generationId: 'gateway-generation-a',
+		peerId: 'gateway-zone-a',
+		verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
+	};
+}
 
 function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
@@ -41,18 +65,70 @@ function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	};
 }
 
+function registeredRoute(
+	registerHttpRoute: ReturnType<typeof vi.fn>,
+	pathname: string,
+): { readonly handleUpgrade?: unknown; readonly handler?: unknown } {
+	const route = registerHttpRoute.mock.calls
+		.map(
+			(call) =>
+				call[0] as {
+					readonly handleUpgrade?: unknown;
+					readonly handler?: unknown;
+					readonly path?: string;
+				},
+		)
+		.find((candidate) => candidate.path === pathname);
+	if (route === undefined) {
+		throw new Error(`Expected route ${pathname} to be registered.`);
+	}
+	return route;
+}
+
 describe('createGondolinPlugin', () => {
 	it('marks the plugin for gateway startup activation', async () => {
 		const manifestPath = path.resolve(import.meta.dirname, '..', 'openclaw.plugin.json');
 		const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
 			readonly activation?: { readonly onStartup?: boolean };
 			readonly cliBackends?: readonly string[];
+			readonly configSchema?: {
+				readonly properties?: Record<
+					string,
+					{
+						readonly additionalProperties?: boolean;
+						readonly required?: readonly string[];
+						readonly type?: string;
+					}
+				>;
+				readonly required?: readonly string[];
+			};
 			readonly contracts?: { readonly tools?: readonly string[] };
+			readonly toolMetadata?: Record<string, { readonly optional?: boolean }>;
 		};
 
 		expect(manifest.activation?.onStartup).toBe(true);
 		expect(manifest.cliBackends).toContain('gondolin');
-		expect(manifest.contracts?.tools).toContain('zone_git_push');
+		expect(manifest.contracts?.tools ?? []).not.toContain('zone_git_push');
+		expect(manifest.contracts?.tools).toEqual(TOOL_PORTAL_NATIVE_TOOL_NAMES);
+		expect(manifest.toolMetadata).toEqual(
+			Object.fromEntries(
+				TOOL_PORTAL_NATIVE_TOOL_NAMES.map((toolName) => [toolName, { optional: true }]),
+			),
+		);
+		expect(manifest.configSchema?.required).toEqual(['zoneId']);
+		expect(manifest.configSchema?.properties).not.toHaveProperty('controllerUrl');
+		expect(manifest.configSchema?.properties).not.toHaveProperty('gatewayControlLinkMonitor');
+		expect(manifest.configSchema?.properties).not.toHaveProperty('gatewayControlSessionMonitor');
+		expect(manifest.configSchema?.properties?.toolPortal).toMatchObject({
+			additionalProperties: false,
+			required: ['configDir'],
+			type: 'object',
+		});
+		expect(manifest.configSchema?.properties?.controlSession).toMatchObject({
+			additionalProperties: false,
+			required: ['bootId', 'controllerEpoch', 'generationId', 'peerId', 'verifierPublicKeyPem'],
+			type: 'object',
+		});
 	});
 
 	it('exports a default plugin descriptor with the gondolin id', () => {
@@ -70,52 +146,46 @@ describe('createGondolinPlugin', () => {
 		}).not.toThrow();
 	});
 
-	it('registers the zone_git_push tool from plugin config when available', () => {
+	it('does not register the old direct zone_git_push model tool', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerTool = vi.fn();
 
 		try {
 			defaultPlugin.register({
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
+				registerHttpRoute: vi.fn(),
 				registerTool,
 				registrationMode: 'full',
 			});
 
-			expect(registerTool).toHaveBeenCalledWith(
-				expect.objectContaining({
-					name: 'zone_git_push',
-					parameters: expect.objectContaining({ type: 'object' }),
-				}),
-				{ name: 'zone_git_push', optional: true },
+			expect(registerTool).not.toHaveBeenCalledWith(
+				expect.objectContaining({ name: 'zone_git_push' }),
+				expect.anything(),
 			);
 		} finally {
 			stderrWrite.mockRestore();
 		}
 	});
 
-	it('registers zone_git_push during OpenClaw tool discovery without loading the sandbox SDK', () => {
+	it('does not expose zone_git_push during OpenClaw tool discovery', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerTool = vi.fn();
 
 		try {
 			defaultPlugin.register({
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
 					zoneId: 'shravan',
 				},
 				registerTool,
 				registrationMode: 'tool-discovery',
 			});
 
-			expect(registerTool).toHaveBeenCalledWith(
-				expect.objectContaining({
-					name: 'zone_git_push',
-					parameters: expect.objectContaining({ type: 'object' }),
-				}),
-				{ name: 'zone_git_push', optional: true },
+			expect(registerTool).not.toHaveBeenCalledWith(
+				expect.objectContaining({ name: 'zone_git_push' }),
+				expect.anything(),
 			);
 			expect(stderrWrite).not.toHaveBeenCalled();
 		} finally {
@@ -123,7 +193,146 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
-	it('publishes Tool VM runtime status from OpenClaw runtime config during full registration', async () => {
+	it('registers Tool Portal native tools during OpenClaw tool discovery', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerTool = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					toolPortal: {
+						configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+					},
+					zoneId: 'shravan',
+				},
+				registerTool,
+				registrationMode: 'tool-discovery',
+			});
+
+			expect(registerTool).toHaveBeenCalledWith(expect.any(Function), {
+				names: TOOL_PORTAL_NATIVE_TOOL_NAMES,
+				optional: true,
+			});
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers private gateway control readiness and upgrade routes when control session config is present', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerHttpRoute = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute,
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+
+			expect(registerHttpRoute).toHaveBeenCalledWith(
+				expect.objectContaining({
+					auth: 'plugin',
+					match: 'exact',
+					path: '/__agent-vm/ready',
+				}),
+			);
+			expect(registerHttpRoute).toHaveBeenCalledWith(
+				expect.objectContaining({
+					auth: 'plugin',
+					handleUpgrade: expect.any(Function),
+					match: 'exact',
+					path: '/__agent-vm/gateway-control',
+				}),
+			);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('reuses the gateway control service across repeated full registration for the same identity', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const controlSession = createControlSessionPluginConfig();
+		const firstRegisterHttpRoute = vi.fn();
+		const secondRegisterHttpRoute = vi.fn();
+		const pluginConfig = {
+			controlSession,
+			zoneId: 'shravan',
+		};
+
+		try {
+			defaultPlugin.register({
+				pluginConfig,
+				registerHttpRoute: firstRegisterHttpRoute,
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+			defaultPlugin.register({
+				pluginConfig,
+				registerHttpRoute: secondRegisterHttpRoute,
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+
+			expect(registeredRoute(firstRegisterHttpRoute, '/__agent-vm/ready').handler).toBe(
+				registeredRoute(secondRegisterHttpRoute, '/__agent-vm/ready').handler,
+			);
+			expect(
+				registeredRoute(firstRegisterHttpRoute, '/__agent-vm/gateway-control').handleUpgrade,
+			).toBe(registeredRoute(secondRegisterHttpRoute, '/__agent-vm/gateway-control').handleUpgrade);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers Tool Portal native model tools instead of MCP Portal model tools', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerTool = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					toolPortal: {
+						configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+					},
+					zoneId: 'shravan',
+				},
+				registerHttpRoute: vi.fn(),
+				registerTool,
+				registrationMode: 'full',
+			});
+
+			expect(registerTool).toHaveBeenCalledWith(expect.any(Function), {
+				names: TOOL_PORTAL_NATIVE_TOOL_NAMES,
+				optional: true,
+			});
+			const toolFactory = registerTool.mock.calls.find(
+				(call) => typeof call[0] === 'function',
+			)?.[0];
+			if (typeof toolFactory !== 'function') {
+				throw new Error('Expected a Tool Portal native tool factory registration.');
+			}
+			const factory = toolFactory as (context: {
+				readonly agentId: string;
+			}) => readonly { readonly name: string }[];
+			const tools = factory({ agentId: 'shravan' });
+			expect(tools.map((tool) => tool.name)).toEqual([
+				'tool_portal_list',
+				'tool_portal_search',
+				'tool_portal_describe',
+				'tool_portal_call',
+			]);
+			expect(JSON.stringify(tools)).not.toContain('mcp_portal_');
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('does not publish Tool VM runtime status through controller HTTP during full registration', async () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const fetchSpy = vi
 			.spyOn(globalThis, 'fetch')
@@ -145,40 +354,23 @@ describe('createGondolinPlugin', () => {
 					},
 				},
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
+				registerHttpRoute: vi.fn(),
 				registerTool: vi.fn(),
 				registrationMode: 'full',
 			});
 
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledWith(
-					'http://controller.vm.host:18800/zones/shravan/openclaw-runtime-status',
-					expect.objectContaining({
-						method: 'POST',
-					}),
-				);
-			});
-			const requestInit = fetchSpy.mock.calls[0]?.[1];
-			if (typeof requestInit?.body !== 'string') {
-				throw new TypeError('Expected runtime status request body to be a string.');
-			}
-			const body = JSON.parse(requestInit.body) as {
-				readonly findings: readonly { readonly ok: boolean }[];
-				readonly pluginId: string;
-				readonly zoneId: string;
-			};
-			expect(body.pluginId).toBe('gondolin');
-			expect(body.zoneId).toBe('shravan');
-			expect(body.findings.every((finding) => finding.ok)).toBe(true);
+			await Promise.resolve();
+			expect(fetchSpy).not.toHaveBeenCalled();
 		} finally {
 			fetchSpy.mockRestore();
 			stderrWrite.mockRestore();
 		}
 	});
 
-	it('retries Tool VM runtime status publishing while the controller becomes ready', async () => {
+	it('does not retry Tool VM runtime status through controller HTTP while the controller becomes ready', async () => {
 		vi.useFakeTimers();
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const fetchSpy = vi
@@ -204,20 +396,16 @@ describe('createGondolinPlugin', () => {
 					},
 				},
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
+				registerHttpRoute: vi.fn(),
 				registerTool: vi.fn(),
 				registrationMode: 'full',
 			});
 
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledTimes(1);
-			});
 			await vi.advanceTimersByTimeAsync(1_000);
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledTimes(2);
-			});
+			expect(fetchSpy).not.toHaveBeenCalled();
 			expect(stderrWrite).not.toHaveBeenCalledWith(
 				expect.stringContaining('failed to publish OpenClaw runtime status'),
 			);
@@ -228,7 +416,7 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
-	it('does not wrap runtime status publishing in a second retry loop', async () => {
+	it('does not keep a controller HTTP runtime-status retry loop alive', async () => {
 		vi.useFakeTimers();
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const fetchSpy = vi
@@ -253,22 +441,17 @@ describe('createGondolinPlugin', () => {
 					},
 				},
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
+				registerHttpRoute: vi.fn(),
 				registerTool: vi.fn(),
 				registrationMode: 'full',
 			});
 
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledTimes(1);
-			});
 			await vi.advanceTimersByTimeAsync(29_000);
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledTimes(30);
-			});
 			await vi.advanceTimersByTimeAsync(1_000);
-			expect(fetchSpy).toHaveBeenCalledTimes(30);
+			expect(fetchSpy).not.toHaveBeenCalled();
 		} finally {
 			fetchSpy.mockRestore();
 			stderrWrite.mockRestore();
@@ -280,7 +463,7 @@ describe('createGondolinPlugin', () => {
 		expect(() =>
 			defaultPlugin.register({
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
 				registrationMode: 'full',
@@ -288,47 +471,38 @@ describe('createGondolinPlugin', () => {
 		).toThrow('Gondolin full registration requires OpenClaw registerTool.');
 	});
 
-	it('resolves zone_git_push token from the configured environment variable', async () => {
+	it('fails full registration without control session config instead of falling back to raw lease HTTP', () => {
+		expect(() =>
+			defaultPlugin.register({
+				pluginConfig: {
+					zoneId: 'shravan',
+				},
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			}),
+		).toThrow('Gondolin full registration requires controlSession.');
+	});
+
+	it('ignores legacy zone_git_push token config during tool discovery', () => {
 		const previousToken = process.env.AGENT_VM_ZONE_GIT_TOKEN;
 		process.env.AGENT_VM_ZONE_GIT_TOKEN = 'runtime-push-token';
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-		let registeredTool:
-			| Parameters<NonNullable<Parameters<typeof defaultPlugin.register>[0]['registerTool']>>[0]
-			| undefined;
+		const registerTool = vi.fn();
 
 		try {
 			defaultPlugin.register({
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
 					zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 					zoneId: 'shravan',
 				},
-				registerTool: (tool) => {
-					registeredTool = tool;
-				},
+				registerTool,
 				registrationMode: 'tool-discovery',
 			});
 
-			if (!registeredTool) {
-				throw new Error('Expected zone_git_push tool to be registered.');
-			}
-			const fetchSpy = vi
-				.spyOn(globalThis, 'fetch')
-				.mockResolvedValue(new Response(JSON.stringify({ success: true })));
-			try {
-				await registeredTool.execute('tool-call-1', { expectedHead: 'abc123' });
-				expect(fetchSpy).toHaveBeenCalledWith(
-					'http://controller.vm.host:18800/zones/shravan/zone-git/push',
-					expect.objectContaining({
-						headers: {
-							'content-type': 'application/json',
-							'x-agent-vm-zone-git-token': 'runtime-push-token',
-						},
-					}),
-				);
-			} finally {
-				fetchSpy.mockRestore();
-			}
+			expect(registerTool).not.toHaveBeenCalledWith(
+				expect.objectContaining({ name: 'zone_git_push' }),
+				expect.anything(),
+			);
 		} finally {
 			stderrWrite.mockRestore();
 			if (previousToken === undefined) {

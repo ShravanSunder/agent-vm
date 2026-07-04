@@ -4,32 +4,14 @@ import path from 'node:path';
 
 import type { ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { startControllerHttpServer } from '../controller/http/controller-http-server.js';
-import type { controllerLeaseCreateRequestSchema } from '../controller/http/controller-request-schemas.js';
 import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
-
-type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequestSchema>;
-
-function createLeaseRequestBody(
-	overrides: Partial<ControllerLeaseCreateRequestBody> = {},
-): ControllerLeaseCreateRequestBody {
-	return {
-		agentId: 'main',
-		agentWorkspaceDir: '/zone',
-		profileId: 'standard',
-		sessionKey: 'agent:main:restart-test',
-		workMountDir: '/zone/restart-work',
-		zoneId: 'shravan',
-		...overrides,
-	};
-}
 
 function createSystemConfig(
 	controllerPort: number,
@@ -341,8 +323,7 @@ describe('live integration: controller restart persistence', () => {
 		expect(readBody.stdout).toBe('persistent-value');
 
 		const leasesResponse = await fetch(`http://127.0.0.1:${controllerPort}/leases`);
-		const leasesBody = (await leasesResponse.json()) as unknown[];
-		expect(leasesBody).toHaveLength(0);
+		expect(leasesResponse.status).toBe(404);
 
 		const runtimeStatusResponse = await fetch(
 			`http://127.0.0.1:${controllerPort}/zones/shravan/openclaw-runtime-status`,
@@ -362,19 +343,21 @@ describe('live integration: controller restart persistence', () => {
 				method: 'POST',
 			},
 		);
-		expect(runtimeStatusResponse.status).toBe(200);
+		expect(runtimeStatusResponse.status).toBe(404);
 
 		const createLeaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
-			body: JSON.stringify(
-				createLeaseRequestBody({
-					agentId: 'restart-test',
-					sessionKey: 'agent:restart-test:integration',
-				}),
-			),
+			body: JSON.stringify({
+				agentId: 'restart-test',
+				agentWorkspaceDir: '/zone',
+				profileId: 'standard',
+				sessionKey: 'agent:restart-test:integration',
+				workMountDir: '/zone/restart-work',
+				zoneId: 'shravan',
+			}),
 			headers: { 'content-type': 'application/json' },
 			method: 'POST',
 		});
-		expect(createLeaseResponse.status).toBe(200);
+		expect(createLeaseResponse.status).toBe(404);
 
 		await restartedRuntime.close();
 		await runtime.close().catch(() => {});
