@@ -170,6 +170,62 @@ describe('managed Tool Portal runtime', () => {
 		expect(closeFactory).toHaveBeenCalledTimes(1);
 	});
 
+	it('retires MCP sessions that finish after their cache entry was evicted', async () => {
+		const rootDirectory = await createTemporaryDirectory();
+		const configDirectory = path.join(rootDirectory, 'config');
+		await mkdir(configDirectory);
+		await writeJsonConfig(path.join(configDirectory, 'mcp.config.jsonc'), {
+			providers: {},
+			schemaVersion: 1,
+		});
+		await writeJsonConfig(path.join(configDirectory, 'tool-portal.config.jsonc'), {
+			agents: { 'agent-a': { profile: 'default' } },
+			profiles: {
+				default: {
+					capabilities: {
+						'upstream-a': {
+							backend: { kind: 'mcp_provider' },
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: '*', deny: [] },
+							},
+							tools: { allow: '*', deny: [] },
+						},
+					},
+				},
+			},
+			schemaVersion: 1,
+		});
+		const observedSessionKeys: string[] = [];
+		const retiredSessionKeys: string[] = [];
+		const factory = {
+			close: vi.fn(async () => {}),
+			createBackend: vi.fn((_projection, options) => {
+				if (options?.sessionKey === undefined) {
+					throw new Error('Expected session key.');
+				}
+				observedSessionKeys.push(options.sessionKey);
+				return createMcpBackendStub();
+			}),
+			retireSession: vi.fn(async (sessionKey: string) => {
+				retiredSessionKeys.push(sessionKey);
+			}),
+		} satisfies ManagedMcpProviderBackendFactory;
+		const runtime = createManagedToolPortalInProcessRuntime({
+			configDir: configDirectory,
+			createMcpProviderBackendFactory: vi.fn(async () => factory),
+			maxEntryPointCacheEntries: 1,
+		});
+
+		const firstEntryPoint = runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-a' });
+		const secondEntryPoint = runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-b' });
+		await Promise.all([firstEntryPoint, secondEntryPoint]);
+		await runtime.close();
+
+		expect(observedSessionKeys).toEqual(['session-a', 'session-b']);
+		expect(retiredSessionKeys).toEqual(['session-a', 'session-b']);
+	});
+
 	it('derives an MCP-safe session key from internal cache keys with control separators', async () => {
 		const rootDirectory = await createTemporaryDirectory();
 		const configDirectory = path.join(rootDirectory, 'config');

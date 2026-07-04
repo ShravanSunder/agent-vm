@@ -212,11 +212,23 @@ export function createManagedToolPortalInProcessRuntime(
 		await factory.retireSession(mcpSessionKeyForEntryPointCacheKey(entryPointCacheKey));
 	};
 
+	const retireEntryPointAfterSettlement = async (
+		entryPointCacheKey: string,
+		entryPointPromise: Promise<ToolPortalInProcessEntryPoint>,
+	): Promise<void> => {
+		await entryPointPromise.catch(() => undefined);
+		await retireMcpSessionIfFactoryExists(entryPointCacheKey);
+	};
+
 	return {
 		close: async () => {
-			const entryPointCacheKeys = [...entryPointsByCacheKey.keys()];
+			const entryPointEntries = [...entryPointsByCacheKey.entries()];
 			entryPointsByCacheKey.clear();
-			await Promise.all(entryPointCacheKeys.map(retireMcpSessionIfFactoryExists));
+			await Promise.all(
+				entryPointEntries.map(([entryPointCacheKey, entryPointPromise]) =>
+					retireEntryPointAfterSettlement(entryPointCacheKey, entryPointPromise),
+				),
+			);
 			if (mcpProviderBackendFactoryPromise !== undefined) {
 				const factory = await mcpProviderBackendFactoryPromise;
 				await factory.close();
@@ -253,19 +265,32 @@ export function createManagedToolPortalInProcessRuntime(
 				throw error;
 			});
 			entryPointsByCacheKey.set(entryPointCacheKey, entryPointPromise);
-			const evictedEntryPointCacheKeys: string[] = [];
+			const evictedEntryPointEntries: {
+				readonly entryPointCacheKey: string;
+				readonly entryPointPromise: Promise<ToolPortalInProcessEntryPoint>;
+			}[] = [];
 			while (entryPointsByCacheKey.size > maxEntryPointCacheEntries) {
 				const oldestEntryPointCacheKey = entryPointsByCacheKey.keys().next().value;
 				if (typeof oldestEntryPointCacheKey !== 'string') {
 					break;
 				}
+				const oldestEntryPointPromise = entryPointsByCacheKey.get(oldestEntryPointCacheKey);
+				if (oldestEntryPointPromise === undefined) {
+					break;
+				}
 				entryPointsByCacheKey.delete(oldestEntryPointCacheKey);
-				evictedEntryPointCacheKeys.push(oldestEntryPointCacheKey);
+				evictedEntryPointEntries.push({
+					entryPointCacheKey: oldestEntryPointCacheKey,
+					entryPointPromise: oldestEntryPointPromise,
+				});
 			}
-			if (evictedEntryPointCacheKeys.length > 0) {
+			if (evictedEntryPointEntries.length > 0) {
 				await Promise.all(
-					evictedEntryPointCacheKeys.map((evictedEntryPointCacheKey) =>
-						retireMcpSessionIfFactoryExists(evictedEntryPointCacheKey),
+					evictedEntryPointEntries.map((evictedEntryPointEntry) =>
+						retireEntryPointAfterSettlement(
+							evictedEntryPointEntry.entryPointCacheKey,
+							evictedEntryPointEntry.entryPointPromise,
+						),
 					),
 				);
 			}

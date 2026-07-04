@@ -15,8 +15,8 @@ import {
 	type GatewayControlService,
 } from './gateway-control-service.js';
 
-const GATEWAY_CONTROL_SERVICE_RUNTIMES_KEY = Symbol.for(
-	'agent-vm.openclawGatewayControlServiceRuntimes',
+const GATEWAY_CONTROL_SERVICE_RUNTIME_STORES_KEY = Symbol.for(
+	'agent-vm.openclawGatewayControlServiceRuntimeStores',
 );
 
 export interface GatewayControlServiceRuntime {
@@ -37,7 +37,43 @@ export interface EnsureGatewayControlSessionHeartbeatOptions {
 }
 
 interface GatewayControlServiceRuntimeGlobalStore {
-	[key: symbol]: Map<string, GatewayControlServiceRuntime> | undefined;
+	[key: symbol]: unknown;
+}
+
+interface GatewayControlServiceRuntimeStores {
+	readonly activeRuntimeKeys: Map<string, string>;
+	readonly runtimes: Map<string, GatewayControlServiceRuntime>;
+}
+
+function activeRuntimeKey(options: GetOrCreateGatewayControlServiceRuntimeOptions): string {
+	return JSON.stringify([options.identity.zoneId, options.identity.peerId]);
+}
+
+function isGatewayControlServiceRuntimeStores(
+	value: unknown,
+): value is GatewayControlServiceRuntimeStores {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'activeRuntimeKeys' in value &&
+		'runtimes' in value &&
+		value.activeRuntimeKeys instanceof Map &&
+		value.runtimes instanceof Map
+	);
+}
+
+function gatewayControlServiceRuntimeStores(): GatewayControlServiceRuntimeStores {
+	const globalStore = globalThis as typeof globalThis & GatewayControlServiceRuntimeGlobalStore;
+	const existingStores = globalStore[GATEWAY_CONTROL_SERVICE_RUNTIME_STORES_KEY];
+	if (isGatewayControlServiceRuntimeStores(existingStores)) {
+		return existingStores;
+	}
+	const stores = {
+		activeRuntimeKeys: new Map<string, string>(),
+		runtimes: new Map<string, GatewayControlServiceRuntime>(),
+	} satisfies GatewayControlServiceRuntimeStores;
+	globalStore[GATEWAY_CONTROL_SERVICE_RUNTIME_STORES_KEY] = stores;
+	return stores;
 }
 
 function runtimeCacheKey(options: GetOrCreateGatewayControlServiceRuntimeOptions): string {
@@ -49,12 +85,6 @@ function runtimeCacheKey(options: GetOrCreateGatewayControlServiceRuntimeOptions
 		options.identity.controllerEpoch,
 		options.verifierPublicKeyPem,
 	]);
-}
-
-function gatewayControlServiceRuntimes(): Map<string, GatewayControlServiceRuntime> {
-	const globalStore = globalThis as typeof globalThis & GatewayControlServiceRuntimeGlobalStore;
-	globalStore[GATEWAY_CONTROL_SERVICE_RUNTIMES_KEY] ??= new Map();
-	return globalStore[GATEWAY_CONTROL_SERVICE_RUNTIMES_KEY];
 }
 
 function createGatewayControlApplicationMessageHandler(): GatewayControlApplicationMessageHandler {
@@ -121,10 +151,18 @@ export function getOrCreateGatewayControlServiceRuntime(
 	options: GetOrCreateGatewayControlServiceRuntimeOptions,
 ): GatewayControlServiceRuntime {
 	const cacheKey = runtimeCacheKey(options);
-	const runtimes = gatewayControlServiceRuntimes();
+	const peerActiveRuntimeKey = activeRuntimeKey(options);
+	const { activeRuntimeKeys, runtimes } = gatewayControlServiceRuntimeStores();
 	const existingRuntime = runtimes.get(cacheKey);
 	if (existingRuntime !== undefined) {
+		activeRuntimeKeys.set(peerActiveRuntimeKey, cacheKey);
 		return existingRuntime;
+	}
+	const previousCacheKey = activeRuntimeKeys.get(peerActiveRuntimeKey);
+	if (previousCacheKey !== undefined && previousCacheKey !== cacheKey) {
+		const previousRuntime = runtimes.get(previousCacheKey);
+		previousRuntime?.heartbeat?.stop();
+		runtimes.delete(previousCacheKey);
 	}
 	const runtime = {
 		service: createGatewayControlService({
@@ -134,6 +172,7 @@ export function getOrCreateGatewayControlServiceRuntime(
 		}),
 	} satisfies GatewayControlServiceRuntime;
 	runtimes.set(cacheKey, runtime);
+	activeRuntimeKeys.set(peerActiveRuntimeKey, cacheKey);
 	return runtime;
 }
 

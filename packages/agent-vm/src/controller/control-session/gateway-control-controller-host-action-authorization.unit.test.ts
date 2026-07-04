@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
+import { writeMcpPortalEffectiveConfig } from '../../gateway/mcp-portal-effective-config.js';
 import type {
 	GatewayControlAcceptedSessionRef,
 	GatewayControlTrustedCallerContext,
@@ -42,6 +43,13 @@ const trustedCallerContext = {
 	workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 	zoneId: acceptedSession.zoneId,
 } satisfies GatewayControlTrustedCallerContext;
+
+const noSecretResolutionDuringTest = {
+	resolve: async () => {
+		throw new Error('test authorization fixture must not resolve secrets');
+	},
+	resolveAll: async () => ({}),
+};
 
 async function writeToolPortalAuthoredConfig(
 	props: {
@@ -193,6 +201,29 @@ async function createSystemConfigFixture(
 	} satisfies LoadedSystemConfig;
 }
 
+async function writeEffectiveToolPortalSnapshot(systemConfig: LoadedSystemConfig): Promise<void> {
+	const zone = systemConfig.zones.find(
+		(configuredZone) => configuredZone.id === acceptedSession.zoneId,
+	);
+	if (zone === undefined || zone.toolPortal === undefined) {
+		throw new Error('test fixture expected a Tool Portal zone');
+	}
+	await writeMcpPortalEffectiveConfig({
+		allowedRawEnvSecretNames: ['OPENCLAW_GATEWAY_TOKEN'],
+		authoredConfigDir: zone.toolPortal.configDir,
+		effectiveHostConfigDir: path.join(
+			systemConfig.cacheDir,
+			'gateways',
+			acceptedSession.zoneId,
+			'tool-portal-effective',
+		),
+		effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+		includeZoneGitControllerHostAction: true,
+		secretResolver: noSecretResolutionDuringTest,
+		zoneId: acceptedSession.zoneId,
+	});
+}
+
 function createZoneGitPushPayload(
 	overrides: {
 		readonly capabilityName?: string;
@@ -229,6 +260,7 @@ function createZoneGitPushPayload(
 describe('authorizeGatewayControlControllerHostAction', () => {
 	it('authorizes zone_git_push from the controller-derived Tool Portal projection', async () => {
 		const systemConfig = await createSystemConfigFixture();
+		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
 			authorizeGatewayControlControllerHostAction({
@@ -238,6 +270,26 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 				systemConfig,
 			}),
 		).resolves.toEqual({ authorized: true });
+	});
+
+	it('authorizes from the controller-owned effective Tool Portal snapshot instead of mutable authored files', async () => {
+		const configDir = await writeToolPortalAuthoredConfig({ controllerHostActionPolicy: false });
+		const systemConfig = await createSystemConfigFixture({ configDir });
+		await writeEffectiveToolPortalSnapshot(systemConfig);
+		await writeToolPortalAuthoredConfig({ controllerHostActionPolicy: true });
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createZoneGitPushPayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_host_action_policy_denied',
+			safeMessage: 'controller host action policy denied the requested capability',
+		});
 	});
 
 	it('rejects forged capability selectors before controller execution', async () => {
@@ -281,6 +333,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 
 	it('rejects undeclared trusted caller-context agents from controller config', async () => {
 		const systemConfig = await createSystemConfigFixture();
+		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
 			authorizeGatewayControlControllerHostAction({
@@ -317,10 +370,11 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		});
 	});
 
-	it('rejects zones without authored Tool Portal controller host action policy', async () => {
+	it('rejects zones without effective Tool Portal controller host action policy', async () => {
 		const systemConfig = await createSystemConfigFixture({
 			configDir: await writeToolPortalAuthoredConfig({ controllerHostActionPolicy: false }),
 		});
+		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
 			authorizeGatewayControlControllerHostAction({

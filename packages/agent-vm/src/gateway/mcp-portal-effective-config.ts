@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readdir, rename, rm } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -62,6 +62,58 @@ interface EffectiveConfigManifest {
 	readonly portalConfigFile: string;
 	readonly schemaVersion: 1;
 	readonly toolPortalConfigFile: string;
+}
+
+export interface McpPortalEffectiveToolPortalConfigSnapshot {
+	readonly effectiveToolPortalConfig: ToolPortalConfig;
+	readonly toolPortalConfigPath: string;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readEffectiveConfigManifestStringField(
+	manifest: Readonly<Record<string, unknown>>,
+	fieldName: keyof EffectiveConfigManifest,
+): string {
+	const value = manifest[fieldName];
+	if (typeof value !== 'string' || value.length === 0) {
+		throw new Error(`mcp-portal: effective config manifest has invalid ${fieldName}.`);
+	}
+	return value;
+}
+
+async function readEffectiveConfigManifest(
+	directoryPath: string,
+): Promise<EffectiveConfigManifest> {
+	const manifest: unknown = JSON.parse(
+		await readFile(path.join(directoryPath, effectiveConfigManifestFileName), 'utf8'),
+	);
+	if (!isRecord(manifest) || manifest.schemaVersion !== 1) {
+		throw new Error('mcp-portal: effective config manifest is malformed.');
+	}
+	return {
+		mcpConfigFile: readEffectiveConfigManifestStringField(manifest, 'mcpConfigFile'),
+		portalConfigFile: readEffectiveConfigManifestStringField(manifest, 'portalConfigFile'),
+		schemaVersion: 1,
+		toolPortalConfigFile: readEffectiveConfigManifestStringField(manifest, 'toolPortalConfigFile'),
+	};
+}
+
+function resolveEffectiveConfigManifestFilePath(
+	directoryPath: string,
+	fileName: string,
+	fieldName: keyof EffectiveConfigManifest,
+): string {
+	const resolvedDirectoryPath = path.resolve(directoryPath);
+	const resolvedFilePath = path.resolve(resolvedDirectoryPath, fileName);
+	if (path.dirname(resolvedFilePath) !== resolvedDirectoryPath) {
+		throw new Error(
+			`mcp-portal: effective config manifest ${fieldName} must stay inside the effective config directory.`,
+		);
+	}
+	return resolvedFilePath;
 }
 
 function normalizeEnvironmentSegment(value: string): string {
@@ -554,6 +606,21 @@ export async function planMcpPortalEffectiveConfig(
 	props: McpPortalEffectiveConfigProps,
 ): Promise<McpPortalEffectiveConfigPlan> {
 	return await buildEffectivePlan(props, false);
+}
+
+export async function loadMcpPortalEffectiveToolPortalConfigSnapshot(
+	effectiveHostConfigDir: string,
+): Promise<McpPortalEffectiveToolPortalConfigSnapshot> {
+	const manifest = await readEffectiveConfigManifest(effectiveHostConfigDir);
+	const toolPortalConfigPath = resolveEffectiveConfigManifestFilePath(
+		effectiveHostConfigDir,
+		manifest.toolPortalConfigFile,
+		'toolPortalConfigFile',
+	);
+	const effectiveToolPortalConfig = toolPortalConfigSchema.parse(
+		JSON.parse(await readFile(toolPortalConfigPath, 'utf8')),
+	);
+	return { effectiveToolPortalConfig, toolPortalConfigPath };
 }
 
 export async function planMcpPortalEffectiveConfigFromConfig(

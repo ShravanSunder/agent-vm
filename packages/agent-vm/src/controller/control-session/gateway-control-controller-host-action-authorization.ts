@@ -5,10 +5,9 @@ import {
 	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import type { GatewayControlToolPortalControllerHostActionPayload } from '@agent-vm/gateway-control-contracts';
-import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { SystemConfig } from '../../config/system-config.js';
-import { planMcpPortalEffectiveConfig } from '../../gateway/mcp-portal-effective-config.js';
+import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
 import { isOpenClawZoneGitConfigured } from '../zone-git/zone-git-paths.js';
 import type {
 	GatewayControlAcceptedSessionRef,
@@ -17,7 +16,6 @@ import type {
 
 const controllerHostActionNamespace = 'controller_host_action';
 const zoneGitPushToolName = 'zone_git_push';
-const effectiveVmToolPortalConfigDir = '/home/openclaw/.openclaw/cache/tool-portal-effective';
 
 export interface GatewayControlControllerHostActionAuthorizationRequest {
 	readonly callerContext: GatewayControlTrustedCallerContext;
@@ -35,15 +33,6 @@ export type GatewayControlControllerHostActionAuthorizationResult =
 			readonly errorClass: string;
 			readonly safeMessage: string;
 	  };
-
-const noSecretResolutionDuringAuthorization: SecretResolver = {
-	resolve: async () => {
-		throw new Error('controller host action authorization must not resolve secrets');
-	},
-	resolveAll: async () => {
-		throw new Error('controller host action authorization must not resolve secrets');
-	},
-};
 
 function selectorIncludesTool(selector: ToolPortalToolSelector, toolName: string): boolean {
 	if (selector.deny.includes(toolName)) {
@@ -98,24 +87,12 @@ export async function authorizeGatewayControlControllerHostAction(
 			'controller host action is not configured for this zone',
 		);
 	}
-	const toolPortal = zone.toolPortal;
 
 	const projectionResult = await (async () => {
 		try {
-			const effectiveConfig = await planMcpPortalEffectiveConfig({
-				allowedRawEnvSecretNames: ['OPENCLAW_GATEWAY_TOKEN', ...(zone.gateway.rawEnvSecrets ?? [])],
-				authoredConfigDir: toolPortal.configDir,
-				effectiveHostConfigDir: path.join(
-					request.systemConfig.cacheDir,
-					'gateways',
-					zone.id,
-					'tool-portal-effective',
-				),
-				effectiveVmConfigDir: effectiveVmToolPortalConfigDir,
-				includeZoneGitControllerHostAction: true,
-				secretResolver: noSecretResolutionDuringAuthorization,
-				zoneId: zone.id,
-			});
+			const effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+				path.join(request.systemConfig.cacheDir, 'gateways', zone.id, 'tool-portal-effective'),
+			);
 			return {
 				ok: true,
 				projection: createToolPortalControllerHostActionProjection({
