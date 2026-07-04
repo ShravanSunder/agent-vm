@@ -738,13 +738,14 @@ controller trusted config / registry
 Managed Agent VM deployment config uses a Tool Portal root for managed agents.
 The managed field is `zones[].toolPortal`. It points at the authored Tool Portal
 config and any managed Tool Portal materialization settings. Generated OpenClaw
-plugin materialization uses `runtimePluginConfigs["tool-portal"]`. The
+plugin materialization uses `runtimePluginConfigs.gondolin.toolPortal`. The
 controller materializes the effective Tool Portal config into the managed gateway
 state directory under a Tool Portal-owned filename, not the MCP Portal effective
 config filename.
 
-`zones[].toolPortal` and generated `runtimePluginConfigs["mcp-portal"]` are stale
-managed OpenClaw paths after the hard cutover. They may remain only for
+`zones[].toolPortal` is the managed OpenClaw Tool Portal root after the hard
+cutover. Generated `runtimePluginConfigs["mcp-portal"]` and direct MCP Portal
+plugin config remain stale managed OpenClaw paths. They may remain only for
 standalone MCP Portal deployments that explicitly choose MCP Portal.
 
 Tool Portal MCP-backed projections are generated from `tool-portal.config.jsonc`
@@ -1537,7 +1538,8 @@ model-facing or managed OpenClaw installation paths:
 - `mcp_portal_upstream_notification`
 - `portalApprovalToken`
 - `runtimePluginConfigs["mcp-portal"]`
-- `zones[].toolPortal` as the managed Tool Portal trigger
+- a top-level `tool-portal` entry in `runtimePluginConfigs` as the managed Tool
+  Portal trigger
 
 Standalone MCP Portal docs and tests may still contain `mcp_portal_*` when they
 are clearly outside managed Tool Portal mode.
@@ -1633,7 +1635,8 @@ Direct observations from this worktree:
   exposes `/zones/:zoneId/execute-command`; this route is an admin/gateway
   operation and is not the Tool Portal controller-owned action path.
 - Managed OpenClaw config currently uses `zones[].toolPortal` and generated
-  `runtimePluginConfigs["mcp-portal"]`; these are stale managed paths after the
+  `runtimePluginConfigs.gondolin.toolPortal`; generated
+  `runtimePluginConfigs["mcp-portal"]` remains a stale managed path after the
   Tool Portal hard cutover.
 
 ## Requirement-To-Proof Matrix
@@ -1655,7 +1658,7 @@ This table is not an implementation sequence.
 | R10 Credentialed runner strict RPC | Runner proof covers ephemeral VM lifecycle, no SSH, no PTY, no shell strings, array argv, strict ManagedVm `exec`/`fs`, streamed output caps, stdin policy, and approval/fingerprint freshness. |
 | R11 CLI promotion | CLI allowance proof covers argv normalization before validation, denied shell tokens/launchers, denied flags/patterns, exact flag value kinds, path/host canonicalization, stdin policy, and promoted typed capability templates. |
 | R12 Approval hook | Approval proof covers model-visible approval errors, hidden proof references, Tool Portal approval binding for MCP-backed capabilities, controller approval binding for controller-owned capabilities, denial, expiry, stale/mismatched proof, and single-use replay rejection. |
-| R13 OpenClaw hard cutover | Residue audit proof fails managed OpenClaw paths containing banned MCP Portal tool/event/plugin/config/approval names, verifies `zones[].toolPortal` and `runtimePluginConfigs["tool-portal"]`, and confirms standalone MCP Portal paths remain allowed. |
+| R13 OpenClaw hard cutover | Residue audit proof fails managed OpenClaw paths containing banned MCP Portal tool/event/plugin/config/approval names, verifies `zones[].toolPortal` and `runtimePluginConfigs.gondolin.toolPortal`, and confirms standalone MCP Portal paths remain allowed. |
 | Package boundaries | Architecture gate proves dependency direction, package exports, descriptive multi-word filenames, no banned bucket folders, and no controller runtime imports from Tool Portal packages. |
 | Caller credential custody | Surface proof attempts forged public trusted identity and model-visible caller credential exfil/replay for CLI, HTTP, Tool Portal MCP server, TS SDK embedding, and OpenClaw plugin paths. |
 | Descriptor normalization | MCP-backed descriptor proof injects hostile provider schema metadata and verifies managed Tool Portal list/search/describe outputs do not leak backend/package/credential/path identity. |

@@ -194,7 +194,7 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Fourteen workspace packages compose the system. Dependencies flow downward.
+Seventeen workspace packages compose the system. Dependencies flow downward.
 
 ```
   @earendil-works/gondolin
@@ -216,6 +216,21 @@ Fourteen workspace packages compose the system. Dependencies flow downward.
                      v
               agent-vm-worker
 
+  control-protocol-contracts
+        |
+        +--> gateway-control-contracts
+        |          |
+        |          v
+        |     openclaw-agent-vm-plugin
+        |          |
+        |          v
+        |       agent-vm
+        |
+        +--> worker-control-contracts
+                   |
+                   v
+              agent-vm-worker
+
   agent-portal-sdk ---> mcp-portal
             |              |
             |              v
@@ -235,6 +250,9 @@ Fourteen workspace packages compose the system. Dependencies flow downward.
 |---------|----------------|
 | **secret-management** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
 | **config-contracts** | Zod-owned configuration contracts and generated schema sources for system, worker, MCP Portal, and Tool Portal config. |
+| **control-protocol-contracts** | Shared Socket.IO control-session envelope, identity, fencing, delivery, sequencing, close reason, and ack/result Zod contracts. |
+| **gateway-control-contracts** | Gateway-domain control RPC Zod contracts for gateway readiness, lease intent/observation, health, recovery, and controller-host-action requests. |
+| **worker-control-contracts** | Worker-domain control RPC Zod contracts for worker readiness, task lifecycle observations, runtime status, and controller-backed git operations. |
 | **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
 | **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
 | **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
