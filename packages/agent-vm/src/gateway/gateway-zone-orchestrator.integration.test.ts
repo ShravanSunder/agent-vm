@@ -3706,4 +3706,58 @@ describe('startGatewayZone', () => {
 			}),
 		).not.toThrow();
 	});
+
+	it('rejects caller context registration when a declared agent presents another agent work mount', async () => {
+		const systemConfig = await createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw gateway test zone.');
+		}
+		const multiAgentZone = {
+			...zone,
+			agents: [{ id: 'main' }, { id: 'second' }],
+		};
+
+		expect(() =>
+			validateGatewayControlCallerContextRegistration({
+				payload: {
+					adapterEvidence: {
+						agentId: 'second',
+						agentWorkspaceDir: '/home/openclaw/workspace-second',
+						sessionKey: 'agent:second:test-session',
+						workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+						zoneId: 'shravan',
+					},
+				},
+				zone: multiAgentZone,
+			}),
+		).toThrow(/only .*second/u);
+	});
+
+	it('rejects caller context registration for ambiguous shared OpenClaw work mounts', async () => {
+		const systemConfig = await createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw gateway test zone.');
+		}
+		const multiAgentZone = {
+			...zone,
+			agents: [{ id: 'main' }, { id: 'second' }],
+		};
+
+		expect(() =>
+			validateGatewayControlCallerContextRegistration({
+				payload: {
+					adapterEvidence: {
+						agentId: 'second',
+						agentWorkspaceDir: '/home/openclaw/workspace-second',
+						sessionKey: 'agent:second:test-session',
+						workMountDir: '/home/openclaw/.openclaw/state/workspace-main',
+						zoneId: 'shravan',
+					},
+				},
+				zone: multiAgentZone,
+			}),
+		).toThrow(/workspace-second/u);
+	});
 });

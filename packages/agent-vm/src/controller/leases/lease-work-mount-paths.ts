@@ -233,6 +233,15 @@ export async function resolveLeaseWorkMountDir(options: {
 		});
 	}
 	if (
+		translation.value.rootId === 'openclaw-sandboxes' &&
+		!translation.value.relativePath.startsWith(`${options.agentId}/`)
+	) {
+		throw new LeaseWorkMountValidationError(
+			'work-mount-purpose-not-allowed',
+			`Lease workMountDir '${options.workMountDir}' matched OpenClaw sandboxes, but only '${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/${options.agentId}/...' is allowed for agent '${options.agentId}'.`,
+		);
+	}
+	if (
 		translation.value.rootId === 'openclaw-state' &&
 		translation.value.relativePath !== `workspace-${options.agentId}`
 	) {

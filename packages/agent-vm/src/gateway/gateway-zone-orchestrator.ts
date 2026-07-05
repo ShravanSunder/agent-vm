@@ -6,7 +6,10 @@ import type {
 	GatewayLifecycle,
 	GatewayZoneConfig,
 } from '@agent-vm/gateway-interface';
-import { createWebSocketUpgradeRequestGuard } from '@agent-vm/gateway-interface';
+import {
+	createWebSocketUpgradeRequestGuard,
+	translateRuntimePath,
+} from '@agent-vm/gateway-interface';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
@@ -26,6 +29,7 @@ import {
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
+import { createOpenClawGatewayLeasePathMapping } from '../controller/leases/openclaw-gateway-lease-path-mapping.js';
 import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
 import {
 	createObservabilityRuntimeConfig,
@@ -77,10 +81,44 @@ export function validateGatewayControlCallerContextRegistration(options: {
 	readonly zone: GatewayZone;
 }): void {
 	const evidence = options.payload.adapterEvidence;
+	if (options.zone.gateway.type !== 'openclaw') {
+		throw new Error('Gateway control caller context registration requires an OpenClaw zone.');
+	}
 	const configuredAgentIds = new Set((options.zone.agents ?? []).map((agent) => agent.id));
 	if (configuredAgentIds.size === 0 || !configuredAgentIds.has(evidence.agentId)) {
 		throw new Error(
 			`Gateway control caller context rejected undeclared OpenClaw agent '${evidence.agentId}'.`,
+		);
+	}
+	const workMountTranslation = translateRuntimePath({
+		inputPath: evidence.workMountDir,
+		mapping: createOpenClawGatewayLeasePathMapping({
+			stateDir: options.zone.gateway.stateDir,
+			zoneFilesDir: options.zone.gateway.zoneFilesDir,
+		}),
+		purpose: 'leaseMount',
+		sourceNamespace: 'openclaw-gateway',
+		targetNamespace: 'controller-host',
+	});
+	if (!workMountTranslation.ok) {
+		throw new Error(
+			`Gateway control caller context rejected invalid OpenClaw workMountDir '${evidence.workMountDir}': ${workMountTranslation.error.message}`,
+		);
+	}
+	if (
+		workMountTranslation.value.rootId === 'openclaw-sandboxes' &&
+		!workMountTranslation.value.relativePath.startsWith(`${evidence.agentId}/`)
+	) {
+		throw new Error(
+			`Gateway control caller context rejected OpenClaw workMountDir '${evidence.workMountDir}': only the '${evidence.agentId}' sandbox may register for agent '${evidence.agentId}'.`,
+		);
+	}
+	if (
+		workMountTranslation.value.rootId === 'openclaw-state' &&
+		workMountTranslation.value.relativePath !== `workspace-${evidence.agentId}`
+	) {
+		throw new Error(
+			`Gateway control caller context rejected OpenClaw workMountDir '${evidence.workMountDir}': expected workspace-${evidence.agentId}.`,
 		);
 	}
 	if (
