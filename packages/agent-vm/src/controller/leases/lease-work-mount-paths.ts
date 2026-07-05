@@ -193,6 +193,49 @@ async function validateResolvedLeaseWorkMountDir(options: {
 	return realCandidatePath;
 }
 
+function hostAgentOwnedLeaseRoot(options: {
+	readonly agentId: string;
+	readonly rootId: string;
+	readonly zone: ZoneConfig;
+}): string | undefined {
+	if (options.zone.gateway.type !== 'openclaw') {
+		return undefined;
+	}
+	if (options.rootId === 'openclaw-sandboxes') {
+		return path.join(options.zone.gateway.stateDir, 'sandboxes', options.agentId);
+	}
+	if (options.rootId === 'openclaw-state') {
+		return path.join(options.zone.gateway.stateDir, `workspace-${options.agentId}`);
+	}
+	if (options.rootId === 'zone-files') {
+		return path.join(options.zone.gateway.zoneFilesDir, 'agents', options.agentId);
+	}
+	return undefined;
+}
+
+async function assertResolvedLeaseWorkMountKeepsAgentOwnership(options: {
+	readonly agentId: string;
+	readonly realHostWorkMountDir: string;
+	readonly rootId: string;
+	readonly workMountDir: string;
+	readonly zone: ZoneConfig;
+}): Promise<void> {
+	const ownedHostRoot = hostAgentOwnedLeaseRoot(options);
+	if (ownedHostRoot === undefined) {
+		return;
+	}
+	const realOwnedHostRoot = await realpathAllowedRoot(ownedHostRoot);
+	if (
+		realOwnedHostRoot === null ||
+		!isPathWithin(options.realHostWorkMountDir, realOwnedHostRoot)
+	) {
+		throw new LeaseWorkMountValidationError(
+			'work-mount-purpose-not-allowed',
+			`Lease workMountDir '${options.workMountDir}' resolves outside the host workspace owned by agent '${options.agentId}'.`,
+		);
+	}
+}
+
 export async function validateResolvedToolWorkMountDir(options: {
 	readonly hostWorkMountDir: string;
 	readonly zone: ZoneConfig;
@@ -274,6 +317,13 @@ export async function resolveLeaseWorkMountDir(options: {
 	}
 	const realHostWorkMountDir = await validateResolvedLeaseWorkMountDir({
 		hostWorkMountDir: translation.value.outputPath,
+		zone: options.zone,
+	});
+	await assertResolvedLeaseWorkMountKeepsAgentOwnership({
+		agentId: options.agentId,
+		realHostWorkMountDir,
+		rootId: translation.value.rootId,
+		workMountDir: options.workMountDir,
 		zone: options.zone,
 	});
 	if (

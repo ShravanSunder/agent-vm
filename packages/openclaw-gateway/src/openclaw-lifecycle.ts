@@ -55,6 +55,12 @@ const diagnosticsOtelGlobalPackageVmPath = '/pnpm/global/5/node_modules/@opencla
 const deprecatedMcpPortalPluginId = 'mcp-portal';
 const openClawInstalledPluginDirectoryName = 'plugins';
 const openClawInstalledPluginIndexFileName = 'installs.json';
+const removedGondolinRawControlConfigFields = new Set([
+	'controllerUrl',
+	'zoneGitToken',
+	'zoneGitTokenEnv',
+]);
+const removedGondolinControlSessionConfigFields = new Set(['callerContextProofKey']);
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -628,6 +634,42 @@ function omitPluginConfigEntry(
 	return Object.fromEntries(Object.entries(config).filter(([key]) => key !== pluginId));
 }
 
+function omitObjectFields(
+	record: Readonly<Record<string, unknown>>,
+	omittedFields: ReadonlySet<string>,
+): Record<string, unknown> {
+	const result: Record<string, unknown> = {};
+	for (const [fieldName, fieldValue] of Object.entries(record)) {
+		if (!omittedFields.has(fieldName)) {
+			result[fieldName] = fieldValue;
+		}
+	}
+	return result;
+}
+
+function stripRemovedGondolinRawControlConfig(
+	config: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+	const strippedConfig = omitObjectFields(config, removedGondolinRawControlConfigFields);
+	const rawControlSessionConfig = strippedConfig.controlSession;
+	if (!isObjectRecord(rawControlSessionConfig)) {
+		return strippedConfig;
+	}
+	const strippedControlSessionConfig = omitObjectFields(
+		rawControlSessionConfig,
+		removedGondolinControlSessionConfigFields,
+	);
+	if (Object.keys(strippedControlSessionConfig).length === 0) {
+		const result = { ...strippedConfig };
+		delete result.controlSession;
+		return result;
+	}
+	return {
+		...strippedConfig,
+		controlSession: strippedControlSessionConfig,
+	};
+}
+
 function isDeprecatedMcpPortalLoadPath(value: string): boolean {
 	const normalizedValue = value.replace(/\/+$/u, '');
 	return path.posix.basename(normalizedValue) === deprecatedMcpPortalPluginId;
@@ -711,9 +753,15 @@ function buildEffectivePluginsConfig(
 		const existingPluginConfig = isObjectRecord(existingEntryConfig.config)
 			? existingEntryConfig.config
 			: {};
+		const existingEffectivePluginConfig =
+			pluginId === 'gondolin'
+				? stripRemovedGondolinRawControlConfig(existingPluginConfig)
+				: existingPluginConfig;
+		const runtimeEffectiveConfig =
+			pluginId === 'gondolin' ? stripRemovedGondolinRawControlConfig(runtimeConfig) : runtimeConfig;
 		const config = {
-			...existingPluginConfig,
-			...runtimeConfig,
+			...existingEffectivePluginConfig,
+			...runtimeEffectiveConfig,
 		};
 		runtimeEntriesConfig[pluginId] = {
 			...existingEntryConfig,

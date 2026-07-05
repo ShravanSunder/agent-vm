@@ -1509,6 +1509,99 @@ describe('openclawLifecycle', () => {
 			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
 		});
 
+		it('strips stale Gondolin raw-control config from the managed effective config', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-raw-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						plugins: {
+							allow: ['gondolin'],
+							entries: {
+								gondolin: {
+									enabled: true,
+									config: {
+										controlSession: {
+											callerContextProofKey: 'stale-proof-key',
+										},
+										controllerUrl: 'http://controller.vm.host:18800',
+										zoneGitToken: 'stale-zone-git-token',
+										zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+										zoneId: 'shravan',
+									},
+								},
+							},
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				runtimePluginConfigs: {
+					gondolin: {
+						controlSession: {
+							bootId: 'boot-a',
+							controllerEpoch: 'epoch-a',
+							generationId: 'generation-a',
+							peerId: 'gateway-shravan',
+							verifierPublicKeyPem: 'public-key',
+						},
+					},
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(effectiveOpenClawConfigContent).not.toContain('controller.vm.host:18800');
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-proof-key');
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-zone-git-token');
+			expect(effectiveOpenClawConfigContent).not.toContain('AGENT_VM_ZONE_GIT_TOKEN');
+			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
+				plugins: {
+					entries: {
+						gondolin: {
+							config: {
+								controlSession: {
+									bootId: 'boot-a',
+									controllerEpoch: 'epoch-a',
+									generationId: 'generation-a',
+									peerId: 'gateway-shravan',
+									verifierPublicKeyPem: 'public-key',
+								},
+								zoneId: 'shravan',
+							},
+						},
+					},
+				},
+			});
+		});
+
 		it('rejects runtime MCP Portal plugin config for managed OpenClaw', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-mcp-'));
 			createdDirectories.push(tempDirectory);

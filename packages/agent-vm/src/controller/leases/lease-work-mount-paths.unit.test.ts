@@ -212,6 +212,22 @@ describe('resolveLeaseWorkMountDir', () => {
 		} satisfies Partial<LeaseWorkMountValidationError>);
 	});
 
+	it('rejects /zone agent symlinks that resolve into another agent workspace', async () => {
+		const linkPath = path.join(zoneFilesDir, 'agents', 'beta', 'main-link');
+		await symlink(path.join(zoneFilesDir, 'agents', 'main'), linkPath);
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'beta',
+				runtimeDir,
+				workMountDir: '/zone/agents/beta/main-link',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
 	it('returns zone Git mount metadata for configured OpenClaw /zone leases', async () => {
 		if (zone.gateway.type !== 'openclaw') {
 			throw new Error('test fixture must use an OpenClaw gateway');

@@ -172,4 +172,25 @@ describe('resolveGondolinPluginConfig', () => {
 			}),
 		).toThrow('Gondolin plugin toolPortal requires string configDir.');
 	});
+
+	it.each([
+		{ fieldName: 'controlSession', value: true },
+		{ fieldName: 'controlSession', value: null },
+		{ fieldName: 'controlSession', value: 'control' },
+		{ fieldName: 'controlSession', value: ['control'] },
+		{ fieldName: 'toolPortal', value: true },
+		{ fieldName: 'toolPortal', value: null },
+		{ fieldName: 'toolPortal', value: 'portal' },
+		{ fieldName: 'toolPortal', value: ['portal'] },
+	] satisfies readonly {
+		readonly fieldName: 'controlSession' | 'toolPortal';
+		readonly value: boolean | null | string | readonly string[];
+	}[])('throws when $fieldName is present but not an object', ({ fieldName, value }) => {
+		expect(() =>
+			resolveGondolinPluginConfig({
+				[fieldName]: value,
+				zoneId: 'shravan',
+			}),
+		).toThrow(`Gondolin plugin ${fieldName} must be an object when present.`);
+	});
 });

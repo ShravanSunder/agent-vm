@@ -33,6 +33,20 @@ function isConfigObject(
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function optionalConfigObject(options: {
+	readonly fieldName: string;
+	readonly record: GondolinPluginConfigInput;
+}): GondolinPluginConfigJsonObject | undefined {
+	if (!Object.hasOwn(options.record, options.fieldName)) {
+		return undefined;
+	}
+	const value = options.record[options.fieldName];
+	if (!isConfigObject(value)) {
+		throw new Error(`Gondolin plugin ${options.fieldName} must be an object when present.`);
+	}
+	return value;
+}
+
 function assertNoUnknownFields(options: {
 	readonly allowedFields: ReadonlySet<string>;
 	readonly label: string;
@@ -83,8 +97,11 @@ const toolPortalConfigFields = new Set(['configDir']);
 function resolveControlSessionConfig(
 	config: GondolinPluginConfigInput,
 ): ResolvedGondolinPluginConfig['controlSession'] {
-	const rawControlSession = config.controlSession;
-	if (!isConfigObject(rawControlSession)) {
+	const rawControlSession = optionalConfigObject({
+		fieldName: 'controlSession',
+		record: config,
+	});
+	if (rawControlSession === undefined) {
 		return undefined;
 	}
 	if (Object.hasOwn(rawControlSession, 'callerContextProofKey')) {
@@ -132,8 +149,11 @@ function resolveControlSessionConfig(
 function resolveToolPortalConfig(
 	config: GondolinPluginConfigInput,
 ): ResolvedGondolinPluginConfig['toolPortal'] {
-	const rawToolPortalConfig = config.toolPortal;
-	if (!isConfigObject(rawToolPortalConfig)) {
+	const rawToolPortalConfig = optionalConfigObject({
+		fieldName: 'toolPortal',
+		record: config,
+	});
+	if (rawToolPortalConfig === undefined) {
 		return undefined;
 	}
 	assertNoUnknownFields({
