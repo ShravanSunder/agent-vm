@@ -8817,6 +8817,36 @@ Current status:
   - an authorized 1Password session for the redacted test sender bot secret, or
   - a manual allowed-user Discord message in the configured beta channel.
 
+## Event 216 Third Secret-Auth Blocker Confirmation
+
+Completed in this checkpoint:
+- Re-loaded the goal orchestration rules and rechecked live state.
+- Source branch remained clean and pushed at `b8ec29d`.
+- Beta runtime health remained green:
+  - controller `/health`: `ok:true`
+  - controller `/zones/beta/health`: `ok:true`, `/readyz`, HTTP 200
+  - direct ingress `/readyz`: `ready:true`
+- Checked current OpenClaw logs and recent beta trajectories for a fresh manual
+  Discord proof after the `2026-07-05T04:37:47.527Z` beta boot.
+- Found only the older `02:56Z` Discord proof, which predates the fresh beta
+  boot and cannot satisfy the current post-restart proof gate.
+- Retried the fresh external Discord REST send path with redacted secret
+  handling.
+- The message was not sent. The attempt again failed at secret-read before the
+  Discord API call because 1Password authorization failed or timed out.
+- No Discord token value, raw secret value, or secret-bearing output was printed
+  or recorded.
+
+Blocked status:
+- This is the third consecutive goal turn with the same external blocker:
+  inability to access the redacted test sender bot secret and no fresh manual
+  allowed-user Discord message available.
+- The remaining proof gate cannot be completed by code changes or lower-layer
+  tests. It requires one external state change:
+  - authorize/unlock 1Password for the redacted test sender bot secret, or
+  - manually send an allowed-user Discord message into the configured beta
+    channel and let this session capture log/trajectory/readback evidence.
+
 ## Event 205 OpenClaw Health Rerun Reduction
 
 Completed in this checkpoint:
