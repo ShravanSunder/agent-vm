@@ -1,5 +1,70 @@
 # 2026-07-02 Socket.IO Control Plane Goal Details
 
+## Current Resume Edge - Event 212
+
+Event 212 refreshes terminal VM/default e2e and `pnpm check` after two
+post-review stale fixture fixes.
+
+Current workflow: `shravan-dev-workflow:implementation-review-swarm`.
+
+Next workflow: refresh implementation review/Fable over the current branch diff.
+If review comes back clean, continue to live `../shravan-claw-beta`
+allowed-user Discord/OpenClaw inbound proof and PR-ready non-merge wrapup.
+
+Latest checkpoint result:
+
+- Checkpoint commit `b993f97` aligns
+  `openclaw-default-runtime.openclaw.e2e.test.ts` with the hard-cutover single
+  trusted managed OpenClaw agent rule.
+- Checkpoint commit `05ae556` aligns
+  `live-tool-vm-mediated-env.vm.e2e.test.ts` with the same runtime rule while
+  leaving multi-agent Tool VM mediated-secret selection proof in the pure unit
+  owner.
+- Closed reviewer agent `019f302e-b8b2-7312-9b21-5cf67b24d3ea` after it failed
+  to settle; previous status was running, so no findings were harvested.
+- Regenerated branch inventory from `git diff origin/master...HEAD`:
+  - `staged-name-status.txt`: 413 rows.
+  - `staged-stat.txt`: 413 files changed, 70820 insertions, 11450 deletions.
+
+Fresh proof:
+
+- Full OpenClaw e2e passed:
+  `mise exec -- pnpm run test:e2e:openclaw`
+  passed 7 files / 12 tests / 0 skipped / 0 todo.
+  Result: `tmp/vitest-results/e2e-openclaw-5669-vFMNLU/results.json`.
+- Full Worker e2e passed:
+  `set -a; source .env.local; set +a; AGENT_VM_TEST_OPENAI_API_KEY="$OPEN_AI_TEST_KEY" mise exec -- pnpm run test:e2e:worker`
+  passed 3 files / 5 tests / 0 skipped / 0 todo.
+  Result: `tmp/vitest-results/e2e-worker-23955-UXSfTg/results.json`.
+- Focused mediated-env live VM proof passed:
+  `live-tool-vm-mediated-env.vm.e2e.test.ts` passed 1 file / 1 test.
+- Tool VM secret-selection unit owner passed:
+  `tool-vm-secret-selection.unit.test.ts` passed 1 file / 5 tests.
+- Full VM e2e passed:
+  `mise exec -- pnpm run test:e2e:vm`
+  passed 5 files / 9 tests / 0 skipped / 0 todo.
+  Result: `tmp/vitest-results/e2e-vm-45468-Dji5pd/results.json`.
+- Default e2e passed:
+  `mise exec -- pnpm test:e2e`
+  passed 4 lanes / 0 failed in 77.92s:
+  e2e-host-docker 1 file / 2 tests, e2e-host 22 files / 180 tests,
+  e2e-vm 5 files / 9 tests, and e2e-vm-mediation passed.
+  Results:
+  `tmp/vitest-results/e2e-host-docker-50198-YczXZM/results.json`,
+  `tmp/vitest-results/e2e-host-50199-NeLqex/results.json`, and
+  `tmp/vitest-results/e2e-vm-50197-vRqLdN/results.json`.
+- Fresh current-head quality gate passed:
+  `pnpm check`
+  passed 10 checks / 0 failed in 25.37s.
+
+Still not PR-ready:
+
+- Implementation review/Fable freshness remains required after this packet
+  refresh commit.
+- Live `../shravan-claw-beta` actual allowed-user Discord/OpenClaw inbound
+  proof remains required.
+- PR-ready non-merge wrapup remains required.
+
 ## Current Resume Edge - Event 211
 
 Event 211 fixes Composer/Bugbot follow-up findings after Event 210 and records

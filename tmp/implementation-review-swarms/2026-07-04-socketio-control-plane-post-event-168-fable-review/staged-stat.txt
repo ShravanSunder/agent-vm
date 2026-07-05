@@ -6,7 +6,7 @@
  docs/architecture/storage-model.md                 |    2 +-
  docs/getting-started/openclaw-guide.md             |   35 +-
  docs/getting-started/worker-guide.md               |    3 +-
- docs/reference/configuration/system-json.md        |  163 +-
+ docs/reference/configuration/system-json.md        |  169 +-
  docs/reference/validate-and-doctor.md              |    4 +-
  .../2026-06-25-tool-portal-composition-contract.md | 1690 ++++
  ...6-06-30-gateway-control-session-hard-cutover.md | 2445 ++++++
@@ -120,8 +120,8 @@
  .../src/cli/commands/controller-definition.ts      |   64 +-
  .../agent-vm/src/cli/commands/init-definition.ts   |    2 +-
  .../cli/controller-operation-commands.unit.test.ts |   36 +-
- .../src/cli/init-command.integration.test.ts       |   57 +-
- packages/agent-vm/src/cli/init-command.ts          |   61 +-
+ .../src/cli/init-command.integration.test.ts       |   59 +-
+ packages/agent-vm/src/cli/init-command.ts          |   62 +-
  packages/agent-vm/src/cli/lease-commands.ts        |   47 -
  packages/agent-vm/src/cli/manual-templates.ts      |   91 +-
  .../agent-vm/src/cli/manual-templates.unit.test.ts |   53 +-
@@ -154,9 +154,9 @@
  .../worker-control-session.integration.test.ts     |  145 +
  .../control-session/worker-control-session.ts      |  335 +
  .../worker-control-session.unit.test.ts            |  151 +
- .../src/controller/controller-runtime-types.ts     |    7 +-
- .../agent-vm/src/controller/controller-runtime.ts  |  115 +-
- .../src/controller/controller-runtime.unit.test.ts | 1221 +--
+ .../src/controller/controller-runtime-types.ts     |    9 +-
+ .../agent-vm/src/controller/controller-runtime.ts  |  148 +-
+ .../src/controller/controller-runtime.unit.test.ts | 1241 +--
  .../git-push-operations.integration.test.ts        |   31 +
  .../agent-vm/src/controller/git-push-operations.ts |   10 +
  .../controller/health/durable-health-event-log.ts  |    2 +-
@@ -170,8 +170,9 @@
  .../controller/http/controller-client.unit.test.ts |   34 +-
  .../http/controller-health-event-routes.ts         |  124 -
  .../controller-health-event-routes.unit.test.ts    |  401 +-
+ .../http/controller-http-route-support.ts          |    1 -
  .../src/controller/http/controller-http-routes.ts  |  708 +-
- .../http/controller-http-routes.unit.test.ts       | 2120 +----
+ .../http/controller-http-routes.unit.test.ts       | 2138 +----
  .../controller/http/controller-request-schemas.ts  |    9 +-
  .../http/controller-zone-operation-routes.ts       |   53 -
  .../src/controller/leases/lease-manager.ts         |    4 +-
@@ -182,6 +183,8 @@
  ...nclaw-tool-vm-lease-create-options.unit.test.ts |  218 +
  .../worker-task-runner.integration.test.ts         |  306 +
  .../agent-vm/src/controller/worker-task-runner.ts  |  185 +-
+ .../zone-git/zone-git-capability-store.ts          |   65 -
+ .../zone-git-capability-store.unit.test.ts         |   37 -
  .../zone-git/zone-git-operations.host.e2e.test.ts  |  106 +-
  .../src/controller/zone-git/zone-git-operations.ts |   57 +
  .../zone-runtimes/gateway-zone-state-machine.ts    |    2 +-
@@ -193,7 +196,7 @@
  .../zone-runtime-registry.unit.test.ts             |   30 +-
  .../controller/zone-runtimes/zone-runtime-types.ts |    3 +
  .../gateway/gateway-runtime-record.unit.test.ts    |   17 +
- .../gateway-zone-orchestrator.integration.test.ts  |  842 +-
+ .../gateway-zone-orchestrator.integration.test.ts  |  844 +-
  .../src/gateway/gateway-zone-orchestrator.ts       |  237 +-
  .../agent-vm/src/gateway/gateway-zone-support.ts   |   42 +-
  ...mcp-portal-effective-config.integration.test.ts |   37 +-
@@ -208,8 +211,10 @@
  .../live-git-ssh-egress-policy.vm.e2e.test.ts      |  170 +
  ...live-openclaw-control-link.openclaw.e2e.test.ts |  266 +-
  .../integration-tests/live-sandbox.vm.e2e.test.ts  |  185 -
+ .../live-tool-vm-mediated-env.vm.e2e.test.ts       |   96 +-
  .../observability-build-cli.host.e2e.test.ts       |   66 +-
  .../openclaw-control-session.openclaw.e2e.test.ts  |  311 +
+ .../openclaw-default-runtime.openclaw.e2e.test.ts  |    2 +-
  ...openclaw-gateway-stability.openclaw.e2e.test.ts |   47 +-
  .../openclaw-mcp-portal.openclaw.e2e.test.ts       |   83 +-
  .../openclaw-stability-classification.ts           |   12 +-
@@ -293,7 +298,7 @@
  .../mcp-provider-capability-backend.unit.test.ts   |  362 +
  packages/mcp-portal/tsconfig.build.json            |    1 +
  packages/mcp-portal/tsdown.config.ts               |    1 +
- .../openclaw-agent-vm-plugin/openclaw.plugin.json  |   65 +-
+ .../openclaw-agent-vm-plugin/openclaw.plugin.json  |   71 +-
  packages/openclaw-agent-vm-plugin/package.json     |   10 +
  .../src/controller-integration.integration.test.ts |  234 +-
  .../src/controller-lease-client.ts                 |  409 -
@@ -314,13 +319,13 @@
  .../gateway-control-service-runtime.unit.test.ts   |   60 +
  .../gateway-control-service.integration.test.ts    | 1962 +++++
  .../gateway-control-service.ts                     | 1131 +++
- .../src/gondolin-plugin-config.ts                  |   98 +-
- .../src/gondolin-plugin-config.unit.test.ts        |   46 +-
+ .../src/gondolin-plugin-config.ts                  |  109 +-
+ .../src/gondolin-plugin-config.unit.test.ts        |   65 +-
  packages/openclaw-agent-vm-plugin/src/index.ts     |    5 +-
  .../src/lease-client-contract.ts                   |  100 +
  .../src/openclaw-lease-contract.unit.test.ts       |    2 +-
  .../src/openclaw-plugin-registration.ts            |  152 +-
- .../src/openclaw-plugin-registration.unit.test.ts  |  342 +-
+ .../src/openclaw-plugin-registration.unit.test.ts  |  359 +-
  .../src/openclaw-sandbox-sdk-contract.ts           |   42 +-
  .../src/sandbox-backend-factory.unit.test.ts       |   46 +-
  .../sandbox-backend/sandbox-backend-contract.ts    |    8 +-
@@ -330,7 +335,7 @@
  .../src/tool-portal-native-tools.unit.test.ts      |  592 ++
  .../openclaw-agent-vm-plugin/src/zone-git-tool.ts  |   93 -
  .../src/zone-git-tool.unit.test.ts                 |  173 -
- .../src/openclaw-lifecycle.host.e2e.test.ts        |  252 +-
+ .../src/openclaw-lifecycle.host.e2e.test.ts        |  287 +-
  .../openclaw-gateway/src/openclaw-lifecycle.ts     |  197 +-
  packages/openclaw-mcp-portal-plugin/package.json   |    6 +-
  packages/tool-portal/package.json                  |   56 +
@@ -375,7 +380,7 @@
  .../agent-portal/fake-tool-portal-controller.ts    |   30 +
  .../agent-portal/portal-contract-assertions.ts     |   65 +
  .../debug-investigation.md                         |   41 +
- .../copy-paste-prompt.md                           |  307 +
+ .../copy-paste-prompt.md                           |  324 +
  .../execution-report-event-186.md                  |  120 +
  .../execution-report-event-187.md                  |   75 +
  .../execution-report-event-188.md                  |   96 +
@@ -398,12 +403,12 @@
  .../reducer-report-event-194.md                    |   71 +
  .../reducer-report-event-197.md                    |  160 +
  .../reducer-report.md                              |  120 +
- .../review-packet.md                               | 1151 +++
- .../staged-name-status.txt                         |  406 +
- .../staged-stat.txt                                |  407 +
- .../2026-07-02-socketio-control-plane/details.md   | 8807 ++++++++++++++++++++
- .../2026-07-02-socketio-control-plane/events.jsonl |  213 +
+ .../review-packet.md                               | 1183 +++
+ .../staged-name-status.txt                         |  408 +
+ .../staged-stat.txt                                |  409 +
+ .../2026-07-02-socketio-control-plane/details.md   | 8866 ++++++++++++++++++++
+ .../2026-07-02-socketio-control-plane/events.jsonl |  214 +
  tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
  vitest.config.ts                                   |   57 +-
- 408 files changed, 70655 insertions(+), 11129 deletions(-)
+ 413 files changed, 70820 insertions(+), 11450 deletions(-)

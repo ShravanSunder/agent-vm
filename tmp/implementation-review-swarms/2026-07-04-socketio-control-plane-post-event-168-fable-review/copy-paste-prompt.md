@@ -47,7 +47,8 @@ accepted findings fixed in execution-report-event-196.md, plus the Event 205
 OpenClaw health/recovery rerun, Event 206 post-OpenClaw `pnpm check`
 refresh, Event 208 full Worker e2e refresh, Event 209 accepted finding fixes,
 Event 210 stale Tool VM unit fixture repair, and Event 211 Composer/Bugbot
-follow-up reduction recorded in workflow state.
+follow-up reduction recorded in workflow state, plus Event 212 terminal
+OpenClaw, Worker, VM, default e2e, and `pnpm check` refresh.
 In particular, scrutinize:
 
 1. empty and multi-agent `zones[].agents` fail-closed behavior for managed OpenClaw
@@ -60,8 +61,8 @@ In particular, scrutinize:
 8. terminal e2e freshness after Event 200, OpenClaw freshness after Event 205,
     Worker freshness after Event 208, `pnpm check` freshness after Event 209,
     full unit freshness after Event 210, Event 211 full unit/full integration
-    and `pnpm check` proof, and remaining stale beta Discord/OpenClaw proof
-    after Event 172
+    proof, Event 212 terminal OpenClaw/Worker/VM/default e2e and `pnpm check`
+    proof, and remaining stale beta Discord/OpenClaw proof after Event 172
 9. remaining old raw-controller string matches, especially whether deletion of
     `scripts/live-sandbox-manual.mjs` fully removes shippable manual raw-control
     residue
@@ -294,6 +295,17 @@ In particular, scrutinize:
     - Fresh proof passed: focused integration 3 files / 106 tests, focused
       host-e2e 1 file / 55 tests, full unit 241 files / 2110 tests, full
       integration 28 files / 441 tests, and `pnpm check` 10 checks / 0 failed.
+36. Event 212 terminal e2e and check refresh:
+    - `b993f97` aligns the OpenClaw default runtime e2e fixture with the
+      hard-cutover single trusted managed OpenClaw agent rule.
+    - `05ae556` aligns the mediated-env live VM e2e fixture with the same rule
+      while leaving multi-agent Tool VM mediated-secret selection proof in the
+      pure unit owner.
+    - Full OpenClaw e2e passed 7 files / 12 tests / 0 skipped / 0 todo.
+    - Full Worker e2e passed 3 files / 5 tests / 0 skipped / 0 todo.
+    - Full VM e2e passed 5 files / 9 tests / 0 skipped / 0 todo.
+    - Default e2e passed 4 lanes / 0 failed.
+    - Fresh `pnpm check` passed 10 checks / 0 failed.
 
 Return only grounded candidate findings:
 

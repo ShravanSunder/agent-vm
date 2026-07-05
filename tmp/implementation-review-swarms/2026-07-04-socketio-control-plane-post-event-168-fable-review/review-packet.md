@@ -1,4 +1,4 @@
-Socket.IO Control Plane Post-Event-211 Fable Review Packet
+Socket.IO Control Plane Post-Event-212 Fable Review Packet
 ==========================================================
 
 Purpose
@@ -21,7 +21,8 @@ priority-lane change. Event 209 fixes the accepted implementation-review
 findings from that pass. Event 210 fixes the stale Tool VM unit fixture exposed
 by the full unit rerun after Event 209. Event 211 fixes Composer/Bugbot
 follow-up findings and records fresh full unit, full integration, and
-`pnpm check` proof.
+`pnpm check` proof. Event 212 refreshes terminal OpenClaw, Worker, VM, default
+e2e, and `pnpm check` proof after two stale fixture repairs.
 
 Review the current repository state, not the older final-terminal review packet.
 Older packets and reducers remain useful as finding history only:
@@ -142,9 +143,9 @@ Workflow state:
 Important current-state note:
 
 - `events.jsonl` is the official transition log. After this packet refresh,
-  latest event should include Event 211, keeping the workflow in
-  implementation-review-swarm after Composer/Bugbot follow-up fixes and fresh
-  full unit, full integration, and `pnpm check` proof.
+  latest event should include Event 212, keeping the workflow in
+  implementation-review-swarm after terminal OpenClaw, Worker, VM, default e2e,
+  and `pnpm check` proof were refreshed.
 - This packet was refreshed after accepted Event 185 findings were fixed:
   caller contexts now bind to gateway boot/session and evict/release by
   lifecycle, managed OpenClaw rejects runtime `mcp-portal` plugin config and
@@ -271,6 +272,18 @@ Important current-state note:
   106 tests, focused host-e2e 1 file / 55 tests, full unit 241 files / 2110
   tests, full integration 28 files / 441 tests, and `pnpm check` 10 checks /
   0 failed.
+- This packet was refreshed after Event 212:
+  checkpoint commits `b993f97` and `05ae556` align OpenClaw default-runtime and
+  mediated-env live VM fixtures with the hard-cutover single trusted managed
+  OpenClaw agent rule. Multi-agent Tool VM mediated-secret selection remains
+  covered by the pure unit owner. The remaining reviewer agent
+  `019f302e-b8b2-7312-9b21-5cf67b24d3ea` was closed after failing to settle, so
+  no findings were harvested. Fresh proof passed: full OpenClaw e2e 7 files /
+  12 tests / 0 skipped / 0 todo, full Worker e2e 3 files / 5 tests / 0 skipped
+  / 0 todo, focused mediated-env live VM 1 file / 1 test, Tool VM
+  secret-selection unit 1 file / 5 tests, full VM e2e 5 files / 9 tests /
+  0 skipped / 0 todo, default e2e 4 lanes / 0 failed, and `pnpm check`
+  10 checks / 0 failed.
 
 Implementation Scope
 --------------------
@@ -694,6 +707,38 @@ pnpm check
   passed, 10 passed / 0 failed in 25.52s
 ```
 
+Current Event 212 proof after terminal VM/default e2e refresh:
+
+```text
+mise exec -- pnpm run test:e2e:openclaw
+  passed, 7 files / 12 tests / 0 skipped / 0 todo
+  result: tmp/vitest-results/e2e-openclaw-5669-vFMNLU/results.json
+
+set -a; source .env.local; set +a; AGENT_VM_TEST_OPENAI_API_KEY="$OPEN_AI_TEST_KEY" mise exec -- pnpm run test:e2e:worker
+  passed, 3 files / 5 tests / 0 skipped / 0 todo
+  result: tmp/vitest-results/e2e-worker-23955-UXSfTg/results.json
+
+AGENT_VM_GONDOLIN_E2E=1 mise exec -- pnpm vitest run --config vitest.config.ts --project e2e-vm packages/agent-vm/src/integration-tests/live-tool-vm-mediated-env.vm.e2e.test.ts --reporter=verbose
+  passed, 1 file / 1 test
+
+pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/tool-vm/tool-vm-secret-selection.unit.test.ts --reporter=verbose
+  passed, 1 file / 5 tests
+
+mise exec -- pnpm run test:e2e:vm
+  passed, 5 files / 9 tests / 0 skipped / 0 todo
+  result: tmp/vitest-results/e2e-vm-45468-Dji5pd/results.json
+
+mise exec -- pnpm test:e2e
+  passed, 4 lanes / 0 failed in 77.92s
+  results:
+  tmp/vitest-results/e2e-host-docker-50198-YczXZM/results.json
+  tmp/vitest-results/e2e-host-50199-NeLqex/results.json
+  tmp/vitest-results/e2e-vm-50197-vRqLdN/results.json
+
+pnpm check
+  passed, 10 checks / 0 failed in 25.37s
+```
+
 Current Event 200 proof after terminal refresh and host-e2e fixture repairs:
 
 ```text
@@ -779,10 +824,10 @@ git diff --name-only | wc -l
   0
 
 git diff --name-only origin/master...HEAD | wc -l
-  408
+  413
 
 git diff --shortstat origin/master...HEAD
-  408 files changed, 70655 insertions(+), 11129 deletions(-)
+  413 files changed, 70820 insertions(+), 11450 deletions(-)
   note: use live `git diff --shortstat origin/master...HEAD` for exact counts
   if additional packet-only commits have landed after this capture.
 
@@ -1073,10 +1118,10 @@ pnpm check
   passed, 10 passed / 0 failed in about 27.9s
 
 git diff --name-only origin/master...HEAD | wc -l
-  404
+  413
 
 git diff --stat origin/master...HEAD
-  408 files changed; use live `git diff --stat origin/master...HEAD` for
+  413 files changed; use live `git diff --stat origin/master...HEAD` for
   exact insertion/deletion counts.
 ```
 
@@ -1084,11 +1129,11 @@ Fable should treat beta Discord/OpenClaw proof as incomplete for PR readiness.
 Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
 connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
 fresh allowed-user inbound Discord message after the latest runtime fixes.
-Terminal VM/default e2e are fresh as of Event 200. Full OpenClaw e2e is fresh
-as of Event 205, full Worker e2e is fresh as of Event 208, and full unit,
-full integration, and `pnpm check` are fresh as of Event 211. If this review
-comes back clean, the next execution step is to obtain beta actual allowed-user
-Discord inbound proof before PR-ready non-merge wrapup.
+Terminal VM/default e2e, full OpenClaw e2e, full Worker e2e, and `pnpm check`
+are fresh as of Event 212. Full unit and full integration remain fresh as of
+Event 211. If this review comes back clean, the next execution step is to
+obtain beta actual allowed-user Discord inbound proof before PR-ready non-merge
+wrapup.
 
 Latest beta Discord/OpenClaw proof recorded in workflow state:
 

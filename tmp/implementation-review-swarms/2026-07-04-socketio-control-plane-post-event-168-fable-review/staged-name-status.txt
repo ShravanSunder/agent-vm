@@ -170,6 +170,7 @@ M	packages/agent-vm/src/controller/http/controller-client.ts
 M	packages/agent-vm/src/controller/http/controller-client.unit.test.ts
 M	packages/agent-vm/src/controller/http/controller-health-event-routes.ts
 M	packages/agent-vm/src/controller/http/controller-health-event-routes.unit.test.ts
+M	packages/agent-vm/src/controller/http/controller-http-route-support.ts
 M	packages/agent-vm/src/controller/http/controller-http-routes.ts
 M	packages/agent-vm/src/controller/http/controller-http-routes.unit.test.ts
 M	packages/agent-vm/src/controller/http/controller-request-schemas.ts
@@ -182,6 +183,8 @@ A	packages/agent-vm/src/controller/leases/openclaw-tool-vm-lease-create-options.
 A	packages/agent-vm/src/controller/leases/openclaw-tool-vm-lease-create-options.unit.test.ts
 M	packages/agent-vm/src/controller/worker-task-runner.integration.test.ts
 M	packages/agent-vm/src/controller/worker-task-runner.ts
+D	packages/agent-vm/src/controller/zone-git/zone-git-capability-store.ts
+D	packages/agent-vm/src/controller/zone-git/zone-git-capability-store.unit.test.ts
 M	packages/agent-vm/src/controller/zone-git/zone-git-operations.host.e2e.test.ts
 M	packages/agent-vm/src/controller/zone-git/zone-git-operations.ts
 M	packages/agent-vm/src/controller/zone-runtimes/gateway-zone-state-machine.ts
@@ -208,8 +211,10 @@ D	packages/agent-vm/src/integration-tests/live-controller-tcphosts.vm.e2e.test.t
 A	packages/agent-vm/src/integration-tests/live-git-ssh-egress-policy.vm.e2e.test.ts
 M	packages/agent-vm/src/integration-tests/live-openclaw-control-link.openclaw.e2e.test.ts
 D	packages/agent-vm/src/integration-tests/live-sandbox.vm.e2e.test.ts
+M	packages/agent-vm/src/integration-tests/live-tool-vm-mediated-env.vm.e2e.test.ts
 M	packages/agent-vm/src/integration-tests/observability-build-cli.host.e2e.test.ts
 A	packages/agent-vm/src/integration-tests/openclaw-control-session.openclaw.e2e.test.ts
+M	packages/agent-vm/src/integration-tests/openclaw-default-runtime.openclaw.e2e.test.ts
 M	packages/agent-vm/src/integration-tests/openclaw-gateway-stability.openclaw.e2e.test.ts
 M	packages/agent-vm/src/integration-tests/openclaw-mcp-portal.openclaw.e2e.test.ts
 M	packages/agent-vm/src/integration-tests/openclaw-stability-classification.ts
