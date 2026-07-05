@@ -483,33 +483,24 @@ describe('createGondolinPlugin', () => {
 		).toThrow('Gondolin full registration requires controlSession.');
 	});
 
-	it('ignores legacy zone_git_push token config during tool discovery', () => {
-		const previousToken = process.env.AGENT_VM_ZONE_GIT_TOKEN;
-		process.env.AGENT_VM_ZONE_GIT_TOKEN = 'runtime-push-token';
+	it('rejects legacy zone_git_push token config during tool discovery', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerTool = vi.fn();
 
 		try {
-			defaultPlugin.register({
-				pluginConfig: {
-					zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
-					zoneId: 'shravan',
-				},
-				registerTool,
-				registrationMode: 'tool-discovery',
-			});
-
-			expect(registerTool).not.toHaveBeenCalledWith(
-				expect.objectContaining({ name: 'zone_git_push' }),
-				expect.anything(),
-			);
+			expect(() =>
+				defaultPlugin.register({
+					pluginConfig: {
+						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+						zoneId: 'shravan',
+					},
+					registerTool,
+					registrationMode: 'tool-discovery',
+				}),
+			).toThrow('Gondolin plugin config no longer accepts zone git token fields.');
+			expect(registerTool).not.toHaveBeenCalled();
 		} finally {
 			stderrWrite.mockRestore();
-			if (previousToken === undefined) {
-				delete process.env.AGENT_VM_ZONE_GIT_TOKEN;
-			} else {
-				process.env.AGENT_VM_ZONE_GIT_TOKEN = previousToken;
-			}
 		}
 	});
 });

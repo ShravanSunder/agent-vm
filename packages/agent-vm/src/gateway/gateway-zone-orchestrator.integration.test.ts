@@ -343,7 +343,7 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						cpus: 2,
 						port: 18791,
 						config: await createGatewayConfigPath(),
-						rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
+						rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
 						runtimeRootfsSize: '12G',
 						stateDir: path.join(workingDirectoryPath, 'state', 'shravan'),
 						zoneFilesDir: path.join(workingDirectoryPath, 'zone-files', 'shravan'),

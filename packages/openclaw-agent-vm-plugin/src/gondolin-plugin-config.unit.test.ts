@@ -7,14 +7,10 @@ describe('resolveGondolinPluginConfig', () => {
 		expect(
 			resolveGondolinPluginConfig({
 				profileId: 'gpu',
-				zoneGitToken: 'push-token',
-				zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 				zoneId: 'shravan',
 			}),
 		).toEqual({
 			profileId: 'gpu',
-			zoneGitToken: 'push-token',
-			zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 			zoneId: 'shravan',
 		});
 	});
@@ -44,6 +40,21 @@ describe('resolveGondolinPluginConfig', () => {
 				zoneId: 'shravan',
 			}),
 		).toThrow('Gondolin plugin config no longer accepts controllerUrl.');
+	});
+
+	it('rejects stale zone-git token config fields', () => {
+		expect(() =>
+			resolveGondolinPluginConfig({
+				zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+				zoneId: 'shravan',
+			}),
+		).toThrow('Gondolin plugin config no longer accepts zone git token fields.');
+		expect(() =>
+			resolveGondolinPluginConfig({
+				zoneGitToken: 'push-token',
+				zoneId: 'shravan',
+			}),
+		).toThrow('Gondolin plugin config no longer accepts zone git token fields.');
 	});
 
 	it('throws when zoneId is missing', () => {

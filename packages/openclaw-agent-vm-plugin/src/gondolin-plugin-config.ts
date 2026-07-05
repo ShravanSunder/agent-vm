@@ -10,8 +10,6 @@ export interface ResolvedGondolinPluginConfig {
 	readonly toolPortal?: {
 		readonly configDir: string;
 	};
-	readonly zoneGitToken?: string;
-	readonly zoneGitTokenEnv?: string;
 	readonly zoneId: string;
 }
 
@@ -82,6 +80,9 @@ export function resolveGondolinPluginConfig(
 	if (config.controllerUrl !== undefined) {
 		throw new Error('Gondolin plugin config no longer accepts controllerUrl.');
 	}
+	if (config.zoneGitToken !== undefined || config.zoneGitTokenEnv !== undefined) {
+		throw new Error('Gondolin plugin config no longer accepts zone git token fields.');
+	}
 	const controlSession = resolveControlSessionConfig(config);
 	const toolPortal = resolveToolPortalConfig(config);
 
@@ -89,10 +90,6 @@ export function resolveGondolinPluginConfig(
 		...(controlSession === undefined ? {} : { controlSession }),
 		...(typeof config.profileId === 'string' ? { profileId: config.profileId } : {}),
 		...(toolPortal === undefined ? {} : { toolPortal }),
-		...(typeof config.zoneGitToken === 'string' ? { zoneGitToken: config.zoneGitToken } : {}),
-		...(typeof config.zoneGitTokenEnv === 'string'
-			? { zoneGitTokenEnv: config.zoneGitTokenEnv }
-			: {}),
 		zoneId: config.zoneId,
 	};
 }

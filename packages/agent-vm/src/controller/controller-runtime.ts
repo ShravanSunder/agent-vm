@@ -68,7 +68,6 @@ import { createTcpPool } from './leases/tcp-pool.js';
 import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from './worker-task-runner.js';
-import { ZoneGitCapabilityStore } from './zone-git/zone-git-capability-store.js';
 import { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
 import {
 	getZoneGitStatus,
@@ -166,22 +165,6 @@ function isWorkerZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig 
 	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'worker' }>;
 } {
 	return zone.gateway.type === 'worker';
-}
-
-function buildOpenClawRuntimePluginConfig(options: {
-	readonly systemConfig: StartControllerRuntimeOptions['systemConfig'];
-	readonly zoneGitCapabilityStore: ZoneGitCapabilityStore;
-	readonly zoneId: string;
-}): Readonly<Record<string, Readonly<Record<string, unknown>>>> {
-	const zoneGitRuntimePluginConfig = options.zoneGitCapabilityStore.buildRuntimePluginConfig(
-		options.zoneId,
-	);
-	return {
-		...zoneGitRuntimePluginConfig,
-		gondolin: {
-			...zoneGitRuntimePluginConfig.gondolin,
-		},
-	};
 }
 
 function selectConfiguredObservabilityStartupCheck(options: {
@@ -423,8 +406,6 @@ export async function startControllerRuntime(
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const activeTaskRegistry = new ActiveTaskRegistry();
 	const requestHeartbeatRegistry = new RequestHeartbeatRegistry();
-	const zoneGitCapabilityStore =
-		dependencies.zoneGitCapabilityStore ?? new ZoneGitCapabilityStore();
 	const zoneGitOperationLocks = dependencies.zoneGitOperationLocks ?? new ZoneGitOperationLocks();
 	const controllerHealthConfig = resolveControllerHealthConfig(options.systemConfig);
 	const observabilityRuntimeConfig = createObservabilityRuntimeConfig(options.systemConfig);
@@ -621,15 +602,9 @@ export async function startControllerRuntime(
 						now,
 						preflightGatewayZoneStart: async (preflightOptions, preflightDependencies) => {
 							const runtimeEnvironment = {
-								...zoneGitCapabilityStore.buildRuntimeEnvironment(preflightOptions.zoneId),
 								...preflightOptions.runtimeEnvironment,
 							};
 							const runtimePluginConfigs = {
-								...buildOpenClawRuntimePluginConfig({
-									systemConfig: options.systemConfig,
-									zoneGitCapabilityStore,
-									zoneId: preflightOptions.zoneId,
-								}),
 								...preflightOptions.runtimePluginConfigs,
 							};
 							const effectivePreflightDependencies =
@@ -668,15 +643,9 @@ export async function startControllerRuntime(
 								healthEventStore,
 								openClawRuntimeStatusStore,
 								runtimeEnvironment: {
-									...zoneGitCapabilityStore.buildRuntimeEnvironment(zoneId),
 									...startOptions?.runtimeEnvironment,
 								},
 								runtimePluginConfigs: {
-									...buildOpenClawRuntimePluginConfig({
-										systemConfig: options.systemConfig,
-										zoneGitCapabilityStore,
-										zoneId,
-									}),
 									...startOptions?.runtimePluginConfigs,
 								},
 								secretResolver: startOptions?.secretResolver ?? secretResolver,
@@ -867,8 +836,6 @@ export async function startControllerRuntime(
 		) => await registry.getWorkerRuntime(zoneId).pushTaskBranches(taskId, input),
 		pushZoneGit: async (zoneId: string, input: { readonly expectedHead: string }) =>
 			await pushZoneGitFromController(zoneId, input),
-		verifyZoneGitPushToken: (zoneId: string, token: string | undefined) =>
-			zoneGitCapabilityStore.verifyTokenForZone(zoneId, token),
 		stopController,
 	};
 	const recoverGatewayVm = createGatewayVmRecoveryRunner({

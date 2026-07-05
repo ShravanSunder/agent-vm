@@ -355,13 +355,11 @@ describe('createControllerApp', () => {
 					getStatus: vi.fn(async () => ({})),
 					getZoneLogs: vi.fn(async () => ({})),
 					pushTaskBranches: vi.fn(async () => ({})),
-					pushZoneGit: vi.fn(async () => ({})),
 					pullDefaultForTask: vi.fn(async () => ({})),
 					refreshZoneCredentials: vi.fn(async () => ({})),
 					prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-1')),
 					executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 					upgradeZone: vi.fn(async () => ({})),
-					verifyZoneGitPushToken: vi.fn(() => true),
 				},
 				openClawRuntimeStatusStore: new OpenClawRuntimeStatusStore(),
 			});
@@ -675,9 +673,6 @@ describe('createControllerApp', () => {
 				pushZoneGit,
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
-				verifyZoneGitPushToken: vi.fn(
-					(zoneId, token) => zoneId === 'sunfam' && token === 'push-token',
-				),
 			},
 		});
 
@@ -686,7 +681,6 @@ describe('createControllerApp', () => {
 			body: JSON.stringify({ expectedHead: 'abc123' }),
 			headers: {
 				'content-type': 'application/json',
-				'x-agent-vm-zone-git-token': 'push-token',
 			},
 			method: 'POST',
 		});

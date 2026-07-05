@@ -250,8 +250,8 @@ POST /zones/:zoneId/health-events             controller-health-event-routes.ts:
   (unauthenticated today)                        (unauth)                                    operator-gate
 POST /zones/:zoneId/openclaw-runtime-status   controller-http-routes.ts:771                delete OR      S6b    S6a
                                                                                             operator-gate
-POST /zones/:zoneId/zone-git/push             controller-zone-operation-routes.ts:388      delete OR      S7     S7
-  (has zoneGitToken guard today)                                                            operator-gate
+POST /zones/:zoneId/zone-git/push             deleted in S7; old zoneGitToken guard        delete        S7     S7
+  (removed with direct VM push route)             must not ship as guest config/env residue
 GET /leases                                    controller-http-routes.ts:612                delete        S4b    —
 ```
 - Delete vs operator-auth-gate is a USER implementation decision (Q1, reclassified — the spec ALREADY permits

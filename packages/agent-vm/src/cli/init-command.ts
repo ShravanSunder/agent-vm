@@ -418,7 +418,6 @@ const defaultSystemConfig = (
 							},
 							zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId),
 							authProfilesByAgent: {},
-							rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN'],
 						}
 					: {}),
 				backupDir: pathProfile.gatewayBackupDir(zoneId),

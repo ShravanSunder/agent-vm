@@ -72,14 +72,6 @@
 					}
 				},
 				"required": ["configDir"]
-			},
-			"zoneGitToken": {
-				"type": "string",
-				"minLength": 1
-			},
-			"zoneGitTokenEnv": {
-				"type": "string",
-				"minLength": 1
 			}
 		},
 		"required": ["zoneId"]

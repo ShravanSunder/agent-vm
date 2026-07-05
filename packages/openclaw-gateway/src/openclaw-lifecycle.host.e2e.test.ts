@@ -161,7 +161,7 @@ function createZone(overrides?: {
 		config: '/host/config/shravan/openclaw.json',
 		memory: '2G',
 		port: 18791,
-		rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
+		rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
 		ssh: { secretEnv: 'explicit' },
 		stateDir: '/host/state/shravan',
 		type: 'openclaw',
@@ -498,7 +498,7 @@ describe('openclawLifecycle', () => {
 		it('rejects OPENCLAW_DIAGNOSTICS raw env overrides for observability-enabled zones', () => {
 			const zone = createZone({
 				gateway: {
-					rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN', 'OPENCLAW_DIAGNOSTICS'],
+					rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'OPENCLAW_DIAGNOSTICS'],
 				},
 				observability: createObservabilityConfig(),
 				secrets: {
@@ -531,7 +531,7 @@ describe('openclawLifecycle', () => {
 			).toThrow(/OPENCLAW_DIAGNOSTICS/u);
 		});
 
-		it('injects runtime environment without mediating or persisting it', () => {
+		it('injects explicitly allowlisted runtime environment without mediating or persisting it', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -543,14 +543,17 @@ describe('openclawLifecycle', () => {
 					size: 3,
 				},
 				zone: createZone({
+					gateway: {
+						rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'OPENCLAW_TEST_RUNTIME_SECRET'],
+					},
 					runtimeEnvironment: {
-						AGENT_VM_ZONE_GIT_TOKEN: 'runtime-zone-git-token',
+						OPENCLAW_TEST_RUNTIME_SECRET: 'runtime-test-secret',
 					},
 				}),
 			});
 
-			expect(vmSpec.environment.AGENT_VM_ZONE_GIT_TOKEN).toBe('runtime-zone-git-token');
-			expect(vmSpec.mediatedSecrets.AGENT_VM_ZONE_GIT_TOKEN).toBeUndefined();
+			expect(vmSpec.environment.OPENCLAW_TEST_RUNTIME_SECRET).toBe('runtime-test-secret');
+			expect(vmSpec.mediatedSecrets.OPENCLAW_TEST_RUNTIME_SECRET).toBeUndefined();
 		});
 
 		it('injects generated runtime mediated secrets without authored zone secret config entries', () => {
@@ -863,7 +866,7 @@ describe('openclawLifecycle', () => {
 			// synthetic AAAA again.
 			const baseZone = createZone({
 				gateway: {
-					rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN', 'NODE_OPTIONS'],
+					rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'NODE_OPTIONS'],
 				},
 			});
 			const zoneWithNodeOptions: GatewayZoneConfig = {
@@ -904,24 +907,16 @@ describe('openclawLifecycle', () => {
 
 	describe('buildProcessSpec', () => {
 		it('builds bootstrap and start commands with runtime-injected gateway token', () => {
-			const processSpec = openclawLifecycle.buildProcessSpec(
-				createZone({
-					runtimeEnvironment: {
-						AGENT_VM_ZONE_GIT_TOKEN: 'runtime-zone-git-token',
-					},
-				}),
-				resolvedSecrets,
-			);
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
 			expect(processSpec.bootstrapCommand).toContain("printf '%s\\n'");
 			expect(processSpec.bootstrapCommand).toContain('DISCORD_BOT_TOKEN');
 			expect(processSpec.bootstrapCommand).toContain('OPENCLAW_GATEWAY_TOKEN');
-			expect(processSpec.bootstrapCommand).toContain('AGENT_VM_ZONE_GIT_TOKEN');
+			expect(processSpec.bootstrapCommand).not.toContain('AGENT_VM_ZONE_GIT_TOKEN');
 			expect(processSpec.bootstrapCommand).not.toContain('discord-token');
 			expect(processSpec.bootstrapCommand).not.toContain("gateway'token");
-			expect(processSpec.bootstrapCommand).not.toContain('runtime-zone-git-token');
 			expect(processSpec.bootstrapCommand).not.toContain(
 				`cat > /run/openclaw/secrets.env << 'ENVEOF'`,
 			);
@@ -1246,11 +1241,6 @@ describe('openclawLifecycle', () => {
 						},
 					},
 				},
-				runtimePluginConfigs: {
-					gondolin: {
-						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
-					},
-				},
 			});
 			const secretResolver: SecretResolver = {
 				resolve: async (secretRef) => {
@@ -1304,7 +1294,6 @@ describe('openclawLifecycle', () => {
 						gondolin: {
 							enabled: true,
 							config: {
-								zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 								zoneId: 'shravan',
 							},
 						},

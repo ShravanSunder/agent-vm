@@ -21,7 +21,6 @@ import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
 import type { ObservedControllerLeaseCreateRequest } from './leases/observed-lease-create-request.js';
 import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
-import type { ZoneGitCapabilityStore } from './zone-git/zone-git-capability-store.js';
 import type { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
 import type { ZoneGitToolVmMount } from './zone-git/zone-git-paths.js';
 
@@ -89,7 +88,6 @@ export interface ControllerRuntimeDependencies {
 	}) => Promise<{
 		close(): Promise<void>;
 	}>;
-	readonly zoneGitCapabilityStore?: ZoneGitCapabilityStore;
 	readonly zoneGitOperationLocks?: ZoneGitOperationLocks;
 }
 

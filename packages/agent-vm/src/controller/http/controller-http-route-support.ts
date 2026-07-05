@@ -90,7 +90,6 @@ export interface ControllerRouteOperations {
 		zoneId: string,
 		input: { readonly expectedHead: string },
 	) => Promise<unknown>;
-	readonly verifyZoneGitPushToken?: (zoneId: string, token: string | undefined) => boolean;
 	readonly pullDefaultForTask?: (
 		zoneId: string,
 		taskId: string,

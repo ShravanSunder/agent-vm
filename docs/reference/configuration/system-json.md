@@ -969,9 +969,9 @@ referenced secret must exist in `zone.secrets` with `injection: "env"` and
 `gateway.rawEnvSecrets` is the explicit escape hatch for other OpenClaw secrets
 that must reach the gateway VM as raw environment variables. Other provider or
 service tokens should use `http-mediation` unless the integration cannot work
-with HTTP mediation, such as a non-HTTP or websocket credential flow. Generated
-runtime env secrets also need to be named here when a feature requires them, for
-example `AGENT_VM_ZONE_GIT_TOKEN`.
+with HTTP mediation, such as a non-HTTP or websocket credential flow. The
+managed zone-git push path is controller-owned through Tool Portal host actions;
+do not add a zone-git push token to the gateway VM.
 
 `zones[].gateway.runtimeRootfsSize` optionally requests a minimum runtime root
 disk size for the gateway VM, using Gondolin `rootfs.size`. The base image is

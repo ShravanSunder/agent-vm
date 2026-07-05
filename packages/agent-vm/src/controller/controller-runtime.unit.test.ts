@@ -767,14 +767,8 @@ describe('startControllerRuntime', () => {
 		expect(startGatewayZone).toHaveBeenCalledWith(
 			expect.objectContaining({
 				runTask: expect.any(Function),
-				runtimeEnvironment: {
-					AGENT_VM_ZONE_GIT_TOKEN: expect.any(String),
-				},
-				runtimePluginConfigs: {
-					gondolin: {
-						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
-					},
-				},
+				runtimeEnvironment: {},
+				runtimePluginConfigs: {},
 				zoneId: 'shravan',
 			}),
 		);
@@ -2060,14 +2054,8 @@ describe('startControllerRuntime', () => {
 
 		expect(preflightGatewayZoneStartMock).toHaveBeenCalledWith(
 			expect.objectContaining({
-				runtimeEnvironment: {
-					AGENT_VM_ZONE_GIT_TOKEN: expect.any(String),
-				},
-				runtimePluginConfigs: {
-					gondolin: {
-						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
-					},
-				},
+				runtimeEnvironment: {},
+				runtimePluginConfigs: {},
 				zoneId: 'shravan',
 			}),
 			undefined,
