@@ -55,6 +55,24 @@ const diagnosticsOtelGlobalPackageVmPath = '/pnpm/global/5/node_modules/@opencla
 const deprecatedMcpPortalPluginId = 'mcp-portal';
 const openClawInstalledPluginDirectoryName = 'plugins';
 const openClawInstalledPluginIndexFileName = 'installs.json';
+const gondolinPluginConfigFields = new Set([
+	'controlSession',
+	'controllerUrl',
+	'profileId',
+	'toolPortal',
+	'zoneGitToken',
+	'zoneGitTokenEnv',
+	'zoneId',
+]);
+const gondolinControlSessionConfigFields = new Set([
+	'bootId',
+	'callerContextProofKey',
+	'controllerEpoch',
+	'generationId',
+	'peerId',
+	'verifierPublicKeyPem',
+]);
+const gondolinToolPortalConfigFields = new Set(['configDir']);
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -644,21 +662,98 @@ function assertNoRemovedGondolinRawControlConfig(config: Readonly<Record<string,
 	}
 }
 
-function assertOptionalManagedGondolinObjectField(options: {
-	readonly config: Readonly<Record<string, unknown>>;
-	readonly fieldName: 'controlSession' | 'toolPortal';
+function assertNoUnknownGondolinConfigFields(options: {
+	readonly allowedFields: ReadonlySet<string>;
+	readonly label: string;
+	readonly record: Readonly<Record<string, unknown>>;
 }): void {
-	if (!Object.hasOwn(options.config, options.fieldName)) {
-		return;
-	}
-	if (!isObjectRecord(options.config[options.fieldName])) {
-		throw new Error(`Gondolin plugin ${options.fieldName} must be an object when present.`);
+	for (const fieldName of Object.keys(options.record)) {
+		if (!options.allowedFields.has(fieldName)) {
+			throw new Error(`Gondolin plugin ${options.label} does not accept field '${fieldName}'.`);
+		}
 	}
 }
 
+function assertOptionalGondolinStringField(options: {
+	readonly fieldName: string;
+	readonly label: string;
+	readonly record: Readonly<Record<string, unknown>>;
+}): void {
+	if (!Object.hasOwn(options.record, options.fieldName)) {
+		return;
+	}
+	const fieldValue = options.record[options.fieldName];
+	if (typeof fieldValue !== 'string') {
+		throw new Error(`Gondolin plugin ${options.label} requires string ${options.fieldName}.`);
+	}
+	if (fieldValue.trim() === '') {
+		throw new Error(`Gondolin plugin ${options.label} requires non-empty ${options.fieldName}.`);
+	}
+}
+
+function assertOptionalManagedGondolinObjectField(options: {
+	readonly config: Readonly<Record<string, unknown>>;
+	readonly fieldName: 'controlSession' | 'toolPortal';
+}): Readonly<Record<string, unknown>> | undefined {
+	if (!Object.hasOwn(options.config, options.fieldName)) {
+		return undefined;
+	}
+	const rawFieldValue = options.config[options.fieldName];
+	if (!isObjectRecord(rawFieldValue)) {
+		throw new Error(`Gondolin plugin ${options.fieldName} must be an object when present.`);
+	}
+	return rawFieldValue;
+}
+
 function assertManagedGondolinPluginConfig(config: Readonly<Record<string, unknown>>): void {
-	assertOptionalManagedGondolinObjectField({ config, fieldName: 'controlSession' });
-	assertOptionalManagedGondolinObjectField({ config, fieldName: 'toolPortal' });
+	assertNoRemovedGondolinRawControlConfig(config);
+	assertNoUnknownGondolinConfigFields({
+		allowedFields: gondolinPluginConfigFields,
+		label: 'config',
+		record: config,
+	});
+	assertOptionalGondolinStringField({ fieldName: 'profileId', label: 'config', record: config });
+	assertOptionalGondolinStringField({ fieldName: 'zoneId', label: 'config', record: config });
+	const controlSessionConfig = assertOptionalManagedGondolinObjectField({
+		config,
+		fieldName: 'controlSession',
+	});
+	if (controlSessionConfig !== undefined) {
+		assertNoUnknownGondolinConfigFields({
+			allowedFields: gondolinControlSessionConfigFields,
+			label: 'controlSession',
+			record: controlSessionConfig,
+		});
+		for (const fieldName of [
+			'bootId',
+			'controllerEpoch',
+			'generationId',
+			'peerId',
+			'verifierPublicKeyPem',
+		] as const) {
+			assertOptionalGondolinStringField({
+				fieldName,
+				label: 'controlSession',
+				record: controlSessionConfig,
+			});
+		}
+	}
+	const toolPortalConfig = assertOptionalManagedGondolinObjectField({
+		config,
+		fieldName: 'toolPortal',
+	});
+	if (toolPortalConfig !== undefined) {
+		assertNoUnknownGondolinConfigFields({
+			allowedFields: gondolinToolPortalConfigFields,
+			label: 'toolPortal',
+			record: toolPortalConfig,
+		});
+		assertOptionalGondolinStringField({
+			fieldName: 'configDir',
+			label: 'toolPortal',
+			record: toolPortalConfig,
+		});
+	}
 }
 
 function isDeprecatedMcpPortalLoadPath(value: string): boolean {
@@ -732,8 +827,20 @@ function buildEffectivePluginsConfig(
 		: {};
 	const runtimeEntriesConfig: Record<string, unknown> = {};
 	for (const [pluginId, runtimeConfig] of Object.entries(runtimePluginConfigs ?? {})) {
-		const existingEntryConfig = isObjectRecord(existingEntriesConfig[pluginId])
-			? existingEntriesConfig[pluginId]
+		const rawExistingEntryConfig = existingEntriesConfig[pluginId];
+		if (pluginId === 'gondolin' && Object.hasOwn(existingEntriesConfig, pluginId)) {
+			if (!isObjectRecord(rawExistingEntryConfig)) {
+				throw new Error('Gondolin plugin entry must be an object when present.');
+			}
+			if (
+				Object.hasOwn(rawExistingEntryConfig, 'config') &&
+				!isObjectRecord(rawExistingEntryConfig.config)
+			) {
+				throw new Error('Gondolin plugin config must be an object when present.');
+			}
+		}
+		const existingEntryConfig = isObjectRecord(rawExistingEntryConfig)
+			? rawExistingEntryConfig
 			: {};
 		if (pluginId === diagnosticsOtelPluginId) {
 			runtimeEntriesConfig[pluginId] = {
@@ -745,8 +852,8 @@ function buildEffectivePluginsConfig(
 			? existingEntryConfig.config
 			: {};
 		if (pluginId === 'gondolin') {
-			assertNoRemovedGondolinRawControlConfig(existingPluginConfig);
-			assertNoRemovedGondolinRawControlConfig(runtimeConfig);
+			assertManagedGondolinPluginConfig(existingPluginConfig);
+			assertManagedGondolinPluginConfig(runtimeConfig);
 		}
 		const config = {
 			...existingPluginConfig,

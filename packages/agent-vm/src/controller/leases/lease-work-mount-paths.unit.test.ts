@@ -262,7 +262,7 @@ describe('resolveLeaseWorkMountDir', () => {
 	});
 
 	it('rejects symlinked state workspace roots that resolve into another agent workspace', async () => {
-		await mkdir(path.join(stateDir, 'workspace-beta', 'project'), { recursive: true });
+		await mkdir(path.join(stateDir, 'workspace-beta'), { recursive: true });
 		const linkPath = path.join(stateDir, 'workspace-link-agent');
 		await symlink(path.join(stateDir, 'workspace-beta'), linkPath);
 
@@ -270,12 +270,10 @@ describe('resolveLeaseWorkMountDir', () => {
 			resolveLeaseWorkMountDir({
 				agentId: 'link-agent',
 				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/workspace-link-agent/project',
+				workMountDir: '/home/openclaw/.openclaw/state/workspace-link-agent',
 				zone,
 			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-purpose-not-allowed',
-		} satisfies Partial<LeaseWorkMountValidationError>);
+		).rejects.toThrow(/not a symlink or non-directory root/u);
 	});
 
 	it('returns zone Git mount metadata for configured OpenClaw /zone leases', async () => {

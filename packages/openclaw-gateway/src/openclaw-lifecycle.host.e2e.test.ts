@@ -1509,8 +1509,88 @@ describe('openclawLifecycle', () => {
 			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
 		});
 
-		it('rejects stale Gondolin raw-control config in managed OpenClaw config', async () => {
-			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-raw-'));
+		it.each([
+			{
+				config: { controllerUrl: 'http://controller.vm.host:18800' },
+				error: /Gondolin plugin config no longer accepts controllerUrl/u,
+				name: 'controllerUrl',
+			},
+			{
+				config: { zoneGitToken: 'stale-zone-git-token' },
+				error: /Gondolin plugin config no longer accepts zone git token fields/u,
+				name: 'zoneGitToken',
+			},
+			{
+				config: { zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN' },
+				error: /Gondolin plugin config no longer accepts zone git token fields/u,
+				name: 'zoneGitTokenEnv',
+			},
+			{
+				config: { controlSession: { callerContextProofKey: 'stale-proof-key' } },
+				error: /Gondolin plugin controlSession no longer accepts callerContextProofKey/u,
+				name: 'controlSession.callerContextProofKey',
+			},
+		] satisfies readonly {
+			readonly config: Record<string, unknown>;
+			readonly error: RegExp;
+			readonly name: string;
+		}[])(
+			'rejects stale Gondolin raw-control $name in managed OpenClaw config',
+			async (testCase) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-raw-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+										config: {
+											...testCase.config,
+											zoneId: 'shravan',
+										},
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					testCase.error,
+				);
+			},
+		);
+
+		it('rejects non-object authored managed Gondolin config before writing the effective config', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
 			await mkdir(configDirectory, { recursive: true });
@@ -1523,15 +1603,7 @@ describe('openclawLifecycle', () => {
 							entries: {
 								gondolin: {
 									enabled: true,
-									config: {
-										controlSession: {
-											callerContextProofKey: 'stale-proof-key',
-										},
-										controllerUrl: 'http://controller.vm.host:18800',
-										zoneGitToken: 'stale-zone-git-token',
-										zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
-										zoneId: 'shravan',
-									},
+									config: true,
 								},
 							},
 						},
@@ -1562,7 +1634,7 @@ describe('openclawLifecycle', () => {
 			};
 
 			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
-				/Gondolin plugin config no longer accepts controllerUrl/u,
+				/Gondolin plugin config must be an object when present/u,
 			);
 		});
 
@@ -1606,6 +1678,167 @@ describe('openclawLifecycle', () => {
 						config: path.join(configDirectory, 'openclaw.json'),
 						stateDir: path.join(tempDirectory, 'state'),
 						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					`Gondolin plugin ${fieldName} must be an object when present.`,
+				);
+			},
+		);
+
+		it.each([
+			{
+				authoredConfig: {
+					toolPortal: {
+						configDir: 42,
+					},
+					zoneId: 'shravan',
+				},
+				error: /Gondolin plugin toolPortal requires string configDir/u,
+				name: 'toolPortal.configDir',
+				runtimeConfig: {
+					toolPortal: {
+						configDir: '/home/openclaw/.openclaw/config',
+					},
+				},
+			},
+			{
+				authoredConfig: {
+					controlSession: {
+						bootId: 42,
+					},
+					zoneId: 'shravan',
+				},
+				error: /Gondolin plugin controlSession requires string bootId/u,
+				name: 'controlSession.bootId',
+				runtimeConfig: {
+					controlSession: {
+						bootId: 'boot-a',
+						controllerEpoch: 'epoch-a',
+						generationId: 'generation-a',
+						peerId: 'gateway-shravan',
+						verifierPublicKeyPem: 'public-key',
+					},
+				},
+			},
+		] satisfies readonly {
+			readonly authoredConfig: Record<string, unknown>;
+			readonly error: RegExp;
+			readonly name: string;
+			readonly runtimeConfig: Record<string, unknown>;
+		}[])(
+			'rejects malformed authored Gondolin $name field before runtime config can overwrite it',
+			async (testCase) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+										config: testCase.authoredConfig,
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+					runtimePluginConfigs: {
+						gondolin: testCase.runtimeConfig,
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					testCase.error,
+				);
+			},
+		);
+
+		it.each([
+			{ fieldName: 'controlSession', value: true },
+			{ fieldName: 'toolPortal', value: true },
+		] satisfies readonly {
+			readonly fieldName: 'controlSession' | 'toolPortal';
+			readonly value: boolean;
+		}[])(
+			'rejects malformed authored Gondolin $fieldName even when runtime config provides a managed object',
+			async ({ fieldName, value }) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+										config: {
+											[fieldName]: value,
+											zoneId: 'shravan',
+										},
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+					runtimePluginConfigs: {
+						gondolin: {
+							[fieldName]: { managed: true },
+						},
 					},
 				});
 				const secretResolver: SecretResolver = {
