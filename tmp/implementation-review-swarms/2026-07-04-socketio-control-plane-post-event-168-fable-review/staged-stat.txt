@@ -4,9 +4,9 @@
  docs/architecture/openclaw-gateway.md              |   73 +-
  docs/architecture/overview.md                      |  183 +-
  docs/architecture/storage-model.md                 |    2 +-
- docs/getting-started/openclaw-guide.md             |   19 +-
+ docs/getting-started/openclaw-guide.md             |   35 +-
  docs/getting-started/worker-guide.md               |    3 +-
- docs/reference/configuration/system-json.md        |  137 +-
+ docs/reference/configuration/system-json.md        |  163 +-
  docs/reference/validate-and-doctor.md              |    4 +-
  .../2026-06-25-tool-portal-composition-contract.md | 1690 ++++
  ...6-06-30-gateway-control-session-hard-cutover.md | 2445 ++++++
@@ -40,7 +40,7 @@
  .../slices/14-s5c-collector-fail-closed.md         |   36 +
  .../slices/15-sg-ssh-egress-git-policy.md          |   62 +
  .../slices/README.md                               |   50 +
- docs/subsystems/controller.md                      |   70 +-
+ docs/subsystems/controller.md                      |   78 +-
  docs/subsystems/gateway-lifecycle.md               |   10 +-
  docs/subsystems/gondolin-vm-layer.md               |   26 +-
  docs/subsystems/mcp-portal.md                      |  116 +-
@@ -111,18 +111,19 @@
  .../backup-create-operation.host.e2e.test.ts       |   13 +-
  .../agent-vm/src/build/managed-image-dockerfile.ts |   62 +-
  .../src/build/managed-image-release.unit.test.ts   |   20 +-
- .../src/cli/agent-vm-entrypoint.unit.test.ts       |  177 +-
+ .../src/cli/agent-vm-entrypoint.unit.test.ts       |  212 +-
  packages/agent-vm/src/cli/backup-commands.ts       |    3 +
  .../agent-vm/src/cli/backup-commands.unit.test.ts  |    1 +
- .../src/cli/build-command.integration.test.ts      |   46 +-
+ .../src/cli/build-command.integration.test.ts      |   47 +-
  packages/agent-vm/src/cli/build-command.ts         |    6 +-
  .../agent-vm/src/cli/cache-commands.unit.test.ts   |    1 +
  .../src/cli/commands/controller-definition.ts      |   64 +-
+ .../agent-vm/src/cli/commands/init-definition.ts   |    2 +-
  .../cli/controller-operation-commands.unit.test.ts |   36 +-
- .../src/cli/init-command.integration.test.ts       |   19 +-
- packages/agent-vm/src/cli/init-command.ts          |   48 +-
+ .../src/cli/init-command.integration.test.ts       |   57 +-
+ packages/agent-vm/src/cli/init-command.ts          |   61 +-
  packages/agent-vm/src/cli/lease-commands.ts        |   47 -
- packages/agent-vm/src/cli/manual-templates.ts      |   74 +-
+ packages/agent-vm/src/cli/manual-templates.ts      |   91 +-
  .../agent-vm/src/cli/manual-templates.unit.test.ts |   53 +-
  .../src/cli/openclaw-auth-command.unit.test.ts     |   16 -
  .../agent-vm/src/cli/ssh-commands.unit.test.ts     |   16 -
@@ -219,8 +220,9 @@
  .../src/observability/health-event-telemetry.ts    |    2 +-
  .../health-event-telemetry.unit.test.ts            |   10 +-
  .../observability-config.unit.test.ts              |   43 +-
- .../config-validation.integration.test.ts          |   57 +-
+ .../config-validation.integration.test.ts          |   64 +-
  .../agent-vm/src/operations/config-validation.ts   |   17 +-
+ .../controller-offline-cleanup.integration.test.ts |    1 +
  .../src/operations/controller-status.unit.test.ts  |    2 +-
  .../agent-vm/src/operations/doctor.unit.test.ts    |    1 +
  .../src/operations/mcp-portal-live-validation.ts   |    4 +-
@@ -328,8 +330,8 @@
  .../src/tool-portal-native-tools.unit.test.ts      |  592 ++
  .../openclaw-agent-vm-plugin/src/zone-git-tool.ts  |   93 -
  .../src/zone-git-tool.unit.test.ts                 |  173 -
- .../src/openclaw-lifecycle.host.e2e.test.ts        |  243 +-
- .../openclaw-gateway/src/openclaw-lifecycle.ts     |  192 +-
+ .../src/openclaw-lifecycle.host.e2e.test.ts        |  252 +-
+ .../openclaw-gateway/src/openclaw-lifecycle.ts     |  197 +-
  packages/openclaw-mcp-portal-plugin/package.json   |    6 +-
  packages/tool-portal/package.json                  |   56 +
  .../cli-allowance-contracts.unit.test.ts           |  155 +
@@ -373,7 +375,7 @@
  .../agent-portal/fake-tool-portal-controller.ts    |   30 +
  .../agent-portal/portal-contract-assertions.ts     |   65 +
  .../debug-investigation.md                         |   41 +
- .../copy-paste-prompt.md                           |  297 +
+ .../copy-paste-prompt.md                           |  307 +
  .../execution-report-event-186.md                  |  120 +
  .../execution-report-event-187.md                  |   75 +
  .../execution-report-event-188.md                  |   96 +
@@ -396,12 +398,12 @@
  .../reducer-report-event-194.md                    |   71 +
  .../reducer-report-event-197.md                    |  160 +
  .../reducer-report.md                              |  120 +
- .../review-packet.md                               | 1128 +++
- .../staged-name-status.txt                         |  404 +
- .../staged-stat.txt                                |  405 +
- .../2026-07-02-socketio-control-plane/details.md   | 8794 ++++++++++++++++++++
- .../2026-07-02-socketio-control-plane/events.jsonl |  212 +
+ .../review-packet.md                               | 1151 +++
+ .../staged-name-status.txt                         |  406 +
+ .../staged-stat.txt                                |  407 +
+ .../2026-07-02-socketio-control-plane/details.md   | 8807 ++++++++++++++++++++
+ .../2026-07-02-socketio-control-plane/events.jsonl |  213 +
  tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
  vitest.config.ts                                   |   57 +-
- 406 files changed, 70481 insertions(+), 11074 deletions(-)
+ 408 files changed, 70655 insertions(+), 11129 deletions(-)

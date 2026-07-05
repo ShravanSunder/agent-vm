@@ -1,9 +1,9 @@
 # 2026-07-02 Socket.IO Control Plane Goal Details
 
-## Current Resume Edge - Event 210
+## Current Resume Edge - Event 211
 
-Event 210 fixes the stale Tool VM unit fixture exposed by the full unit rerun
-after Event 209.
+Event 211 fixes Composer/Bugbot follow-up findings after Event 210 and records
+fresh full unit, full integration, and `pnpm check` proof.
 
 Current workflow: `shravan-dev-workflow:implementation-review-swarm`.
 
@@ -11,13 +11,14 @@ Next workflow: refresh implementation review/Fable over the current branch diff.
 If review comes back clean, continue to live `../shravan-claw-beta`
 allowed-user Discord/OpenClaw inbound proof and PR-ready non-merge wrapup.
 
-Checkpoint result:
+Latest checkpoint result:
 
-- Checkpoint commit `e8b8e6a` fixes
-  `packages/agent-vm/src/tool-vm/tool-vm-lifecycle.unit.test.ts` so the test
-  helper declares only the trusted `sun` agent used by every Tool VM lifecycle
-  test. The dedicated system-config unit test remains the owner for multi-agent
-  managed OpenClaw fail-closed validation.
+- Checkpoint commit `8b70b76` fixes Composer/Bugbot follow-up findings:
+  multi-agent managed OpenClaw scaffold rejection, stale trusted-agent fixtures,
+  non-protected zone-git success fixtures, exact deprecated MCP Portal load-path
+  stripping, and active docs/manual multi-agent wording.
+- The previous Event 210 checkpoint commit `e8b8e6a` fixes
+  `packages/agent-vm/src/tool-vm/tool-vm-lifecycle.unit.test.ts`.
 - Wired `connectWorkerControlSession()` to
   `workerControlDeliveryPolicyByOperation`, so controller-originated Worker
   control commands derive delivery policy through the real controller client
@@ -40,30 +41,18 @@ Checkpoint result:
 
 Fresh proof:
 
-- Focused Tool VM unit proof passed:
-  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/tool-vm/tool-vm-lifecycle.unit.test.ts --reporter=verbose`
-  passed 1 file / 18 tests.
 - Full unit proof passed:
   `pnpm test:unit`
-  passed 241 files / 2109 tests.
+  passed 241 files / 2110 tests.
+- Full integration proof passed:
+  `pnpm test:integration`
+  passed 28 files / 441 tests.
 - Fresh current-head quality gate passed:
   `pnpm check`
-  passed 10 checks / 0 failed in 25.56s.
-- Focused integration proof passed:
-  `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/controller/control-session/worker-control-session.integration.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service.integration.test.ts packages/agent-vm-worker/src/control-session/worker-control-service.integration.test.ts --reporter=verbose`
-  passed 3 files / 51 tests.
-- Focused config unit proof passed:
-  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/config/system-config.unit.test.ts --reporter=verbose`
-  passed 1 file / 162 tests.
-- Portal export audit passed:
-  `pnpm exec tsx scripts/verify-portal-package-exports.ts`
-  reported 29 required imports resolved, 127 named exports present, 2 smoke
-  calls passed, 4 deferred imports absent.
-- `pnpm fmt:check` passed on 803 files.
-- `pnpm lint` passed with 0 warnings / 0 errors on 734 files.
-- `pnpm lint:types` passed with 0 warnings / 0 errors on 734 files.
-- `pnpm typecheck` passed across workspace projects.
-- `pnpm check` passed 10 checks / 0 failed in 25.41s.
+  passed 10 checks / 0 failed in 25.52s.
+- Focused integration proof passed 3 files / 106 tests.
+- Focused host-e2e proof passed 1 file / 55 tests.
+- Focused unit/manual/schema proof passed selected Event 211 tests.
 
 Still not PR-ready:
 
@@ -71,6 +60,76 @@ Still not PR-ready:
   commit.
 - Live `../shravan-claw-beta` actual allowed-user Discord/OpenClaw inbound
   proof remains required.
+	- PR-ready non-merge wrapup remains required.
+
+## Event 211 Composer/Bugbot Follow-Up Reduction
+
+Completed in this checkpoint:
+- Closed the remaining security/review lane
+  `019f300f-de5b-7fe0-8123-8a15a1073bf1` after harvesting two findings.
+- Fixed accepted review findings and checkpointed them in commit `8b70b76`:
+  - Managed OpenClaw init/scaffold now rejects multi-agent
+    `--openclaw-agents` during this cutover.
+  - Stale OpenClaw test fixtures now declare the single trusted `main` or
+    `shravan` agent as appropriate.
+  - Gateway zone-git integration success fixtures use non-protected
+    `agent/main` instead of `main`.
+  - Managed OpenClaw stale MCP Portal load-path stripping now removes only exact
+    deprecated `mcp-portal` load targets while preserving unrelated paths such
+    as `acme-mcp-portal-bridge`.
+  - Active docs/manuals no longer tell users to use same-zone multi-agent
+    managed OpenClaw layouts during this cutover.
+- Verified Bugbot documentation drift findings against current source:
+  - `docs/specs/2026-06-25-tool-portal-composition-contract.md` now treats
+    `zones[].toolPortal` as the managed Tool Portal root.
+  - The same spec names `runtimePluginConfigs.gondolin.toolPortal` as the
+    generated plugin materialization path and bans only stale
+    `runtimePluginConfigs["mcp-portal"]`.
+  - `docs/architecture/overview.md` already includes
+    `control-protocol-contracts`, `gateway-control-contracts`, and
+    `worker-control-contracts` in the package graph and responsibility table.
+- Regenerated branch inventory from `git diff origin/master...HEAD`:
+  - `staged-name-status.txt`: 408 rows.
+  - `staged-stat.txt`: 408 files changed, 70655 insertions, 11129 deletions.
+
+Fresh proof:
+- `pnpm fmt:check` passed.
+- Focused integration proof passed:
+  `packages/agent-vm/src/cli/build-command.integration.test.ts`,
+  `packages/agent-vm/src/gateway/gateway-zone-orchestrator.integration.test.ts`,
+  and
+  `packages/agent-vm/src/operations/controller-offline-cleanup.integration.test.ts`
+  passed 3 files / 106 tests.
+- Focused host-e2e proof passed:
+  `packages/openclaw-gateway/src/openclaw-lifecycle.host.e2e.test.ts` passed
+  1 file / 55 tests.
+- Focused unit/manual/schema proof passed selected tests across
+  `agent-vm-entrypoint.unit.test.ts`, `manual-templates.unit.test.ts`, and
+  `system-config.unit.test.ts`.
+- Previously flaky Tool Portal unit file passed in isolation:
+  `managed-tool-portal-runtime.unit.test.ts` passed 1 file / 5 tests.
+- Full unit gate passed:
+  `pnpm test:unit` passed 241 files / 2110 tests.
+- Full integration gate passed:
+  `pnpm test:integration` passed 28 files / 441 tests.
+- Fresh current-head quality gate passed:
+  `pnpm check` passed 10 checks / 0 failed in 25.52s.
+
+Review reducer notes:
+- Composer's high-severity stale fixture failures are fixed and full unit is
+  green.
+- Composer's multi-agent managed OpenClaw runtime concern remains intentionally
+  fail-closed for this PR; same-zone multi-agent managed OpenClaw requires
+  future controller-signed agent attestation.
+- Composer low-severity error-classification concerns remain follow-up
+  candidates unless later review promotes them.
+- Security lane's substring load-path finding is fixed with host-e2e regression
+  coverage.
+
+Still not PR-ready:
+- Implementation review/Fable freshness remains required after Event 211.
+- Live `../shravan-claw-beta` actual allowed-user Discord/OpenClaw inbound proof
+  remains required.
 - PR-ready non-merge wrapup remains required.
 
 ## Current Resume Edge - Event 208

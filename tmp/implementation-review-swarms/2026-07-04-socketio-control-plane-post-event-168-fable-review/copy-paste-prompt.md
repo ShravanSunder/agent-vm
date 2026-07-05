@@ -13,10 +13,10 @@ Review packet:
 tmp/implementation-review-swarms/2026-07-04-socketio-control-plane-post-event-168-fable-review/review-packet.md
 ```
 
-Latest local reducer note:
+Latest workflow state:
 
 ```text
-tmp/implementation-review-swarms/2026-07-04-socketio-control-plane-post-event-168-fable-review/reducer-report-event-197.md
+tmp/workflow-state/2026-07-02-socketio-control-plane/details.md
 ```
 
 Read the packet first, then review the actual branch diff and source artifacts.
@@ -46,7 +46,8 @@ accepted findings captured in reducer-report-event-194.md, plus the Event 195
 accepted findings fixed in execution-report-event-196.md, plus the Event 205
 OpenClaw health/recovery rerun, Event 206 post-OpenClaw `pnpm check`
 refresh, Event 208 full Worker e2e refresh, Event 209 accepted finding fixes,
-and Event 210 stale Tool VM unit fixture repair recorded in workflow state.
+Event 210 stale Tool VM unit fixture repair, and Event 211 Composer/Bugbot
+follow-up reduction recorded in workflow state.
 In particular, scrutinize:
 
 1. empty and multi-agent `zones[].agents` fail-closed behavior for managed OpenClaw
@@ -58,8 +59,9 @@ In particular, scrutinize:
 7. standalone `pnpm lint` proof in addition to `pnpm check`
 8. terminal e2e freshness after Event 200, OpenClaw freshness after Event 205,
     Worker freshness after Event 208, `pnpm check` freshness after Event 209,
-    full unit freshness after Event 210, and remaining stale beta
-    Discord/OpenClaw proof after Event 172
+    full unit freshness after Event 210, Event 211 full unit/full integration
+    and `pnpm check` proof, and remaining stale beta Discord/OpenClaw proof
+    after Event 172
 9. remaining old raw-controller string matches, especially whether deletion of
     `scripts/live-sandbox-manual.mjs` fully removes shippable manual raw-control
     residue
@@ -277,6 +279,21 @@ In particular, scrutinize:
     - Fresh full unit proof passed 241 files / 2109 tests.
     - Fresh `pnpm check` passed 10 checks / 0 failed on the current Event 210
       head.
+35. Event 211 Composer/Bugbot follow-up reduction:
+    - Managed OpenClaw multi-agent scaffolds now fail at init during this
+      cutover, stale trusted-agent fixtures are fixed, zone-git success fixtures
+      use `agent/main`, and deprecated MCP Portal load-path stripping is exact
+      rather than substring-based.
+    - Active docs/manuals no longer advertise same-zone multi-agent managed
+      OpenClaw during this cutover.
+    - Bugbot docs drift was verified current: `zones[].toolPortal` is the
+      managed Tool Portal root, generated plugin materialization is
+      `runtimePluginConfigs.gondolin.toolPortal`, stale
+      `runtimePluginConfigs["mcp-portal"]` remains banned, and overview includes
+      the three control contract packages.
+    - Fresh proof passed: focused integration 3 files / 106 tests, focused
+      host-e2e 1 file / 55 tests, full unit 241 files / 2110 tests, full
+      integration 28 files / 441 tests, and `pnpm check` 10 checks / 0 failed.
 
 Return only grounded candidate findings:
 

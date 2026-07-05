@@ -1,4 +1,4 @@
-Socket.IO Control Plane Post-Event-210 Fable Review Packet
+Socket.IO Control Plane Post-Event-211 Fable Review Packet
 ==========================================================
 
 Purpose
@@ -19,7 +19,9 @@ rerun passed, the Event 206 post-OpenClaw `pnpm check` refresh passed, and the
 Event 208 full Worker e2e refresh passed after the shared control-session
 priority-lane change. Event 209 fixes the accepted implementation-review
 findings from that pass. Event 210 fixes the stale Tool VM unit fixture exposed
-by the full unit rerun after Event 209.
+by the full unit rerun after Event 209. Event 211 fixes Composer/Bugbot
+follow-up findings and records fresh full unit, full integration, and
+`pnpm check` proof.
 
 Review the current repository state, not the older final-terminal review packet.
 Older packets and reducers remain useful as finding history only:
@@ -140,9 +142,9 @@ Workflow state:
 Important current-state note:
 
 - `events.jsonl` is the official transition log. After this packet refresh,
-  latest event should include Event 206, keeping the workflow in
-  implementation-review-swarm after the focused OpenClaw health/recovery rerun,
-  full OpenClaw e2e rerun, and post-OpenClaw `pnpm check` refresh passed.
+  latest event should include Event 211, keeping the workflow in
+  implementation-review-swarm after Composer/Bugbot follow-up fixes and fresh
+  full unit, full integration, and `pnpm check` proof.
 - This packet was refreshed after accepted Event 185 findings were fixed:
   caller contexts now bind to gateway boot/session and evict/release by
   lifecycle, managed OpenClaw rejects runtime `mcp-portal` plugin config and
@@ -258,6 +260,17 @@ Important current-state note:
   "sun"`. The dedicated system-config unit coverage still owns multi-agent
   fail-closed validation. Focused Tool VM unit proof passed 1 file / 18 tests,
   and the full unit gate passed 241 files / 2109 tests.
+- This packet was refreshed after Event 211:
+  security/review lane `019f300f-de5b-7fe0-8123-8a15a1073bf1` was reduced and
+  closed; managed OpenClaw multi-agent scaffolds now fail at init, stale
+  trusted-agent fixtures are fixed, zone-git success fixtures use non-protected
+  `agent/main`, deprecated MCP Portal load-path stripping is exact instead of
+  substring-based, active docs/manuals no longer advertise same-zone
+  multi-agent managed OpenClaw during this cutover, and Bugbot documentation
+  drift was verified current. Fresh proof passed: focused integration 3 files /
+  106 tests, focused host-e2e 1 file / 55 tests, full unit 241 files / 2110
+  tests, full integration 28 files / 441 tests, and `pnpm check` 10 checks /
+  0 failed.
 
 Implementation Scope
 --------------------
@@ -662,6 +675,25 @@ pnpm check
   typecheck
 ```
 
+Current Event 211 proof after Composer/Bugbot follow-up reduction:
+
+```text
+pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/cli/build-command.integration.test.ts packages/agent-vm/src/gateway/gateway-zone-orchestrator.integration.test.ts packages/agent-vm/src/operations/controller-offline-cleanup.integration.test.ts --reporter=verbose
+  passed, 3 files / 106 tests
+
+pnpm vitest run --config vitest.config.ts --project e2e-host packages/openclaw-gateway/src/openclaw-lifecycle.host.e2e.test.ts --reporter=verbose
+  passed, 1 file / 55 tests
+
+pnpm test:unit
+  passed, 241 files / 2110 tests
+
+pnpm test:integration
+  passed, 28 files / 441 tests
+
+pnpm check
+  passed, 10 passed / 0 failed in 25.52s
+```
+
 Current Event 200 proof after terminal refresh and host-e2e fixture repairs:
 
 ```text
@@ -747,10 +779,10 @@ git diff --name-only | wc -l
   0
 
 git diff --name-only origin/master...HEAD | wc -l
-  404
+  408
 
 git diff --shortstat origin/master...HEAD
-  404 files changed, 69923 insertions(+), 11059 deletions(-)
+  408 files changed, 70655 insertions(+), 11129 deletions(-)
   note: use live `git diff --shortstat origin/master...HEAD` for exact counts
   if additional packet-only commits have landed after this capture.
 
@@ -1044,7 +1076,7 @@ git diff --name-only origin/master...HEAD | wc -l
   404
 
 git diff --stat origin/master...HEAD
-  404 files changed; use live `git diff --stat origin/master...HEAD` for
+  408 files changed; use live `git diff --stat origin/master...HEAD` for
   exact insertion/deletion counts.
 ```
 
@@ -1053,8 +1085,8 @@ Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
 connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
 fresh allowed-user inbound Discord message after the latest runtime fixes.
 Terminal VM/default e2e are fresh as of Event 200. Full OpenClaw e2e is fresh
-as of Event 205, full Worker e2e is fresh as of Event 208, and full unit plus
-`pnpm check` are fresh as of Event 210. If this review
+as of Event 205, full Worker e2e is fresh as of Event 208, and full unit,
+full integration, and `pnpm check` are fresh as of Event 211. If this review
 comes back clean, the next execution step is to obtain beta actual allowed-user
 Discord inbound proof before PR-ready non-merge wrapup.
 
