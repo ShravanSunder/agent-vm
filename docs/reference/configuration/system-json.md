@@ -526,6 +526,9 @@ Important fields in `mcp.config.jsonc` provider entries:
 
 - `transport.kind` may be `streamable-http`, `sse`, or `stdio`.
 - Remote provider `transport.url` must use `http` or `https`.
+- `transport.connectionTimeoutMs` optionally overrides the provider connection,
+  `tools/list`, and call timeout budget when a real upstream MCP provider is
+  slower than the default 30000 ms budget.
 - Stdio providers must declare `transport.networkAccess`.
 - `transport.networkAccess: "declared"` requires non-empty
   `transport.requiredEgressHosts`.

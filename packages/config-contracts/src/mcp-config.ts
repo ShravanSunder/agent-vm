@@ -17,10 +17,13 @@ const remoteTransportUrlSchema = z.url().refine(
 	{ message: 'Remote MCP transport URLs must use http or https.' },
 );
 
+const connectionTimeoutMsSchema = z.number().int().min(1).max(300_000);
+
 const streamableHttpTransportSchema = z
 	.object({
 		kind: z.literal('streamable-http'),
 		url: remoteTransportUrlSchema,
+		connectionTimeoutMs: connectionTimeoutMsSchema.optional(),
 		headers: z.record(z.string(), formattedSecretValueSchema).default({}),
 		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
@@ -30,6 +33,7 @@ const sseTransportSchema = z
 	.object({
 		kind: z.literal('sse'),
 		url: remoteTransportUrlSchema,
+		connectionTimeoutMs: connectionTimeoutMsSchema.optional(),
 		headers: z.record(z.string(), formattedSecretValueSchema).default({}),
 		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
@@ -40,6 +44,7 @@ const stdioTransportSchema = z
 		kind: z.literal('stdio'),
 		command: z.string().min(1),
 		args: z.array(z.string()).default([]),
+		connectionTimeoutMs: connectionTimeoutMsSchema.optional(),
 		cwd: z.string().min(1).optional(),
 		env: z.record(z.string(), formattedSecretValueSchema).default({}),
 		networkAccess: z.enum(['declared', 'none']).optional(),
@@ -97,6 +102,7 @@ export type McpProvider = z.infer<typeof mcpProviderSchema>;
 
 export type ResolvedMcpProvider =
 	| {
+			readonly connectionTimeoutMs?: number;
 			readonly headers: Readonly<Record<string, FormattedSecretValue>>;
 			readonly namespace: string;
 			readonly transport: 'streamable-http' | 'sse';
@@ -105,6 +111,7 @@ export type ResolvedMcpProvider =
 	| {
 			readonly args: readonly string[];
 			readonly command: string;
+			readonly connectionTimeoutMs?: number;
 			readonly cwd?: string;
 			readonly env: Readonly<Record<string, FormattedSecretValue>>;
 			readonly namespace: string;
@@ -122,6 +129,7 @@ export function mcpConfigToResolvedProviders(config: McpConfig): readonly Resolv
 			const resolvedProvider: {
 				args: readonly string[];
 				command: string;
+				connectionTimeoutMs?: number;
 				cwd?: string;
 				env: Readonly<Record<string, FormattedSecretValue>>;
 				namespace: string;
@@ -133,17 +141,30 @@ export function mcpConfigToResolvedProviders(config: McpConfig): readonly Resolv
 				namespace: provider.namespace,
 				transport: transport.kind,
 			};
+			if (transport.connectionTimeoutMs !== undefined) {
+				resolvedProvider.connectionTimeoutMs = transport.connectionTimeoutMs;
+			}
 			if (transport.cwd !== undefined) {
 				resolvedProvider.cwd = transport.cwd;
 			}
 			return resolvedProvider;
 		}
 
-		return {
+		const resolvedProvider: {
+			connectionTimeoutMs?: number;
+			headers: Readonly<Record<string, FormattedSecretValue>>;
+			namespace: string;
+			transport: 'streamable-http' | 'sse';
+			url: string;
+		} = {
 			headers: transport.headers,
 			namespace: provider.namespace,
 			transport: transport.kind,
 			url: transport.url,
 		};
+		if (transport.connectionTimeoutMs !== undefined) {
+			resolvedProvider.connectionTimeoutMs = transport.connectionTimeoutMs;
+		}
+		return resolvedProvider;
 	});
 }
