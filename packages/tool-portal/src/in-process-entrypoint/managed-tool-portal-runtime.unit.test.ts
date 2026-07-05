@@ -31,6 +31,22 @@ function createMcpBackendStub(): McpProviderCapabilityBackend {
 	};
 }
 
+interface DeferredVoid {
+	readonly promise: Promise<void>;
+	readonly resolve: () => void;
+}
+
+function createDeferredVoid(): DeferredVoid {
+	let resolvePromise!: () => void;
+	const promise = new Promise<void>((resolve) => {
+		resolvePromise = resolve;
+	});
+	return {
+		promise,
+		resolve: resolvePromise,
+	};
+}
+
 describe('managed Tool Portal runtime', () => {
 	afterEach(async () => {
 		await Promise.all(
@@ -211,18 +227,29 @@ describe('managed Tool Portal runtime', () => {
 				retiredSessionKeys.push(sessionKey);
 			}),
 		} satisfies ManagedMcpProviderBackendFactory;
+		const factoryResolution = createDeferredVoid();
 		const runtime = createManagedToolPortalInProcessRuntime({
 			configDir: configDirectory,
-			createMcpProviderBackendFactory: vi.fn(async () => factory),
+			createMcpProviderBackendFactory: vi.fn(async () => {
+				await factoryResolution.promise;
+				return factory;
+			}),
 			maxEntryPointCacheEntries: 1,
 		});
 
 		const firstEntryPoint = runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-a' });
 		const secondEntryPoint = runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-b' });
+		await Promise.resolve();
+		expect(observedSessionKeys).toEqual([]);
+		expect(retiredSessionKeys).toEqual([]);
+		factoryResolution.resolve();
 		await Promise.all([firstEntryPoint, secondEntryPoint]);
+		expect(observedSessionKeys).toHaveLength(2);
+		expect(observedSessionKeys).toContain('session-a');
+		expect(observedSessionKeys).toContain('session-b');
+		expect(retiredSessionKeys).toEqual(['session-a']);
 		await runtime.close();
 
-		expect(observedSessionKeys).toEqual(['session-a', 'session-b']);
 		expect(retiredSessionKeys).toEqual(['session-a', 'session-b']);
 	});
 
