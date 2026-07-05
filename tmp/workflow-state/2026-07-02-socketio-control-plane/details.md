@@ -1,5 +1,65 @@
 # 2026-07-02 Socket.IO Control Plane Goal Details
 
+## Current Resume Edge - Event 209
+
+Event 209 fixes the accepted implementation-review findings recorded after the
+Event 208 Worker e2e refresh.
+
+Current workflow: `shravan-dev-workflow:implementation-execute-plan`.
+
+Next workflow: checkpoint this reducer/fix set, then refresh implementation
+review/Fable over the current branch diff. If review comes back clean, continue
+to live `../shravan-claw-beta` allowed-user Discord/OpenClaw inbound proof and
+PR-ready non-merge wrapup.
+
+Checkpoint result:
+
+- Wired `connectWorkerControlSession()` to
+  `workerControlDeliveryPolicyByOperation`, so controller-originated Worker
+  control commands derive delivery policy through the real controller client
+  instead of failing locally with `no derived delivery policy`.
+- Added an integration proof that `connectWorkerControlSession()` sends
+  controller-originated `operation_cancel` to the real Worker control service
+  and receives the intended hard-rejected `command_result`.
+- Updated Gateway and Worker peer control services to clear accepted session
+  state and reject pending command-result waiters immediately when the accepted
+  socket disconnects.
+- Added Gateway and Worker integration proofs for prompt pending-command
+  rejection on accepted-socket disconnect.
+- Added config validation that rejects multi-agent managed OpenClaw zones
+  before runtime/caller-context registration during this hard cutover.
+- Updated active OpenClaw architecture docs, system config reference, and
+  generated manual template to stop advertising shared multi-agent managed
+  OpenClaw zones in this cutover.
+- Expanded the portal package export verifier to cover the six omitted
+  published `@agent-vm/mcp-portal` subpath exports.
+
+Fresh proof:
+
+- Focused integration proof passed:
+  `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/controller/control-session/worker-control-session.integration.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service.integration.test.ts packages/agent-vm-worker/src/control-session/worker-control-service.integration.test.ts --reporter=verbose`
+  passed 3 files / 51 tests.
+- Focused config unit proof passed:
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/config/system-config.unit.test.ts --reporter=verbose`
+  passed 1 file / 162 tests.
+- Portal export audit passed:
+  `pnpm exec tsx scripts/verify-portal-package-exports.ts`
+  reported 29 required imports resolved, 127 named exports present, 2 smoke
+  calls passed, 4 deferred imports absent.
+- `pnpm fmt:check` passed on 803 files.
+- `pnpm lint` passed with 0 warnings / 0 errors on 734 files.
+- `pnpm lint:types` passed with 0 warnings / 0 errors on 734 files.
+- `pnpm typecheck` passed across workspace projects.
+- `pnpm check` passed 10 checks / 0 failed in 25.41s.
+
+Still not PR-ready:
+
+- Implementation review/Fable freshness remains required after this reducer
+  commit.
+- Live `../shravan-claw-beta` actual allowed-user Discord/OpenClaw inbound
+  proof remains required.
+- PR-ready non-merge wrapup remains required.
+
 ## Current Resume Edge - Event 208
 
 Event 208 resolves the fresh Worker terminal proof gap raised by the latest

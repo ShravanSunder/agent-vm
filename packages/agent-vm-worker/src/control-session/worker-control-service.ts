@@ -671,7 +671,12 @@ export function createWorkerControlService(
 		socket.once('disconnect', () => {
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
+				acceptedSession = undefined;
 				latestWinsQueue.clear();
+				resolveAcceptedSessionWaiters(undefined);
+				rejectPendingWorkerControlCommandResults(
+					new Error('control_session_disconnect: worker control session disconnected'),
+				);
 			}
 		});
 		socket.on(

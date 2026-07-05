@@ -470,7 +470,7 @@ When gateway.zoneGit is configured:
 			content: generatedPage(
 				'Per-Agent Setup',
 				`
-A single OpenClaw gateway can host multiple agents. Use scope=agent so OpenClaw resolves each agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
+During the Socket.IO control-plane hard cutover, a managed OpenClaw gateway zone must declare exactly one trusted agent. Multi-agent OpenClaw zones are rejected until controller-signed agent attestation exists. Use scope=agent so OpenClaw resolves that agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
 
 Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for prebuilt OpenClaw auth profiles, gateway.authLogin for interactive OpenClaw profile login helpers, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
 agent-vm auth openclaw login <provider> --all-configured-profiles logs in each configured gateway.authLogin.providers.<provider>.profileIds entry for gateway.authLogin.defaultAgent and verifies those profile IDs afterward. Use --dry-run before a refresh when you want to inspect the target agent and profile list.

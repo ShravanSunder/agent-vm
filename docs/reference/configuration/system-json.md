@@ -1255,6 +1255,8 @@ The schema rejects:
 - WebSocket upgrade hosts not declared in `egressHosts` for the same audience.
 - OpenClaw zones without `gateway.controlAuth` or without the referenced
   gateway-only env secret.
+- OpenClaw zones declaring more than one `zones[].agents` entry during the
+  Socket.IO control-plane hard cutover.
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
 - OpenClaw zones declaring `runtimeAuthHints`.

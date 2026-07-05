@@ -244,11 +244,13 @@ OpenClaw's sandbox file API into remote shell scripts over that SSH lease. The
 controller does not expose a generic filesystem RPC for Tool VMs and does not
 proxy command stdout/stderr.
 
-The controller first checks the zone's `agentToolVmProfiles[agentId]` mapping.
-If no agent-specific mapping exists, it falls back to the zone's
-`defaultToolVmProfile`. This lets one OpenClaw zone serve multiple agents with
-different Tool VM images while keeping the gateway and durable `/zone` namespace
-shared.
+During the Socket.IO control-plane hard cutover, managed OpenClaw zones support
+exactly one declared trusted agent. Multi-agent OpenClaw zones require a future
+controller-signed agent-attestation design before caller-context registration can
+distinguish per-agent authority safely. The controller still checks the zone's
+`agentToolVmProfiles[agentId]` mapping first and falls back to
+`defaultToolVmProfile`, but the configured agent set must contain only that one
+trusted agent for managed OpenClaw.
 
 For Tool VM-mediated service tokens, the controller filters zone secrets by the
 requesting declared `agentId` and each secret's `agentAccess` before resolving

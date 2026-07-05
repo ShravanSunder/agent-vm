@@ -613,7 +613,12 @@ export function createGatewayControlService(
 		socket.once('disconnect', () => {
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
+				acceptedSession = undefined;
 				latestWinsQueue.clear();
+				resolveAcceptedSessionWaiters(undefined);
+				rejectPendingGatewayControlCommandResults(
+					new Error('control_session_disconnect: gateway control session disconnected'),
+				);
 			}
 		});
 		socket.on('control:hello', (payload: ControlHello, acknowledge) => {

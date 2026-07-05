@@ -18,7 +18,10 @@ import {
 	type ControlHandshakeCredential,
 	type ControlReadyRequestCredential,
 } from '@agent-vm/control-protocol-contracts';
-import { workerControlCommandExecutionTimeoutMsByOperation } from '@agent-vm/worker-control-contracts';
+import {
+	workerControlCommandExecutionTimeoutMsByOperation,
+	workerControlDeliveryPolicyByOperation,
+} from '@agent-vm/worker-control-contracts';
 
 import {
 	DEFAULT_WORKER_CONTROL_PATH,
@@ -312,7 +315,7 @@ export async function connectWorkerControlSession(
 					},
 				}),
 		commandResultTimeoutMsByOperation: workerControlCommandExecutionTimeoutMsByOperation,
-		policyByOperation: {},
+		policyByOperation: workerControlDeliveryPolicyByOperation,
 		refreshExtraHeaders: buildHeaders,
 		timeoutMs: CONTROL_SESSION_TIMING_MS.connectTimeout,
 	});

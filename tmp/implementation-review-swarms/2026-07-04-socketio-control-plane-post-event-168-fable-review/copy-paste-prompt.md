@@ -45,7 +45,8 @@ post-Fable fixes captured in reducer-report-event-193.md, plus the Event 194
 accepted findings captured in reducer-report-event-194.md, plus the Event 195
 accepted findings fixed in execution-report-event-196.md, plus the Event 205
 OpenClaw health/recovery rerun, Event 206 post-OpenClaw `pnpm check`
-refresh, and Event 208 full Worker e2e refresh recorded in workflow state.
+refresh, Event 208 full Worker e2e refresh, and Event 209 accepted finding
+fixes recorded in workflow state.
 In particular, scrutinize:
 
 1. empty and multi-agent `zones[].agents` fail-closed behavior for managed OpenClaw
@@ -56,7 +57,7 @@ In particular, scrutinize:
 6. portal export verifier freshness and new in-process named export coverage
 7. standalone `pnpm lint` proof in addition to `pnpm check`
 8. terminal e2e freshness after Event 200, OpenClaw freshness after Event 205,
-    `pnpm check` freshness after Event 206, Worker freshness after Event 208,
+    Worker freshness after Event 208, `pnpm check` freshness after Event 209,
     and remaining stale beta Discord/OpenClaw proof after Event 172
 9. remaining old raw-controller string matches, especially whether deletion of
     `scripts/live-sandbox-manual.mjs` fully removes shippable manual raw-control
@@ -255,6 +256,17 @@ In particular, scrutinize:
 32. Event 208 Worker e2e refresh:
     - Fresh full Worker e2e passed 3 files / 5 tests / 0 skipped / 0 todo
       after the shared control-session priority-lane change.
+33. Event 209 accepted finding fixes:
+    - `connectWorkerControlSession()` uses the Worker delivery policy map and
+      has real Worker service integration proof for controller-originated
+      `operation_cancel` hard rejection.
+    - Gateway and Worker peer services reject pending command results promptly
+      on accepted-socket disconnect.
+    - Managed OpenClaw multi-agent zones fail config validation before runtime
+      caller-context registration during this cutover.
+    - Portal export audit covers all published `@agent-vm/mcp-portal` subpath
+      exports.
+    - Fresh focused integration/config/export proof and `pnpm check` passed.
 
 Return only grounded candidate findings:
 

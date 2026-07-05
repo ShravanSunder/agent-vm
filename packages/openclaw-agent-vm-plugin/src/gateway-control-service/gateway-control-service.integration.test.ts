@@ -1064,6 +1064,65 @@ describe('gateway control service', () => {
 		).rejects.toThrow(/gateway control command result timed out/u);
 	});
 
+	it('rejects outbound command promises promptly when the accepted socket disconnects', async () => {
+		const fixture = createFixture();
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		let resolveCommandObserved: (() => void) | undefined;
+		const commandObserved = new Promise<void>((resolve) => {
+			resolveCommandObserved = resolve;
+		});
+		client.on(
+			'control:message',
+			(_envelope: unknown, _payload: unknown, acknowledge: (response: unknown) => void) => {
+				acknowledge({ received: true });
+				resolveCommandObserved?.();
+			},
+		);
+		await waitForSocketConnect(client);
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			bootId: identity.bootId,
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.getAcceptedSession();
+		const gatewayLeaseCreateEnvelope = gatewayLeaseCreateEnvelopeFor(
+			acceptedSession,
+			fixture.service.nextPeerSequence(),
+		);
+		const commandResult = fixture.service.emitApplicationMessage(
+			gatewayLeaseCreateEnvelope,
+			{ kind: 'command', operation: 'lease_create' },
+			{
+				kind: 'command',
+				operation: 'lease_create',
+				payload: {
+					callerContext: {
+						callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+					},
+				},
+			},
+			{ commandResultTimeoutMs: 5_000 },
+		);
+		commandResult.catch(() => undefined);
+		await commandObserved;
+		client.disconnect();
+
+		await expect(commandResult).rejects.toThrow(/control_session_disconnect/u);
+	});
+
 	it('receives controller-originated gateway control RPC messages and emits command_result separately', async () => {
 		const handledPayloads: unknown[] = [];
 		const fixture = createFixture(() => 1_000, {

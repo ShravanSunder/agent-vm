@@ -1,4 +1,4 @@
-Socket.IO Control Plane Post-Event-208 Fable Review Packet
+Socket.IO Control Plane Post-Event-209 Fable Review Packet
 ==========================================================
 
 Purpose
@@ -17,7 +17,8 @@ the Event 202 Bugbot documentation drift fixes were committed, the Event 203
 beta runtime proof status was recorded, the Event 205 OpenClaw health/recovery
 rerun passed, the Event 206 post-OpenClaw `pnpm check` refresh passed, and the
 Event 208 full Worker e2e refresh passed after the shared control-session
-priority-lane change.
+priority-lane change. Event 209 fixes the accepted implementation-review
+findings from that pass.
 
 Review the current repository state, not the older final-terminal review packet.
 Older packets and reducers remain useful as finding history only:
@@ -240,6 +241,16 @@ Important current-state note:
   full Worker e2e passed after the shared control-session priority-lane change,
   covering 3 files / 5 tests / 0 skipped / 0 todo with result
   `tmp/vitest-results/e2e-worker-91602-cGthgw/results.json`.
+- This packet was refreshed after Event 209:
+  the accepted review findings were fixed. The real
+  `connectWorkerControlSession()` path now uses
+  `workerControlDeliveryPolicyByOperation` and has integration proof against
+  the real Worker control service; Gateway and Worker peer services reject
+  pending command-result waiters on accepted-socket disconnect; managed OpenClaw
+  multi-agent zones fail config validation before runtime caller-context
+  registration; active docs/manuals no longer advertise shared multi-agent
+  managed OpenClaw zones for this cutover; and the portal export verifier covers
+  every published `@agent-vm/mcp-portal` subpath export.
 
 Implementation Scope
 --------------------
@@ -609,6 +620,23 @@ pnpm check
 set -a; source .env.local; set +a; AGENT_VM_TEST_OPENAI_API_KEY="$OPEN_AI_TEST_KEY" mise exec -- pnpm run test:e2e:worker
   passed, 3 files / 5 tests / 0 skipped / 0 todo in 201.49s
   result: tmp/vitest-results/e2e-worker-91602-cGthgw/results.json
+```
+
+Current Event 209 proof after accepted review finding fixes:
+
+```text
+pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/controller/control-session/worker-control-session.integration.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service.integration.test.ts packages/agent-vm-worker/src/control-session/worker-control-service.integration.test.ts --reporter=verbose
+  passed, 3 files / 51 tests
+
+pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/config/system-config.unit.test.ts --reporter=verbose
+  passed, 1 file / 162 tests
+
+pnpm exec tsx scripts/verify-portal-package-exports.ts
+  passed, 29 required imports resolved, 127 named exports present,
+  2 smoke calls passed, 4 deferred imports absent
+
+pnpm check
+  passed, 10 passed / 0 failed in 25.41s
 ```
 
 Current Event 200 proof after terminal refresh and host-e2e fixture repairs:
@@ -1002,8 +1030,8 @@ Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
 connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
 fresh allowed-user inbound Discord message after the latest runtime fixes.
 Terminal VM/default e2e are fresh as of Event 200. Full OpenClaw e2e is fresh
-as of Event 205, `pnpm check` is fresh as of Event 206, and full Worker e2e is
-fresh as of Event 208. If this review comes back clean, the next execution step
+as of Event 205, full Worker e2e is fresh as of Event 208, and `pnpm check` is
+fresh as of Event 209. If this review comes back clean, the next execution step
 is to obtain beta actual allowed-user Discord inbound proof before PR-ready
 non-merge wrapup.
 

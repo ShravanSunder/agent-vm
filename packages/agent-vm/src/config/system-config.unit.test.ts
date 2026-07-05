@@ -577,7 +577,7 @@ describe('loadSystemConfig', () => {
 
 	test('loads OpenClaw zone agent records and Tool Portal config directory references', async () => {
 		const config = createValidSystemConfigInput();
-		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }, { id: 'sun' }];
+		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }];
 		config.zones[0].toolPortal = { configDir: './shravan' };
 		const configPath = await writeSystemConfigForTest('agent-vm-system-zone-agents-', config);
 
@@ -587,13 +587,23 @@ describe('loadSystemConfig', () => {
 			throw new Error('Expected first loaded zone.');
 		}
 
-		expect(loadedZone.agents).toEqual([
-			{ id: 'shravan', toolVmProfile: 'standard' },
-			{ id: 'sun' },
-		]);
+		expect(loadedZone.agents).toEqual([{ id: 'shravan', toolVmProfile: 'standard' }]);
 		expect(loadedZone.toolPortal).toEqual({
 			configDir: path.join(path.dirname(configPath), 'shravan'),
 		});
+	});
+
+	test('rejects multi-agent OpenClaw zones before caller-context registration', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }, { id: 'sun' }];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-multi-agent-openclaw-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/OpenClaw zone 'shravan' declares multiple agents/u,
+		);
 	});
 
 	test('rejects legacy OpenClaw zone tool portal config keys', async () => {
@@ -1844,7 +1854,7 @@ describe('loadSystemConfig', () => {
 	test('accepts all-agent access on Tool VM mediated secrets', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.agents = [{ id: 'sun' }];
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -1888,7 +1898,7 @@ describe('loadSystemConfig', () => {
 	test('accepts per-agent access on Tool VM mediated secrets', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.agents = [{ id: 'sun' }];
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -1915,7 +1925,7 @@ describe('loadSystemConfig', () => {
 	test('accepts agent access on shared mediated secrets and scopes the Tool VM side', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.agents = [{ id: 'sun' }];
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'both' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',

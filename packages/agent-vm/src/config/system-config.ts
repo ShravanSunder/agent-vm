@@ -944,6 +944,13 @@ const systemConfigSchema = z
 		for (const [zoneIndex, zone] of config.zones.entries()) {
 			const zoneAgents = zone.agents ?? [];
 			const zoneAgentIds = new Set(zoneAgents.map((agent) => agent.id));
+			if (zone.gateway.type === 'openclaw' && zoneAgentIds.size > 1) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `OpenClaw zone '${zone.id}' declares multiple agents, but managed OpenClaw supports exactly one trusted agent during the Socket.IO control-plane hard cutover until controller-signed agent attestation is implemented.`,
+					path: ['zones', zoneIndex, 'agents'],
+				});
+			}
 			if (zone.observability?.enabled === true && config.host.observability?.enabled !== true) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
