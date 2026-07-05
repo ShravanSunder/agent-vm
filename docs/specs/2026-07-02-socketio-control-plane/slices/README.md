@@ -35,7 +35,10 @@ Slice order:
 
 Terminal proof:
 - `mise exec -- pnpm run test:e2e:openclaw`
-- `mise exec -- pnpm run test:e2e:worker`
+- `set -a; source .env.local; set +a; AGENT_VM_TEST_OPENAI_API_KEY="$OPEN_AI_TEST_KEY" mise exec -- pnpm run test:e2e:worker`
+  The bare Worker command is expected to fail the evidence wrapper when live
+  Worker tests skip for missing model credentials; the mapped command is the
+  canonical no-skip Worker terminal proof.
 - `mise exec -- pnpm run test:e2e:vm`
 - `mise exec -- pnpm test:e2e`
 - `pnpm check`

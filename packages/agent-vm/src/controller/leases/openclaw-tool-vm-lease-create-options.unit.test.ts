@@ -87,6 +87,7 @@ async function createSystemConfigFixture(
 		},
 		zones: [
 			{
+				agents: [{ id: 'main' }],
 				agentToolVmProfiles: {},
 				defaultToolVmProfile: 'standard',
 				egressHosts: [],
@@ -196,7 +197,6 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 		if (zone === undefined) {
 			throw new Error('Expected OpenClaw fixture zone');
 		}
-		zone.agents = [{ id: 'main' }];
 		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
 		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
 		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({

@@ -2,13 +2,13 @@
  docs/README.md                                     |    1 +
  docs/architecture/agent-worker-gateway.md          |   24 +-
  docs/architecture/openclaw-gateway.md              |   61 +-
- docs/architecture/overview.md                      |  165 +-
+ docs/architecture/overview.md                      |  183 +-
  docs/architecture/storage-model.md                 |    2 +-
  docs/getting-started/openclaw-guide.md             |   19 +-
  docs/getting-started/worker-guide.md               |    3 +-
  docs/reference/configuration/system-json.md        |  135 +-
  docs/reference/validate-and-doctor.md              |    4 +-
- .../2026-06-25-tool-portal-composition-contract.md | 1687 ++++
+ .../2026-06-25-tool-portal-composition-contract.md | 1690 ++++
  ...6-06-30-gateway-control-session-hard-cutover.md | 2445 ++++++
  ...26-07-01-socketio-control-protocol-semantics.md | 1052 +++
  .../architecture-recheck-report.md                 |  179 +
@@ -135,8 +135,8 @@
  .../control-session/control-session-dispatcher.ts  |  253 +
  .../gateway-control-caller-context.ts              |  184 +
  .../gateway-control-caller-context.unit.test.ts    |  227 +
- ...control-controller-host-action-authorization.ts |  153 +
- ...ntroller-host-action-authorization.unit.test.ts |  338 +
+ ...control-controller-host-action-authorization.ts |  130 +
+ ...ntroller-host-action-authorization.unit.test.ts |  392 +
  .../gateway-control-domain-handler.ts              |  866 ++
  .../gateway-control-domain-handler.unit.test.ts    | 1195 +++
  .../control-session/gateway-control-lease-rpc.ts   |  250 +
@@ -193,7 +193,7 @@
  .../src/gateway/gateway-zone-orchestrator.ts       |  237 +-
  .../agent-vm/src/gateway/gateway-zone-support.ts   |   42 +-
  ...mcp-portal-effective-config.integration.test.ts |   37 +-
- .../src/gateway/mcp-portal-effective-config.ts     |  186 +-
+ .../src/gateway/mcp-portal-effective-config.ts     |  255 +-
  .../mcp-portal-effective-config.unit.test.ts       |  195 +-
  .../integration-tests/e2e-harness.host.e2e.test.ts |  127 +-
  .../agent-vm/src/integration-tests/e2e-harness.ts  |  224 +-
@@ -303,7 +303,8 @@
  .../gateway-control-event-publisher.unit.test.ts   |  222 +
  .../gateway-control-lease-client.ts                |  693 ++
  .../gateway-control-lease-client.unit.test.ts      |  712 ++
- .../gateway-control-service-runtime.ts             |  151 +
+ .../gateway-control-service-runtime.ts             |  190 +
+ .../gateway-control-service-runtime.unit.test.ts   |   42 +
  .../gateway-control-service.integration.test.ts    | 1903 +++++
  .../gateway-control-service.ts                     | 1136 +++
  .../src/gondolin-plugin-config.ts                  |   98 +-
@@ -331,8 +332,8 @@
  packages/tool-portal/src/cli-allowances/index.ts   |    2 +
  .../cli-allowances/models/cli-allowance-schema.ts  |   64 +
  .../tool-portal/src/in-process-entrypoint/index.ts |    2 +
- .../managed-tool-portal-runtime.ts                 |  275 +
- .../managed-tool-portal-runtime.unit.test.ts       |  235 +
+ .../managed-tool-portal-runtime.ts                 |  300 +
+ .../managed-tool-portal-runtime.unit.test.ts       |  291 +
  .../tool-portal-in-process-entrypoint.ts           |  440 +
  .../tool-portal-in-process-entrypoint.unit.test.ts |  500 ++
  ...tal-mcp-backed-capabilities.integration.test.ts |  114 +
@@ -367,7 +368,7 @@
  .../agent-portal/fake-tool-portal-controller.ts    |   30 +
  .../agent-portal/portal-contract-assertions.ts     |   65 +
  .../debug-investigation.md                         |   41 +
- .../copy-paste-prompt.md                           |  253 +
+ .../copy-paste-prompt.md                           |  255 +
  .../execution-report-event-186.md                  |  120 +
  .../execution-report-event-187.md                  |   75 +
  .../execution-report-event-188.md                  |   96 +
@@ -390,12 +391,12 @@
  .../reducer-report-event-194.md                    |   71 +
  .../reducer-report-event-197.md                    |  160 +
  .../reducer-report.md                              |  120 +
- .../review-packet.md                               | 1061 +++
- .../staged-name-status.txt                         |  352 +
- .../staged-stat.txt                                |  353 +
- .../2026-07-02-socketio-control-plane/details.md   | 8372 ++++++++++++++++++++
- .../2026-07-02-socketio-control-plane/events.jsonl |  200 +
+ .../review-packet.md                               | 1057 +++
+ .../staged-name-status.txt                         |  400 +
+ .../staged-stat.txt                                |  401 +
+ .../2026-07-02-socketio-control-plane/details.md   | 8465 ++++++++++++++++++++
+ .../2026-07-02-socketio-control-plane/events.jsonl |  203 +
  tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
  vitest.config.ts                                   |   57 +-
- 400 files changed, 68944 insertions(+), 11058 deletions(-)
+ 401 files changed, 69416 insertions(+), 11059 deletions(-)

@@ -99,7 +99,7 @@ Infrastructure facts verified against the repo:
 | control-residue audit | architecture gate | `pnpm check` | S5/S6/S7/SW | no shippable old control vocabulary/surfaces |
 | controller route disposition | integration | `pnpm test:integration` | S4b/S6b/S7 | 404/auth for old HTTP mutation routes |
 | git-egress denial | e2e-vm | `mise exec -- pnpm run test:e2e:vm` | SG (SSH Git) | host-boundary receive-pack denial (gondolin-adapter execPolicy) |
-| worker control e2e | e2e-worker | `mise exec -- pnpm run test:e2e:worker` | SWb/SWc | Worker Socket.IO handshake and git RPC path |
+| worker control e2e | e2e-worker | `set -a; source .env.local; set +a; AGENT_VM_TEST_OPENAI_API_KEY="$OPEN_AI_TEST_KEY" mise exec -- pnpm run test:e2e:worker` | SWb/SWc | Worker Socket.IO handshake and git RPC path; the bare command may fail the evidence wrapper because live Worker model tests skip without this credential mapping |
 | full-system beta deployment | external live proof | `../shravan-claw-beta` deployment run/logs | parent/PR wrapup | actual Discord plus actual OpenClaw managed runtime; no fake Discord provider or mock OpenClaw substitute |
 
 ## Open Questions

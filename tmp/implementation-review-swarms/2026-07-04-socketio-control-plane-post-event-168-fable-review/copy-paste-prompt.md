@@ -225,6 +225,21 @@ In particular, scrutinize:
     - Host zone-git proof fixtures use non-protected branch names when the
       protected branch guard is not the behavior under test.
     - Full VM e2e, default four-lane e2e, and `pnpm check` are fresh and green.
+28. Event 202 Bugbot drift fixes:
+    - `zones[].toolPortal` is documented as the managed Tool Portal root, not a
+      stale field.
+    - The managed Tool Portal runtime plugin path is
+      `runtimePluginConfigs.gondolin.toolPortal`.
+    - The architecture overview package graph/table includes
+      `control-protocol-contracts`, `gateway-control-contracts`, and
+      `worker-control-contracts`.
+29. Event 203 beta proof status:
+    - Beta controller, OpenClaw ingress, `/readyz`, doctor, validate, Discord
+      gateway connectivity, and OpenClaw `2026.6.8` plugin loading are freshly
+      proven.
+    - Fresh actual allowed-user Discord inbound proof is still missing and
+      remains a PR-readiness blocker, not a code-review finding unless code
+      makes the proof impossible.
 
 Return only grounded candidate findings:
 

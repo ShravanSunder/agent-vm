@@ -8441,6 +8441,64 @@ Still not PR-ready:
   required.
 - No checkpoint commit has been made yet.
 
+## Event 204 Composer Review Reception And Unit Fixture Fix
+
+Completed in this checkpoint:
+- Received Composer code review over `mcp-portal-better-interface` vs
+  `origin/master`, scoped to TypeScript implementation, tests, scripts, and
+  config schemas.
+- Reproduced the high-severity unit gate failure:
+  - `pnpm test:unit` initially exited 1.
+  - Failure shape: 6 failed files / 27 failed tests.
+  - Root cause: stale valid-OpenClaw-zone fixtures omitted the new required
+    `zones[].agents` trusted-agent list.
+- Fixed the six stale fixture builders:
+  - `packages/agent-vm/src/cli/backup-commands.unit.test.ts`
+  - `packages/agent-vm/src/cli/cache-commands.unit.test.ts`
+  - `packages/agent-vm/src/observability/observability-config.unit.test.ts`
+  - `packages/agent-vm/src/operations/doctor.unit.test.ts`
+  - `packages/agent-vm/src/operations/openclaw-deployment-doctor.unit.test.ts`
+  - `packages/agent-vm/src/controller/leases/openclaw-tool-vm-lease-create-options.unit.test.ts`
+- Refreshed the current review packet metadata and inventory after commits
+  `64fd26d` and `3a9cdf5`:
+  - `HEAD: 3a9cdf5`
+  - branch diff: `origin/master...HEAD`
+  - 401 paths
+  - 401 files changed, 69416 insertions, 11059 deletions
+- Added Event 202 and Event 203 focus notes to the Fable copy-paste prompt.
+
+Fresh proof:
+- Focused six-file unit rerun passed 6 files / 68 tests.
+- Full unit gate passed:
+  - `pnpm test:unit`
+  - 241 files / 2105 tests passed.
+- Ad-hoc Vitest no-project repro did not reproduce Composer's low-severity
+  config complaint:
+  - `pnpm vitest run packages/agent-vm/src/config/system-config.unit.test.ts --reporter=verbose`
+  - 1 file / 161 tests passed.
+- `git diff --check` passed after review packet and fixture edits.
+
+Review reducer notes:
+- Composer's high-severity stale unit fixture finding is accepted and fixed.
+- Composer's stale profile-resolution unit expectation is accepted and fixed by
+  the same fixture update.
+- Composer's multi-agent caller-context concern is rejected as a blocker and
+  accepted as an intentional scoped fail-closed restriction. Evidence:
+  `gateway-zone-orchestrator.ts` rejects multi-agent caller context "until
+  controller-signed agent attestation is implemented", and
+  `gateway-zone-orchestrator.integration.test.ts` has matching coverage named
+  "rejects caller context registration for multi-agent OpenClaw zones until
+  agent attestation exists". This preserves the trust boundary until a future
+  spec defines signed agent attestation.
+- Composer's low-severity diagnostics/error-classification concerns remain
+  follow-up candidates unless a later review promotes them.
+
+Still not PR-ready:
+- Implementation review freshness remains required.
+- Live `../shravan-claw-beta` actual Discord/OpenClaw inbound proof remains
+  required.
+- PR-ready non-merge wrapup remains required.
+
 ## Event 201 Checkpoint Commit And Review Packet Retarget
 
 Completed in this checkpoint:

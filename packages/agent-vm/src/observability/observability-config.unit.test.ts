@@ -47,6 +47,7 @@ function createConfig(): SystemConfigInput {
 		zones: [
 			{
 				id: 'sunfam',
+				agents: [{ id: 'main' }],
 				gateway: {
 					type: 'openclaw',
 					controlAuth: {

@@ -92,6 +92,7 @@ function createSystemConfig(
 						authProfilesByAgent,
 					},
 					id: 'shravan',
+					agents: [{ id: 'sun' }],
 					...(mcpConfigDir === undefined ? {} : { toolPortal: { configDir: mcpConfigDir } }),
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {

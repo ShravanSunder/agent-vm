@@ -12,8 +12,9 @@ fixes were folded in, the Event 189 accepted findings were fixed, the
 post-Event-190 accepted findings were fixed in Event 191, the Event 192
 Worker-control scope gap was fixed, the Event 193 post-Fable findings were
 fixed, the Event 194 accepted findings were fixed, the Event 195 accepted
-findings were fixed, and the post-Event-197 terminal proof repairs were folded
-in.
+findings were fixed, the post-Event-197 terminal proof repairs were folded in,
+the Event 202 Bugbot documentation drift fixes were committed, and the Event 203
+beta runtime proof status was recorded.
 
 Review the current repository state, not the older final-terminal review packet.
 Older packets and reducers remain useful as finding history only:
@@ -71,7 +72,7 @@ Branch/base:
 
 ```text
 branch: mcp-portal-better-interface
-HEAD: af018d2
+HEAD: 3a9cdf5
 base: origin/master 479ad73
 working tree: expected clean
 branch diff: `origin/master...HEAD`
@@ -659,10 +660,10 @@ git diff --name-only | wc -l
   0
 
 git diff --name-only origin/master...HEAD | wc -l
-  400
+  401
 
 git diff --shortstat origin/master...HEAD
-  400 files changed, 68944 insertions(+), 11058 deletions(-)
+  401 files changed, 69416 insertions(+), 11059 deletions(-)
 
 pnpm vitest run --config vitest.config.ts --project unit packages/control-protocol-contracts/src/control-protocol-contracts.unit.test.ts packages/gateway-control-contracts/src/gateway-control-contracts.unit.test.ts packages/worker-control-contracts/src/worker-control-contracts.unit.test.ts packages/gateway-interface/src/health/controller-request-policy.unit.test.ts packages/agent-vm/src/controller/control-session/gateway-control-domain-handler.unit.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-controller-host-action-backend.unit.test.ts
   passed after Event 188 fixes, 6 files / 72 tests
@@ -951,18 +952,21 @@ pnpm check
   passed, 10 passed / 0 failed in about 27.9s
 
 git diff --name-only origin/master...HEAD | wc -l
-  400
+  401
 
 git diff --stat origin/master...HEAD
-  400 files changed; use live `git diff --stat origin/master...HEAD` for
+  401 files changed; use live `git diff --stat origin/master...HEAD` for
   exact insertion/deletion counts.
 ```
 
-Fable should treat beta Discord/OpenClaw proof as stale relative to the
-post-Event-194 and post-Event-197 fixes. Terminal VM/default e2e and
-`pnpm check` are fresh as of Event 200; beta proof is still useful regression
-history, not final PR-ready proof. If this review comes back clean, the next
-execution step is to refresh beta proof before PR-ready non-merge wrapup.
+Fable should treat beta Discord/OpenClaw proof as incomplete for PR readiness.
+Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
+connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
+fresh allowed-user inbound Discord message after the latest runtime fixes.
+Terminal VM/default e2e and `pnpm check` are fresh as of Event 200, and
+`pnpm check` was refreshed again for Event 202 Bugbot drift fixes. If this
+review comes back clean, the next execution step is to obtain beta actual
+allowed-user Discord inbound proof before PR-ready non-merge wrapup.
 
 Latest beta Discord/OpenClaw proof recorded in workflow state:
 

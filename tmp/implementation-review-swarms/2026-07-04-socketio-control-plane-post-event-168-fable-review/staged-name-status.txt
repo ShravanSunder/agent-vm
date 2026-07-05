@@ -304,6 +304,7 @@ A	packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-
 A	packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-lease-client.ts
 A	packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-lease-client.unit.test.ts
 A	packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service-runtime.ts
+A	packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service-runtime.unit.test.ts
 A	packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service.integration.test.ts
 A	packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service.ts
 M	packages/openclaw-agent-vm-plugin/src/gondolin-plugin-config.ts
