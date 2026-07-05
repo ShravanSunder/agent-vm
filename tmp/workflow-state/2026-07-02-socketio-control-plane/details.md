@@ -8847,6 +8847,60 @@ Blocked status:
   - manually send an allowed-user Discord message into the configured beta
     channel and let this session capture log/trajectory/readback evidence.
 
+## Event 217 Live Beta Discord/OpenClaw Proof Closed
+
+Completed in this checkpoint:
+- Stored the provided 1Password service/access token outside the repo under a
+  locked temp directory:
+  - temp directory permissions: `0700`
+  - token file permissions: `0600`
+  - no token value was printed.
+- Used the service/access token to resolve the actual Discord sender bot token
+  into a second locked temp file:
+  - Discord bot token file permissions: `0600`
+  - no token value was printed.
+- Sent a fresh external Discord REST message into the configured beta channel:
+  - sender id: `1508937355816472747`
+  - sender username: `clawfest`
+  - sender bot: `true`
+  - channel id: `1505884477535158352`
+  - message id: `1523270012196880515`
+  - created at: `2026-07-05T10:11:11.896000+00:00`
+  - nonce: `socketio-control-proof-20260705T101111Z`
+- Confirmed OpenClaw logs after the fresh beta boot
+  `2026-07-05T04:37:47.527Z`:
+  - line 228: Discord inbound id `1523270012196880515`
+  - line 233: message received with session key
+    `agent:beta:discord:channel:1505884477535158352`
+  - line 302: user-triggered Discord session turn created
+  - line 345: message processed with outcome `completed`
+  - line 347: `discord: delivered 1 reply to channel:1505884477535158352`
+- Confirmed trajectory proof:
+  - file:
+    `/Users/shravansunder/.agent-vm/state/beta/agents/beta/sessions/660e15a3-789a-448d-8175-c81ebac07655.trajectory.jsonl`
+  - line 1: `session.started`, trigger `user`, message provider `discord`
+  - line 4: prompt contains message id `1523270012196880515` and nonce
+    `socketio-control-proof-20260705T101111Z`
+  - line 5: `model.completed` with assistant text
+    `BETA_PROOF_OK socketio-control-proof-20260705T101111Z`
+  - line 6: `trace.artifacts`, final status `success`, same assistant text
+- Discord message-list readback caveat:
+  - `GET /channels/1505884477535158352/messages` with the sender bot token
+    returned HTTP 200 but zero messages for `limit`, `before`, `after`, and
+    `around` queries.
+  - The Discord-side proof retained is the successful send response with the
+    message id/timestamp above; OpenClaw logs and trajectory prove the message
+    was received, processed, and replied to through actual Discord/OpenClaw.
+- Post-proof beta health remained green:
+  - controller `/health`: `ok:true`
+  - controller `/zones/beta/health`: `ok:true`, `/readyz`, HTTP 200
+  - direct ingress `/readyz`: `ready:true`
+
+Current status:
+- Live beta actual Discord/OpenClaw inbound proof is now closed.
+- Next workflow should advance from implementation-review-swarm/proof closure
+  to PR-ready non-merge wrapup.
+
 ## Event 205 OpenClaw Health Rerun Reduction
 
 Completed in this checkpoint:
