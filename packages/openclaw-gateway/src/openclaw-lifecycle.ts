@@ -14,6 +14,7 @@ import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	composeNodeOptions,
 	FORCE_IPV4_EGRESS_NODE_OPTIONS,
+	GATEWAY_CONTROL_PRIVATE_ENVIRONMENT_NAMES,
 	gatewayVmAllowedHosts,
 	mergeRuntimeGatewaySecrets,
 	normalizeGitReposForSshReadAllowlist,
@@ -455,6 +456,35 @@ function assertAllowedOpenClawEnvironmentSecrets(
 		throw new Error(
 			`[${logPrefix}] OpenClaw env secret '${secretName}' must be listed in gateway.rawEnvSecrets or use injection 'http-mediation'.`,
 		);
+	}
+}
+
+function assertNoOpenClawPrivateEnvironmentCollisions(options: {
+	readonly environmentSecrets: Readonly<Record<string, string>>;
+	readonly runtimeEnvironment: Readonly<Record<string, string>> | undefined;
+	readonly runtimePrivateEnvironment: GatewayZoneConfig['runtimePrivateEnvironment'] | undefined;
+}): void {
+	const privateEnvironmentNames = new Set<string>(GATEWAY_CONTROL_PRIVATE_ENVIRONMENT_NAMES);
+	for (const secretName of Object.keys(options.environmentSecrets)) {
+		if (privateEnvironmentNames.has(secretName)) {
+			throw new Error(
+				`OpenClaw runtime environment secret '${secretName}' collides with a controller-owned private environment variable.`,
+			);
+		}
+	}
+	for (const environmentName of Object.keys(options.runtimeEnvironment ?? {})) {
+		if (privateEnvironmentNames.has(environmentName)) {
+			throw new Error(
+				`OpenClaw runtime environment '${environmentName}' collides with a controller-owned private environment variable.`,
+			);
+		}
+	}
+	for (const environmentName of Object.keys(options.runtimePrivateEnvironment ?? {})) {
+		if (!privateEnvironmentNames.has(environmentName)) {
+			throw new Error(
+				`OpenClaw private environment variable '${environmentName}' is not a registered controller-owned private environment variable.`,
+			);
+		}
 	}
 }
 
@@ -1154,6 +1184,11 @@ export const openclawLifecycle: GatewayLifecycle = {
 			environmentSecrets,
 			'openclaw-vm-runtime-raw-env-secrets',
 		);
+		assertNoOpenClawPrivateEnvironmentCollisions({
+			environmentSecrets,
+			runtimeEnvironment: zone.runtimeEnvironment,
+			runtimePrivateEnvironment: zone.runtimePrivateEnvironment,
+		});
 		const sshEgress = createManagedGitReadOnlySshEgressOptions({
 			gitReadAllowlistRepos: zone.gitReadAllowlistRepos,
 		});
@@ -1180,6 +1215,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				npm_config_cache: '/work/cache/npm',
 				pnpm_config_store_dir: '/work/cache/pnpm/store',
 				...environmentSecrets,
+				...zone.runtimePrivateEnvironment,
 				// NODE_OPTIONS goes AFTER the spread so a user-supplied
 				// NODE_OPTIONS in environmentSecrets cannot drop the
 				// forced IPv4-preference flags. composeNodeOptions

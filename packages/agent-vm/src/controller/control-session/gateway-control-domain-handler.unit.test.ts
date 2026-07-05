@@ -1,8 +1,11 @@
+import { createHmac } from 'node:crypto';
+
 import {
 	CONTROL_PROTOCOL_VERSION,
 	type ControlEnvelope,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	buildGatewayControlCallerContextProofPayload,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlLeaseSnapshot,
 	type GatewayControlLeaseUseSnapshot,
@@ -30,6 +33,22 @@ const acceptedSession = {
 	zoneId: 'zone-a',
 };
 
+const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length';
+
+function signCallerContextEvidence(
+	evidence: Omit<GatewayControlCallerContextRegisterPayload['adapterEvidence'], 'proof'>,
+): GatewayControlCallerContextRegisterPayload['adapterEvidence'] {
+	return {
+		...evidence,
+		proof: {
+			algorithm: 'hmac-sha256',
+			digest: createHmac('sha256', callerContextProofKey)
+				.update(buildGatewayControlCallerContextProofPayload(evidence), 'utf8')
+				.digest('base64url'),
+		},
+	};
+}
+
 const callerContextRegisterEnvelope = {
 	bootId: acceptedSession.bootId,
 	commandId: '44444444-4444-4444-8444-444444444444',
@@ -50,17 +69,13 @@ const callerContextRegisterEnvelope = {
 } as const;
 
 const callerContextRegisterPayload = {
-	adapterEvidence: {
+	adapterEvidence: signCallerContextEvidence({
 		agentId: 'main',
 		agentWorkspaceDir: '/home/openclaw/workspace',
-		proof: {
-			algorithm: 'hmac-sha256',
-			digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
-		},
 		sessionKey: 'agent:main:test-session',
 		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 		zoneId: 'zone-a',
-	},
+	}),
 } satisfies GatewayControlCallerContextRegisterPayload;
 
 const callerContextRegisterMessage = GatewayControlRpcMessageSchema.parse({
@@ -161,24 +176,40 @@ function createAuthorizedControllerHostActions(
 function createRegisteredCallerContexts(
 	options: { readonly purpose?: 'tool_portal_controller_host_action' | 'tool_vm_lease' } = {},
 ): ReturnType<typeof createGatewayControlCallerContextRegistry> {
-	const callerContexts = createGatewayControlCallerContextRegistry({
+	const callerContexts = createCallerContexts({
 		createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 	});
 	callerContexts.register({
 		payload: {
-			adapterEvidence: {
-				...callerContextRegisterPayload.adapterEvidence,
+			adapterEvidence: signCallerContextEvidence({
+				agentId: callerContextRegisterPayload.adapterEvidence.agentId,
+				agentWorkspaceDir: callerContextRegisterPayload.adapterEvidence.agentWorkspaceDir,
 				...(options.purpose === undefined ? {} : { purpose: options.purpose }),
-			},
+				sessionKey: callerContextRegisterPayload.adapterEvidence.sessionKey,
+				workMountDir: callerContextRegisterPayload.adapterEvidence.workMountDir,
+				zoneId: callerContextRegisterPayload.adapterEvidence.zoneId,
+			}),
 		},
 		session: acceptedSession,
 	});
 	return callerContexts;
 }
 
+function createCallerContexts(
+	options: {
+		readonly createCallerContextId?: () => string;
+		readonly maxContexts?: number;
+	} = {},
+): ReturnType<typeof createGatewayControlCallerContextRegistry> {
+	return createGatewayControlCallerContextRegistry({
+		callerContextProofKey,
+		...options,
+	});
+}
+
 describe('gateway control domain handler', () => {
 	it('issues callerContextId through the dispatcher without exposing raw evidence in the result', async () => {
-		const callerContexts = createGatewayControlCallerContextRegistry({
+		const callerContexts = createCallerContexts({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 		});
 		const dispatcher = createControlSessionDispatcher();
@@ -210,7 +241,7 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('creates a lease only through a registered callerContextId', async () => {
-		const callerContexts = createGatewayControlCallerContextRegistry({
+		const callerContexts = createCallerContexts({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 		});
 		const createLease = vi.fn(async () => leaseSnapshot);
@@ -301,7 +332,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				leaseRpc,
 				session: acceptedSession,
 			}),
@@ -333,7 +364,7 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects lease_create when callerContextId belongs to a previous gateway boot', async () => {
-		const callerContexts = createGatewayControlCallerContextRegistry({
+		const callerContexts = createCallerContexts({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 		});
 		callerContexts.register({
@@ -383,7 +414,7 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects lease_create when callerContextId belongs to a previous accepted session', async () => {
-		const callerContexts = createGatewayControlCallerContextRegistry({
+		const callerContexts = createCallerContexts({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 		});
 		callerContexts.register({
@@ -638,7 +669,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				session: acceptedSession,
 			}),
 		);
@@ -675,7 +706,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				recordHealthEvent,
 				session: acceptedSession,
 			}),
@@ -720,7 +751,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				recordHealthEvent,
 				session: acceptedSession,
 			}),
@@ -756,7 +787,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				recordHealthEvent,
 				session: acceptedSession,
 			}),
@@ -798,7 +829,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				recordRuntimeStatus,
 				session: acceptedSession,
 			}),
@@ -966,7 +997,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				session: acceptedSession,
 			}),
 		);
@@ -1018,7 +1049,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
 				session: acceptedSession,
 			}),
@@ -1153,7 +1184,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				session: acceptedSession,
 			}),
 		);
@@ -1194,7 +1225,7 @@ describe('gateway control domain handler', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createCallerContexts(),
 				session: acceptedSession,
 			}),
 		);

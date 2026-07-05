@@ -22,6 +22,7 @@ import {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import {
+	buildGatewayControlPrivateEnvironment,
 	buildGatewayControlEndpoint,
 	buildGatewayControlRuntimePluginConfig,
 	connectGatewayControlSession,
@@ -261,6 +262,12 @@ function buildControlSessionRuntimePluginConfigs(options: {
 			controlSession: buildGatewayControlRuntimePluginConfig(options.material),
 		},
 	};
+}
+
+function buildControlSessionRuntimePrivateEnvironment(options: {
+	readonly material: ReturnType<typeof createGatewayControlSessionMaterial>;
+}): GatewayZoneConfig['runtimePrivateEnvironment'] {
+	return buildGatewayControlPrivateEnvironment(options.material);
 }
 
 function secretRefCacheKey(secretRef: SecretRef): string {
@@ -713,6 +720,10 @@ async function preflightGatewayZoneStartPrerequisites(
 		controlSessionMaterial === undefined
 			? undefined
 			: buildControlSessionRuntimePluginConfigs({ material: controlSessionMaterial });
+	const controlSessionRuntimePrivateEnvironment =
+		controlSessionMaterial === undefined
+			? undefined
+			: buildControlSessionRuntimePrivateEnvironment({ material: controlSessionMaterial });
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 	const cachingSecretResolver = createPreflightCachingSecretResolver(options.secretResolver);
 	const [toolPortalMaterialization] = await Promise.all([
@@ -752,6 +763,9 @@ async function preflightGatewayZoneStartPrerequisites(
 					},
 				}),
 		...(runtimePluginConfigs === undefined ? {} : { runtimePluginConfigs }),
+		...(controlSessionRuntimePrivateEnvironment === undefined
+			? {}
+			: { runtimePrivateEnvironment: controlSessionRuntimePrivateEnvironment }),
 	};
 	if (zone.gateway.type === 'openclaw') {
 		await assertOpenClawToolVmRequirements({ ...options.systemConfig, zones: [zone] }, zone.id);
@@ -781,6 +795,10 @@ export async function startGatewayZone(
 		controlSessionMaterial === undefined
 			? undefined
 			: buildControlSessionRuntimePluginConfigs({ material: controlSessionMaterial });
+	const controlSessionRuntimePrivateEnvironment =
+		controlSessionMaterial === undefined
+			? undefined
+			: buildControlSessionRuntimePrivateEnvironment({ material: controlSessionMaterial });
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 
 	// Phase A: prove ownership before doing any other startup work.
@@ -978,6 +996,9 @@ export async function startGatewayZone(
 					},
 				}),
 		...(runtimePluginConfigs === undefined ? {} : { runtimePluginConfigs }),
+		...(controlSessionRuntimePrivateEnvironment === undefined
+			? {}
+			: { runtimePrivateEnvironment: controlSessionRuntimePrivateEnvironment }),
 	};
 	await fs.mkdir(zone.gateway.stateDir, { recursive: true });
 	if (zone.gateway.type === 'openclaw') {
@@ -1097,7 +1118,9 @@ export async function startGatewayZone(
 						dispatcher.register(
 							'gateway_control',
 							createGatewayControlDomainHandler({
-								callerContexts: createGatewayControlCallerContextRegistry(),
+								callerContexts: createGatewayControlCallerContextRegistry({
+									callerContextProofKey: controlSessionMaterial.callerContextProofKey,
+								}),
 								...(options.gatewayControlControllerHostActions === undefined
 									? {}
 									: {

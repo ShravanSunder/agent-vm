@@ -15,7 +15,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
+import {
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+	type GatewayZoneConfig,
+} from '@agent-vm/gateway-interface';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -145,6 +148,7 @@ function createZone(overrides?: {
 	readonly runtimeMcpServers?: GatewayZoneConfig['runtimeMcpServers'];
 	readonly runtimeEnvironment?: GatewayZoneConfig['runtimeEnvironment'];
 	readonly runtimeMediatedSecrets?: GatewayZoneConfig['runtimeMediatedSecrets'];
+	readonly runtimePrivateEnvironment?: GatewayZoneConfig['runtimePrivateEnvironment'];
 	readonly observability?: GatewayZoneConfig['observability'];
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly gitReadAllowlistRepos?: GatewayZoneConfig['gitReadAllowlistRepos'];
@@ -217,6 +221,9 @@ function createZone(overrides?: {
 		...(overrides?.runtimeEnvironment ? { runtimeEnvironment: overrides.runtimeEnvironment } : {}),
 		...(overrides?.runtimeMediatedSecrets
 			? { runtimeMediatedSecrets: overrides.runtimeMediatedSecrets }
+			: {}),
+		...(overrides?.runtimePrivateEnvironment
+			? { runtimePrivateEnvironment: overrides.runtimePrivateEnvironment }
 			: {}),
 		...(overrides?.runtimePluginConfigs
 			? { runtimePluginConfigs: overrides.runtimePluginConfigs }
@@ -554,6 +561,54 @@ describe('openclawLifecycle', () => {
 
 			expect(vmSpec.environment.OPENCLAW_TEST_RUNTIME_SECRET).toBe('runtime-test-secret');
 			expect(vmSpec.mediatedSecrets.OPENCLAW_TEST_RUNTIME_SECRET).toBeUndefined();
+		});
+
+		it('injects controller-owned private environment without runtime secret mediation', () => {
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 3,
+				},
+				zone: createZone({
+					runtimePrivateEnvironment: {
+						[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'private-proof-key',
+					},
+				}),
+			});
+
+			expect(vmSpec.environment[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBe(
+				'private-proof-key',
+			);
+			expect(vmSpec.mediatedSecrets[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBeUndefined();
+		});
+
+		it('rejects user runtime environment that collides with controller-owned private names', () => {
+			expect(() =>
+				openclawLifecycle.buildVmSpec({
+					controllerPort: 18800,
+					gatewayCacheDir: '/host/cache/gateways/shravan',
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					resolvedSecrets,
+					runtimeDir: '/host/runtime',
+					tcpPool: {
+						basePort: 19000,
+						size: 3,
+					},
+					zone: createZone({
+						gateway: {
+							rawEnvSecrets: ['DISCORD_BOT_TOKEN', GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV],
+						},
+						runtimeEnvironment: {
+							[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'user-proof-key',
+						},
+					}),
+				}),
+			).toThrow(/collides with a controller-owned private environment variable/u);
 		});
 
 		it('injects generated runtime mediated secrets without authored zone secret config entries', () => {
@@ -1500,6 +1555,89 @@ describe('openclawLifecycle', () => {
 			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
 				/managed OpenClaw does not accept runtime mcp-portal plugin config/u,
 			);
+		});
+
+		it('does not serialize the gateway caller-context proof key into effective OpenClaw config', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-proof-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						plugins: {
+							allow: ['gondolin'],
+							entries: { gondolin: { enabled: true } },
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				runtimePluginConfigs: {
+					gondolin: {
+						controlSession: {
+							bootId: 'boot-a',
+							controllerEpoch: 'epoch-a',
+							generationId: 'generation-a',
+							peerId: 'gateway-shravan',
+							verifierPublicKeyPem: 'public-key',
+						},
+					},
+				},
+				runtimePrivateEnvironment: {
+					[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'private-proof-key',
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(effectiveOpenClawConfigContent).not.toContain('private-proof-key');
+			expect(effectiveOpenClawConfigContent).not.toContain(
+				GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+			);
+			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
+				plugins: {
+					entries: {
+						gondolin: {
+							config: {
+								controlSession: {
+									bootId: 'boot-a',
+									controllerEpoch: 'epoch-a',
+									generationId: 'generation-a',
+									peerId: 'gateway-shravan',
+									verifierPublicKeyPem: 'public-key',
+								},
+								zoneId: 'shravan',
+							},
+						},
+					},
+				},
+			});
 		});
 
 		it('resolves all per-agent auth profiles before writing files', async () => {

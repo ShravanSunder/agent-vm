@@ -1,6 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
-import type { GatewayControlCallerContextRegisterPayloadSchema } from '@agent-vm/gateway-control-contracts';
+import {
+	buildGatewayControlCallerContextProofPayload,
+	type GatewayControlCallerContextRegisterPayloadSchema,
+} from '@agent-vm/gateway-control-contracts';
 import {
 	isOpenClawAgentSessionKey,
 	resolveOpenClawAgentIdFromSessionKey,
@@ -59,6 +62,7 @@ export function digestGatewayControlSessionKey(sessionKey: string): string {
 
 function assertGatewayControlCallerContextEvidence(
 	evidence: GatewayControlCallerContextRegisterPayload['adapterEvidence'],
+	callerContextProofKey: string,
 ): void {
 	if (!isOpenClawAgentSessionKey(evidence.sessionKey)) {
 		throw new Error('gateway caller context sessionKey is not agent-shaped');
@@ -66,6 +70,27 @@ function assertGatewayControlCallerContextEvidence(
 	const sessionAgentId = resolveOpenClawAgentIdFromSessionKey(evidence.sessionKey);
 	if (sessionAgentId !== evidence.agentId) {
 		throw new Error('gateway caller context agentId does not match sessionKey agent');
+	}
+	const expectedDigest = createHmac('sha256', callerContextProofKey)
+		.update(
+			buildGatewayControlCallerContextProofPayload({
+				agentId: evidence.agentId,
+				agentWorkspaceDir: evidence.agentWorkspaceDir,
+				purpose: evidence.purpose,
+				sessionKey: evidence.sessionKey,
+				workMountDir: evidence.workMountDir,
+				zoneId: evidence.zoneId,
+			}),
+			'utf8',
+		)
+		.digest('base64url');
+	const expectedDigestBytes = Buffer.from(expectedDigest, 'utf8');
+	const observedDigestBytes = Buffer.from(evidence.proof.digest, 'utf8');
+	if (
+		observedDigestBytes.length !== expectedDigestBytes.length ||
+		!timingSafeEqual(observedDigestBytes, expectedDigestBytes)
+	) {
+		throw new Error('gateway caller context proof digest is invalid');
 	}
 }
 
@@ -89,12 +114,12 @@ function buildCallerContextCacheKey(options: {
 	].join('\u0000');
 }
 
-export function createGatewayControlCallerContextRegistry(
-	options: {
-		readonly createCallerContextId?: () => string;
-		readonly maxContexts?: number;
-	} = {},
-): GatewayControlCallerContextRegistry {
+export function createGatewayControlCallerContextRegistry(options: {
+	readonly callerContextProofKey: string;
+	readonly createCallerContextId?: () => string;
+	readonly maxContexts?: number;
+}): GatewayControlCallerContextRegistry {
+	const callerContextProofKey = options.callerContextProofKey;
 	const createCallerContextId = options.createCallerContextId ?? randomUUID;
 	const maxContexts = options.maxContexts ?? DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_LIMIT;
 	const contextById = new Map<string, GatewayControlTrustedCallerContext>();
@@ -143,7 +168,7 @@ export function createGatewayControlCallerContextRegistry(
 			if (evidence.zoneId !== session.zoneId) {
 				throw new Error('gateway caller context zoneId mismatch');
 			}
-			assertGatewayControlCallerContextEvidence(evidence);
+			assertGatewayControlCallerContextEvidence(evidence, callerContextProofKey);
 			removeSupersededSessionContexts(session);
 			const cacheKey = buildCallerContextCacheKey({ evidence, session });
 			const existingContextId = contextIdByCacheKey.get(cacheKey);

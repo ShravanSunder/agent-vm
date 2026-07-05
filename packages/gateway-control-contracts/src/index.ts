@@ -522,7 +522,7 @@ const GatewayControlRpcRecoveryCommandResultMessageSchema =
 const GatewayControlHeartbeatMessageSchema = z
 	.object({
 		kind: z.literal('heartbeat'),
-		operation: z.undefined().optional(),
+		operation: z.never().optional(),
 		payload: GatewayControlHeartbeatPayloadSchema,
 	})
 	.strict();

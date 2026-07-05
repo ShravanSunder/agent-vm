@@ -1,4 +1,9 @@
-import type { GatewayControlCallerContextRegisterPayload } from '@agent-vm/gateway-control-contracts';
+import { createHmac } from 'node:crypto';
+
+import {
+	buildGatewayControlCallerContextProofPayload,
+	type GatewayControlCallerContextRegisterPayload,
+} from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -15,23 +20,56 @@ const acceptedSession = {
 	zoneId: 'zone-a',
 };
 
-const registerPayload = {
-	adapterEvidence: {
+const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length';
+
+function signRegisterPayload(
+	payload: Omit<GatewayControlCallerContextRegisterPayload['adapterEvidence'], 'proof'>,
+): GatewayControlCallerContextRegisterPayload {
+	return {
+		adapterEvidence: {
+			...payload,
+			proof: {
+				algorithm: 'hmac-sha256',
+				digest: createHmac('sha256', callerContextProofKey)
+					.update(buildGatewayControlCallerContextProofPayload(payload), 'utf8')
+					.digest('base64url'),
+			},
+		},
+	};
+}
+
+function createRegisterPayload(
+	overrides: Partial<
+		Omit<GatewayControlCallerContextRegisterPayload['adapterEvidence'], 'proof'>
+	> = {},
+): GatewayControlCallerContextRegisterPayload {
+	return signRegisterPayload({
 		agentId: 'main',
 		agentWorkspaceDir: '/home/openclaw/workspace',
-		proof: {
-			algorithm: 'hmac-sha256',
-			digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
-		},
 		sessionKey: 'agent:main:test-session',
 		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 		zoneId: 'zone-a',
-	},
-} satisfies GatewayControlCallerContextRegisterPayload;
+		...overrides,
+	});
+}
+
+const registerPayload = createRegisterPayload();
+
+function createRegistry(
+	options: {
+		readonly createCallerContextId?: () => string;
+		readonly maxContexts?: number;
+	} = {},
+): ReturnType<typeof createGatewayControlCallerContextRegistry> {
+	return createGatewayControlCallerContextRegistry({
+		callerContextProofKey,
+		...options,
+	});
+}
 
 describe('gateway control caller context registry', () => {
 	it('issues an opaque context id and stores only a sessionKey digest', () => {
-		const registry = createGatewayControlCallerContextRegistry({
+		const registry = createRegistry({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 		});
 
@@ -60,7 +98,7 @@ describe('gateway control caller context registry', () => {
 
 	it('does not reuse the same evidence across a new gateway boot', () => {
 		let nextContextId = 0;
-		const registry = createGatewayControlCallerContextRegistry({
+		const registry = createRegistry({
 			createCallerContextId: () => {
 				nextContextId += 1;
 				return `44444444-4444-4444-8444-${String(nextContextId).padStart(12, '0')}`;
@@ -86,7 +124,7 @@ describe('gateway control caller context registry', () => {
 
 	it('does not reuse the same evidence across a new accepted control session', () => {
 		let nextContextId = 0;
-		const registry = createGatewayControlCallerContextRegistry({
+		const registry = createRegistry({
 			createCallerContextId: () => {
 				nextContextId += 1;
 				return `44444444-4444-4444-8444-${String(nextContextId).padStart(12, '0')}`;
@@ -113,7 +151,7 @@ describe('gateway control caller context registry', () => {
 
 	it('evicts completed caller contexts so the hard cap is not a steady-state failure', () => {
 		let nextContextId = 0;
-		const registry = createGatewayControlCallerContextRegistry({
+		const registry = createRegistry({
 			createCallerContextId: () => {
 				nextContextId += 1;
 				return `44444444-4444-4444-8444-${String(nextContextId).padStart(12, '0')}`;
@@ -129,10 +167,7 @@ describe('gateway control caller context registry', () => {
 
 		const secondContext = registry.register({
 			payload: {
-				adapterEvidence: {
-					...registerPayload.adapterEvidence,
-					sessionKey: 'agent:main:second-session',
-				},
+				...createRegisterPayload({ sessionKey: 'agent:main:second-session' }),
 			},
 			session: acceptedSession,
 		});
@@ -142,7 +177,7 @@ describe('gateway control caller context registry', () => {
 	});
 
 	it('dedupes the same evidence within the accepted session', () => {
-		const registry = createGatewayControlCallerContextRegistry({
+		const registry = createRegistry({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 		});
 
@@ -159,7 +194,7 @@ describe('gateway control caller context registry', () => {
 	});
 
 	it('rejects new caller contexts after the registry cap is reached', () => {
-		const registry = createGatewayControlCallerContextRegistry({
+		const registry = createRegistry({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 			maxContexts: 1,
 		});
@@ -171,35 +206,25 @@ describe('gateway control caller context registry', () => {
 
 		expect(() =>
 			registry.register({
-				payload: {
-					adapterEvidence: {
-						...registerPayload.adapterEvidence,
-						sessionKey: 'agent:main:second-session',
-					},
-				},
+				payload: createRegisterPayload({ sessionKey: 'agent:main:second-session' }),
 				session: acceptedSession,
 			}),
 		).toThrow(/caller context registry limit exceeded/u);
 	});
 
 	it('rejects registration evidence for a different zone', () => {
-		const registry = createGatewayControlCallerContextRegistry();
+		const registry = createRegistry();
 
 		expect(() =>
 			registry.register({
-				payload: {
-					adapterEvidence: {
-						...registerPayload.adapterEvidence,
-						zoneId: 'other-zone',
-					},
-				},
+				payload: createRegisterPayload({ zoneId: 'other-zone' }),
 				session: acceptedSession,
 			}),
 		).toThrow(/zoneId mismatch/u);
 	});
 
 	it('rejects registration evidence with a malformed session key', () => {
-		const registry = createGatewayControlCallerContextRegistry();
+		const registry = createRegistry();
 
 		expect(() =>
 			registry.register({
@@ -215,7 +240,7 @@ describe('gateway control caller context registry', () => {
 	});
 
 	it('rejects registration evidence when agentId does not match the session key', () => {
-		const registry = createGatewayControlCallerContextRegistry();
+		const registry = createRegistry();
 
 		expect(() =>
 			registry.register({
@@ -228,5 +253,24 @@ describe('gateway control caller context registry', () => {
 				session: acceptedSession,
 			}),
 		).toThrow(/agentId does not match sessionKey agent/u);
+	});
+
+	it('rejects HMAC-signed evidence when the session key suffix is changed after signing', () => {
+		const registry = createRegistry();
+		const signedPayload = createRegisterPayload({
+			sessionKey: 'agent:main:original-session',
+		});
+
+		expect(() =>
+			registry.register({
+				payload: {
+					adapterEvidence: {
+						...signedPayload.adapterEvidence,
+						sessionKey: 'agent:main:forged-session',
+					},
+				},
+				session: acceptedSession,
+			}),
+		).toThrow(/proof digest is invalid/u);
 	});
 });

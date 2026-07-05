@@ -16,6 +16,10 @@ export {
 	websocketUpgradesForAudience,
 } from './websocket-upgrade-policy.js';
 export {
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+	GATEWAY_CONTROL_PRIVATE_ENVIRONMENT_NAMES,
+} from './gateway-control-private-environment.js';
+export {
 	agentVmHealthEventKinds,
 	agentVmHealthResultKinds,
 	deriveZoneHealthSnapshot,
@@ -45,6 +49,7 @@ export { composeNodeOptions, FORCE_IPV4_EGRESS_NODE_OPTIONS } from './force-ipv4
 export type { EgressHostConfig, RuntimeVmAudience, VmAudience } from './audience.js';
 export type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 export type { GatewayType } from './gateway-runtime-contract.js';
+export type { GatewayControlPrivateEnvironmentName } from './gateway-control-private-environment.js';
 export type {
 	AgentVmHealthEvent,
 	AgentVmHealthEventBase,

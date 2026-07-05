@@ -2,7 +2,8 @@ import { generateKeyPairSync } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV } from '@agent-vm/gateway-interface';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import defaultPlugin, {
 	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
@@ -21,7 +22,6 @@ const TOOL_PORTAL_NATIVE_TOOL_NAMES = [
 
 function createControlSessionPluginConfig(): {
 	readonly bootId: string;
-	readonly callerContextProofKey: string;
 	readonly controllerEpoch: string;
 	readonly generationId: string;
 	readonly peerId: string;
@@ -30,13 +30,23 @@ function createControlSessionPluginConfig(): {
 	const { publicKey } = generateKeyPairSync('ed25519');
 	return {
 		bootId: 'gateway-boot-a',
-		callerContextProofKey: 'test-caller-context-proof-key',
 		controllerEpoch: 'controller-epoch-a',
 		generationId: 'gateway-generation-a',
 		peerId: 'gateway-zone-a',
 		verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
 	};
 }
+
+beforeEach(() => {
+	vi.stubEnv(
+		GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+		'test-caller-context-proof-key-with-enough-length',
+	);
+});
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
@@ -128,14 +138,7 @@ describe('createGondolinPlugin', () => {
 		});
 		expect(manifest.configSchema?.properties?.controlSession).toMatchObject({
 			additionalProperties: false,
-			required: [
-				'bootId',
-				'callerContextProofKey',
-				'controllerEpoch',
-				'generationId',
-				'peerId',
-				'verifierPublicKeyPem',
-			],
+			required: ['bootId', 'controllerEpoch', 'generationId', 'peerId', 'verifierPublicKeyPem'],
 			type: 'object',
 		});
 	});
@@ -490,6 +493,24 @@ describe('createGondolinPlugin', () => {
 				registrationMode: 'full',
 			}),
 		).toThrow('Gondolin full registration requires controlSession.');
+	});
+
+	it('fails full registration when the private caller-context proof key env is absent', () => {
+		vi.unstubAllEnvs();
+
+		expect(() =>
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute: vi.fn(),
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			}),
+		).toThrow(
+			`Gondolin full registration requires ${GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV}.`,
+		);
 	});
 
 	it('rejects legacy zone_git_push token config during tool discovery', () => {

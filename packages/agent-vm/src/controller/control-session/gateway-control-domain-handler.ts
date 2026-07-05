@@ -13,9 +13,11 @@ import {
 	type GatewayControlRuntimeStatusPayload,
 	type GatewayControlToolPortalControllerHostActionPayload,
 	type GatewayControlToolPortalControllerHostActionResult,
+	type GatewayControlRpcMessage,
 	type GatewayControlZoneGitPushResult,
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
+	GatewayControlRpcResponsePayloadSchema,
 	assertGatewayControlEnvelopeDeliveryPolicy,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
@@ -118,6 +120,11 @@ type CommandResultKind =
 	| 'ok'
 	| 'rejected'
 	| 'timeout';
+
+type GatewayControlCommandResultPayload = Extract<
+	GatewayControlRpcMessage,
+	{ readonly kind: 'command_result' }
+>['payload'];
 
 function assertLeaseRpcConfigured(
 	leaseRpc: GatewayControlLeaseRpcOperations | undefined,
@@ -335,8 +342,8 @@ function commandResultPayload(options: {
 	readonly leaseUse?: GatewayControlLeaseUseSnapshot;
 	readonly responseToMessageId: string;
 	readonly result: CommandResultKind;
-}): unknown {
-	return {
+}): GatewayControlCommandResultPayload {
+	return GatewayControlRpcResponsePayloadSchema.parse({
 		...(options.activeOperationId === undefined
 			? {}
 			: { activeOperationId: options.activeOperationId }),
@@ -354,7 +361,7 @@ function commandResultPayload(options: {
 		...(options.leaseUse === undefined ? {} : { leaseUse: options.leaseUse }),
 		responseToMessageId: options.responseToMessageId,
 		result: options.result,
-	};
+	});
 }
 
 async function executeToolPortalControllerHostAction(options: {
@@ -363,7 +370,7 @@ async function executeToolPortalControllerHostAction(options: {
 	readonly payload: GatewayControlToolPortalControllerHostActionPayload;
 	readonly responseToMessageId: string;
 	readonly session: GatewayControlCallerContextSessionRef;
-}): Promise<unknown> {
+}): Promise<GatewayControlCommandResultPayload> {
 	if (options.actions === undefined) {
 		const callerContext = options.callerContexts.resolve(
 			options.payload.callerContext.callerContextId,
@@ -465,7 +472,7 @@ async function executeToolPortalControllerHostAction(options: {
 function leaseResultPayload(options: {
 	readonly lease: GatewayControlLeaseSnapshot | undefined;
 	readonly responseToMessageId: string;
-}): unknown {
+}): GatewayControlCommandResultPayload {
 	return commandResultPayload({
 		...(options.lease === undefined
 			? { leaseRejectionReason: 'absent' as const, result: 'rejected' as const }
@@ -477,7 +484,7 @@ function leaseResultPayload(options: {
 function leaseUseResultPayload(options: {
 	readonly leaseUse: GatewayControlLeaseUseSnapshot | undefined;
 	readonly responseToMessageId: string;
-}): unknown {
+}): GatewayControlCommandResultPayload {
 	return commandResultPayload({
 		...(options.leaseUse === undefined
 			? { leaseRejectionReason: 'absent' as const, result: 'rejected' as const }

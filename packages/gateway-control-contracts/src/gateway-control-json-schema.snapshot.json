@@ -14,7 +14,9 @@
 						"type": "string",
 						"const": "heartbeat"
 					},
-					"operation": {},
+					"operation": {
+						"not": {}
+					},
 					"payload": {
 						"type": "object",
 						"properties": {

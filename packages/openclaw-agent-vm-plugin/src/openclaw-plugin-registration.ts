@@ -1,3 +1,5 @@
+import { GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV } from '@agent-vm/gateway-interface';
+
 import { createGatewayControlCallerContextStore } from './gateway-control-service/gateway-control-caller-context-store.js';
 import { createGatewayControlEventPublisher } from './gateway-control-service/gateway-control-event-publisher.js';
 import { createGatewayControlLeaseClient } from './gateway-control-service/gateway-control-lease-client.js';
@@ -31,6 +33,16 @@ import {
 import { registerToolPortalNativeTools } from './tool-portal-native-tools.js';
 
 const gatewayControlLeaseClientEndpoint = 'gateway-control://control-session';
+
+function resolveGatewayControlCallerContextProofKey(): string {
+	const proofKey = process.env[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV];
+	if (proofKey === undefined || proofKey.length === 0) {
+		throw new Error(
+			`Gondolin full registration requires ${GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV}.`,
+		);
+	}
+	return proofKey;
+}
 
 const plugin = {
 	id: 'gondolin',
@@ -72,13 +84,14 @@ const plugin = {
 		if (pluginConfig.controlSession === undefined) {
 			throw new Error('Gondolin full registration requires controlSession.');
 		}
+		const callerContextProofKey = resolveGatewayControlCallerContextProofKey();
 		const registerHttpRoute = api.registerHttpRoute;
 		if (typeof registerHttpRoute !== 'function') {
 			throw new Error('Gondolin control-session registration requires OpenClaw registerHttpRoute.');
 		}
 		const gatewayControlIdentity: GatewayControlIdentity = {
 			bootId: pluginConfig.controlSession.bootId,
-			callerContextProofKey: pluginConfig.controlSession.callerContextProofKey,
+			callerContextProofKey,
 			controllerEpoch: pluginConfig.controlSession.controllerEpoch,
 			generationId: pluginConfig.controlSession.generationId,
 			peerId: pluginConfig.controlSession.peerId,

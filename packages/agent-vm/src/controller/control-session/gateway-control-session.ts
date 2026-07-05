@@ -24,6 +24,7 @@ import {
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
+import { GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV } from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import {
@@ -137,11 +138,18 @@ export function buildGatewayControlRuntimePluginConfig(
 ): Readonly<Record<string, unknown>> {
 	return {
 		bootId: material.bootId,
-		callerContextProofKey: material.callerContextProofKey,
 		controllerEpoch: material.controllerEpoch,
 		generationId: material.generationId,
 		peerId: material.peerId,
 		verifierPublicKeyPem: material.verifierPublicKeyPem,
+	};
+}
+
+export function buildGatewayControlPrivateEnvironment(
+	material: GatewayControlSessionMaterial,
+): Readonly<Record<typeof GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV, string>> {
+	return {
+		[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: material.callerContextProofKey,
 	};
 }
 

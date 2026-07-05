@@ -296,7 +296,9 @@ describe('control session client', () => {
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
-				callerContexts: createGatewayControlCallerContextRegistry(),
+				callerContexts: createGatewayControlCallerContextRegistry({
+					callerContextProofKey: material.callerContextProofKey,
+				}),
 				recordHealthEvent: (event) => {
 					recordedHealthEvents.push(event);
 				},
