@@ -261,6 +261,32 @@ async function addMcpPortalReferencesToOpenClawFixture(rootPath: string): Promis
 	});
 }
 
+async function addZoneGitToOpenClawFixture(rootPath: string): Promise<void> {
+	const systemConfigPath = path.join(rootPath, 'config', 'system.json');
+	await updateJsonFile(systemConfigPath, (systemConfig) => {
+		const zones = systemConfig.zones;
+		if (!Array.isArray(zones)) {
+			throw new Error('Expected zones array.');
+		}
+		const firstZone = zones[0];
+		if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
+			throw new Error('Expected first zone object.');
+		}
+		const zone = firstZone as Record<string, unknown>;
+		const gateway = zone.gateway;
+		if (typeof gateway !== 'object' || gateway === null || Array.isArray(gateway)) {
+			throw new Error('Expected gateway object.');
+		}
+		const gatewayRecord = gateway as Record<string, unknown>;
+		gatewayRecord.zoneGit = {
+			remote: {
+				repoUrl: 'ShravanSunder/sunfam-zone-files',
+				branch: 'agent/zone-files',
+			},
+		};
+	});
+}
+
 async function writeMcpPortalConfigFiles(rootPath: string, profileName: string): Promise<void> {
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
 		schemaVersion: 1,
@@ -272,6 +298,30 @@ async function writeMcpPortalConfigFiles(rootPath: string, profileName: string):
 		profiles: {
 			default: {
 				namespaces: {},
+			},
+		},
+	});
+}
+
+async function writeMcpPortalConfigWithControllerHostAction(rootPath: string): Promise<void> {
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
+		schemaVersion: 1,
+		providers: {},
+	});
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
+		schemaVersion: 1,
+		agents: { shravan: { profile: 'default' } },
+		profiles: {
+			default: {
+				namespaces: {
+					controller_host_action: {
+						calls: {
+							requiresApproval: { allow: [] },
+							withoutApproval: { allow: ['zone_git_push'] },
+						},
+						tools: { allow: ['zone_git_push'] },
+					},
+				},
 			},
 		},
 	});
@@ -359,12 +409,16 @@ function createSingleToolMcpConfig(props: {
 }
 
 async function createSystemConfigWithLiveMcpFiles(props: {
+	readonly enableZoneGit?: boolean;
 	readonly mcpConfig: unknown;
 	readonly portalConfig: unknown;
 }): Promise<Awaited<ReturnType<typeof loadSystemConfig>>> {
 	const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 	const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 	await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+	if (props.enableZoneGit === true) {
+		await addZoneGitToOpenClawFixture(temporaryDirectoryPath);
+	}
 	await writeJson(
 		path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'),
 		props.mcpConfig,
@@ -614,6 +668,41 @@ describe('runConfigValidation', () => {
 			name: 'mcp-live-profile-namespace-shravan-shravan-deepwiki',
 			ok: false,
 		});
+	});
+
+	it('does not require controller host action to be declared as an upstream MCP provider', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			enableZoneGit: true,
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							controller_host_action: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['zone_git_push'] },
+								},
+								tools: { allow: ['zone_git_push'] },
+							},
+						},
+					},
+				},
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({}),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toEqual([]);
 	});
 
 	it('checks hidden and approval tool names, not only enabled tools', async () => {
@@ -1260,6 +1349,31 @@ describe('runConfigValidation', () => {
 			hint: expect.stringContaining('must declare networkAccess'),
 			ok: false,
 		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('allows controller host action Tool Portal materialization when zoneGit is enabled', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await addZoneGitToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithControllerHostAction(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
+		).toMatchObject({
+			ok: true,
+		});
+		expect(result.checks.map((check) => check.hint).join('\n')).not.toMatch(
+			/controller_host_action while zoneGit is disabled/u,
+		);
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

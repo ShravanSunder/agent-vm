@@ -514,6 +514,8 @@ async function collectMcpPortalConfigChecks(
 			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 			allowedRawEnvSecretNames,
 			declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
+			includeZoneGitControllerHostAction:
+				zone.gateway.type === 'openclaw' && zone.gateway.zoneGit !== undefined,
 			secretResolver: validationOnlySecretResolver,
 			zoneId: zone.id,
 		});

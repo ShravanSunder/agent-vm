@@ -54,6 +54,14 @@ function profileNamespaces(profile: ResolvedMcpPortalProfile): readonly string[]
 	).toSorted();
 }
 
+function isControllerBackedToolPortalNamespace(zone: LoadedZoneConfig, namespace: string): boolean {
+	return (
+		namespace === 'controller_host_action' &&
+		zone.gateway.type === 'openclaw' &&
+		zone.gateway.zoneGit !== undefined
+	);
+}
+
 function selectorToolNames(selector: PortalToolSelector): readonly string[] {
 	return selector.allow === '*' ? selector.deny : [...selector.allow, ...selector.deny];
 }
@@ -199,6 +207,9 @@ async function validateMcpPortalZone(
 		namespaceChecks = Object.entries(portalConfig.agents).flatMap(([agentId, agent]) => {
 			const profile = resolveMcpPortalProfile(portalConfig, agent.profile);
 			return profileNamespaces(profile).flatMap((namespace) => {
+				if (isControllerBackedToolPortalNamespace(zone, namespace)) {
+					return [];
+				}
 				referencedNamespaces.add(namespace);
 				if (serverNamespaces.has(namespace)) {
 					return [];
