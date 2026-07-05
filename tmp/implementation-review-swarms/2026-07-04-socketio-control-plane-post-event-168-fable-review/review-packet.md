@@ -1,4 +1,4 @@
-Socket.IO Control Plane Post-Event-206 Fable Review Packet
+Socket.IO Control Plane Post-Event-208 Fable Review Packet
 ==========================================================
 
 Purpose
@@ -15,7 +15,9 @@ fixed, the Event 194 accepted findings were fixed, the Event 195 accepted
 findings were fixed, the post-Event-197 terminal proof repairs were folded in,
 the Event 202 Bugbot documentation drift fixes were committed, the Event 203
 beta runtime proof status was recorded, the Event 205 OpenClaw health/recovery
-rerun passed, and the Event 206 post-OpenClaw `pnpm check` refresh passed.
+rerun passed, the Event 206 post-OpenClaw `pnpm check` refresh passed, and the
+Event 208 full Worker e2e refresh passed after the shared control-session
+priority-lane change.
 
 Review the current repository state, not the older final-terminal review packet.
 Older packets and reducers remain useful as finding history only:
@@ -234,6 +236,10 @@ Important current-state note:
   / 0 skipped / 0 todo with result
   `tmp/vitest-results/e2e-openclaw-36144-GAir0U/results.json`. The
   post-OpenClaw `pnpm check` refresh passed 10 checks / 0 failed.
+- This packet was refreshed after Event 208:
+  full Worker e2e passed after the shared control-session priority-lane change,
+  covering 3 files / 5 tests / 0 skipped / 0 todo with result
+  `tmp/vitest-results/e2e-worker-91602-cGthgw/results.json`.
 
 Implementation Scope
 --------------------
@@ -583,7 +589,8 @@ hard-cutover blocker.
 Proof Claims
 ------------
 
-Current Event 205 / Event 206 proof after OpenClaw health/recovery reduction:
+Current Event 205 / Event 206 / Event 208 proof after OpenClaw health/recovery
+reduction and Worker e2e refresh:
 
 ```text
 AGENT_VM_OPENCLAW_E2E=1 mise exec -- pnpm exec vitest run --config vitest.config.ts --project e2e-openclaw packages/agent-vm/src/integration-tests/live-openclaw-control-link.openclaw.e2e.test.ts --reporter=verbose
@@ -598,6 +605,10 @@ pnpm check
   includes build, package-version sync, Zod guard, test taxonomy, portal
   architecture audit, portal export audit, lint, format, type-aware lint, and
   typecheck
+
+set -a; source .env.local; set +a; AGENT_VM_TEST_OPENAI_API_KEY="$OPEN_AI_TEST_KEY" mise exec -- pnpm run test:e2e:worker
+  passed, 3 files / 5 tests / 0 skipped / 0 todo in 201.49s
+  result: tmp/vitest-results/e2e-worker-91602-cGthgw/results.json
 ```
 
 Current Event 200 proof after terminal refresh and host-e2e fixture repairs:
@@ -991,9 +1002,10 @@ Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
 connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
 fresh allowed-user inbound Discord message after the latest runtime fixes.
 Terminal VM/default e2e are fresh as of Event 200. Full OpenClaw e2e is fresh
-as of Event 205, and `pnpm check` is fresh as of Event 206. If this review
-comes back clean, the next execution step is to obtain beta actual allowed-user
-Discord inbound proof before PR-ready non-merge wrapup.
+as of Event 205, `pnpm check` is fresh as of Event 206, and full Worker e2e is
+fresh as of Event 208. If this review comes back clean, the next execution step
+is to obtain beta actual allowed-user Discord inbound proof before PR-ready
+non-merge wrapup.
 
 Latest beta Discord/OpenClaw proof recorded in workflow state:
 

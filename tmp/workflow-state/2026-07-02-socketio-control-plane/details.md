@@ -1,5 +1,59 @@
 # 2026-07-02 Socket.IO Control Plane Goal Details
 
+## Current Resume Edge - Event 208
+
+Event 208 resolves the fresh Worker terminal proof gap raised by the latest
+source/proof review lane after shared `control-session-client.ts` changed.
+
+Current workflow: `shravan-dev-workflow:implementation-review-swarm`.
+
+Next workflow: reduce the newly accepted implementation review findings, then
+refresh focused proof, static proof, review packet evidence, beta
+Discord/OpenClaw proof, and PR-ready non-merge wrapup.
+
+Checkpoint result:
+
+- Reran the full Worker e2e gate with the repo-local test OpenAI key mapped to
+  the expected Worker e2e environment name in a redacted shell.
+- Confirmed the Worker e2e gate now covers the shared control-session client
+  after the priority-lane change.
+- Refreshed the legacy-named review inventory files from the committed branch
+  diff `origin/master...HEAD`.
+
+Fresh proof:
+
+- `set -a; source .env.local; set +a; AGENT_VM_TEST_OPENAI_API_KEY="$OPEN_AI_TEST_KEY" mise exec -- pnpm run test:e2e:worker`
+  passed 3 files / 5 tests / 0 skipped / 0 todo in 201.49s.
+- Worker result artifact:
+  `tmp/vitest-results/e2e-worker-91602-cGthgw/results.json`.
+- Branch diff inventory refreshed from `git diff origin/master...HEAD`:
+  404 files changed, 69966 insertions, 11059 deletions.
+
+Accepted review findings still open after this checkpoint:
+
+- Runtime/reliability: controller-side Worker control cannot currently send
+  the controller-originated `operation_cancel` path that should be rejected by
+  the real Worker control service.
+- Runtime/reliability: Gateway and Worker peer services should reject
+  outstanding pending command results promptly on accepted-socket disconnect
+  instead of waiting for long per-command timeouts.
+- Security/trust: multi-agent managed OpenClaw zones are still accepted by
+  config/docs but fail later at caller-context registration; this should be
+  surfaced before runtime use for this cutover.
+- Contracts/residue: portal package export verification misses six published
+  `@agent-vm/mcp-portal` subpath exports.
+
+Still not PR-ready:
+
+- Accepted implementation review findings above need code/docs fixes or
+  evidence-backed rejection.
+- Fresh focused proof and `pnpm check` are required after those fixes.
+- Implementation review packet and external/Fable review freshness remain
+  required after fixes.
+- Live `../shravan-claw-beta` actual allowed-user Discord/OpenClaw inbound
+  proof remains required.
+- PR-ready non-merge wrapup remains required.
+
 ## Current Resume Edge - Event 205
 
 Event 205 resolves the remaining accepted Popper follow-up from the latest

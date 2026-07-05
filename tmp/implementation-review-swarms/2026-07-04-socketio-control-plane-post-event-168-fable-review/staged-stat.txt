@@ -394,12 +394,12 @@
  .../reducer-report-event-194.md                    |   71 +
  .../reducer-report-event-197.md                    |  160 +
  .../reducer-report.md                              |  120 +
- .../review-packet.md                               | 1086 +++
+ .../review-packet.md                               | 1088 +++
  .../staged-name-status.txt                         |  404 +
  .../staged-stat.txt                                |  405 +
- .../2026-07-02-socketio-control-plane/details.md   | 8641 ++++++++++++++++++++
- .../2026-07-02-socketio-control-plane/events.jsonl |  208 +
+ .../2026-07-02-socketio-control-plane/details.md   | 8680 ++++++++++++++++++++
+ .../2026-07-02-socketio-control-plane/events.jsonl |  210 +
  tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
  vitest.config.ts                                   |   57 +-
- 404 files changed, 69923 insertions(+), 11059 deletions(-)
+ 404 files changed, 69966 insertions(+), 11059 deletions(-)

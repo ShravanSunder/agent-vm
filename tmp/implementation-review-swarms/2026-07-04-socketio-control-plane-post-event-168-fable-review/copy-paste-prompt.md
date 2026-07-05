@@ -44,8 +44,8 @@ scope fixes captured in execution-report-event-192.md, plus the Event 193
 post-Fable fixes captured in reducer-report-event-193.md, plus the Event 194
 accepted findings captured in reducer-report-event-194.md, plus the Event 195
 accepted findings fixed in execution-report-event-196.md, plus the Event 205
-OpenClaw health/recovery rerun and Event 206 post-OpenClaw `pnpm check`
-refresh recorded in workflow state.
+OpenClaw health/recovery rerun, Event 206 post-OpenClaw `pnpm check`
+refresh, and Event 208 full Worker e2e refresh recorded in workflow state.
 In particular, scrutinize:
 
 1. empty and multi-agent `zones[].agents` fail-closed behavior for managed OpenClaw
@@ -56,8 +56,8 @@ In particular, scrutinize:
 6. portal export verifier freshness and new in-process named export coverage
 7. standalone `pnpm lint` proof in addition to `pnpm check`
 8. terminal e2e freshness after Event 200, OpenClaw freshness after Event 205,
-    `pnpm check` freshness after Event 206, and remaining stale beta
-    Discord/OpenClaw proof after Event 172
+    `pnpm check` freshness after Event 206, Worker freshness after Event 208,
+    and remaining stale beta Discord/OpenClaw proof after Event 172
 9. remaining old raw-controller string matches, especially whether deletion of
     `scripts/live-sandbox-manual.mjs` fully removes shippable manual raw-control
     residue
@@ -252,6 +252,9 @@ In particular, scrutinize:
       assertions passed inside the full OpenClaw gate.
 31. Event 206 post-OpenClaw check refresh:
     - Fresh `pnpm check` passed 10 checks / 0 failed after the OpenClaw rerun.
+32. Event 208 Worker e2e refresh:
+    - Fresh full Worker e2e passed 3 files / 5 tests / 0 skipped / 0 todo
+      after the shared control-session priority-lane change.
 
 Return only grounded candidate findings:
 
