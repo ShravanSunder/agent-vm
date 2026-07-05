@@ -121,15 +121,32 @@ file 15 added; README/DAG/profile updated.
   BROKER, never a data plane; bounded memory regardless of volume; heavy data never transits heap/control socket
   (forbidden_bulk); data streaming brokered onto separate host-terminated paths, never buffered. New PROTO section
   + CONTROLLER-CEILING proof. Gateway external-event (Discord/queue) durability = gateway-internal, out of scope.
+
+## Interactive correction (2026-07-05) — same-zone multi-agent OpenClaw preserved
+
+The single-agent managed OpenClaw rule introduced by the July 4 cutover/review-fix commits is superseded. It was
+not a user requirement. Managed OpenClaw must remain properly same-zone multi-agent under the Socket.IO control
+plane. The valid boundary is declared-agent parity plus controller-vetted caller context, not exactly one declared
+agent per zone.
+
+Plan consequences:
+- Added slice `slices/00b-sma-openclaw-same-zone-multi-agent.md`.
+- Slice file count is now 19 including `slices/README.md`.
+- Added proof rows SMA-1..SMA-7 to the canonical matrix.
+- Implementation must remove the single-agent config/runtime/scaffold/docs restrictions while preserving:
+  declared-agent allowlists, duplicate/unknown-agent rejection, per-agent `agentToolVmProfiles`, per-agent sandbox
+  seeds, MCP Portal agent parity, Tool Portal host-action zone config checks, and stable-provenance lease ownership.
+- `../shravan-claw` is not part of this repair unless explicitly authorized. Beta proof uses `../shravan-claw-beta`
+  only and must be genuinely multi-agent; a single-agent beta validation run is non-evidence for this correction.
 - Full-system proof target: `../shravan-claw-beta` with actual Discord and actual OpenClaw. This live proof validates
   managed wiring and runtime behavior; it does not change the non-goal that gateway-internal Discord/queue durability
   is out of scope for the control-session cutover.
 
 ## Route
-Independent plan review DONE and folded. Architecture re-review pass 2 DONE and folded. Remaining before
-implementation-execute-plan: GATE-0a (exact delivered runtime proof + real-runtime handleUpgrade proof), user decisions
-(OPEN-4 proof-gating, Q1 route defaults), and spec confirmation for Q2 worker probe. Use the slice plan files under
-`slices/` for execution.
+Independent plan review DONE and folded. Architecture re-review pass 2 DONE and folded. Focused SMA plan review DONE
+and folded. Implementation-execute-plan may start with SMA. Remaining before the broader control-plane cutover can
+ship: GATE-0a (exact delivered runtime proof + real-runtime handleUpgrade proof), user decisions (OPEN-4 proof-gating,
+Q1 route defaults), and spec confirmation for Q2 worker probe. Use the slice plan files under `slices/` for execution.
 
 ## Completion receipt
 Artifacts: implementation-plan.md, plan-ledger.md, lanes/{codebase-boundary,validation-proof,security-reliability,

@@ -1,11 +1,12 @@
 # Implementation Plan — Socket.IO Control Plane Hard Cutover
 
 Date: 2026-07-02
-Status: scope-and-proof-fit folded (4B/9I/7N) + independent plan-review folded (5 blockers + 11 important +
+Status: 2026-07-05 multi-agent correction folded after focused plan-review + scope-and-proof-fit folded (4B/9I/7N) + independent plan-review folded (5 blockers + 11 important +
 3 questions) + architecture re-review folded (2026-07-02, 4 grounded lanes: git-execPolicy ownership BLOCKER →
 new SG (SSH Git) slice; AF-2 deliveryPolicy-trust + AF-3 message-kind spec hardening; PC-1..6 anchor corrections; D3
 multi-gateway decision). All findings parent-verified against spec text + live code + the Gondolin checkout.
-Ready for implementation-execute-plan after GATE-0a + user decisions.
+Ready for implementation-execute-plan starting with SMA. Full control-plane cutover remains gated by GATE-0a and the
+open user decisions below.
 Source specs (accepted, all 8 fresh-review blockers closed):
 - docs/specs/2026-07-01-socketio-control-protocol-semantics.md (PROTO, 1047 lines)
 - docs/specs/2026-06-30-gateway-control-session-hard-cutover.md (CUT, 2382 lines)
@@ -29,6 +30,10 @@ and managed OpenClaw runtime.
 ## Non-goals (from the specs; do not expand)
 
 - No sidecar control service (managed OpenClaw uses in-process plugin handleUpgrade).
+- No single-agent downgrade. Managed OpenClaw remains a same-zone multi-agent surface when `zones[].agents` declares
+  multiple trusted agents. The cutover must preserve per-agent workspaces, `agentToolVmProfiles`, per-agent auth
+  files/seeds, channel routing, and agent-scoped Tool VM lease identity. The valid trust boundary is "declared agent
+  allowlist plus controller-vetted caller context", not "exactly one declared agent".
 - No move of Worker task submit/state/close off ingress HTTP (only git tools + observations move).
 - No SSH data-plane change; Tool VM SSH stays raw TCP tool-<slot>:22.
 - No credentialed-runner execution; no generic guest/host RPC.
@@ -139,6 +144,47 @@ anchor and are labeled PLANNING DEFAULT — proof asserts the ORDERING/behavior,
 tune under load.
 
 ## Vertical slice cards
+
+### SMA — OpenClaw same-zone multi-agent preservation (PLAN REPAIR, before implementation-execute-plan)
+- Source: user correction 2026-07-05; existing OpenClaw multi-agent docs and code anchors:
+  `docs/reference/configuration/system-json.md` Tool VM profile policy, `docs/getting-started/openclaw-guide.md`
+  lease identity, `openclaw-tool-vm-lease-create-options.ts` agent-scoped profile selection.
+- Behavior: remove the accidental Socket.IO-cutover rule that rejects managed OpenClaw zones with more than one
+  declared trusted agent. Preserve the legitimate checks: OpenClaw zones must declare at least one agent,
+  duplicate agent ids reject, `agentToolVmProfiles` and `agentSandboxSeeds` may only reference declared agents,
+  caller-context registration rejects undeclared/forged `adapterEvidence.agentId`, and Tool VM leases resolve by
+  `authorityContext.agentId`.
+- Existing boundary to preserve: `gateway-control-caller-context.ts` already verifies the OpenClaw session key is
+  agent-shaped and that the session-key agent equals `adapterEvidence.agentId`; `gateway-control-lease-rpc.ts`
+  already checks lease ownership using stable fields (`agentId`, workspace, boot/epoch/peer, purpose,
+  sessionKeyDigest, workMountDir, zoneId) rather than transient `sessionId`/`connectionId`. Implementors should
+  preserve and extend tests around those boundaries, not add a vague future "attestation" blocker.
+- Hard security invariant: before issuing `callerContextId`, the controller must validate or derive
+  `agentId`, `agentWorkspaceDir`, `workMountDir`, and `sessionKeyDigest` from accepted session-scoped/controller
+  truth. Declared-agent allowlisting alone is not sufficient. A declared agent with a workspace or work mount that
+  belongs to another agent, a shared ambiguous fallback, or a mismatched session key must fail closed. Same stable
+  provenance with refreshed ephemeral connection/session ids may keep lease reachability; changed workspace, work
+  mount, or session-key provenance must not.
+- Write surface: EDIT `system-config.ts`, `gateway-zone-orchestrator.ts`, `init-command.ts`,
+  `manual-templates.ts`, `docs/reference/configuration/system-json.md`, `docs/subsystems/controller.md`,
+  `docs/getting-started/openclaw-guide.md`;
+  EDIT targeted tests in `system-config.unit.test.ts`, `gateway-zone-orchestrator.integration.test.ts`,
+  `agent-vm-entrypoint.unit.test.ts`, `init-command.integration.test.ts`, `manual-templates.unit.test.ts`,
+  `openclaw-tool-vm-lease-create-options.unit.test.ts`, `mcp-portal-effective-config.unit.test.ts`, and
+  `config-validation.integration.test.ts` where the existing parity tests do not already cover multiple agents.
+- Checkpoint: the same-zone multi-agent fixture loads/scaffolds; declared non-default-agent caller context is accepted
+  and remains non-default downstream; undeclared, mismatched-session-key, wrong-workspace, and wrong-work-mount caller
+  contexts still reject; `agentToolVmProfiles` still chooses the agent-specific Tool VM profile;
+  Tool Portal/MCP Portal effective config still requires parity with all declared agents; generated manuals no
+  longer teach single-agent cutover.
+- Proof: SMA-1..SMA-7 in the canonical proof matrix. Layer: unit + integration + manual-generation smoke + beta
+  validation. Red/green is required because current code fails the accepted behavior.
+- Dependency: independent of GATE-0a. SMA may be implemented/reviewed before the runtime spike, but no production
+  control-plane cutover slice may claim readiness until both SMA and GATE-0a have passed. Split trigger: if
+  caller-context identity binding requires new OpenClaw adapter evidence beyond the current session-key/workspace/
+  mount fields, route back to spec before implementation.
+- Workspace rule: same-zone multi-agent requires explicit per-agent workspace entries or a controller-proven mapping
+  that resolves to distinct agent-scoped mounts/workdirs. Ambiguous shared fallback is invalid for SMA.
 
 ### S1 — control-protocol-contract (FOUNDATION, first, disjoint create + one-time shared wiring)
 - Source: PROTO Shared Package Contract, Shared Envelope, delivery/close/handshake schemas; ledger.
@@ -445,6 +491,10 @@ SWc — controller handlers + rewire + residue:
 ```text
 gate 0a: repo state + THROWAWAY feasibility spike (pinned OpenClaw pre-101 hook). STOP the cutover here if unprovable.
   |
+SMA OpenClaw same-zone multi-agent preservation
+  |  (independent of GATE-0a runtime spike; blocks implementation readiness because current code/docs contain an
+  |   invalid single-agent restriction)
+  |
 S1 control-protocol-contract  (creates 3 pkg shells + shared wiring + constant module; owns tsconfig.base/audit scripts)
   |
   +-- S2 gateway-control-service-placement   (plugin + gateway spec; contains GATE-0b) ─┐
@@ -526,6 +576,11 @@ here for the DAG only (full detail is in the canonical file):
   NEW *.openclaw.e2e.test.ts. This is stronger than "Socket.IO connected": the controller must send
   `control_ping` over `/__agent-vm/gateway-control` and parse a typed gateway_control command result from the VM,
   with no fallback to controller HTTP/raw TCP and no `/socket.io` path in the route contract.
+- SMA-1..SMA-7 preserve same-zone multi-agent OpenClaw: config accepts multiple declared trusted agents, scaffold
+  accepts multiple `--openclaw-agents`, caller context accepts declared agents and rejects undeclared agents,
+  agentToolVmProfiles resolves by agent id, manuals/docs no longer teach single-agent cutover, and beta validation
+  proves the real multi-agent deployment shape is not blocked by this rule. A single-agent beta pass is explicitly
+  non-evidence for SMA.
 - SCHEMA versioning: protocolVersion mismatch fails closed → close reason protocol_version_mismatch (I9 — covered by
   z.literal(1) strict parse + reject-no-resync; explicit row added). Owner: S1 unit + S2 handshake integration.
 - RESIDUE-1..6 (RED today, GREEN after cutover) + planted-positive fixtures so empty match sets are meaningful.
@@ -632,15 +687,18 @@ External proof runbook:
 2. Reconcile beta's selected OpenClaw runtime before building. The current PR-selected runtime is OpenClaw v2026.6.8;
    beta must not prove against a stale, downgraded, or accidental runtime. If the runtime changes, record the GATE-0a
    evidence that made that version acceptable.
-3. In `../shravan-claw-beta`, run `mise exec -- pnpm build`.
-4. Start the beta controller with `mise exec -- pnpm start`.
-5. Exercise the real Discord channel path configured by beta's OpenClaw config. The current beta target is the
+3. For SMA proof only, stage beta with at least two declared same-zone OpenClaw agents plus matching Tool Portal/MCP
+   Portal agent bindings. Do not count a single-agent beta run as proof of the multi-agent repair.
+4. In `../shravan-claw-beta`, run `pnpm validate` and `pnpm exec agent-vm validate --config config/system.jsonc --mcp-live`.
+5. In `../shravan-claw-beta`, run `mise exec -- pnpm build`.
+6. Start the beta controller with `mise exec -- pnpm start`.
+7. Exercise the real Discord channel path configured by beta's OpenClaw config. The current beta target is the
    `#beta-debug` channel binding for `pulse-bot`; the proof may use a manual/operator Discord message or a
    token-backed Discord API send, but tokens and 1Password refs must stay redacted.
-6. Capture evidence that the message traversed actual Discord, the managed OpenClaw gateway, the plugin/control
+8. Capture evidence that the message traversed actual Discord, the managed OpenClaw gateway, the plugin/control
    plane, and the controller-owned backend path. Acceptable evidence includes redacted command transcript, controller
    logs, OpenClaw logs, and the visible Discord reply/result.
-7. Stop or clean up the beta controller after evidence capture unless another operator is intentionally keeping the
+9. Stop or clean up the beta controller after evidence capture unless another operator is intentionally keeping the
    deployment running.
 
 ## Vertical Slice Files
