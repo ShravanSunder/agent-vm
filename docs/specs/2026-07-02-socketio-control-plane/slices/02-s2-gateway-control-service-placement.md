@@ -31,6 +31,9 @@ Checkpoint:
 Proof rows:
 - HANDSHAKE-2, HANDSHAKE-3, HANDSHAKE-4
 - HANDSHAKE-5, INGRESS-1, INGRESS-2 with S3
+- RPC-VM-1 with S3/S4a: a controller-originated `control_ping` command reaches
+  the managed VM over `/__agent-vm/gateway-control` and returns a typed
+  gateway_control result.
 
 Commands:
 - `pnpm test:integration`

@@ -5,6 +5,7 @@ import {
 	OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES,
 	TOOL_VM_TARBALL_PACKAGE_NAMES,
 	createBetaTarballSyncPlan,
+	listStaleLocalOverlayFileNames,
 	migrateLegacyOpenClawPackageOverrides,
 	parseCliOptions,
 	renderBetaPnpmWorkspace,
@@ -142,6 +143,31 @@ describe('beta tarball sync planning', () => {
 			'/repo/tmp/beta-tarballs-abc123ef',
 			'--json',
 			'--config.ignore-scripts=true',
+		]);
+	});
+
+	it('selects superseded local overlay package files for pruning', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		expect(
+			listStaleLocalOverlayFileNames({
+				existingFileNames: [
+					'agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz',
+					'agent-vm-openclaw-agent-vm-plugin-0.0.82-oldhash.tgz',
+					'agent-vm-openclaw-mcp-portal-plugin-0.0.82-oldhash.tgz',
+					'agent-vm-local-packages-openclaw-gateway-oldhash.json',
+					'README.md',
+				],
+				packageEntries: plan.gatewayPackages,
+			}),
+		).toEqual([
+			'agent-vm-openclaw-agent-vm-plugin-0.0.82-oldhash.tgz',
+			'agent-vm-openclaw-mcp-portal-plugin-0.0.82-oldhash.tgz',
+			'agent-vm-local-packages-openclaw-gateway-oldhash.json',
 		]);
 	});
 });

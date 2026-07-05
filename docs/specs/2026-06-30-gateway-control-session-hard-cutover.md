@@ -739,7 +739,7 @@ Gateway VM-side ownership:
 
 @agent-vm/openclaw-agent-vm-plugin
   owns the VM-side private OpenClaw gateway Socket.IO server integration in this
-  cutover. It uses OpenClaw v2026.6.5's plugin `handleUpgrade(req, socket,
+  cutover. It uses OpenClaw v2026.6.8's plugin `handleUpgrade(req, socket,
   head)` route hook to feed the Socket.IO engine manually. This version-couples
   managed OpenClaw control to that plugin upgrade API, so the implementation
   must prove the route hook before replacing the old raw controller path.
@@ -753,7 +753,7 @@ route registration
   The managed OpenClaw plugin route contract must expose both the normal HTTP
   readiness handler and an upgrade handler with the Node signature
   handleUpgrade(req, socket, head). The local plugin API shim and tests must be
-  updated to the selected OpenClaw v2026.6.5 route shape before planning treats
+  updated to the selected OpenClaw v2026.6.8 route shape before planning treats
   the plugin-hosted path as implementable.
 
 Socket.IO integration

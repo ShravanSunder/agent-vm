@@ -51,6 +51,8 @@ Proof rows:
 - RESILIENT-GRACE, RECREATE-FENCE (with S6b)
 - FLAP-1A
 - FLAP-1B with S2
+- RPC-VM-1 with S2/S4a: controller command dispatch traverses the real managed
+  VM private route and parses the domain result.
 
 Commands:
 - `pnpm test:integration`

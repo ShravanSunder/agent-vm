@@ -39,6 +39,8 @@ Checkpoint:
 Proof rows:
 - DOMAIN-SEP-1 gateway portion
 - SURFACE-1
+- RPC-VM-1: live managed-VM `control_ping` command/result over
+  `/__agent-vm/gateway-control` before claiming lease/use RPC readiness
 - DELIVERY-3, DELIVERY-4 lease portions
 - SCHEMA rows for gateway domain exactness
 

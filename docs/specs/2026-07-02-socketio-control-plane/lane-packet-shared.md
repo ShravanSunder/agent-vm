@@ -29,7 +29,7 @@ Mode: plan-creation, READ-ONLY. Do not edit product code, tests, configs, or pla
   transport-neutral path; controller dials in over Gondolin ingress after a readiness probe.
 - Socket.IO-over-WebSocket-only (transports:["websocket"], no polling). Socket.IO is net-new (not a
   dependency yet anywhere — verified). JSON Schema is the normative cross-language wire contract.
-- Managed OpenClaw placement is FIXED: in-process plugin-hosted private route via OpenClaw v2026.6.5 minimum
+- Managed OpenClaw placement is FIXED: in-process plugin-hosted private route via OpenClaw v2026.6.8
   handleUpgrade(req, socket, head); NO sidecar, no second guest port. Proving handleUpgrade-before-101
   private auth is a cutover PREREQUISITE (CUT ~line 748-776). If the pinned plugin API can't provide it,
   the cutover STOPS — no fallback.

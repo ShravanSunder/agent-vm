@@ -18,7 +18,7 @@ Read in full:
 - Supporting plan lane artifacts, ledger, prior review reports, and new slice files.
 
 Repo anchors rechecked:
-- OpenClaw v2026.6.5-minimum runtime provenance.
+- OpenClaw v2026.6.8 runtime provenance.
 - Socket.IO/OpenClaw `handleUpgrade` absence in current package code.
 - e2e scripts and Vitest project suffixes.
 - lease heartbeat/stale constants.
@@ -85,7 +85,7 @@ These are not hidden plan blockers; they are explicit gate decisions or stop
 conditions in the current plan:
 
 1. GATE-0a:
-   - Prove exact managed OpenClaw runtime provenance; v2026.6.5 is the minimum accepted version.
+   - Prove exact managed OpenClaw runtime provenance; v2026.6.8 is the selected accepted version.
    - Prove detached Socket.IO through plugin `handleUpgrade` with pre-101 auth.
    - Stop and return to spec if the runtime cannot support this.
 

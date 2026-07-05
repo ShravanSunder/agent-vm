@@ -16,7 +16,7 @@ Rule:
 | `docs/specs/2026-07-01-socketio-control-protocol-semantics.md` | Shared protocol contract | Source of truth for Socket.IO transport, Zod/JSON Schema envelope, delivery, reconnect, backpressure, and proof expectations. |
 | `docs/specs/2026-06-30-gateway-control-session-hard-cutover.md` | Domain and cutover contract | Source of truth for gateway/worker domains, Tool Portal taxonomy, route disposition, hard removal, and Git policy. |
 | `docs/specs/2026-07-02-socketio-control-plane/implementation-plan.md` | Root execution DAG | Use for global order, dependencies, gates, open decisions, and terminal proof. |
-| `docs/specs/2026-07-02-socketio-control-plane/lanes/validation-proof.md` | Canonical proof matrix | 45 row-level proof obligations (incl. DP-TRUST, KIND-EXACT, RESILIENT-GRACE, RECREATE-FENCE, CONTROLLER-CEILING). Every slice must map to rows here. |
+| `docs/specs/2026-07-02-socketio-control-plane/lanes/validation-proof.md` | Canonical proof matrix | 46 row-level proof obligations (incl. DP-TRUST, KIND-EXACT, RESILIENT-GRACE, RECREATE-FENCE, CONTROLLER-CEILING, RPC-VM-1). Every slice must map to rows here. |
 | `docs/specs/2026-07-02-socketio-control-plane/slices/*.md` | Per-slice execution plans | One file per executable gate/slice. Implementors should work from these. |
 
 ## New Contract Packages
@@ -37,7 +37,7 @@ Rule:
 | `packages/openclaw-gateway/src/openclaw-lifecycle.ts` | Builds `controller.vm.host:18800` tcpHost (`:75`) and websocket-bypass tcpHosts (`:81-83`, a plain mapping loop — no fail-closed check yet). `allowedHosts` at `:1011` only CALLS `gatewayVmAllowedHosts`; it is NOT the injection site. Also the gateway VM-spec home for SG (SSH Git) egress execPolicy. | S2 path exposure; S5a raw-TCP removal; SG egress execPolicy | RESIDUE-1/2, INGRESS-1, GIT-1 |
 | `packages/gateway-interface/src/audience.ts` | REAL `controller.vm.host` source: literal at `:11`; unconditional `allowedHosts` injection `gatewayVmAllowedHosts` at `:29-31`. Removing controller.vm.host from allowedHosts edits HERE. | S5a | RESIDUE-2 |
 | `packages/gondolin-adapter/src/vm-adapter.ts` | Exposes inbound `SshAccess` (`:59`) only; has NO ssh-EGRESS/execPolicy surface today. SG (SSH Git) adds the egress+execPolicy passthrough to Gondolin's `SshExecPolicy`. | SG | GIT-1 |
-| `packages/agent-vm/managed-images.json` | Delivered managed OpenClaw image metadata and runtime version input. This PR targets OpenClaw v2026.6.5 minimum, with newer only by fresh runtime evidence. | GATE-0 | GATE-0 runtime provenance |
+| `packages/agent-vm/managed-images.json` | Delivered managed OpenClaw image metadata and runtime version input. This PR targets OpenClaw v2026.6.8 and requires fresh GATE-0a evidence before any runtime change. | GATE-0 | GATE-0 runtime provenance |
 | `pnpm-lock.yaml` | Current lock evidence includes OpenClaw package provenance. | GATE-0 | GATE-0 runtime provenance |
 
 ## Controller Session And Lease RPC

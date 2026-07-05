@@ -8,7 +8,7 @@ for the durable plan packet under `docs/specs/2026-07-02-socketio-control-plane/
 
 ## Source coverage
 Both specs read in full by parent + lanes. Repo re-anchored: controller/gateway/worker code, test layers, package
-templates, Gondolin ingress source, OpenClaw v2026.6.5-minimum plugin API. Key re-anchor: existing gateway-websocket-client.ts
+templates, Gondolin ingress source, OpenClaw v2026.6.8 plugin API. Key re-anchor: existing gateway-websocket-client.ts
 is a raw-WS client for OpenClaw's own protocol (NOT the new control plane); Socket.IO net-new.
 
 ## Lanes issued (packets) + artifacts
@@ -40,10 +40,9 @@ scopes/proof/order). Named per skill's "smaller lane set" rule; fit lane was the
 - Constants chosen (grounded; ordering normative, 4 magnitudes PLANNING DEFAULT). Reconnect send buffer DISABLED.
 - CONTRACT-PURITY: new eventKind enum stays in gateway-interface (owns reducer; contract pkgs transport-only).
 - Rollback = version pin (hard cutover, no dual path).
-- VERSION RULE (2026-07-03): OpenClaw v2026.6.5 is the minimum accepted runtime for this PR. A newer OpenClaw may be
-  selected only when fresh GATE-0a/runtime evidence shows it materially helps or is required for plugin
-  `handleUpgrade(req, socket, head)` plus pre-101 private auth. Do not treat stale fixed-newer-version plan text as
-  normative.
+- VERSION RULE (2026-07-05): OpenClaw v2026.6.8 is the selected accepted runtime for this PR. GATE-0a proves the exact
+  delivered artifact supports plugin `handleUpgrade(req, socket, head)` plus pre-101 private auth. Do not downgrade or
+  float the runtime without fresh GATE-0a/runtime evidence.
 
 ## Contested / open (route before the dependent slice)
 - BLOCKING: OPEN-5/GATE-0a (whole cutover STOP), OPEN-4 (proof-gating — USER decision), Q2 (S6b worker corroboration
@@ -59,7 +58,7 @@ scopes/proof/order). Named per skill's "smaller lane set" rule; fit lane was the
 ## Independent plan review folded (2026-07-02) — plan-review-report.md
 User ran a separate 4-lane plan review; parent VERIFIED every accepted finding against code before folding (not
 blind acceptance). Verifications:
-- B1 version provenance: target OpenClaw is 2026.6.5 minimum. CONFIRMED → GATE-0a runs against the exact delivered
+- B1 version provenance: target OpenClaw is 2026.6.8. CONFIRMED → GATE-0a runs against the exact delivered
   runtime artifact and stops if that runtime cannot provide handleUpgrade-before-101.
 - B2 circular proof matrix (plan↔lane point at each other). CONFIRMED → validation-proof.md made canonical, plan
   links one-way.
@@ -97,7 +96,8 @@ Four grounded lanes + parent verification vs spec text, live code, Gondolin chec
   PC-5 no send-buffer constructor option (clear sendBuffer on reconnect). PC-6 gateway-zone-orchestrator=src/gateway/.
 - D3 (initially folded as "keep openclaw domain" recommendation) — SUPERSEDED by the interactive decision below:
   user chose GENERIC (gateway_control). See "Interactive design decisions".
-Matrix now 45 rows (added DP-TRUST, KIND-EXACT, RESILIENT-GRACE, RECREATE-FENCE, CONTROLLER-CEILING). New slice
+Matrix now 46 rows (added DP-TRUST, KIND-EXACT, RESILIENT-GRACE, RECREATE-FENCE, CONTROLLER-CEILING, and
+RPC-VM-1). New slice
 file 15 added; README/DAG/profile updated.
 
 ## Interactive design decisions (2026-07-02, with user)

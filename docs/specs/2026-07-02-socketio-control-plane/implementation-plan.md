@@ -71,15 +71,14 @@ and execution-order were folded into parent synthesis rather than dispatched —
 GATE-0 is split (I7) into a throwaway feasibility spike (here, pre-S1) and productionized work (S2). Only the
 spike gates the cutover; production handleUpgrade lands in S2 and depends on S1's handshake schema.
 
-VERSION PROVENANCE PREREQUISITE (B1 — resolve BEFORE GATE-0a). OpenClaw v2026.6.5 is the minimum accepted runtime.
-This branch's selected runtime is OpenClaw v2026.6.8 because the upstream managed image package overrides already pin
-the OpenClaw package family there. A newer OpenClaw version may be selected only when fresh GATE-0a/runtime evidence
-shows the newer version materially helps or is required for plugin `handleUpgrade(req, socket, head)` plus pre-101
-private auth.
+VERSION PROVENANCE PREREQUISITE (B1 — resolve BEFORE GATE-0a). OpenClaw v2026.6.8 is the selected accepted runtime
+for this PR. This matches the managed image package overrides and beta validation package line. Any downgrade or
+future runtime change requires fresh GATE-0a/runtime evidence for plugin `handleUpgrade(req, socket, head)` plus
+pre-101 private auth.
 GATE-0a must run against the exact delivered OpenClaw runtime artifact, not a remembered/local SDK declaration. Steps:
 - Build or inspect the generated managed image/overlay that this PR delivers.
-- Assert in the VM/runtime that `openclaw --version` reports the selected runtime, currently v2026.6.8.
-- If the delivered runtime is older than v2026.6.5 or differs from the selected runtime, stop and fix the PR inputs
+- Assert in the VM/runtime that `openclaw --version` reports the selected runtime, v2026.6.8.
+- If the delivered runtime differs from v2026.6.8, stop and fix the PR inputs
   before running the Socket.IO upgrade proof.
 - If the selected runtime cannot provide handleUpgrade-before-101, STOP and route back to spec.
 
@@ -523,6 +522,10 @@ here for the DAG only (full detail is in the canonical file):
   .host.e2e.test.ts file, which runs under a different project).
 - INGRESS-1 pre-101 private auth over real ingress (cutover prerequisite). JOINT S2+S3, NEW *.openclaw.e2e.test.ts
   (Imp8). The STOP decision itself is reachable earlier from GATE-0a + S2's HANDSHAKE-2/3/4 integration seam.
+- RPC-VM-1 controller-originated gateway_control_rpc over the private managed VM route: JOINT S2+S3+S4a,
+  NEW *.openclaw.e2e.test.ts. This is stronger than "Socket.IO connected": the controller must send
+  `control_ping` over `/__agent-vm/gateway-control` and parse a typed gateway_control command result from the VM,
+  with no fallback to controller HTTP/raw TCP and no `/socket.io` path in the route contract.
 - SCHEMA versioning: protocolVersion mismatch fails closed → close reason protocol_version_mismatch (I9 — covered by
   z.literal(1) strict parse + reject-no-resync; explicit row added). Owner: S1 unit + S2 handshake integration.
 - RESIDUE-1..6 (RED today, GREEN after cutover) + planted-positive fixtures so empty match sets are meaningful.
@@ -566,8 +569,8 @@ Plan/handoff artifacts carry no resolved secrets, op:// refs, or account metadat
 ## Risks + rollback
 
 - Rollback = VERSION PIN to pre-cutover package (hard cutover; no runtime dual path).
-- Top risk: GATE-0a — the delivered OpenClaw runtime must be the selected runtime, currently v2026.6.8 with v2026.6.5
-  as the minimum floor, and must provide handleUpgrade-before-101. Prove the exact delivered runtime artifact before
+- Top risk: GATE-0a — the delivered OpenClaw runtime must be the selected runtime, v2026.6.8, and must provide
+  handleUpgrade-before-101. Prove the exact delivered runtime artifact before
   trusting the spike. If the selected runtime cannot provide the hook → STOP at spec.
 - Second: A5 reliability bet — if FLAP-1(b) shows the new session flaps like the old path, STOP and revise (do not
   ship). This is why FLAP-1(b) is a required gate, not optional.
@@ -576,10 +579,8 @@ Plan/handoff artifacts carry no resolved secrets, op:// refs, or account metadat
 ## Open questions — classified blocking-before-<gate/slice> vs tune-during (fit lane B2/B3/B4/I4)
 
 BLOCKING (must resolve before the named gate/slice; not tunable during execution):
-- VERSION PROVENANCE (B1) / GATE-0a: target OpenClaw is the selected delivered runtime, currently v2026.6.8 with
-  v2026.6.5 as the minimum floor. GATE-0a must run against the EXACT delivered runtime artifact. Blocks the ENTIRE
-  cutover; STOP if the selected runtime cannot provide
-  handleUpgrade-before-101.
+- VERSION PROVENANCE (B1) / GATE-0a: target OpenClaw is v2026.6.8. GATE-0a must run against the EXACT delivered
+  runtime artifact. Blocks the ENTIRE cutover; STOP if the selected runtime cannot provide handleUpgrade-before-101.
 - OPEN-4: cutover proofs (INGRESS-1, FLAP-1b, worker RPC, GIT-1) run under env-gated lanes NOT in default
   pnpm test:e2e (VERIFIED). Exact commands are now in the cutover proof gate. USER DECISION: how these gate the
   cutover / join CI — a proof-infra change needing the SAME approval as editing run-e2e-proof-lanes.ts. Blocks the
@@ -628,9 +629,9 @@ Before a PR-ready claim, run or record a blocked attempt for the external deploy
 External proof runbook:
 
 1. Refresh beta from this worktree with `pnpm dev:sync-tarballs -- --deployment ../shravan-claw-beta`.
-2. Reconcile beta's selected OpenClaw runtime before building. The current PR-selected runtime is OpenClaw v2026.6.8
-   with v2026.6.5 as the minimum floor; beta must not prove against a stale or accidental runtime. If a newer runtime
-   is selected, record the GATE-0a evidence that made that version acceptable.
+2. Reconcile beta's selected OpenClaw runtime before building. The current PR-selected runtime is OpenClaw v2026.6.8;
+   beta must not prove against a stale, downgraded, or accidental runtime. If the runtime changes, record the GATE-0a
+   evidence that made that version acceptable.
 3. In `../shravan-claw-beta`, run `mise exec -- pnpm build`.
 4. Start the beta controller with `mise exec -- pnpm start`.
 5. Exercise the real Discord channel path configured by beta's OpenClaw config. The current beta target is the

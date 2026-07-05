@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -206,6 +206,18 @@ export function renderBetaPnpmWorkspace(options: RenderBetaPnpmWorkspaceOptions)
 		lines.push(`  '${packageEntry.name}': ${packageEntry.specifier}`);
 	}
 	return `${lines.join('\n')}\n`;
+}
+
+export function listStaleLocalOverlayFileNames(options: {
+	readonly existingFileNames: readonly string[];
+	readonly packageEntries: readonly BetaTarballPackageEntry[];
+}): readonly string[] {
+	const currentOverlayFileNames = new Set(
+		options.packageEntries.map((packageEntry) => packageEntry.overlayFileName),
+	);
+	return options.existingFileNames.filter(
+		(fileName) => fileName.startsWith('agent-vm-') && !currentOverlayFileNames.has(fileName),
+	);
 }
 
 export function updateBetaPackageManifest(options: UpdateBetaPackageManifestOptions): JsonRecord {
@@ -621,6 +633,31 @@ async function copyOverlayPackageTarballs(options: {
 	);
 }
 
+async function pruneStaleLocalOverlayFiles(options: {
+	readonly overlayDirectory: string;
+	readonly packageEntries: readonly BetaTarballPackageEntry[];
+}): Promise<void> {
+	const localAgentVmDirectory = path.join(options.overlayDirectory, 'local-agent-vm');
+	let existingDirectoryEntries;
+	try {
+		existingDirectoryEntries = await readdir(localAgentVmDirectory, { withFileTypes: true });
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			return;
+		}
+		throw error;
+	}
+	const staleFileNames = listStaleLocalOverlayFileNames({
+		existingFileNames: existingDirectoryEntries
+			.filter((directoryEntry) => directoryEntry.isFile())
+			.map((directoryEntry) => directoryEntry.name),
+		packageEntries: options.packageEntries,
+	});
+	await Promise.all(
+		staleFileNames.map((fileName) => unlink(path.join(localAgentVmDirectory, fileName))),
+	);
+}
+
 async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void> {
 	const hash = options.hash ?? (await getGitShortHash(options.repositoryDirectory));
 	const version = await readWorkspacePackageVersion(options.repositoryDirectory);
@@ -671,6 +708,10 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 		packageEntries: plan.gatewayPackages,
 		tarballDirectory,
 	});
+	await pruneStaleLocalOverlayFiles({
+		overlayDirectory,
+		packageEntries: plan.gatewayPackages,
+	});
 	const overlay = (await readJsonFile(overlayPath)) as OpenClawGatewayOverlay;
 	await writeJsonFile(
 		overlayPath,
@@ -692,6 +733,10 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 		overlayDirectory: toolVmOverlayDirectory,
 		packageEntries: plan.toolVmPackages,
 		tarballDirectory,
+	});
+	await pruneStaleLocalOverlayFiles({
+		overlayDirectory: toolVmOverlayDirectory,
+		packageEntries: plan.toolVmPackages,
 	});
 	const toolVmOverlay = (await readJsonFile(toolVmOverlayPath)) as OpenClawGatewayOverlay;
 	await writeJsonFile(

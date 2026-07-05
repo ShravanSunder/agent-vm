@@ -42,8 +42,8 @@ All four subagents were closed after completion.
 Evidence:
 - Plan gates on exact delivered OpenClaw runtime proof and a pre-S1 throwaway spike at `implementation-plan.md:39`.
 - The same spike only promises request inspection and pre-101 reject/accept behavior at `implementation-plan.md:39-45`.
-- Version rule note: OpenClaw `v2026.6.5` is the minimum accepted runtime for this PR. A newer OpenClaw may be
-  selected only when fresh GATE-0a/runtime evidence shows it materially helps or is required.
+- Version rule note: OpenClaw `v2026.6.8` is the selected accepted runtime for this PR. Any downgrade or future version
+  change requires fresh GATE-0a/runtime evidence.
 - The hard-cutover spec requires the plugin route contract to prove HTTP readiness, `handleUpgrade(req, socket, head)`, detached Socket.IO handoff, pre-101 auth, and no second port.
 
 Failure scenario:
@@ -53,7 +53,7 @@ Smallest plan edit:
 - Make GATE-0a first resolve the exact OpenClaw runtime artifact used by the generated managed image or overlay.
 - Prove a real detached Socket.IO/Engine.IO server through that exact plugin `handleUpgrade`.
 - Require a Socket.IO client connection over `/__agent-vm/gateway-control`, `transports: ["websocket"]`, good credential success, bad credential rejected before 101, no second port, and a STOP if any part fails.
-- Keep `v2026.6.5` as the minimum target and prove the delivered runtime is actually the selected runtime.
+- Keep `v2026.6.8` as the selected target and prove the delivered runtime is actually that runtime.
 
 Proof expected:
 - Generated Dockerfile/package-plan assertion.
