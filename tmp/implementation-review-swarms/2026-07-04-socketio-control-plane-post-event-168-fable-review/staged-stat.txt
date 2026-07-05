@@ -225,12 +225,12 @@
  .../src/observability/health-event-telemetry.ts    |    2 +-
  .../health-event-telemetry.unit.test.ts            |   10 +-
  .../observability-config.unit.test.ts              |   43 +-
- .../config-validation.integration.test.ts          |   64 +-
- .../agent-vm/src/operations/config-validation.ts   |   17 +-
+ .../config-validation.integration.test.ts          |  178 +-
+ .../agent-vm/src/operations/config-validation.ts   |   19 +-
  .../controller-offline-cleanup.integration.test.ts |    1 +
  .../src/operations/controller-status.unit.test.ts  |    2 +-
  .../agent-vm/src/operations/doctor.unit.test.ts    |    1 +
- .../src/operations/mcp-portal-live-validation.ts   |    4 +-
+ .../src/operations/mcp-portal-live-validation.ts   |   15 +-
  .../src/operations/openclaw-deployment-doctor.ts   |  105 +-
  .../openclaw-deployment-doctor.unit.test.ts        |  123 +-
  .../operations/openclaw-deployment-requirements.ts |   58 +-
@@ -302,7 +302,7 @@
  packages/openclaw-agent-vm-plugin/package.json     |   10 +
  .../src/controller-integration.integration.test.ts |  234 +-
  .../src/controller-lease-client.ts                 |  409 -
- .../src/controller-lease-client.unit.test.ts       |  936 ---
+ .../src/controller-lease-client.unit.test.ts       |  936 --
  .../controller-request-policy.integration.test.ts  |  138 -
  .../src/controller-request-policy.ts               |   11 -
  .../src/controller-request-policy.unit.test.ts     |  371 -
@@ -380,7 +380,7 @@
  .../agent-portal/fake-tool-portal-controller.ts    |   30 +
  .../agent-portal/portal-contract-assertions.ts     |   65 +
  .../debug-investigation.md                         |   41 +
- .../copy-paste-prompt.md                           |  324 +
+ .../copy-paste-prompt.md                           |  336 +
  .../execution-report-event-186.md                  |  120 +
  .../execution-report-event-187.md                  |   75 +
  .../execution-report-event-188.md                  |   96 +
@@ -403,12 +403,12 @@
  .../reducer-report-event-194.md                    |   71 +
  .../reducer-report-event-197.md                    |  160 +
  .../reducer-report.md                              |  120 +
- .../review-packet.md                               | 1183 +++
- .../staged-name-status.txt                         |  408 +
- .../staged-stat.txt                                |  409 +
- .../2026-07-02-socketio-control-plane/details.md   | 8866 ++++++++++++++++++++
- .../2026-07-02-socketio-control-plane/events.jsonl |  214 +
+ .../review-packet.md                               | 1228 +++
+ .../staged-name-status.txt                         |  413 +
+ .../staged-stat.txt                                |  414 +
+ .../2026-07-02-socketio-control-plane/details.md   | 8931 ++++++++++++++++++++
+ .../2026-07-02-socketio-control-plane/events.jsonl |  215 +
  tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
  vitest.config.ts                                   |   57 +-
- 413 files changed, 70820 insertions(+), 11450 deletions(-)
+ 413 files changed, 71080 insertions(+), 11450 deletions(-)

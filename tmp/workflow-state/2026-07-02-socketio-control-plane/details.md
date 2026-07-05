@@ -1,5 +1,67 @@
 # 2026-07-02 Socket.IO Control Plane Goal Details
 
+## Current Resume Edge - Event 213
+
+Event 213 reduces the fresh implementation-review lanes after Event 212,
+accepts two validation regressions, fixes them in checkpoint commit `64a4c98`,
+and records fresh proof.
+
+Current workflow: `shravan-dev-workflow:implementation-review-swarm`.
+
+Next workflow: obtain live `../shravan-claw-beta` actual allowed-user
+Discord/OpenClaw inbound proof, then run PR-ready non-merge wrapup. A fresh
+Fable/external review may still review `64a4c98`, but the local review lanes'
+accepted code findings are fixed.
+
+Review lane result:
+
+- Source/spec trace lane: accepted one PR-readiness blocker: live beta
+  Discord/OpenClaw allowed-user inbound proof is still missing.
+- Proof/reachability lane: no findings.
+- Security/trust lane: no findings.
+- Contracts/regression lane: accepted two important validation findings:
+  static Tool Portal validation rejected valid zoneGit
+  `controller_host_action` configs, and `--mcp-live` treated
+  `controller_host_action` as an upstream MCP provider namespace.
+- All four reviewer agents were closed after harvesting.
+
+Latest checkpoint result:
+
+- Checkpoint commit `64a4c98` fixes controller-host-action validation:
+  - Static materialization validation now passes
+    `includeZoneGitControllerHostAction` when an OpenClaw zone has `zoneGit`.
+  - Live MCP validation treats `controller_host_action` as a controller-backed
+    Tool Portal namespace instead of an upstream MCP provider namespace when
+    `zoneGit` is enabled.
+  - Regression coverage was added to
+    `packages/agent-vm/src/operations/config-validation.integration.test.ts`.
+- Regenerated branch inventory from `git diff origin/master...HEAD`:
+  - `staged-name-status.txt`: 413 rows.
+  - `staged-stat.txt`: 413 files changed, 71080 insertions, 11450 deletions.
+
+Fresh proof:
+
+- Red proof before the fix:
+  `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/operations/config-validation.integration.test.ts --reporter=verbose`
+  failed only the two new controller-host-action validation tests.
+- Focused green proof after the fix:
+  the same command passed 1 file / 30 tests.
+- Package typecheck passed:
+  `pnpm --filter @agent-vm/agent-vm typecheck`.
+- Full integration passed:
+  `pnpm test:integration`
+  passed 28 files / 443 tests.
+- Fresh current-head quality gate passed:
+  `pnpm check`
+  passed 10 checks / 0 failed in 25.40s.
+- `pnpm fmt:check` and `git diff --check` passed.
+
+Still not PR-ready:
+
+- Live `../shravan-claw-beta` actual allowed-user Discord/OpenClaw inbound
+  proof remains required.
+- PR-ready non-merge wrapup remains required after beta proof.
+
 ## Current Resume Edge - Event 212
 
 Event 212 refreshes terminal VM/default e2e and `pnpm check` after two

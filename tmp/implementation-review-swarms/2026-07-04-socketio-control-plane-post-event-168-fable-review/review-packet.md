@@ -1,4 +1,4 @@
-Socket.IO Control Plane Post-Event-212 Fable Review Packet
+Socket.IO Control Plane Post-Event-213 Fable Review Packet
 ==========================================================
 
 Purpose
@@ -22,7 +22,9 @@ findings from that pass. Event 210 fixes the stale Tool VM unit fixture exposed
 by the full unit rerun after Event 209. Event 211 fixes Composer/Bugbot
 follow-up findings and records fresh full unit, full integration, and
 `pnpm check` proof. Event 212 refreshes terminal OpenClaw, Worker, VM, default
-e2e, and `pnpm check` proof after two stale fixture repairs.
+e2e, and `pnpm check` proof after two stale fixture repairs. Event 213 fixes
+two accepted controller-host-action validation findings from the fresh local
+implementation review.
 
 Review the current repository state, not the older final-terminal review packet.
 Older packets and reducers remain useful as finding history only:
@@ -143,9 +145,9 @@ Workflow state:
 Important current-state note:
 
 - `events.jsonl` is the official transition log. After this packet refresh,
-  latest event should include Event 212, keeping the workflow in
-  implementation-review-swarm after terminal OpenClaw, Worker, VM, default e2e,
-  and `pnpm check` proof were refreshed.
+  latest event should include Event 213, keeping the workflow in
+  implementation-review-swarm after controller-host-action validation findings
+  were fixed and proven.
 - This packet was refreshed after accepted Event 185 findings were fixed:
   caller contexts now bind to gateway boot/session and evict/release by
   lifecycle, managed OpenClaw rejects runtime `mcp-portal` plugin config and
@@ -284,6 +286,16 @@ Important current-state note:
   secret-selection unit 1 file / 5 tests, full VM e2e 5 files / 9 tests /
   0 skipped / 0 todo, default e2e 4 lanes / 0 failed, and `pnpm check`
   10 checks / 0 failed.
+- This packet was refreshed after Event 213:
+  four local review lanes were reduced and closed. Proof/reachability and
+  security/trust reported no findings. Source/spec trace accepted the still-open
+  beta proof blocker. Contracts/regression found two validation findings, both
+  fixed in `64a4c98`: static materialization now enables
+  `controller_host_action` when OpenClaw `zoneGit` is configured, and
+  `--mcp-live` no longer treats that controller-backed namespace as an upstream
+  MCP provider namespace. Fresh proof passed: focused config-validation
+  integration 1 file / 30 tests, `@agent-vm/agent-vm` typecheck, full
+  integration 28 files / 443 tests, and `pnpm check` 10 checks / 0 failed.
 
 Implementation Scope
 --------------------
@@ -739,6 +751,29 @@ pnpm check
   passed, 10 checks / 0 failed in 25.37s
 ```
 
+Current Event 213 proof after controller-host-action validation fixes:
+
+```text
+pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/operations/config-validation.integration.test.ts --reporter=verbose
+  red before fix: failed only the two new controller-host-action validation tests
+  green after fix: passed, 1 file / 30 tests
+
+pnpm --filter @agent-vm/agent-vm typecheck
+  passed
+
+pnpm test:integration
+  passed, 28 files / 443 tests
+
+pnpm check
+  passed, 10 checks / 0 failed in 25.40s
+
+pnpm fmt:check
+  passed
+
+git diff --check
+  passed
+```
+
 Current Event 200 proof after terminal refresh and host-e2e fixture repairs:
 
 ```text
@@ -827,7 +862,7 @@ git diff --name-only origin/master...HEAD | wc -l
   413
 
 git diff --shortstat origin/master...HEAD
-  413 files changed, 70820 insertions(+), 11450 deletions(-)
+  413 files changed, 71080 insertions(+), 11450 deletions(-)
   note: use live `git diff --shortstat origin/master...HEAD` for exact counts
   if additional packet-only commits have landed after this capture.
 
@@ -1129,11 +1164,10 @@ Fable should treat beta Discord/OpenClaw proof as incomplete for PR readiness.
 Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
 connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
 fresh allowed-user inbound Discord message after the latest runtime fixes.
-Terminal VM/default e2e, full OpenClaw e2e, full Worker e2e, and `pnpm check`
-are fresh as of Event 212. Full unit and full integration remain fresh as of
-Event 211. If this review comes back clean, the next execution step is to
-obtain beta actual allowed-user Discord inbound proof before PR-ready non-merge
-wrapup.
+Terminal VM/default e2e, full OpenClaw e2e, and full Worker e2e are fresh as of
+Event 212. Full integration and `pnpm check` are fresh as of Event 213. Full
+unit remains fresh as of Event 211. The next execution step is to obtain beta
+actual allowed-user Discord inbound proof before PR-ready non-merge wrapup.
 
 Latest beta Discord/OpenClaw proof recorded in workflow state:
 
