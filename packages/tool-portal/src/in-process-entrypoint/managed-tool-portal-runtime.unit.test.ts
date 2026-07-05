@@ -31,6 +31,35 @@ function createMcpBackendStub(): McpProviderCapabilityBackend {
 	};
 }
 
+function createRetirableMcpBackendStub(
+	sessionKey: string,
+	retiredSessionKeys: ReadonlySet<string>,
+): McpProviderCapabilityBackend {
+	const assertSessionNotRetired = (): void => {
+		if (retiredSessionKeys.has(sessionKey)) {
+			throw new Error(`retired:${sessionKey}`);
+		}
+	};
+	return {
+		call: vi.fn(async () => {
+			assertSessionNotRetired();
+			return { items: [], ok: true };
+		}),
+		describe: vi.fn(async () => {
+			assertSessionNotRetired();
+			return { items: [], ok: true };
+		}),
+		list: vi.fn(async () => {
+			assertSessionNotRetired();
+			return { items: [], ok: true };
+		}),
+		search: vi.fn(async () => {
+			assertSessionNotRetired();
+			return { items: [], ok: true };
+		}),
+	};
+}
+
 interface DeferredVoid {
 	readonly promise: Promise<void>;
 	readonly resolve: () => void;
@@ -137,10 +166,10 @@ describe('managed Tool Portal runtime', () => {
 		await runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-c' });
 		await runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-b' });
 
-		expect(createdBackendCacheKeys).toEqual(['session-a', 'session-b', 'session-c', 'session-b']);
+		expect(createdBackendCacheKeys).toEqual(['session-a', 'session-b', 'session-c']);
 	});
 
-	it('retires session-scoped MCP backends on LRU eviction and runtime close', async () => {
+	it('retires session-scoped MCP backends on runtime close after LRU eviction', async () => {
 		const rootDirectory = await createTemporaryDirectory();
 		const configDirectory = path.join(rootDirectory, 'config');
 		await mkdir(configDirectory);
@@ -178,15 +207,15 @@ describe('managed Tool Portal runtime', () => {
 		await runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-c' });
 		await runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-b' });
 
-		expect(retiredSessionKeys).toEqual(['session-b', 'session-a']);
+		expect(retiredSessionKeys).toEqual([]);
 
 		await runtime.close();
 
-		expect(retiredSessionKeys).toEqual(['session-b', 'session-a', 'session-c', 'session-b']);
+		expect(retiredSessionKeys).toEqual(['session-a', 'session-b', 'session-c']);
 		expect(closeFactory).toHaveBeenCalledTimes(1);
 	});
 
-	it('retires MCP sessions that finish after their cache entry was evicted', async () => {
+	it('keeps MCP sessions alive when they finish after their cache entry was evicted', async () => {
 		const rootDirectory = await createTemporaryDirectory();
 		const configDirectory = path.join(rootDirectory, 'config');
 		await mkdir(configDirectory);
@@ -247,10 +276,84 @@ describe('managed Tool Portal runtime', () => {
 		expect(observedSessionKeys).toHaveLength(2);
 		expect(observedSessionKeys).toContain('session-a');
 		expect(observedSessionKeys).toContain('session-b');
-		expect(retiredSessionKeys).toEqual(['session-a']);
+		expect(retiredSessionKeys).toEqual([]);
 		await runtime.close();
 
 		expect(retiredSessionKeys).toEqual(['session-a', 'session-b']);
+	});
+
+	it('does not return an entrypoint that has already been retired by pending eviction', async () => {
+		const rootDirectory = await createTemporaryDirectory();
+		const configDirectory = path.join(rootDirectory, 'config');
+		await mkdir(configDirectory);
+		await writeJsonConfig(path.join(configDirectory, 'mcp.config.jsonc'), {
+			providers: {},
+			schemaVersion: 1,
+		});
+		await writeJsonConfig(path.join(configDirectory, 'tool-portal.config.jsonc'), {
+			agents: { 'agent-a': { profile: 'default' } },
+			profiles: {
+				default: {
+					capabilities: {
+						'upstream-a': {
+							backend: { kind: 'mcp_provider' },
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: '*', deny: [] },
+							},
+							tools: { allow: '*', deny: [] },
+						},
+					},
+				},
+			},
+			schemaVersion: 1,
+		});
+		const retiredSessionKeys = new Set<string>();
+		const factory = {
+			close: vi.fn(async () => {}),
+			createBackend: vi.fn((_projection, options) => {
+				if (options?.sessionKey === undefined) {
+					throw new Error('Expected session key.');
+				}
+				return createRetirableMcpBackendStub(options.sessionKey, retiredSessionKeys);
+			}),
+			retireSession: vi.fn(async (sessionKey: string) => {
+				retiredSessionKeys.add(sessionKey);
+			}),
+		} satisfies ManagedMcpProviderBackendFactory;
+		const factoryResolution = createDeferredVoid();
+		const runtime = createManagedToolPortalInProcessRuntime({
+			configDir: configDirectory,
+			createMcpProviderBackendFactory: vi.fn(async () => {
+				await factoryResolution.promise;
+				return factory;
+			}),
+			maxEntryPointCacheEntries: 1,
+		});
+
+		const firstEntryPoint = runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-a' });
+		const secondEntryPoint = runtime.getEntryPoint('agent-a', { entryPointCacheKey: 'session-b' });
+		await Promise.resolve();
+		factoryResolution.resolve();
+		const [firstResolvedEntryPoint, secondResolvedEntryPoint] = await Promise.all([
+			firstEntryPoint,
+			secondEntryPoint,
+		]);
+
+		await expect(
+			firstResolvedEntryPoint.list({ requests: [{ id: 'list-a' }] }),
+		).resolves.toMatchObject({
+			items: [{ id: 'list-a', status: 'ok' }],
+			ok: true,
+		});
+		await expect(
+			secondResolvedEntryPoint.list({ requests: [{ id: 'list-b' }] }),
+		).resolves.toMatchObject({
+			items: [{ id: 'list-b', status: 'ok' }],
+			ok: true,
+		});
+
+		await runtime.close();
 	});
 
 	it('derives an MCP-safe session key from internal cache keys with control separators', async () => {

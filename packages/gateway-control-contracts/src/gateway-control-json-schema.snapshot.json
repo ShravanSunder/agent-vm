@@ -141,6 +141,21 @@
 												"type": "string",
 												"minLength": 1
 											},
+											"proof": {
+												"type": "object",
+												"properties": {
+													"algorithm": {
+														"type": "string",
+														"const": "hmac-sha256"
+													},
+													"digest": {
+														"type": "string",
+														"minLength": 32
+													}
+												},
+												"required": ["algorithm", "digest"],
+												"additionalProperties": false
+											},
 											"purpose": {
 												"type": "string",
 												"enum": ["tool_vm_lease", "tool_portal_controller_host_action"]
@@ -161,6 +176,7 @@
 										"required": [
 											"agentId",
 											"agentWorkspaceDir",
+											"proof",
 											"sessionKey",
 											"workMountDir",
 											"zoneId"

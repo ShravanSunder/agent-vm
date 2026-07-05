@@ -136,6 +136,10 @@ Plan consequences:
 - Implementation must remove the single-agent config/runtime/scaffold/docs restrictions while preserving:
   declared-agent allowlists, duplicate/unknown-agent rejection, per-agent `agentToolVmProfiles`, per-agent sandbox
   seeds, MCP Portal agent parity, Tool Portal host-action zone config checks, and stable-provenance lease ownership.
+- Review follow-up folded: `sessionKeyDigest` is not a per-agent proof because it can be derived from gateway-supplied
+  evidence. Caller-context registration now requires plugin-signed HMAC-SHA256 proof over `agentId`,
+  `agentWorkspaceDir`, `workMountDir`, `sessionKey`, `purpose`, and `zoneId` using the controller-generated
+  control-session `callerContextProofKey`.
 - `../shravan-claw` is not part of this repair unless explicitly authorized. Beta proof uses `../shravan-claw-beta`
   only and must be genuinely multi-agent; a single-agent beta validation run is non-evidence for this correction.
 - Full-system proof target: `../shravan-claw-beta` with actual Discord and actual OpenClaw. This live proof validates

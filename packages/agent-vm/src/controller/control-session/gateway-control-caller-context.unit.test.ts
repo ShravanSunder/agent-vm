@@ -1,3 +1,4 @@
+import type { GatewayControlCallerContextRegisterPayload } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -18,11 +19,15 @@ const registerPayload = {
 	adapterEvidence: {
 		agentId: 'main',
 		agentWorkspaceDir: '/home/openclaw/workspace',
+		proof: {
+			algorithm: 'hmac-sha256',
+			digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
+		},
 		sessionKey: 'agent:main:test-session',
 		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 		zoneId: 'zone-a',
 	},
-};
+} satisfies GatewayControlCallerContextRegisterPayload;
 
 describe('gateway control caller context registry', () => {
 	it('issues an opaque context id and stores only a sessionKey digest', () => {

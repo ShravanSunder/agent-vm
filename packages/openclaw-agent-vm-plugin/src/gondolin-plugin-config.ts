@@ -1,6 +1,7 @@
 export interface ResolvedGondolinPluginConfig {
 	readonly controlSession?: {
 		readonly bootId: string;
+		readonly callerContextProofKey: string;
 		readonly controllerEpoch: string;
 		readonly generationId: string;
 		readonly peerId: string;
@@ -26,6 +27,7 @@ function resolveControlSessionConfig(
 	}
 	for (const fieldName of [
 		'bootId',
+		'callerContextProofKey',
 		'controllerEpoch',
 		'generationId',
 		'peerId',
@@ -36,12 +38,14 @@ function resolveControlSessionConfig(
 		}
 	}
 	const bootId = rawControlSession.bootId;
+	const callerContextProofKey = rawControlSession.callerContextProofKey;
 	const controllerEpoch = rawControlSession.controllerEpoch;
 	const generationId = rawControlSession.generationId;
 	const peerId = rawControlSession.peerId;
 	const verifierPublicKeyPem = rawControlSession.verifierPublicKeyPem;
 	if (
 		typeof bootId !== 'string' ||
+		typeof callerContextProofKey !== 'string' ||
 		typeof controllerEpoch !== 'string' ||
 		typeof generationId !== 'string' ||
 		typeof peerId !== 'string' ||
@@ -51,6 +55,7 @@ function resolveControlSessionConfig(
 	}
 	return {
 		bootId,
+		callerContextProofKey,
 		controllerEpoch,
 		generationId,
 		peerId,

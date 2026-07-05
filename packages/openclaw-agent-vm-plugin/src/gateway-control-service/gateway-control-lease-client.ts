@@ -28,6 +28,7 @@ import {
 	type LeaseClient,
 	type OpenClawGondolinLeaseRequest,
 } from '../lease-client-contract.js';
+import { signGatewayControlCallerContextProof } from './gateway-control-caller-context-proof.js';
 import type { GatewayControlCallerContextStore } from './gateway-control-caller-context-store.js';
 import type { GatewayControlIdentity, GatewayControlService } from './gateway-control-service.js';
 
@@ -395,6 +396,16 @@ export function createGatewayControlLeaseClient(
 			adapterEvidence: {
 				agentId: request.agentId,
 				agentWorkspaceDir: request.agentWorkspaceDir,
+				proof: signGatewayControlCallerContextProof({
+					input: {
+						agentId: request.agentId,
+						agentWorkspaceDir: request.agentWorkspaceDir,
+						sessionKey: request.sessionKey,
+						workMountDir: request.workMountDir,
+						zoneId: request.zoneId,
+					},
+					proofKey: options.identity.callerContextProofKey,
+				}),
 				sessionKey: request.sessionKey,
 				workMountDir: request.workMountDir,
 				zoneId: request.zoneId,

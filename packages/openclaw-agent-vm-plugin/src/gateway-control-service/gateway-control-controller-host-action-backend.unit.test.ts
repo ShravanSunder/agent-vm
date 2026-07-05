@@ -12,6 +12,7 @@ import type { GatewayControlIdentity, GatewayControlService } from './gateway-co
 
 const identity = {
 	bootId: 'gateway-boot-a',
+	callerContextProofKey: 'test-caller-context-proof-key',
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'generation-a',
 	peerId: 'gateway-zone-a',

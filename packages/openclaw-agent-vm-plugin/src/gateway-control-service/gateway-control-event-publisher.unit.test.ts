@@ -28,6 +28,7 @@ function createControlServiceStub(): GatewayControlService {
 
 const identity = {
 	bootId: 'gateway-boot-a',
+	callerContextProofKey: 'test-caller-context-proof-key',
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'gateway-generation-a',
 	peerId: 'gateway-zone-a',

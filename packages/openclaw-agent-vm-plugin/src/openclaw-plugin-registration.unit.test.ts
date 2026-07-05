@@ -21,6 +21,7 @@ const TOOL_PORTAL_NATIVE_TOOL_NAMES = [
 
 function createControlSessionPluginConfig(): {
 	readonly bootId: string;
+	readonly callerContextProofKey: string;
 	readonly controllerEpoch: string;
 	readonly generationId: string;
 	readonly peerId: string;
@@ -29,6 +30,7 @@ function createControlSessionPluginConfig(): {
 	const { publicKey } = generateKeyPairSync('ed25519');
 	return {
 		bootId: 'gateway-boot-a',
+		callerContextProofKey: 'test-caller-context-proof-key',
 		controllerEpoch: 'controller-epoch-a',
 		generationId: 'gateway-generation-a',
 		peerId: 'gateway-zone-a',
@@ -126,7 +128,14 @@ describe('createGondolinPlugin', () => {
 		});
 		expect(manifest.configSchema?.properties?.controlSession).toMatchObject({
 			additionalProperties: false,
-			required: ['bootId', 'controllerEpoch', 'generationId', 'peerId', 'verifierPublicKeyPem'],
+			required: [
+				'bootId',
+				'callerContextProofKey',
+				'controllerEpoch',
+				'generationId',
+				'peerId',
+				'verifierPublicKeyPem',
+			],
 			type: 'object',
 		});
 	});

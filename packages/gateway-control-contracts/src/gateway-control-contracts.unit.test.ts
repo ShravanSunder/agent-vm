@@ -207,6 +207,10 @@ describe('gateway control contract', () => {
 				adapterEvidence: {
 					agentId: 'main',
 					agentWorkspaceDir: '/home/openclaw/workspace',
+					proof: {
+						algorithm: 'hmac-sha256',
+						digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
+					},
 					sessionKey: 'agent:main:test-session',
 					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 					zoneId: 'zone-a',
@@ -216,6 +220,10 @@ describe('gateway control contract', () => {
 			adapterEvidence: {
 				agentId: 'main',
 				agentWorkspaceDir: '/home/openclaw/workspace',
+				proof: {
+					algorithm: 'hmac-sha256',
+					digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
+				},
 				sessionKey: 'agent:main:test-session',
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 				zoneId: 'zone-a',
@@ -226,6 +234,10 @@ describe('gateway control contract', () => {
 				adapterEvidence: {
 					agentId: 'main',
 					agentWorkspaceDir: '/home/openclaw/workspace',
+					proof: {
+						algorithm: 'hmac-sha256',
+						digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
+					},
 					profileId: 'standard',
 					sessionKey: 'agent:main:test-session',
 					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',

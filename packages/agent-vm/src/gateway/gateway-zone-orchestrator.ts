@@ -1,6 +1,11 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+	buildGatewayControlCallerContextProofPayload,
+	type GatewayControlCallerContextProof,
+} from '@agent-vm/gateway-control-contracts';
 import type {
 	GatewayHealthCheck,
 	GatewayLifecycle,
@@ -29,6 +34,7 @@ import {
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
+import { assertCanonicalOpenClawAgentWorkspaceDir } from '../controller/leases/openclaw-agent-workspace-paths.js';
 import { createOpenClawGatewayLeasePathMapping } from '../controller/leases/openclaw-gateway-lease-path-mapping.js';
 import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
 import {
@@ -77,6 +83,7 @@ const defaultGatewayReadinessMaxAttempts = Math.ceil(
 );
 
 export function validateGatewayControlCallerContextRegistration(options: {
+	readonly callerContextProofKey: string;
 	readonly payload: GatewayControlCallerContextRegisterPayload;
 	readonly zone: GatewayZone;
 }): void {
@@ -90,6 +97,20 @@ export function validateGatewayControlCallerContextRegistration(options: {
 			`Gateway control caller context rejected undeclared OpenClaw agent '${evidence.agentId}'.`,
 		);
 	}
+	if (
+		!verifyGatewayControlCallerContextProof({
+			proof: evidence.proof,
+			proofKey: options.callerContextProofKey,
+			proofPayload: buildGatewayControlCallerContextProofPayload(evidence),
+		})
+	) {
+		throw new Error('Gateway control caller context rejected invalid caller-context proof.');
+	}
+	assertCanonicalOpenClawAgentWorkspaceDir({
+		agentId: evidence.agentId,
+		agentWorkspaceDir: evidence.agentWorkspaceDir,
+		context: 'Gateway control caller context',
+	});
 	const workMountTranslation = translateRuntimePath({
 		inputPath: evidence.workMountDir,
 		mapping: createOpenClawGatewayLeasePathMapping({
@@ -129,6 +150,25 @@ export function validateGatewayControlCallerContextRegistration(options: {
 			'Gateway control caller context rejected Tool Portal host action without zone Tool Portal config.',
 		);
 	}
+}
+
+function verifyGatewayControlCallerContextProof(options: {
+	readonly proof: GatewayControlCallerContextProof;
+	readonly proofKey: string;
+	readonly proofPayload: string;
+}): boolean {
+	if (options.proof.algorithm !== 'hmac-sha256') {
+		return false;
+	}
+	const expectedDigest = createHmac('sha256', options.proofKey)
+		.update(options.proofPayload, 'utf8')
+		.digest('base64url');
+	const receivedDigestBuffer = Buffer.from(options.proof.digest, 'utf8');
+	const expectedDigestBuffer = Buffer.from(expectedDigest, 'utf8');
+	return (
+		receivedDigestBuffer.length === expectedDigestBuffer.length &&
+		timingSafeEqual(receivedDigestBuffer, expectedDigestBuffer)
+	);
 }
 
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
@@ -1087,7 +1127,11 @@ export async function startGatewayZone(
 									zoneId: controlSessionMaterial.zoneId,
 								},
 								validateCallerContextRegistration: (payload) => {
-									validateGatewayControlCallerContextRegistration({ payload, zone });
+									validateGatewayControlCallerContextRegistration({
+										callerContextProofKey: controlSessionMaterial.callerContextProofKey,
+										payload,
+										zone,
+									});
 								},
 							}),
 						);

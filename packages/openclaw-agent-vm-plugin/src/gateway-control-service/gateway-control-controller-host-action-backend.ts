@@ -35,6 +35,7 @@ import {
 import type { ToolPortalCapabilityBackend } from '@agent-vm/tool-portal';
 import { z } from 'zod/v4';
 
+import { signGatewayControlCallerContextProof } from './gateway-control-caller-context-proof.js';
 import type {
 	GatewayControlCallerContextCacheScope,
 	GatewayControlCallerContextStore,
@@ -304,6 +305,17 @@ export function createGatewayControlControllerHostActionBackend(
 				adapterEvidence: {
 					agentId: options.callerContextScope.agentId,
 					agentWorkspaceDir: options.callerContextScope.agentWorkspaceDir,
+					proof: signGatewayControlCallerContextProof({
+						input: {
+							agentId: options.callerContextScope.agentId,
+							agentWorkspaceDir: options.callerContextScope.agentWorkspaceDir,
+							purpose: 'tool_portal_controller_host_action',
+							sessionKey: options.callerContextScope.sessionKey,
+							workMountDir: options.callerContextScope.workMountDir,
+							zoneId: options.identity.zoneId,
+						},
+						proofKey: options.identity.callerContextProofKey,
+					}),
 					purpose: 'tool_portal_controller_host_action',
 					sessionKey: options.callerContextScope.sessionKey,
 					workMountDir: options.callerContextScope.workMountDir,

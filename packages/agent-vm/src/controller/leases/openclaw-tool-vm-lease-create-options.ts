@@ -10,6 +10,7 @@ import {
 } from './lease-idle-policy.js';
 import type { LeaseManager } from './lease-manager.js';
 import { resolveLeaseWorkMountDir } from './lease-work-mount-paths.js';
+import { assertCanonicalOpenClawAgentWorkspaceDir } from './openclaw-agent-workspace-paths.js';
 
 const defaultGatewayControlLeaseIdleTtlPolicy = {
 	defaultMs: defaultToolVmLeaseIdleTtlMs,
@@ -68,6 +69,11 @@ export function createOpenClawToolVmLeaseCreateOptionsResolver(
 				`Zone '${authorityContext.zoneId}' does not declare OpenClaw agent '${authorityContext.agentId}'.`,
 			);
 		}
+		assertCanonicalOpenClawAgentWorkspaceDir({
+			agentId: authorityContext.agentId,
+			agentWorkspaceDir: authorityContext.agentWorkspaceDir,
+			context: `OpenClaw tool VM lease for zone '${authorityContext.zoneId}'`,
+		});
 		options.openClawRuntimeStatusStore.assertFreshOk(authorityContext.zoneId);
 		const resolvedProfileId =
 			zone.agentToolVmProfiles?.[authorityContext.agentId] ?? zone.defaultToolVmProfile;

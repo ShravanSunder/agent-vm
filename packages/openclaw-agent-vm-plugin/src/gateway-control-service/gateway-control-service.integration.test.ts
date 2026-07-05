@@ -28,6 +28,7 @@ import {
 	buildGatewayControlSignaturePayload,
 	createGatewayControlService,
 	type GatewayControlAcceptedSession,
+	type GatewayControlIdentity,
 	type GatewayControlIssuedCredential,
 	type GatewayControlService,
 } from './gateway-control-service.js';
@@ -46,11 +47,12 @@ const activeSockets: Socket[] = [];
 const activeServers: HttpServer[] = [];
 const identity = {
 	bootId: 'gateway-boot-a',
+	callerContextProofKey: 'test-caller-context-proof-key',
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'gateway-generation-a',
 	peerId: 'gateway-zone-a',
 	zoneId: 'zone-a',
-} as const;
+} satisfies GatewayControlIdentity;
 
 function gatewayLeaseCreateEnvelopeFor(
 	session: GatewayControlAcceptedSession,
@@ -402,6 +404,7 @@ describe('gateway control service', () => {
 		);
 
 		expect(credential.audience).toBe('gateway_control');
+		expect(Object.hasOwn(credential, 'callerContextProofKey')).toBe(false);
 		expect(fixture.service.getCredentialState(credential.credentialId)).toBe('issued');
 	});
 

@@ -78,6 +78,7 @@ const plugin = {
 		}
 		const gatewayControlIdentity: GatewayControlIdentity = {
 			bootId: pluginConfig.controlSession.bootId,
+			callerContextProofKey: pluginConfig.controlSession.callerContextProofKey,
 			controllerEpoch: pluginConfig.controlSession.controllerEpoch,
 			generationId: pluginConfig.controlSession.generationId,
 			peerId: pluginConfig.controlSession.peerId,

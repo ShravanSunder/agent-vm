@@ -3,6 +3,7 @@ import {
 	type ControlEnvelope,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlLeaseSnapshot,
 	type GatewayControlLeaseUseSnapshot,
 	GatewayControlRpcMessageSchema,
@@ -52,11 +53,15 @@ const callerContextRegisterPayload = {
 	adapterEvidence: {
 		agentId: 'main',
 		agentWorkspaceDir: '/home/openclaw/workspace',
+		proof: {
+			algorithm: 'hmac-sha256',
+			digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
+		},
 		sessionKey: 'agent:main:test-session',
 		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 		zoneId: 'zone-a',
 	},
-};
+} satisfies GatewayControlCallerContextRegisterPayload;
 
 const callerContextRegisterMessage = GatewayControlRpcMessageSchema.parse({
 	kind: 'command',

@@ -15,6 +15,7 @@ import type { GatewayControlIdentity, GatewayControlService } from './gateway-co
 
 const identity = {
 	bootId: 'gateway-boot-a',
+	callerContextProofKey: 'test-caller-context-proof-key',
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'generation-a',
 	peerId: 'gateway-zone-a',
@@ -164,13 +165,16 @@ describe('createGatewayControlLeaseClient', () => {
 			'lease_create',
 		]);
 		expect(observedMessages[0]?.payload).toEqual({
-			adapterEvidence: {
+			adapterEvidence: expect.objectContaining({
 				agentId: 'main',
 				agentWorkspaceDir: '/home/openclaw/workspace',
+				proof: expect.objectContaining({
+					algorithm: 'hmac-sha256',
+				}),
 				sessionKey: 'agent:main:test-session',
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 				zoneId: 'zone-a',
-			},
+			}),
 		});
 		expect(observedMessages[1]?.payload).not.toHaveProperty('agentId');
 		expect(observedMessages[1]?.payload).not.toHaveProperty('profileId');

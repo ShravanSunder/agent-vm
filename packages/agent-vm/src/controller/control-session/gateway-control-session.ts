@@ -1,6 +1,7 @@
 import {
 	createPrivateKey,
 	generateKeyPairSync,
+	randomBytes,
 	randomUUID,
 	sign as signPayload,
 	type KeyObject,
@@ -40,6 +41,7 @@ export const GATEWAY_CONTROL_READY_PATH = '/__agent-vm/ready';
 
 export interface GatewayControlSessionMaterial {
 	readonly bootId: string;
+	readonly callerContextProofKey: string;
 	readonly controllerEpoch: string;
 	readonly generationId: string;
 	readonly peerId: string;
@@ -50,6 +52,7 @@ export interface GatewayControlSessionMaterial {
 
 export const serializedGatewayControlSessionMaterialSchema = z.strictObject({
 	bootId: z.string().min(1),
+	callerContextProofKey: z.string().min(32),
 	controllerEpoch: z.string().min(1),
 	generationId: z.string().min(1),
 	peerId: z.string().min(1),
@@ -81,6 +84,7 @@ export function createGatewayControlSessionMaterial(
 	const { privateKey, publicKey } = generateKeyPairSync('ed25519');
 	return {
 		bootId: randomUUID(),
+		callerContextProofKey: randomBytes(32).toString('base64url'),
 		controllerEpoch: options.controllerEpoch,
 		generationId: randomUUID(),
 		peerId: `gateway-${options.zoneId}`,
@@ -102,6 +106,7 @@ export function serializeGatewayControlSessionMaterial(
 	}
 	return {
 		bootId: material.bootId,
+		callerContextProofKey: material.callerContextProofKey,
 		controllerEpoch: material.controllerEpoch,
 		generationId: material.generationId,
 		peerId: material.peerId,
@@ -117,6 +122,7 @@ export function deserializeGatewayControlSessionMaterial(
 	const parsedMaterial = serializedGatewayControlSessionMaterialSchema.parse(material);
 	return {
 		bootId: parsedMaterial.bootId,
+		callerContextProofKey: parsedMaterial.callerContextProofKey,
 		controllerEpoch: parsedMaterial.controllerEpoch,
 		generationId: parsedMaterial.generationId,
 		peerId: parsedMaterial.peerId,
@@ -131,6 +137,7 @@ export function buildGatewayControlRuntimePluginConfig(
 ): Readonly<Record<string, unknown>> {
 	return {
 		bootId: material.bootId,
+		callerContextProofKey: material.callerContextProofKey,
 		controllerEpoch: material.controllerEpoch,
 		generationId: material.generationId,
 		peerId: material.peerId,

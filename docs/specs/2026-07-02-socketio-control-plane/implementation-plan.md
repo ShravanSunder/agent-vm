@@ -161,10 +161,12 @@ tune under load.
   preserve and extend tests around those boundaries, not add a vague future "attestation" blocker.
 - Hard security invariant: before issuing `callerContextId`, the controller must validate or derive
   `agentId`, `agentWorkspaceDir`, `workMountDir`, and `sessionKeyDigest` from accepted session-scoped/controller
-  truth. Declared-agent allowlisting alone is not sufficient. A declared agent with a workspace or work mount that
-  belongs to another agent, a shared ambiguous fallback, or a mismatched session key must fail closed. Same stable
-  provenance with refreshed ephemeral connection/session ids may keep lease reachability; changed workspace, work
-  mount, or session-key provenance must not.
+  truth, and it must verify a plugin-signed caller-context proof. The managed OpenClaw plugin signs the evidence
+  with the controller-generated control-session `callerContextProofKey` using HMAC-SHA256. Declared-agent
+  allowlisting and `sessionKeyDigest` alone are not sufficient. A declared agent with a workspace or work mount that
+  belongs to another agent, a shared ambiguous fallback, a mismatched session key, or an invalid proof must fail
+  closed. Same stable provenance with refreshed ephemeral connection/session ids may keep lease reachability;
+  changed workspace, work mount, session-key provenance, or proof provenance must not.
 - Write surface: EDIT `system-config.ts`, `gateway-zone-orchestrator.ts`, `init-command.ts`,
   `manual-templates.ts`, `docs/reference/configuration/system-json.md`, `docs/subsystems/controller.md`,
   `docs/getting-started/openclaw-guide.md`;
@@ -173,8 +175,8 @@ tune under load.
   `openclaw-tool-vm-lease-create-options.unit.test.ts`, `mcp-portal-effective-config.unit.test.ts`, and
   `config-validation.integration.test.ts` where the existing parity tests do not already cover multiple agents.
 - Checkpoint: the same-zone multi-agent fixture loads/scaffolds; declared non-default-agent caller context is accepted
-  and remains non-default downstream; undeclared, mismatched-session-key, wrong-workspace, and wrong-work-mount caller
-  contexts still reject; `agentToolVmProfiles` still chooses the agent-specific Tool VM profile;
+  and remains non-default downstream; undeclared, mismatched-session-key, wrong-workspace, wrong-work-mount, and
+  invalid-proof caller contexts still reject; `agentToolVmProfiles` still chooses the agent-specific Tool VM profile;
   Tool Portal/MCP Portal effective config still requires parity with all declared agents; generated manuals no
   longer teach single-agent cutover.
 - Proof: SMA-1..SMA-7 in the canonical proof matrix. Layer: unit + integration + manual-generation smoke + beta

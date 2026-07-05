@@ -39,6 +39,10 @@
 						"type": "string",
 						"minLength": 1
 					},
+					"callerContextProofKey": {
+						"type": "string",
+						"minLength": 32
+					},
 					"controllerEpoch": {
 						"type": "string",
 						"minLength": 1
@@ -56,7 +60,14 @@
 						"minLength": 1
 					}
 				},
-				"required": ["bootId", "controllerEpoch", "generationId", "peerId", "verifierPublicKeyPem"]
+				"required": [
+					"bootId",
+					"callerContextProofKey",
+					"controllerEpoch",
+					"generationId",
+					"peerId",
+					"verifierPublicKeyPem"
+				]
 			},
 			"profileId": {
 				"type": "string",

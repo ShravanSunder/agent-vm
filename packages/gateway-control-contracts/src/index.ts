@@ -94,12 +94,46 @@ export const GatewayControlCallerContextRefSchema = z
 	})
 	.strict();
 
+export const GatewayControlCallerContextProofAlgorithmSchema = z.literal('hmac-sha256');
+
+export const GatewayControlCallerContextProofSchema = z
+	.object({
+		algorithm: GatewayControlCallerContextProofAlgorithmSchema,
+		digest: z.string().min(32),
+	})
+	.strict();
+
+export interface GatewayControlCallerContextProofPayloadInput {
+	readonly agentId: string;
+	readonly agentWorkspaceDir: string;
+	readonly purpose?: 'tool_vm_lease' | 'tool_portal_controller_host_action' | undefined;
+	readonly sessionKey: string;
+	readonly workMountDir: string;
+	readonly zoneId: string;
+}
+
+export function buildGatewayControlCallerContextProofPayload(
+	input: GatewayControlCallerContextProofPayloadInput,
+): string {
+	const purpose = input.purpose ?? 'tool_vm_lease';
+	return [
+		'gateway-control-caller-context-v1',
+		input.zoneId,
+		input.agentId,
+		input.agentWorkspaceDir,
+		input.workMountDir,
+		input.sessionKey,
+		purpose,
+	].join('\u0000');
+}
+
 export const GatewayControlCallerContextRegisterPayloadSchema = z
 	.object({
 		adapterEvidence: z
 			.object({
 				agentId: z.string().min(1),
 				agentWorkspaceDir: z.string().min(1),
+				proof: GatewayControlCallerContextProofSchema,
 				purpose: z.enum(['tool_vm_lease', 'tool_portal_controller_host_action']).optional(),
 				sessionKey: z.string().min(1),
 				workMountDir: z.string().min(1),
@@ -675,6 +709,9 @@ export type GatewayControlControllerToGatewayEvents =
 export type GatewayControlGatewayToControllerEvents =
 	ControlSessionPeerToControllerEvents<GatewayControlRpcMessage>;
 export type GatewayControlCallerContextRef = z.infer<typeof GatewayControlCallerContextRefSchema>;
+export type GatewayControlCallerContextProof = z.infer<
+	typeof GatewayControlCallerContextProofSchema
+>;
 export type GatewayControlCallerContextRegisterPayload = z.infer<
 	typeof GatewayControlCallerContextRegisterPayloadSchema
 >;

@@ -27,6 +27,7 @@ import { registerToolPortalNativeTools } from './tool-portal-native-tools.js';
 
 const identity = {
 	bootId: 'gateway-boot-a',
+	callerContextProofKey: 'test-caller-context-proof-key',
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'generation-a',
 	peerId: 'gateway-zone-a',
@@ -108,14 +109,19 @@ function createFakeGatewayControlService(
 						kind: 'command',
 						operation: 'caller_context_register',
 					});
-					expect(message.payload.adapterEvidence).toEqual({
-						agentId: 'agent-a',
-						agentWorkspaceDir: '/zone/agents/agent-a',
-						purpose: 'tool_portal_controller_host_action',
-						sessionKey: 'agent:agent-a:discord:channel:123',
-						workMountDir: '/zone/agents/agent-a',
-						zoneId: identity.zoneId,
-					});
+					expect(message.payload.adapterEvidence).toEqual(
+						expect.objectContaining({
+							agentId: 'agent-a',
+							agentWorkspaceDir: '/zone/agents/agent-a',
+							proof: expect.objectContaining({
+								algorithm: 'hmac-sha256',
+							}),
+							purpose: 'tool_portal_controller_host_action',
+							sessionKey: 'agent:agent-a:discord:channel:123',
+							workMountDir: '/zone/agents/agent-a',
+							zoneId: identity.zoneId,
+						}),
+					);
 					return GatewayControlRpcCommandResultMessageSchema.parse({
 						kind: 'command_result',
 						operation: 'caller_context_register',

@@ -64,6 +64,15 @@ export type GatewayControlReadyRejectionReason =
 
 export interface GatewayControlIdentity {
 	readonly bootId: string;
+	readonly callerContextProofKey: string;
+	readonly controllerEpoch: string;
+	readonly generationId: string;
+	readonly peerId: string;
+	readonly zoneId: string;
+}
+
+export interface GatewayControlPublicIdentity {
+	readonly bootId: string;
 	readonly controllerEpoch: string;
 	readonly generationId: string;
 	readonly peerId: string;
@@ -104,9 +113,22 @@ function helloHasSequenceContinuity(
 	return hello.lastSeenControllerSequence !== undefined && hello.lastSeenPeerSequence !== undefined;
 }
 
-export type GatewayControlIssuedCredential = GatewayControlIdentity & ControlHandshakeCredential;
+function gatewayControlPublicIdentityFor(
+	identity: GatewayControlIdentity,
+): GatewayControlPublicIdentity {
+	return {
+		bootId: identity.bootId,
+		controllerEpoch: identity.controllerEpoch,
+		generationId: identity.generationId,
+		peerId: identity.peerId,
+		zoneId: identity.zoneId,
+	};
+}
 
-export interface GatewayControlAcceptedSession extends GatewayControlIdentity {
+export type GatewayControlIssuedCredential = GatewayControlPublicIdentity &
+	ControlHandshakeCredential;
+
+export interface GatewayControlAcceptedSession extends GatewayControlPublicIdentity {
 	readonly connectionId: string;
 	readonly sessionId: string;
 }
@@ -663,7 +685,7 @@ export function createGatewayControlService(
 			}
 			acceptedSocket = socket;
 			acceptedSession = {
-				...options.identity,
+				...gatewayControlPublicIdentityFor(options.identity),
 				connectionId: response.connectionId,
 				sessionId: response.sessionId,
 			};
@@ -992,7 +1014,7 @@ export function createGatewayControlService(
 		}
 		const issuedAtMs = now();
 		const credential: GatewayControlIssuedCredential = {
-			...options.identity,
+			...gatewayControlPublicIdentityFor(options.identity),
 			audience: 'gateway_control',
 			credentialId: randomUUID(),
 			expiresAtMs: issuedAtMs + nonceTtlMs,

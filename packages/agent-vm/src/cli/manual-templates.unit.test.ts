@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,6 +9,33 @@ import {
 } from './manual-templates.js';
 
 describe('manual templates', () => {
+	it('keeps active OpenClaw docs free of stale single-agent cutover wording', async () => {
+		const activeDocPaths = [
+			'docs/architecture/openclaw-gateway.md',
+			'docs/getting-started/openclaw-guide.md',
+			'docs/reference/configuration/system-json.md',
+			'docs/subsystems/controller.md',
+		] as const;
+		const stalePhrases = [
+			'exactly one trusted agent',
+			'controller-signed agent attestation',
+			'OpenClaw zones declaring more than one `zones[].agents` entry during the',
+		] as const;
+
+		const activeDocContents = await Promise.all(
+			activeDocPaths.map(async (activeDocPath) => ({
+				content: await readFile(activeDocPath, 'utf8'),
+				path: activeDocPath,
+			})),
+		);
+
+		for (const activeDocContent of activeDocContents) {
+			for (const stalePhrase of stalePhrases) {
+				expect(activeDocContent.content, activeDocContent.path).not.toContain(stalePhrase);
+			}
+		}
+	});
+
 	it('builds an agent-facing AGENTS.md index that points at the manual', () => {
 		const content = buildAgentVmAgentsTemplate({
 			defaultZoneId: 'shravan',

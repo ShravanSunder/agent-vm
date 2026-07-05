@@ -23,9 +23,12 @@ collapse a zone to one agent.
 
 Before issuing `callerContextId`, the controller must validate or derive
 `agentId`, `agentWorkspaceDir`, `workMountDir`, and `sessionKeyDigest` from
-accepted session-scoped/controller truth. Declared-agent allowlisting alone is
-not enough. A declared agent with another agent's workspace/work mount, an
-ambiguous shared fallback, or a mismatched session key fails closed.
+accepted session-scoped/controller truth, and it must verify a plugin-signed
+caller-context proof. The managed OpenClaw plugin signs caller-context evidence
+with the controller-generated control-session `callerContextProofKey` using
+HMAC-SHA256. Declared-agent allowlisting and `sessionKeyDigest` alone are not
+proof. A declared agent with another agent's workspace/work mount, an ambiguous
+shared fallback, a mismatched session key, or an invalid proof fails closed.
 
 Still rejected:
 
@@ -68,7 +71,8 @@ Proof surfaces:
   system config, OpenClaw `agents.list`, and MCP Portal config.
 - caller-context registration accepts a declared non-default second agent,
   preserves that non-default agent downstream, and rejects undeclared,
-  mismatched-session-key, wrong-workspace, and wrong-work-mount evidence.
+  mismatched-session-key, wrong-workspace, wrong-work-mount, and invalid-proof
+  evidence.
 - per-agent Tool VM profile selection and fallback are proven.
 - active docs and generated manuals no longer contain the single-agent cutover
   rule.
@@ -87,7 +91,7 @@ Required command layers:
 ## Split / Replan Trigger
 
 If implementation finds that current OpenClaw adapter evidence cannot validate
-or derive `agentId`, `agentWorkspaceDir`, `workMountDir`, and
-`sessionKeyDigest` against accepted session/controller truth without new
+or derive `agentId`, `agentWorkspaceDir`, `workMountDir`, `sessionKeyDigest`,
+and caller-context proof against accepted session/controller truth without new
 protocol fields, stop and route back to spec creation before changing product
 code further.

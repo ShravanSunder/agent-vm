@@ -264,6 +264,7 @@ describe('control session client', () => {
 		const gatewayControlService = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
+				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -775,6 +776,7 @@ describe('control session client', () => {
 		const service = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
+				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -1301,6 +1303,7 @@ describe('control session client', () => {
 			createGatewayControlService({
 				identity: {
 					bootId: material.bootId,
+					callerContextProofKey: material.callerContextProofKey,
 					controllerEpoch: material.controllerEpoch,
 					generationId: material.generationId,
 					peerId: material.peerId,

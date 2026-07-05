@@ -181,7 +181,8 @@ export function createManagedToolPortalInProcessRuntime(
 	props: CreateManagedToolPortalInProcessRuntimeProps,
 ): ManagedToolPortalInProcessRuntime {
 	let mcpProviderBackendFactoryPromise: Promise<ManagedMcpProviderBackendFactory> | undefined;
-	const entryPointsByCacheKey = new Map<string, Promise<ToolPortalInProcessEntryPoint>>();
+	const cachedEntryPointsByCacheKey = new Map<string, Promise<ToolPortalInProcessEntryPoint>>();
+	const liveEntryPointsByCacheKey = new Map<string, Promise<ToolPortalInProcessEntryPoint>>();
 	const maxEntryPointCacheEntries =
 		props.maxEntryPointCacheEntries ?? DEFAULT_MAX_ENTRY_POINT_CACHE_ENTRIES;
 	if (!Number.isInteger(maxEntryPointCacheEntries) || maxEntryPointCacheEntries < 1) {
@@ -220,10 +221,21 @@ export function createManagedToolPortalInProcessRuntime(
 		await retireMcpSessionIfFactoryExists(entryPointCacheKey);
 	};
 
+	const trimCachedEntryPoints = (): void => {
+		while (cachedEntryPointsByCacheKey.size > maxEntryPointCacheEntries) {
+			const oldestEntryPointCacheKey = cachedEntryPointsByCacheKey.keys().next().value;
+			if (typeof oldestEntryPointCacheKey !== 'string') {
+				break;
+			}
+			cachedEntryPointsByCacheKey.delete(oldestEntryPointCacheKey);
+		}
+	};
+
 	return {
 		close: async () => {
-			const entryPointEntries = [...entryPointsByCacheKey.entries()];
-			entryPointsByCacheKey.clear();
+			const entryPointEntries = [...liveEntryPointsByCacheKey.entries()];
+			cachedEntryPointsByCacheKey.clear();
+			liveEntryPointsByCacheKey.clear();
 			await Promise.all(
 				entryPointEntries.map(([entryPointCacheKey, entryPointPromise]) =>
 					retireEntryPointAfterSettlement(entryPointCacheKey, entryPointPromise),
@@ -237,10 +249,13 @@ export function createManagedToolPortalInProcessRuntime(
 		},
 		getEntryPoint: async (agentId, options = {}) => {
 			const entryPointCacheKey = options.entryPointCacheKey ?? agentId;
-			const existingEntryPoint = entryPointsByCacheKey.get(entryPointCacheKey);
+			const existingEntryPoint =
+				cachedEntryPointsByCacheKey.get(entryPointCacheKey) ??
+				liveEntryPointsByCacheKey.get(entryPointCacheKey);
 			if (existingEntryPoint !== undefined) {
-				entryPointsByCacheKey.delete(entryPointCacheKey);
-				entryPointsByCacheKey.set(entryPointCacheKey, existingEntryPoint);
+				cachedEntryPointsByCacheKey.delete(entryPointCacheKey);
+				cachedEntryPointsByCacheKey.set(entryPointCacheKey, existingEntryPoint);
+				trimCachedEntryPoints();
 				return await existingEntryPoint;
 			}
 			const entryPointPromise = (async () => {
@@ -261,39 +276,17 @@ export function createManagedToolPortalInProcessRuntime(
 						}),
 				});
 			})().catch((error: unknown) => {
-				entryPointsByCacheKey.delete(entryPointCacheKey);
+				if (cachedEntryPointsByCacheKey.get(entryPointCacheKey) === entryPointPromise) {
+					cachedEntryPointsByCacheKey.delete(entryPointCacheKey);
+				}
+				if (liveEntryPointsByCacheKey.get(entryPointCacheKey) === entryPointPromise) {
+					liveEntryPointsByCacheKey.delete(entryPointCacheKey);
+				}
 				throw error;
 			});
-			entryPointsByCacheKey.set(entryPointCacheKey, entryPointPromise);
-			const evictedEntryPointEntries: {
-				readonly entryPointCacheKey: string;
-				readonly entryPointPromise: Promise<ToolPortalInProcessEntryPoint>;
-			}[] = [];
-			while (entryPointsByCacheKey.size > maxEntryPointCacheEntries) {
-				const oldestEntryPointCacheKey = entryPointsByCacheKey.keys().next().value;
-				if (typeof oldestEntryPointCacheKey !== 'string') {
-					break;
-				}
-				const oldestEntryPointPromise = entryPointsByCacheKey.get(oldestEntryPointCacheKey);
-				if (oldestEntryPointPromise === undefined) {
-					break;
-				}
-				entryPointsByCacheKey.delete(oldestEntryPointCacheKey);
-				evictedEntryPointEntries.push({
-					entryPointCacheKey: oldestEntryPointCacheKey,
-					entryPointPromise: oldestEntryPointPromise,
-				});
-			}
-			if (evictedEntryPointEntries.length > 0) {
-				await Promise.all(
-					evictedEntryPointEntries.map((evictedEntryPointEntry) =>
-						retireEntryPointAfterSettlement(
-							evictedEntryPointEntry.entryPointCacheKey,
-							evictedEntryPointEntry.entryPointPromise,
-						),
-					),
-				);
-			}
+			liveEntryPointsByCacheKey.set(entryPointCacheKey, entryPointPromise);
+			cachedEntryPointsByCacheKey.set(entryPointCacheKey, entryPointPromise);
+			trimCachedEntryPoints();
 			return await entryPointPromise;
 		},
 	};

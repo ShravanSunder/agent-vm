@@ -144,7 +144,7 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 		const options = await resolveLeaseCreateOptions({
 			authorityContext: {
 				agentId: 'main',
-				agentWorkspaceDir: '/home/openclaw/workspace',
+				agentWorkspaceDir: '/zone/agents/main',
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 				zoneId: 'zone-a',
 			},
@@ -155,7 +155,7 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 			resolveLeaseCreateOptions({
 				authorityContext: {
 					agentId: 'main',
-					agentWorkspaceDir: '/home/openclaw/workspace',
+					agentWorkspaceDir: '/zone/agents/main',
 					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 					zoneId: 'zone-a',
 				},
@@ -190,7 +190,7 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 		const options = await resolveLeaseCreateOptions({
 			authorityContext: {
 				agentId: 'second',
-				agentWorkspaceDir: '/home/openclaw/workspace-second',
+				agentWorkspaceDir: '/zone/agents/second',
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
 				zoneId: 'zone-a',
 			},
@@ -206,6 +206,35 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 		await expect(
 			realpath(path.join(testRoot, 'state', 'zone-a', 'sandboxes', 'second', 'work')),
 		).resolves.toBe(options.hostWorkMountDir);
+	});
+
+	it('rejects noncanonical caller context workspaces before lease ownership is stored', async () => {
+		const systemConfig = await createSystemConfigFixture();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined) {
+			throw new Error('Expected OpenClaw fixture zone');
+		}
+		await mkdir(path.join(testRoot, 'state', 'zone-a', 'sandboxes', 'second', 'work'), {
+			recursive: true,
+		});
+		zone.agents = [{ id: 'main' }, { id: 'second' }];
+		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
+		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
+		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
+			openClawRuntimeStatusStore,
+			systemConfig,
+		});
+
+		await expect(
+			resolveLeaseCreateOptions({
+				authorityContext: {
+					agentId: 'second',
+					agentWorkspaceDir: '/home/openclaw/workspace-second',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
+					zoneId: 'zone-a',
+				},
+			}),
+		).rejects.toThrow(/agentWorkspaceDir/u);
 	});
 
 	it('does not trust a gateway-supplied profileId when zone policy has no profile mapping', async () => {
@@ -227,7 +256,7 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 			resolveLeaseCreateOptions({
 				authorityContext: {
 					agentId: 'main',
-					agentWorkspaceDir: '/home/openclaw/workspace',
+					agentWorkspaceDir: '/zone/agents/main',
 					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 					zoneId: 'zone-a',
 				},
