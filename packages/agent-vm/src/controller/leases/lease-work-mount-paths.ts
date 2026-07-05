@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -152,6 +152,38 @@ async function realpathAllowedRoot(directoryPath: string): Promise<string | null
 	}
 }
 
+async function assertAgentOwnedRootIsRealDirectory(options: {
+	readonly agentId: string;
+	readonly ownedHostRoot: string;
+	readonly workMountDir: string;
+}): Promise<void> {
+	let rootStats: Awaited<ReturnType<typeof lstat>>;
+	try {
+		rootStats = await lstat(options.ownedHostRoot);
+	} catch (error) {
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+			throw new LeaseWorkMountValidationError(
+				'work-mount-purpose-not-allowed',
+				`Lease workMountDir '${options.workMountDir}' does not have a host workspace owned by agent '${options.agentId}'.`,
+			);
+		}
+		const code =
+			error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
+		const message = error instanceof Error ? error.message : String(error);
+		throw new LeaseWorkMountValidationError(
+			'allowed-root-realpath-failed',
+			`Lease owned work mount root '${options.ownedHostRoot}' failed directory lstat check (${code}): ${message}`,
+			{ cause: error },
+		);
+	}
+	if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+		throw new LeaseWorkMountValidationError(
+			'work-mount-purpose-not-allowed',
+			`Lease workMountDir '${options.workMountDir}' must resolve through a real host workspace owned by agent '${options.agentId}', not a symlink or non-directory root.`,
+		);
+	}
+}
+
 async function validateResolvedLeaseWorkMountDir(options: {
 	readonly hostWorkMountDir: string;
 	readonly zone: ZoneConfig;
@@ -224,6 +256,11 @@ async function assertResolvedLeaseWorkMountKeepsAgentOwnership(options: {
 	if (ownedHostRoot === undefined) {
 		return;
 	}
+	await assertAgentOwnedRootIsRealDirectory({
+		agentId: options.agentId,
+		ownedHostRoot,
+		workMountDir: options.workMountDir,
+	});
 	const realOwnedHostRoot = await realpathAllowedRoot(ownedHostRoot);
 	if (
 		realOwnedHostRoot === null ||

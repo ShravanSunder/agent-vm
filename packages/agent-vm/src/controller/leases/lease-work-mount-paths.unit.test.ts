@@ -228,6 +228,56 @@ describe('resolveLeaseWorkMountDir', () => {
 		} satisfies Partial<LeaseWorkMountValidationError>);
 	});
 
+	it('rejects symlinked /zone agent roots that resolve into another agent workspace', async () => {
+		await mkdir(path.join(zoneFilesDir, 'agents', 'main', 'project'), { recursive: true });
+		const linkPath = path.join(zoneFilesDir, 'agents', 'link-agent');
+		await symlink(path.join(zoneFilesDir, 'agents', 'main'), linkPath);
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'link-agent',
+				runtimeDir,
+				workMountDir: '/zone/agents/link-agent/project',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
+	it('rejects symlinked sandbox roots that resolve into another agent workspace', async () => {
+		const linkPath = path.join(stateDir, 'sandboxes', 'link-agent');
+		await symlink(path.join(stateDir, 'sandboxes', 'main'), linkPath);
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'link-agent',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/link-agent/work',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
+	it('rejects symlinked state workspace roots that resolve into another agent workspace', async () => {
+		await mkdir(path.join(stateDir, 'workspace-beta', 'project'), { recursive: true });
+		const linkPath = path.join(stateDir, 'workspace-link-agent');
+		await symlink(path.join(stateDir, 'workspace-beta'), linkPath);
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'link-agent',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/state/workspace-link-agent/project',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
 	it('returns zone Git mount metadata for configured OpenClaw /zone leases', async () => {
 		if (zone.gateway.type !== 'openclaw') {
 			throw new Error('test fixture must use an OpenClaw gateway');

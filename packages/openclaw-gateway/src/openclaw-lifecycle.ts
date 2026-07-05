@@ -55,12 +55,6 @@ const diagnosticsOtelGlobalPackageVmPath = '/pnpm/global/5/node_modules/@opencla
 const deprecatedMcpPortalPluginId = 'mcp-portal';
 const openClawInstalledPluginDirectoryName = 'plugins';
 const openClawInstalledPluginIndexFileName = 'installs.json';
-const removedGondolinRawControlConfigFields = new Set([
-	'controllerUrl',
-	'zoneGitToken',
-	'zoneGitTokenEnv',
-]);
-const removedGondolinControlSessionConfigFields = new Set(['callerContextProofKey']);
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -634,40 +628,37 @@ function omitPluginConfigEntry(
 	return Object.fromEntries(Object.entries(config).filter(([key]) => key !== pluginId));
 }
 
-function omitObjectFields(
-	record: Readonly<Record<string, unknown>>,
-	omittedFields: ReadonlySet<string>,
-): Record<string, unknown> {
-	const result: Record<string, unknown> = {};
-	for (const [fieldName, fieldValue] of Object.entries(record)) {
-		if (!omittedFields.has(fieldName)) {
-			result[fieldName] = fieldValue;
-		}
+function assertNoRemovedGondolinRawControlConfig(config: Readonly<Record<string, unknown>>): void {
+	if (Object.hasOwn(config, 'controllerUrl')) {
+		throw new Error('Gondolin plugin config no longer accepts controllerUrl.');
 	}
-	return result;
+	if (Object.hasOwn(config, 'zoneGitToken') || Object.hasOwn(config, 'zoneGitTokenEnv')) {
+		throw new Error('Gondolin plugin config no longer accepts zone git token fields.');
+	}
+	const rawControlSessionConfig = config.controlSession;
+	if (
+		isObjectRecord(rawControlSessionConfig) &&
+		Object.hasOwn(rawControlSessionConfig, 'callerContextProofKey')
+	) {
+		throw new Error('Gondolin plugin controlSession no longer accepts callerContextProofKey.');
+	}
 }
 
-function stripRemovedGondolinRawControlConfig(
-	config: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
-	const strippedConfig = omitObjectFields(config, removedGondolinRawControlConfigFields);
-	const rawControlSessionConfig = strippedConfig.controlSession;
-	if (!isObjectRecord(rawControlSessionConfig)) {
-		return strippedConfig;
+function assertOptionalManagedGondolinObjectField(options: {
+	readonly config: Readonly<Record<string, unknown>>;
+	readonly fieldName: 'controlSession' | 'toolPortal';
+}): void {
+	if (!Object.hasOwn(options.config, options.fieldName)) {
+		return;
 	}
-	const strippedControlSessionConfig = omitObjectFields(
-		rawControlSessionConfig,
-		removedGondolinControlSessionConfigFields,
-	);
-	if (Object.keys(strippedControlSessionConfig).length === 0) {
-		const result = { ...strippedConfig };
-		delete result.controlSession;
-		return result;
+	if (!isObjectRecord(options.config[options.fieldName])) {
+		throw new Error(`Gondolin plugin ${options.fieldName} must be an object when present.`);
 	}
-	return {
-		...strippedConfig,
-		controlSession: strippedControlSessionConfig,
-	};
+}
+
+function assertManagedGondolinPluginConfig(config: Readonly<Record<string, unknown>>): void {
+	assertOptionalManagedGondolinObjectField({ config, fieldName: 'controlSession' });
+	assertOptionalManagedGondolinObjectField({ config, fieldName: 'toolPortal' });
 }
 
 function isDeprecatedMcpPortalLoadPath(value: string): boolean {
@@ -753,16 +744,17 @@ function buildEffectivePluginsConfig(
 		const existingPluginConfig = isObjectRecord(existingEntryConfig.config)
 			? existingEntryConfig.config
 			: {};
-		const existingEffectivePluginConfig =
-			pluginId === 'gondolin'
-				? stripRemovedGondolinRawControlConfig(existingPluginConfig)
-				: existingPluginConfig;
-		const runtimeEffectiveConfig =
-			pluginId === 'gondolin' ? stripRemovedGondolinRawControlConfig(runtimeConfig) : runtimeConfig;
+		if (pluginId === 'gondolin') {
+			assertNoRemovedGondolinRawControlConfig(existingPluginConfig);
+			assertNoRemovedGondolinRawControlConfig(runtimeConfig);
+		}
 		const config = {
-			...existingEffectivePluginConfig,
-			...runtimeEffectiveConfig,
+			...existingPluginConfig,
+			...runtimeConfig,
 		};
+		if (pluginId === 'gondolin') {
+			assertManagedGondolinPluginConfig(config);
+		}
 		runtimeEntriesConfig[pluginId] = {
 			...existingEntryConfig,
 			config,
