@@ -96,7 +96,7 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 			zones: [
 				{
 					egressHosts: [{ host: 'api.anthropic.com', audience: 'gateway' }],
-					agents: [{ id: 'sun' }, { id: 'mak' }, { id: 'ember' }],
+					agents: [{ id: 'sun' }],
 					gateway: {
 						type: 'openclaw',
 						controlAuth: {
