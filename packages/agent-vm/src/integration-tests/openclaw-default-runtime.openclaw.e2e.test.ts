@@ -36,7 +36,7 @@ afterEach(async () => {
 describe('e2e: OpenClaw default runtime scaffold', () => {
 	it('pins scaffolded OpenAI defaults to the PI runtime', async () => {
 		const project = await scaffoldOpenClawE2eProject({
-			agents: ['sun', 'shravan'],
+			agents: ['sun'],
 			architecture: currentE2eArchitecture(),
 			prefix: 'openclaw-control-link-e2e-',
 			zoneId: 'openclaw-default-runtime',
