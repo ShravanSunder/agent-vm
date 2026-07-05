@@ -13,45 +13,113 @@ export interface ResolvedGondolinPluginConfig {
 	readonly zoneId: string;
 }
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
+export type GondolinPluginConfigJsonValue =
+	| boolean
+	| null
+	| number
+	| string
+	| GondolinPluginConfigJsonObject
+	| readonly GondolinPluginConfigJsonValue[];
+
+export interface GondolinPluginConfigJsonObject {
+	readonly [fieldName: string]: GondolinPluginConfigJsonValue;
+}
+
+export type GondolinPluginConfigInput = GondolinPluginConfigJsonObject;
+
+function isConfigObject(
+	value: GondolinPluginConfigJsonValue | undefined,
+): value is GondolinPluginConfigJsonObject {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function resolveControlSessionConfig(
-	config: Record<string, unknown>,
-): ResolvedGondolinPluginConfig['controlSession'] {
-	const rawControlSession = config.controlSession;
-	if (!isObjectRecord(rawControlSession)) {
-		return undefined;
-	}
-	if (rawControlSession.callerContextProofKey !== undefined) {
-		throw new Error('Gondolin plugin controlSession no longer accepts callerContextProofKey.');
-	}
-	for (const fieldName of [
-		'bootId',
-		'controllerEpoch',
-		'generationId',
-		'peerId',
-		'verifierPublicKeyPem',
-	] as const) {
-		if (typeof rawControlSession[fieldName] !== 'string') {
-			throw new Error(`Gondolin plugin controlSession requires string ${fieldName}.`);
+function assertNoUnknownFields(options: {
+	readonly allowedFields: ReadonlySet<string>;
+	readonly label: string;
+	readonly record: GondolinPluginConfigJsonObject;
+}): void {
+	for (const fieldName of Object.keys(options.record)) {
+		if (!options.allowedFields.has(fieldName)) {
+			throw new Error(`Gondolin plugin ${options.label} does not accept field '${fieldName}'.`);
 		}
 	}
-	const bootId = rawControlSession.bootId;
-	const controllerEpoch = rawControlSession.controllerEpoch;
-	const generationId = rawControlSession.generationId;
-	const peerId = rawControlSession.peerId;
-	const verifierPublicKeyPem = rawControlSession.verifierPublicKeyPem;
-	if (
-		typeof bootId !== 'string' ||
-		typeof controllerEpoch !== 'string' ||
-		typeof generationId !== 'string' ||
-		typeof peerId !== 'string' ||
-		typeof verifierPublicKeyPem !== 'string'
-	) {
-		throw new Error('Gondolin plugin controlSession string fields failed validation.');
+}
+
+function requireNonEmptyString(options: {
+	readonly fieldName: string;
+	readonly label: string;
+	readonly value: GondolinPluginConfigJsonValue | undefined;
+}): string {
+	if (typeof options.value !== 'string') {
+		throw new Error(`Gondolin plugin ${options.label} requires string ${options.fieldName}.`);
 	}
+	if (options.value.trim() === '') {
+		throw new Error(`Gondolin plugin ${options.label} requires non-empty ${options.fieldName}.`);
+	}
+	return options.value;
+}
+
+const rootConfigFields = new Set([
+	'controlSession',
+	'controllerUrl',
+	'profileId',
+	'toolPortal',
+	'zoneGitToken',
+	'zoneGitTokenEnv',
+	'zoneId',
+]);
+
+const controlSessionConfigFields = new Set([
+	'bootId',
+	'callerContextProofKey',
+	'controllerEpoch',
+	'generationId',
+	'peerId',
+	'verifierPublicKeyPem',
+]);
+
+const toolPortalConfigFields = new Set(['configDir']);
+
+function resolveControlSessionConfig(
+	config: GondolinPluginConfigInput,
+): ResolvedGondolinPluginConfig['controlSession'] {
+	const rawControlSession = config.controlSession;
+	if (!isConfigObject(rawControlSession)) {
+		return undefined;
+	}
+	if (Object.hasOwn(rawControlSession, 'callerContextProofKey')) {
+		throw new Error('Gondolin plugin controlSession no longer accepts callerContextProofKey.');
+	}
+	assertNoUnknownFields({
+		allowedFields: controlSessionConfigFields,
+		label: 'controlSession',
+		record: rawControlSession,
+	});
+	const bootId = requireNonEmptyString({
+		fieldName: 'bootId',
+		label: 'controlSession',
+		value: rawControlSession.bootId,
+	});
+	const controllerEpoch = requireNonEmptyString({
+		fieldName: 'controllerEpoch',
+		label: 'controlSession',
+		value: rawControlSession.controllerEpoch,
+	});
+	const generationId = requireNonEmptyString({
+		fieldName: 'generationId',
+		label: 'controlSession',
+		value: rawControlSession.generationId,
+	});
+	const peerId = requireNonEmptyString({
+		fieldName: 'peerId',
+		label: 'controlSession',
+		value: rawControlSession.peerId,
+	});
+	const verifierPublicKeyPem = requireNonEmptyString({
+		fieldName: 'verifierPublicKeyPem',
+		label: 'controlSession',
+		value: rawControlSession.verifierPublicKeyPem,
+	});
 	return {
 		bootId,
 		controllerEpoch,
@@ -62,36 +130,60 @@ function resolveControlSessionConfig(
 }
 
 function resolveToolPortalConfig(
-	config: Record<string, unknown>,
+	config: GondolinPluginConfigInput,
 ): ResolvedGondolinPluginConfig['toolPortal'] {
 	const rawToolPortalConfig = config.toolPortal;
-	if (!isObjectRecord(rawToolPortalConfig)) {
+	if (!isConfigObject(rawToolPortalConfig)) {
 		return undefined;
 	}
-	if (typeof rawToolPortalConfig.configDir !== 'string') {
-		throw new Error('Gondolin plugin toolPortal requires string configDir.');
-	}
-	return { configDir: rawToolPortalConfig.configDir };
+	assertNoUnknownFields({
+		allowedFields: toolPortalConfigFields,
+		label: 'toolPortal',
+		record: rawToolPortalConfig,
+	});
+	return {
+		configDir: requireNonEmptyString({
+			fieldName: 'configDir',
+			label: 'toolPortal',
+			value: rawToolPortalConfig.configDir,
+		}),
+	};
 }
 
 export function resolveGondolinPluginConfig(
-	config: Record<string, unknown>,
+	config: GondolinPluginConfigInput,
 ): ResolvedGondolinPluginConfig {
 	if (typeof config.zoneId !== 'string') {
 		throw new Error('Gondolin plugin config requires zoneId.');
 	}
-	if (config.controllerUrl !== undefined) {
+	if (config.zoneId.trim() === '') {
+		throw new Error('Gondolin plugin config requires non-empty zoneId.');
+	}
+	if (Object.hasOwn(config, 'controllerUrl')) {
 		throw new Error('Gondolin plugin config no longer accepts controllerUrl.');
 	}
-	if (config.zoneGitToken !== undefined || config.zoneGitTokenEnv !== undefined) {
+	if (Object.hasOwn(config, 'zoneGitToken') || Object.hasOwn(config, 'zoneGitTokenEnv')) {
 		throw new Error('Gondolin plugin config no longer accepts zone git token fields.');
 	}
+	assertNoUnknownFields({
+		allowedFields: rootConfigFields,
+		label: 'config',
+		record: config,
+	});
 	const controlSession = resolveControlSessionConfig(config);
 	const toolPortal = resolveToolPortalConfig(config);
 
 	return {
 		...(controlSession === undefined ? {} : { controlSession }),
-		...(typeof config.profileId === 'string' ? { profileId: config.profileId } : {}),
+		...(config.profileId === undefined
+			? {}
+			: {
+					profileId: requireNonEmptyString({
+						fieldName: 'profileId',
+						label: 'config',
+						value: config.profileId,
+					}),
+				}),
 		...(toolPortal === undefined ? {} : { toolPortal }),
 		zoneId: config.zoneId,
 	};

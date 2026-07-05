@@ -35,6 +35,7 @@ import {
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
+import { findOpenClawLeaseWorkMountAgentMismatch } from '../controller/leases/lease-work-mount-paths.js';
 import { assertCanonicalOpenClawAgentWorkspaceDir } from '../controller/leases/openclaw-agent-workspace-paths.js';
 import { createOpenClawGatewayLeasePathMapping } from '../controller/leases/openclaw-gateway-lease-path-mapping.js';
 import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
@@ -127,20 +128,15 @@ export function validateGatewayControlCallerContextRegistration(options: {
 			`Gateway control caller context rejected invalid OpenClaw workMountDir '${evidence.workMountDir}': ${workMountTranslation.error.message}`,
 		);
 	}
-	if (
-		workMountTranslation.value.rootId === 'openclaw-sandboxes' &&
-		!workMountTranslation.value.relativePath.startsWith(`${evidence.agentId}/`)
-	) {
+	const workMountAgentMismatch = findOpenClawLeaseWorkMountAgentMismatch({
+		agentId: evidence.agentId,
+		relativePath: workMountTranslation.value.relativePath,
+		rootId: workMountTranslation.value.rootId,
+		workMountDir: evidence.workMountDir,
+	});
+	if (workMountAgentMismatch !== undefined) {
 		throw new Error(
-			`Gateway control caller context rejected OpenClaw workMountDir '${evidence.workMountDir}': only the '${evidence.agentId}' sandbox may register for agent '${evidence.agentId}'.`,
-		);
-	}
-	if (
-		workMountTranslation.value.rootId === 'openclaw-state' &&
-		workMountTranslation.value.relativePath !== `workspace-${evidence.agentId}`
-	) {
-		throw new Error(
-			`Gateway control caller context rejected OpenClaw workMountDir '${evidence.workMountDir}': expected workspace-${evidence.agentId}.`,
+			`Gateway control caller context rejected OpenClaw workMountDir '${evidence.workMountDir}': ${workMountAgentMismatch}`,
 		);
 	}
 	if (

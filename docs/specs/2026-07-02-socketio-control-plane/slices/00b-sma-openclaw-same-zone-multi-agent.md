@@ -21,14 +21,25 @@ Same-zone multi-agent managed OpenClaw must be accepted when all agents are
 declared and the dependent per-agent config is consistent. The cutover must not
 collapse a zone to one agent.
 
-Before issuing `callerContextId`, the controller must validate or derive
-`agentId`, `agentWorkspaceDir`, `workMountDir`, and `sessionKeyDigest` from
-accepted session-scoped/controller truth, and it must verify a plugin-signed
-caller-context proof. The managed OpenClaw plugin signs caller-context evidence
-with the controller-generated control-session `callerContextProofKey` using
-HMAC-SHA256. Declared-agent allowlisting and `sessionKeyDigest` alone are not
-proof. A declared agent with another agent's workspace/work mount, an ambiguous
-shared fallback, a mismatched session key, or an invalid proof fails closed.
+Before issuing `callerContextId`, the controller must verify a plugin-signed
+caller-context proof and validate `agentId`, `agentWorkspaceDir`,
+`workMountDir`, and `sessionKeyDigest` against controller-owned declared-agent
+config and agent-owned path policy. The managed OpenClaw plugin signs
+caller-context evidence with the controller-generated control-session
+`callerContextProofKey` using HMAC-SHA256. The key is injected only through the
+controller-owned private VM environment and is not serialized into plugin
+config, effective OpenClaw config, overlays, runtime records, readiness
+credentials, or accepted session records. Declared-agent allowlisting and
+`sessionKeyDigest` alone are not proof. A declared agent with another agent's
+workspace/work mount, an ambiguous shared fallback, a mismatched session key, or
+an invalid proof fails closed.
+
+This HMAC blocks model/tool-shaped payloads and stale guest-visible config from
+minting caller contexts outside the plugin path. It is not controller-trusted
+active-agent attestation against a fully compromised OpenClaw plugin process
+that can read private VM environment. That stronger property requires a future
+OpenClaw/session attestation source or a controller-issued per-agent capability
+that is not resident in the same guest trust domain.
 
 Still rejected:
 
@@ -90,8 +101,6 @@ Required command layers:
 
 ## Split / Replan Trigger
 
-If implementation finds that current OpenClaw adapter evidence cannot validate
-or derive `agentId`, `agentWorkspaceDir`, `workMountDir`, `sessionKeyDigest`,
-and caller-context proof against accepted session/controller truth without new
-protocol fields, stop and route back to spec creation before changing product
-code further.
+If implementation needs to defend against a fully compromised OpenClaw plugin,
+route back to spec creation for a new OpenClaw/session attestation source before
+claiming that stronger property.

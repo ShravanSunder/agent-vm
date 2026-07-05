@@ -13,7 +13,11 @@ import {
 	type GatewayControlIdentity,
 	type GatewayControlService,
 } from './gateway-control-service/gateway-control-service.js';
-import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
+import {
+	type GondolinPluginConfigInput,
+	type GondolinPluginConfigJsonObject,
+	resolveGondolinPluginConfig,
+} from './gondolin-plugin-config.js';
 import {
 	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 	createBackendDeps,
@@ -50,14 +54,14 @@ const plugin = {
 	description: 'Sandbox backend powered by Gondolin micro-VMs.',
 
 	register(api: {
-		readonly config?: Record<string, unknown>;
-		readonly pluginConfig: Record<string, unknown>;
+		readonly config?: GondolinPluginConfigJsonObject;
+		readonly pluginConfig: GondolinPluginConfigInput;
 		readonly registerHttpRoute?: OpenClawHttpRouteRegistrationApi['registerHttpRoute'];
 		readonly registerTool?: OpenClawToolRegistrationApi['registerTool'];
 		readonly registrationMode: string;
 		readonly runtime?: {
 			readonly config?: {
-				readonly current?: () => Record<string, unknown>;
+				readonly current?: () => GondolinPluginConfigJsonObject;
 			};
 		};
 	}): void {

@@ -159,14 +159,21 @@ tune under load.
   already checks lease ownership using stable fields (`agentId`, workspace, boot/epoch/peer, purpose,
   sessionKeyDigest, workMountDir, zoneId) rather than transient `sessionId`/`connectionId`. Implementors should
   preserve and extend tests around those boundaries, not add a vague future "attestation" blocker.
-- Hard security invariant: before issuing `callerContextId`, the controller must validate or derive
-  `agentId`, `agentWorkspaceDir`, `workMountDir`, and `sessionKeyDigest` from accepted session-scoped/controller
-  truth, and it must verify a plugin-signed caller-context proof. The managed OpenClaw plugin signs the evidence
-  with the controller-generated control-session `callerContextProofKey` using HMAC-SHA256. Declared-agent
-  allowlisting and `sessionKeyDigest` alone are not sufficient. A declared agent with a workspace or work mount that
-  belongs to another agent, a shared ambiguous fallback, a mismatched session key, or an invalid proof must fail
-  closed. Same stable provenance with refreshed ephemeral connection/session ids may keep lease reachability;
-  changed workspace, work mount, session-key provenance, or proof provenance must not.
+- Hard security invariant: before issuing `callerContextId`, the controller must verify a plugin-signed
+  caller-context proof and validate `agentId`, `agentWorkspaceDir`, `workMountDir`, and `sessionKeyDigest` against
+  controller-owned declared-agent config and agent-owned path policy. The managed OpenClaw plugin signs the evidence
+  with the controller-generated control-session `callerContextProofKey` using HMAC-SHA256; the key is injected only
+  through the controller-owned private VM environment and is not serialized into plugin config, effective OpenClaw
+  config, overlays, runtime records, readiness credentials, or accepted session records. Declared-agent allowlisting
+  and `sessionKeyDigest` alone are not sufficient. A declared agent with a workspace or work mount that belongs to
+  another agent, a shared ambiguous fallback, a mismatched session key, or an invalid proof must fail closed. Same
+  stable provenance with refreshed ephemeral connection/session ids may keep lease reachability; changed workspace,
+  work mount, session-key provenance, or proof provenance must not.
+- Current trust boundary: this HMAC blocks model/tool-shaped payloads and stale guest-visible config from minting
+  caller contexts outside the plugin path, but it is not controller-trusted active-agent attestation against a fully
+  compromised plugin process that can read private VM environment. Full compromised-plugin provenance requires a
+  future OpenClaw/session attestation source or a controller-issued per-agent capability that is not resident in the
+  same guest trust domain.
 - Write surface: EDIT `system-config.ts`, `gateway-zone-orchestrator.ts`, `init-command.ts`,
   `manual-templates.ts`, `docs/reference/configuration/system-json.md`, `docs/subsystems/controller.md`,
   `docs/getting-started/openclaw-guide.md`;
@@ -183,8 +190,8 @@ tune under load.
   validation. Red/green is required because current code fails the accepted behavior.
 - Dependency: independent of GATE-0a. SMA may be implemented/reviewed before the runtime spike, but no production
   control-plane cutover slice may claim readiness until both SMA and GATE-0a have passed. Split trigger: if
-  caller-context identity binding requires new OpenClaw adapter evidence beyond the current session-key/workspace/
-  mount fields, route back to spec before implementation.
+  caller-context identity binding must defend against a fully compromised OpenClaw plugin, route back to spec for a
+  new OpenClaw/session attestation source before claiming that stronger property.
 - Workspace rule: same-zone multi-agent requires explicit per-agent workspace entries or a controller-proven mapping
   that resolves to distinct agent-scoped mounts/workdirs. Ambiguous shared fallback is invalid for SMA.
 

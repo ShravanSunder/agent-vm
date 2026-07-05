@@ -103,6 +103,67 @@ describe('resolveGondolinPluginConfig', () => {
 		);
 	});
 
+	it('throws when string fields are empty', () => {
+		expect(() => resolveGondolinPluginConfig({ zoneId: '' })).toThrow(
+			'Gondolin plugin config requires non-empty zoneId.',
+		);
+		expect(() =>
+			resolveGondolinPluginConfig({
+				profileId: '',
+				zoneId: 'shravan',
+			}),
+		).toThrow('Gondolin plugin config requires non-empty profileId.');
+		expect(() =>
+			resolveGondolinPluginConfig({
+				toolPortal: { configDir: '' },
+				zoneId: 'shravan',
+			}),
+		).toThrow('Gondolin plugin toolPortal requires non-empty configDir.');
+		expect(() =>
+			resolveGondolinPluginConfig({
+				controlSession: {
+					bootId: '',
+					controllerEpoch: 'epoch-a',
+					generationId: 'generation-a',
+					peerId: 'gateway-shravan',
+					verifierPublicKeyPem: 'public-key',
+				},
+				zoneId: 'shravan',
+			}),
+		).toThrow('Gondolin plugin controlSession requires non-empty bootId.');
+	});
+
+	it('throws when config objects contain unknown fields', () => {
+		expect(() =>
+			resolveGondolinPluginConfig({
+				extraRoot: true,
+				zoneId: 'shravan',
+			}),
+		).toThrow("Gondolin plugin config does not accept field 'extraRoot'.");
+		expect(() =>
+			resolveGondolinPluginConfig({
+				controlSession: {
+					bootId: 'boot-a',
+					controllerEpoch: 'epoch-a',
+					extraControl: true,
+					generationId: 'generation-a',
+					peerId: 'gateway-shravan',
+					verifierPublicKeyPem: 'public-key',
+				},
+				zoneId: 'shravan',
+			}),
+		).toThrow("Gondolin plugin controlSession does not accept field 'extraControl'.");
+		expect(() =>
+			resolveGondolinPluginConfig({
+				toolPortal: {
+					configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+					extraToolPortal: true,
+				},
+				zoneId: 'shravan',
+			}),
+		).toThrow("Gondolin plugin toolPortal does not accept field 'extraToolPortal'.");
+	});
+
 	it('throws when Tool Portal config is malformed', () => {
 		expect(() =>
 			resolveGondolinPluginConfig({

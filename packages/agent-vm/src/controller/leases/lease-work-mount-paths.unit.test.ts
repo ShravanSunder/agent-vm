@@ -27,6 +27,8 @@ describe('resolveLeaseWorkMountDir', () => {
 		zoneFilesDir = path.join(tempDir, 'zone-files', 'shravan');
 		stateDir = path.join(tempDir, 'state', 'shravan');
 		await mkdir(path.join(zoneFilesDir, 'project'), { recursive: true });
+		await mkdir(path.join(zoneFilesDir, 'agents', 'beta', 'project'), { recursive: true });
+		await mkdir(path.join(zoneFilesDir, 'agents', 'main'), { recursive: true });
 		await mkdir(path.join(stateDir, 'sandboxes', 'beta', 'work'), { recursive: true });
 		await mkdir(path.join(stateDir, 'sandboxes', 'main', 'work'), { recursive: true });
 		await mkdir(path.join(stateDir, 'workspace-beta'), { recursive: true });
@@ -183,18 +185,31 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/must name a child path under/u);
 	});
 
-	it('maps OpenClaw gateway /zone paths to host zoneFilesDir', async () => {
+	it('maps OpenClaw gateway agent-owned /zone paths to host zoneFilesDir', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
 				agentId: 'beta',
 				runtimeDir,
-				workMountDir: '/zone/project',
+				workMountDir: '/zone/agents/beta/project',
 				zone,
 			}),
 		).resolves.toEqual({
 			guestWorkdir: '/workspace',
-			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'project')),
+			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'agents', 'beta', 'project')),
 		});
+	});
+
+	it('rejects OpenClaw gateway /zone agent paths for a different agent', async () => {
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'beta',
+				runtimeDir,
+				workMountDir: '/zone/agents/main',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
 	});
 
 	it('returns zone Git mount metadata for configured OpenClaw /zone leases', async () => {
@@ -221,12 +236,12 @@ describe('resolveLeaseWorkMountDir', () => {
 			resolveLeaseWorkMountDir({
 				agentId: 'beta',
 				runtimeDir,
-				workMountDir: '/zone/project',
+				workMountDir: '/zone/agents/beta/project',
 				zone: zoneWithZoneGit,
 			}),
 		).resolves.toEqual({
-			guestWorkdir: '/zone/project',
-			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'project')),
+			guestWorkdir: '/zone/agents/beta/project',
+			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'agents', 'beta', 'project')),
 			zoneGitMount: {
 				hostZoneFilesDir: zoneFilesDir,
 				hostZoneGitRoot: path.join(runtimeDir, 'zones', 'shravan', 'zone-git'),
@@ -388,7 +403,7 @@ describe('resolveLeaseWorkMountDir', () => {
 			resolveLeaseWorkMountDir({
 				agentId: 'beta',
 				runtimeDir,
-				workMountDir: '/zone/project',
+				workMountDir: '/zone/agents/beta/project',
 				zone: missingRootZone,
 			}),
 		).rejects.toThrow(/failed directory realpath check/u);

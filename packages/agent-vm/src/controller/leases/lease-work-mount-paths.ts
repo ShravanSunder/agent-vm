@@ -88,6 +88,37 @@ function isPathWithin(candidatePath: string, rootPath: string): boolean {
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
+export function findOpenClawLeaseWorkMountAgentMismatch(options: {
+	readonly agentId: string;
+	readonly relativePath: string;
+	readonly rootId: string;
+	readonly workMountDir: string;
+}): string | undefined {
+	if (
+		options.rootId === 'openclaw-sandboxes' &&
+		!options.relativePath.startsWith(`${options.agentId}/`)
+	) {
+		return `Lease workMountDir '${options.workMountDir}' matched OpenClaw sandboxes, but only '${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/${options.agentId}/...' is allowed for agent '${options.agentId}'.`;
+	}
+	if (
+		options.rootId === 'openclaw-state' &&
+		options.relativePath !== `workspace-${options.agentId}`
+	) {
+		return `Lease workMountDir '${options.workMountDir}' matched OpenClaw state, but only '${OPENCLAW_STATE_VM_ROOT}/workspace-${options.agentId}' is allowed for agent '${options.agentId}'.`;
+	}
+	if (options.rootId === 'zone-files') {
+		const expectedAgentWorkspacePath = `agents/${options.agentId}`;
+		if (
+			options.relativePath === expectedAgentWorkspacePath ||
+			options.relativePath.startsWith(`${expectedAgentWorkspacePath}/`)
+		) {
+			return undefined;
+		}
+		return `Lease workMountDir '${options.workMountDir}' matched OpenClaw zone files, but only '${OPENCLAW_ZONE_FILES_VM_ROOT}/${expectedAgentWorkspacePath}' or its children are allowed for agent '${options.agentId}'.`;
+	}
+	return undefined;
+}
+
 async function realpathIfDirectory(directoryPath: string): Promise<string> {
 	try {
 		return await realpath(directoryPath);
@@ -232,23 +263,14 @@ export async function resolveLeaseWorkMountDir(options: {
 			guidance: translation.error.retryGuidance,
 		});
 	}
-	if (
-		translation.value.rootId === 'openclaw-sandboxes' &&
-		!translation.value.relativePath.startsWith(`${options.agentId}/`)
-	) {
-		throw new LeaseWorkMountValidationError(
-			'work-mount-purpose-not-allowed',
-			`Lease workMountDir '${options.workMountDir}' matched OpenClaw sandboxes, but only '${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/${options.agentId}/...' is allowed for agent '${options.agentId}'.`,
-		);
-	}
-	if (
-		translation.value.rootId === 'openclaw-state' &&
-		translation.value.relativePath !== `workspace-${options.agentId}`
-	) {
-		throw new LeaseWorkMountValidationError(
-			'work-mount-purpose-not-allowed',
-			`Lease workMountDir '${options.workMountDir}' matched OpenClaw state, but only '${OPENCLAW_STATE_VM_ROOT}/workspace-${options.agentId}' is allowed for agent '${options.agentId}'.`,
-		);
+	const agentMismatchMessage = findOpenClawLeaseWorkMountAgentMismatch({
+		agentId: options.agentId,
+		relativePath: translation.value.relativePath,
+		rootId: translation.value.rootId,
+		workMountDir: options.workMountDir,
+	});
+	if (agentMismatchMessage !== undefined) {
+		throw new LeaseWorkMountValidationError('work-mount-purpose-not-allowed', agentMismatchMessage);
 	}
 	const realHostWorkMountDir = await validateResolvedLeaseWorkMountDir({
 		hostWorkMountDir: translation.value.outputPath,
