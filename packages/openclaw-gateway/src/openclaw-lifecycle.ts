@@ -691,6 +691,20 @@ function assertOptionalGondolinStringField(options: {
 	}
 }
 
+function assertRequiredGondolinStringField(options: {
+	readonly fieldName: string;
+	readonly label: string;
+	readonly record: Readonly<Record<string, unknown>>;
+}): void {
+	const fieldValue = options.record[options.fieldName];
+	if (typeof fieldValue !== 'string') {
+		throw new Error(`Gondolin plugin ${options.label} requires string ${options.fieldName}.`);
+	}
+	if (fieldValue.trim() === '') {
+		throw new Error(`Gondolin plugin ${options.label} requires non-empty ${options.fieldName}.`);
+	}
+}
+
 function assertOptionalManagedGondolinObjectField(options: {
 	readonly config: Readonly<Record<string, unknown>>;
 	readonly fieldName: 'controlSession' | 'toolPortal';
@@ -705,7 +719,11 @@ function assertOptionalManagedGondolinObjectField(options: {
 	return rawFieldValue;
 }
 
-function assertManagedGondolinPluginConfig(config: Readonly<Record<string, unknown>>): void {
+function assertManagedGondolinPluginConfig(options: {
+	readonly config: Readonly<Record<string, unknown>>;
+	readonly requireCompleteNestedConfig?: boolean;
+}): void {
+	const config = options.config;
 	assertNoRemovedGondolinRawControlConfig(config);
 	assertNoUnknownGondolinConfigFields({
 		allowedFields: gondolinPluginConfigFields,
@@ -737,6 +755,21 @@ function assertManagedGondolinPluginConfig(config: Readonly<Record<string, unkno
 				record: controlSessionConfig,
 			});
 		}
+		if (options.requireCompleteNestedConfig === true) {
+			for (const fieldName of [
+				'bootId',
+				'controllerEpoch',
+				'generationId',
+				'peerId',
+				'verifierPublicKeyPem',
+			] as const) {
+				assertRequiredGondolinStringField({
+					fieldName,
+					label: 'controlSession',
+					record: controlSessionConfig,
+				});
+			}
+		}
 	}
 	const toolPortalConfig = assertOptionalManagedGondolinObjectField({
 		config,
@@ -753,6 +786,13 @@ function assertManagedGondolinPluginConfig(config: Readonly<Record<string, unkno
 			label: 'toolPortal',
 			record: toolPortalConfig,
 		});
+		if (options.requireCompleteNestedConfig === true) {
+			assertRequiredGondolinStringField({
+				fieldName: 'configDir',
+				label: 'toolPortal',
+				record: toolPortalConfig,
+			});
+		}
 	}
 }
 
@@ -852,15 +892,18 @@ function buildEffectivePluginsConfig(
 			? existingEntryConfig.config
 			: {};
 		if (pluginId === 'gondolin') {
-			assertManagedGondolinPluginConfig(existingPluginConfig);
-			assertManagedGondolinPluginConfig(runtimeConfig);
+			assertManagedGondolinPluginConfig({ config: existingPluginConfig });
+			assertManagedGondolinPluginConfig({ config: runtimeConfig });
 		}
 		const config = {
 			...existingPluginConfig,
 			...runtimeConfig,
 		};
 		if (pluginId === 'gondolin') {
-			assertManagedGondolinPluginConfig(config);
+			assertManagedGondolinPluginConfig({
+				config,
+				requireCompleteNestedConfig: true,
+			});
 		}
 		runtimeEntriesConfig[pluginId] = {
 			...existingEntryConfig,

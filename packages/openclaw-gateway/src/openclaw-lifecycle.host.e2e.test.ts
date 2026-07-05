@@ -32,6 +32,23 @@ type ExecFileError = Error & {
 	readonly killed?: boolean;
 	readonly signal?: NodeJS.Signals | null;
 };
+type InvalidFinalManagedGondolinConfigTestCase =
+	| {
+			readonly error: RegExp;
+			readonly name: 'partial controlSession';
+			readonly runtimeConfig: {
+				readonly controlSession: {
+					readonly bootId: string;
+				};
+			};
+	  }
+	| {
+			readonly error: RegExp;
+			readonly name: 'empty toolPortal';
+			readonly runtimeConfig: {
+				readonly toolPortal: Record<never, never>;
+			};
+	  };
 
 async function pathExists(filePath: string): Promise<boolean> {
 	try {
@@ -1856,6 +1873,77 @@ describe('openclawLifecycle', () => {
 
 				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
 					`Gondolin plugin ${fieldName} must be an object when present.`,
+				);
+			},
+		);
+
+		it.each([
+			{
+				error: /Gondolin plugin controlSession requires string controllerEpoch/u,
+				name: 'partial controlSession',
+				runtimeConfig: {
+					controlSession: {
+						bootId: 'boot-a',
+					},
+				},
+			},
+			{
+				error: /Gondolin plugin toolPortal requires string configDir/u,
+				name: 'empty toolPortal',
+				runtimeConfig: {
+					toolPortal: {},
+				},
+			},
+		] satisfies readonly InvalidFinalManagedGondolinConfigTestCase[])(
+			'rejects final managed Gondolin $name config before writing the effective config',
+			async (testCase) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+					runtimePluginConfigs: {
+						gondolin: testCase.runtimeConfig,
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					testCase.error,
 				);
 			},
 		);
