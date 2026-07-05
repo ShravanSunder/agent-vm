@@ -202,9 +202,15 @@ describe('gateway control contract', () => {
 	});
 
 	it('allows caller-context registration evidence without weakening lease_create', () => {
+		const agentAuthority = {
+			algorithm: 'hmac-sha256',
+			digest: 'authoritydigestauthoritydigestauthoritydigestauthoritydigest',
+			keyId: 'main',
+		};
 		expect(
 			GatewayControlCallerContextRegisterPayloadSchema.parse({
 				adapterEvidence: {
+					agentAuthority,
 					agentId: 'main',
 					agentWorkspaceDir: '/home/openclaw/workspace',
 					proof: {
@@ -218,6 +224,7 @@ describe('gateway control contract', () => {
 			}),
 		).toEqual({
 			adapterEvidence: {
+				agentAuthority,
 				agentId: 'main',
 				agentWorkspaceDir: '/home/openclaw/workspace',
 				proof: {
@@ -232,6 +239,7 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlCallerContextRegisterPayloadSchema.safeParse({
 				adapterEvidence: {
+					agentAuthority,
 					agentId: 'main',
 					agentWorkspaceDir: '/home/openclaw/workspace',
 					proof: {
@@ -536,6 +544,80 @@ describe('gateway control contract', () => {
 				},
 			}).success,
 		).toBe(true);
+	});
+
+	it('binds command_result success fields to successful gateway results', () => {
+		const leaseResult = {
+			agentId: 'main',
+			idleTtlMs: 120_000,
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			state: 'idle',
+			tcpSlot: 0,
+			transport: 'ssh-sandbox',
+			workdir: '/workspace',
+			zoneId: 'zone-a',
+		};
+		const controllerHostActionResult = {
+			actionId: 'zone_git_push',
+			result: {
+				branch: 'main',
+				localHead: 'abc123',
+				pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
+				remoteHead: 'abc123',
+			},
+		};
+
+		expect(
+			GatewayControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'lease_create',
+				payload: {
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'ok',
+				},
+			}).success,
+		).toBe(false);
+
+		expect(
+			GatewayControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'lease_create',
+				payload: {
+					lease: leaseResult,
+					leaseRejectionReason: 'absent',
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'rejected',
+				},
+			}).success,
+		).toBe(false);
+
+		expect(
+			GatewayControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'ok',
+				},
+			}).success,
+		).toBe(false);
+
+		expect(
+			GatewayControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					controllerHostAction: controllerHostActionResult,
+					error: {
+						errorClass: 'controller_host_action_denied',
+						retryable: false,
+						safeMessage: 'controller host action denied',
+					},
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'rejected',
+				},
+			}).success,
+		).toBe(false);
 	});
 
 	it('covers every gateway operation with a derived delivery policy', () => {

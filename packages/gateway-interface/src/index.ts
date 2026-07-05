@@ -16,6 +16,7 @@ export {
 	websocketUpgradesForAudience,
 } from './websocket-upgrade-policy.js';
 export {
+	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
 	GATEWAY_CONTROL_PRIVATE_ENVIRONMENT_NAMES,
 } from './gateway-control-private-environment.js';

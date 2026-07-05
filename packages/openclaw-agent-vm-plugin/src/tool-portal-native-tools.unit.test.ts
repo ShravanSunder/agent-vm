@@ -27,6 +27,9 @@ import { registerToolPortalNativeTools } from './tool-portal-native-tools.js';
 
 const identity = {
 	bootId: 'gateway-boot-a',
+	callerContextAgentAuthorityKeys: {
+		'agent-a': 'test-agent-a-authority-key-with-enough-length',
+	},
 	callerContextProofKey: 'test-caller-context-proof-key',
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'generation-a',

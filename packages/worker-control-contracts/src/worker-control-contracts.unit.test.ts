@@ -339,6 +339,102 @@ describe('worker control contract shell', () => {
 		}
 	});
 
+	it('binds command_result success fields to successful worker results', () => {
+		const gitPushResult = {
+			results: [
+				{
+					branch: 'agent/task-1',
+					repoUrl: 'https://github.com/acme/widgets.git',
+					success: true,
+				},
+			],
+		};
+		const gitPullDefaultResult = {
+			commitsSinceForkPoint: [
+				{
+					author: 'Ada Example',
+					date: '2026-07-03T17:31:00.000Z',
+					sha: 'abc123',
+					subject: 'Implement the thing',
+				},
+			],
+			defaultBranch: 'main',
+			divergence: {
+				aheadOfDefault: 0,
+				behindDefault: 1,
+				forkPoint: 'abc123',
+			},
+			fetchedCommits: [
+				{
+					sha: 'def456',
+					subject: 'Update default branch',
+				},
+			],
+			kind: 'advanced',
+			localDefaultHead: 'def456',
+			message: 'advanced default branch',
+			remoteDefaultHead: 'def456',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			success: true,
+		};
+
+		expect(
+			WorkerControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'git_push',
+				payload: {
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'ok',
+				},
+			}).success,
+		).toBe(false);
+
+		expect(
+			WorkerControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'git_push',
+				payload: {
+					error: {
+						errorClass: 'git_push_denied',
+						retryable: false,
+						safeMessage: 'git push denied',
+					},
+					gitPush: gitPushResult,
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'rejected',
+				},
+			}).success,
+		).toBe(false);
+
+		expect(
+			WorkerControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'git_pull_default',
+				payload: {
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'ok',
+				},
+			}).success,
+		).toBe(false);
+
+		expect(
+			WorkerControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'git_pull_default',
+				payload: {
+					error: {
+						errorClass: 'git_pull_default_denied',
+						retryable: false,
+						safeMessage: 'git pull default denied',
+					},
+					gitPullDefault: gitPullDefaultResult,
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'rejected',
+				},
+			}).success,
+		).toBe(false);
+	});
+
 	it('covers every worker operation with a derived delivery policy', () => {
 		expect(Object.keys(workerControlDeliveryPolicyByOperation).toSorted()).toEqual(
 			[...WorkerControlRpcOperationSchema.options].toSorted(),

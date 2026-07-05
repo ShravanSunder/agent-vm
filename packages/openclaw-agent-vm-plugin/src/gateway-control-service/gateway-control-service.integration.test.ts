@@ -47,6 +47,7 @@ const activeSockets: Socket[] = [];
 const activeServers: HttpServer[] = [];
 const identity = {
 	bootId: 'gateway-boot-a',
+	callerContextAgentAuthorityKeys: {},
 	callerContextProofKey: 'test-caller-context-proof-key',
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'gateway-generation-a',

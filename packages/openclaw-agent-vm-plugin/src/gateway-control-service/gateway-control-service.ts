@@ -64,6 +64,7 @@ export type GatewayControlReadyRejectionReason =
 
 export interface GatewayControlIdentity {
 	readonly bootId: string;
+	readonly callerContextAgentAuthorityKeys: Readonly<Record<string, string>>;
 	readonly callerContextProofKey: string;
 	readonly controllerEpoch: string;
 	readonly generationId: string;

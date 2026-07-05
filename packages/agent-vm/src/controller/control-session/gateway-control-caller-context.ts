@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 import {
+	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
 	type GatewayControlCallerContextRegisterPayloadSchema,
 } from '@agent-vm/gateway-control-contracts';
@@ -62,7 +63,10 @@ export function digestGatewayControlSessionKey(sessionKey: string): string {
 
 function assertGatewayControlCallerContextEvidence(
 	evidence: GatewayControlCallerContextRegisterPayload['adapterEvidence'],
-	callerContextProofKey: string,
+	keys: {
+		readonly agentAuthorityKeys: Readonly<Record<string, string>>;
+		readonly callerContextProofKey: string;
+	},
 ): void {
 	if (!isOpenClawAgentSessionKey(evidence.sessionKey)) {
 		throw new Error('gateway caller context sessionKey is not agent-shaped');
@@ -71,7 +75,7 @@ function assertGatewayControlCallerContextEvidence(
 	if (sessionAgentId !== evidence.agentId) {
 		throw new Error('gateway caller context agentId does not match sessionKey agent');
 	}
-	const expectedDigest = createHmac('sha256', callerContextProofKey)
+	const expectedDigest = createHmac('sha256', keys.callerContextProofKey)
 		.update(
 			buildGatewayControlCallerContextProofPayload({
 				agentId: evidence.agentId,
@@ -91,6 +95,35 @@ function assertGatewayControlCallerContextEvidence(
 		!timingSafeEqual(observedDigestBytes, expectedDigestBytes)
 	) {
 		throw new Error('gateway caller context proof digest is invalid');
+	}
+	const agentAuthorityKey = keys.agentAuthorityKeys[evidence.agentId];
+	if (agentAuthorityKey === undefined) {
+		throw new Error('gateway caller context agent authority key is missing');
+	}
+	if (evidence.agentAuthority === undefined) {
+		throw new Error('gateway caller context agent authority proof is missing');
+	}
+	const expectedAgentAuthorityDigest = createHmac('sha256', agentAuthorityKey)
+		.update(
+			buildGatewayControlCallerContextAgentAuthorityPayload({
+				agentId: evidence.agentId,
+				agentWorkspaceDir: evidence.agentWorkspaceDir,
+				purpose: evidence.purpose,
+				sessionKey: evidence.sessionKey,
+				workMountDir: evidence.workMountDir,
+				zoneId: evidence.zoneId,
+			}),
+			'utf8',
+		)
+		.digest('base64url');
+	const expectedAgentAuthorityDigestBytes = Buffer.from(expectedAgentAuthorityDigest, 'utf8');
+	const observedAgentAuthorityDigestBytes = Buffer.from(evidence.agentAuthority.digest, 'utf8');
+	if (
+		evidence.agentAuthority.keyId !== evidence.agentId ||
+		observedAgentAuthorityDigestBytes.length !== expectedAgentAuthorityDigestBytes.length ||
+		!timingSafeEqual(observedAgentAuthorityDigestBytes, expectedAgentAuthorityDigestBytes)
+	) {
+		throw new Error('gateway caller context agent authority proof is invalid');
 	}
 }
 
@@ -115,10 +148,12 @@ function buildCallerContextCacheKey(options: {
 }
 
 export function createGatewayControlCallerContextRegistry(options: {
+	readonly agentAuthorityKeys: Readonly<Record<string, string>>;
 	readonly callerContextProofKey: string;
 	readonly createCallerContextId?: () => string;
 	readonly maxContexts?: number;
 }): GatewayControlCallerContextRegistry {
+	const agentAuthorityKeys = options.agentAuthorityKeys;
 	const callerContextProofKey = options.callerContextProofKey;
 	const createCallerContextId = options.createCallerContextId ?? randomUUID;
 	const maxContexts = options.maxContexts ?? DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_LIMIT;
@@ -168,7 +203,10 @@ export function createGatewayControlCallerContextRegistry(options: {
 			if (evidence.zoneId !== session.zoneId) {
 				throw new Error('gateway caller context zoneId mismatch');
 			}
-			assertGatewayControlCallerContextEvidence(evidence, callerContextProofKey);
+			assertGatewayControlCallerContextEvidence(evidence, {
+				agentAuthorityKeys,
+				callerContextProofKey,
+			});
 			removeSupersededSessionContexts(session);
 			const cacheKey = buildCallerContextCacheKey({ evidence, session });
 			const existingContextId = contextIdByCacheKey.get(cacheKey);

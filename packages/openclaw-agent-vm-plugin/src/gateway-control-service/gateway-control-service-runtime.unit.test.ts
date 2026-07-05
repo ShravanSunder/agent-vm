@@ -13,6 +13,7 @@ function createVerifierPublicKeyPem(): string {
 function createIdentity(overrides: Partial<GatewayControlIdentity> = {}): GatewayControlIdentity {
 	return {
 		bootId: 'boot-a',
+		callerContextAgentAuthorityKeys: {},
 		callerContextProofKey: 'test-caller-context-proof-key',
 		controllerEpoch: 'controller-epoch-a',
 		generationId: 'generation-a',

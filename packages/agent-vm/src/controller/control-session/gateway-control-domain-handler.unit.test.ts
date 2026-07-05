@@ -5,6 +5,7 @@ import {
 	type ControlEnvelope,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlLeaseSnapshot,
@@ -34,12 +35,25 @@ const acceptedSession = {
 };
 
 const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length';
+const agentAuthorityKeys: Readonly<Record<string, string>> = {
+	main: 'test-main-agent-authority-key-with-enough-length',
+};
 
 function signCallerContextEvidence(
-	evidence: Omit<GatewayControlCallerContextRegisterPayload['adapterEvidence'], 'proof'>,
+	evidence: Omit<
+		GatewayControlCallerContextRegisterPayload['adapterEvidence'],
+		'agentAuthority' | 'proof'
+	>,
 ): GatewayControlCallerContextRegisterPayload['adapterEvidence'] {
 	return {
 		...evidence,
+		agentAuthority: {
+			algorithm: 'hmac-sha256',
+			digest: createHmac('sha256', agentAuthorityKeys[evidence.agentId] ?? 'missing')
+				.update(buildGatewayControlCallerContextAgentAuthorityPayload(evidence), 'utf8')
+				.digest('base64url'),
+			keyId: evidence.agentId,
+		},
 		proof: {
 			algorithm: 'hmac-sha256',
 			digest: createHmac('sha256', callerContextProofKey)
@@ -202,6 +216,7 @@ function createCallerContexts(
 	} = {},
 ): ReturnType<typeof createGatewayControlCallerContextRegistry> {
 	return createGatewayControlCallerContextRegistry({
+		agentAuthorityKeys,
 		callerContextProofKey,
 		...options,
 	});

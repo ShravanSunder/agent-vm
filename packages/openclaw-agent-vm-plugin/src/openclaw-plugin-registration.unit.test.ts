@@ -2,7 +2,10 @@ import { generateKeyPairSync } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV } from '@agent-vm/gateway-interface';
+import {
+	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+} from '@agent-vm/gateway-interface';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import defaultPlugin, {
@@ -41,6 +44,13 @@ beforeEach(() => {
 	vi.stubEnv(
 		GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
 		'test-caller-context-proof-key-with-enough-length',
+	);
+	vi.stubEnv(
+		GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+		JSON.stringify({
+			main: 'test-main-agent-authority-key-with-enough-length',
+			second: 'test-second-agent-authority-key-with-enough-length',
+		}),
 	);
 });
 

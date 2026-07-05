@@ -8,7 +8,9 @@ import {
 	type ControlEnvelope,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
+	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlCallerContextProof,
 	type GatewayControlLeaseSnapshot,
 	GatewayControlRpcCommandResultMessageSchema,
@@ -48,6 +50,10 @@ interface DeferredPromise<TResult> {
 }
 
 const testCallerContextProofKey = 'test-caller-context-proof-key';
+const testAgentAuthorityKeys: Readonly<Record<string, string>> = {
+	main: 'test-main-agent-authority-key-with-enough-length',
+	second: 'test-second-agent-authority-key-with-enough-length',
+};
 
 function signTestCallerContextProof(
 	input: GatewayControlCallerContextProofPayloadInput,
@@ -58,6 +64,23 @@ function signTestCallerContextProof(
 		digest: createHmac('sha256', proofKey)
 			.update(buildGatewayControlCallerContextProofPayload(input), 'utf8')
 			.digest('base64url'),
+	};
+}
+
+function signTestCallerContextAgentAuthority(
+	input: GatewayControlCallerContextProofPayloadInput,
+	key = testAgentAuthorityKeys[input.agentId] ?? 'missing',
+): {
+	readonly algorithm: 'hmac-sha256';
+	readonly digest: string;
+	readonly keyId: string;
+} {
+	return {
+		algorithm: 'hmac-sha256',
+		digest: createHmac('sha256', key)
+			.update(buildGatewayControlCallerContextAgentAuthorityPayload(input), 'utf8')
+			.digest('base64url'),
+		keyId: input.agentId,
 	};
 }
 
@@ -3488,6 +3511,16 @@ describe('startGatewayZone', () => {
 					operation: 'caller_context_register',
 					payload: {
 						adapterEvidence: {
+							agentAuthority: signTestCallerContextAgentAuthority(
+								{
+									agentId: 'main',
+									agentWorkspaceDir: '/zone/agents/main',
+									sessionKey: 'agent:main:test-session',
+									workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+									zoneId: 'shravan',
+								},
+								connectedOptions.material.agentAuthorityKeys.main,
+							),
 							agentId: 'main',
 							agentWorkspaceDir: '/zone/agents/main',
 							proof: signTestCallerContextProof(
@@ -3554,6 +3587,17 @@ describe('startGatewayZone', () => {
 					operation: 'caller_context_register',
 					payload: {
 						adapterEvidence: {
+							agentAuthority: signTestCallerContextAgentAuthority(
+								{
+									agentId: 'main',
+									agentWorkspaceDir: '/zone/agents/main',
+									purpose: 'tool_portal_controller_host_action',
+									sessionKey: 'agent:main:test-session',
+									workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+									zoneId: 'shravan',
+								},
+								connectedOptions.material.agentAuthorityKeys.main,
+							),
 							agentId: 'main',
 							agentWorkspaceDir: '/zone/agents/main',
 							proof: signTestCallerContextProof(
@@ -3732,9 +3776,17 @@ describe('startGatewayZone', () => {
 
 		expect(() =>
 			validateGatewayControlCallerContextRegistration({
+				agentAuthorityKeys: testAgentAuthorityKeys,
 				callerContextProofKey: testCallerContextProofKey,
 				payload: {
 					adapterEvidence: {
+						agentAuthority: signTestCallerContextAgentAuthority({
+							agentId: 'second',
+							agentWorkspaceDir: '/zone/agents/second',
+							sessionKey: 'agent:second:test-session',
+							workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
+							zoneId: 'shravan',
+						}),
 						agentId: 'second',
 						agentWorkspaceDir: '/zone/agents/second',
 						proof: signTestCallerContextProof({
@@ -3754,6 +3806,42 @@ describe('startGatewayZone', () => {
 		).not.toThrow();
 	});
 
+	it('rejects caller context registration without per-agent authority proof in multi-agent OpenClaw zones', async () => {
+		const systemConfig = await createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw gateway test zone.');
+		}
+		const multiAgentZone = {
+			...zone,
+			agents: [{ id: 'main' }, { id: 'second' }],
+		};
+
+		expect(() =>
+			validateGatewayControlCallerContextRegistration({
+				agentAuthorityKeys: testAgentAuthorityKeys,
+				callerContextProofKey: testCallerContextProofKey,
+				payload: {
+					adapterEvidence: {
+						agentId: 'second',
+						agentWorkspaceDir: '/zone/agents/second',
+						proof: signTestCallerContextProof({
+							agentId: 'second',
+							agentWorkspaceDir: '/zone/agents/second',
+							sessionKey: 'agent:second:test-session',
+							workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
+							zoneId: 'shravan',
+						}),
+						sessionKey: 'agent:second:test-session',
+						workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
+						zoneId: 'shravan',
+					},
+				} as unknown as GatewayControlCallerContextRegisterPayload,
+				zone: multiAgentZone,
+			}),
+		).toThrow(/agent authority/u);
+	});
+
 	it('rejects caller context registration when a declared agent presents a forged workspace', async () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
@@ -3767,9 +3855,17 @@ describe('startGatewayZone', () => {
 
 		expect(() =>
 			validateGatewayControlCallerContextRegistration({
+				agentAuthorityKeys: testAgentAuthorityKeys,
 				callerContextProofKey: testCallerContextProofKey,
 				payload: {
 					adapterEvidence: {
+						agentAuthority: signTestCallerContextAgentAuthority({
+							agentId: 'second',
+							agentWorkspaceDir: '/home/openclaw/workspace-second',
+							sessionKey: 'agent:second:test-session',
+							workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
+							zoneId: 'shravan',
+						}),
 						agentId: 'second',
 						agentWorkspaceDir: '/home/openclaw/workspace-second',
 						proof: signTestCallerContextProof({
@@ -3802,9 +3898,17 @@ describe('startGatewayZone', () => {
 
 		expect(() =>
 			validateGatewayControlCallerContextRegistration({
+				agentAuthorityKeys: testAgentAuthorityKeys,
 				callerContextProofKey: testCallerContextProofKey,
 				payload: {
 					adapterEvidence: {
+						agentAuthority: signTestCallerContextAgentAuthority({
+							agentId: 'second',
+							agentWorkspaceDir: '/zone/agents/second',
+							sessionKey: 'agent:second:test-session',
+							workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
+							zoneId: 'shravan',
+						}),
 						agentId: 'second',
 						agentWorkspaceDir: '/zone/agents/second',
 						proof: signTestCallerContextProof(
@@ -3840,9 +3944,17 @@ describe('startGatewayZone', () => {
 
 		expect(() =>
 			validateGatewayControlCallerContextRegistration({
+				agentAuthorityKeys: testAgentAuthorityKeys,
 				callerContextProofKey: testCallerContextProofKey,
 				payload: {
 					adapterEvidence: {
+						agentAuthority: signTestCallerContextAgentAuthority({
+							agentId: 'second',
+							agentWorkspaceDir: '/zone/agents/second',
+							sessionKey: 'agent:second:test-session',
+							workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+							zoneId: 'shravan',
+						}),
 						agentId: 'second',
 						agentWorkspaceDir: '/zone/agents/second',
 						proof: signTestCallerContextProof({
@@ -3875,9 +3987,17 @@ describe('startGatewayZone', () => {
 
 		expect(() =>
 			validateGatewayControlCallerContextRegistration({
+				agentAuthorityKeys: testAgentAuthorityKeys,
 				callerContextProofKey: testCallerContextProofKey,
 				payload: {
 					adapterEvidence: {
+						agentAuthority: signTestCallerContextAgentAuthority({
+							agentId: 'second',
+							agentWorkspaceDir: '/zone/agents/second',
+							sessionKey: 'agent:second:test-session',
+							workMountDir: '/zone/agents/main',
+							zoneId: 'shravan',
+						}),
 						agentId: 'second',
 						agentWorkspaceDir: '/zone/agents/second',
 						proof: signTestCallerContextProof({
@@ -3910,9 +4030,17 @@ describe('startGatewayZone', () => {
 
 		expect(() =>
 			validateGatewayControlCallerContextRegistration({
+				agentAuthorityKeys: testAgentAuthorityKeys,
 				callerContextProofKey: testCallerContextProofKey,
 				payload: {
 					adapterEvidence: {
+						agentAuthority: signTestCallerContextAgentAuthority({
+							agentId: 'second',
+							agentWorkspaceDir: '/zone/agents/second',
+							sessionKey: 'agent:second:test-session',
+							workMountDir: '/home/openclaw/.openclaw/state/workspace-main',
+							zoneId: 'shravan',
+						}),
 						agentId: 'second',
 						agentWorkspaceDir: '/zone/agents/second',
 						proof: signTestCallerContextProof({

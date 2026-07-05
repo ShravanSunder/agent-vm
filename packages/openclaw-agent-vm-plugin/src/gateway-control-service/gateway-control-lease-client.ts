@@ -28,7 +28,10 @@ import {
 	type LeaseClient,
 	type OpenClawGondolinLeaseRequest,
 } from '../lease-client-contract.js';
-import { signGatewayControlCallerContextProof } from './gateway-control-caller-context-proof.js';
+import {
+	signGatewayControlCallerContextAgentAuthority,
+	signGatewayControlCallerContextProof,
+} from './gateway-control-caller-context-proof.js';
 import type { GatewayControlCallerContextStore } from './gateway-control-caller-context-store.js';
 import type { GatewayControlIdentity, GatewayControlService } from './gateway-control-service.js';
 
@@ -199,6 +202,21 @@ function requirePrivateToolVmLease(
 		transport: snapshot.transport,
 		workdir: snapshot.workdir,
 	};
+}
+
+function requireAgentAuthorityKey(options: {
+	readonly agentId: string;
+	readonly keys: Readonly<Record<string, string>>;
+}): string {
+	const key = options.keys[options.agentId];
+	if (key === undefined || key.length === 0) {
+		throw createGatewayControlError({
+			context: 'Gateway control caller_context_register',
+			message: `gateway control missing caller-context agent authority for '${options.agentId}'`,
+			status: 500,
+		});
+	}
+	return key;
 }
 
 function requirePublicToolVmLeasePeek(
@@ -394,6 +412,20 @@ export function createGatewayControlLeaseClient(
 		}
 		const response = await sendCommand('caller_context_register', {
 			adapterEvidence: {
+				agentAuthority: signGatewayControlCallerContextAgentAuthority({
+					input: {
+						agentId: request.agentId,
+						agentWorkspaceDir: request.agentWorkspaceDir,
+						sessionKey: request.sessionKey,
+						workMountDir: request.workMountDir,
+						zoneId: request.zoneId,
+					},
+					key: requireAgentAuthorityKey({
+						agentId: request.agentId,
+						keys: options.identity.callerContextAgentAuthorityKeys,
+					}),
+					keyId: request.agentId,
+				}),
 				agentId: request.agentId,
 				agentWorkspaceDir: request.agentWorkspaceDir,
 				proof: signGatewayControlCallerContextProof({

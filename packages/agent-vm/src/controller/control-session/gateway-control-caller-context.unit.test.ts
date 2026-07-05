@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 
 import {
+	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
 	type GatewayControlCallerContextRegisterPayload,
 } from '@agent-vm/gateway-control-contracts';
@@ -21,13 +22,26 @@ const acceptedSession = {
 };
 
 const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length';
+const agentAuthorityKeys: Readonly<Record<string, string>> = {
+	main: 'test-main-agent-authority-key-with-enough-length',
+};
 
 function signRegisterPayload(
-	payload: Omit<GatewayControlCallerContextRegisterPayload['adapterEvidence'], 'proof'>,
+	payload: Omit<
+		GatewayControlCallerContextRegisterPayload['adapterEvidence'],
+		'agentAuthority' | 'proof'
+	>,
 ): GatewayControlCallerContextRegisterPayload {
 	return {
 		adapterEvidence: {
 			...payload,
+			agentAuthority: {
+				algorithm: 'hmac-sha256',
+				digest: createHmac('sha256', agentAuthorityKeys[payload.agentId] ?? 'missing')
+					.update(buildGatewayControlCallerContextAgentAuthorityPayload(payload), 'utf8')
+					.digest('base64url'),
+				keyId: payload.agentId,
+			},
 			proof: {
 				algorithm: 'hmac-sha256',
 				digest: createHmac('sha256', callerContextProofKey)
@@ -40,7 +54,7 @@ function signRegisterPayload(
 
 function createRegisterPayload(
 	overrides: Partial<
-		Omit<GatewayControlCallerContextRegisterPayload['adapterEvidence'], 'proof'>
+		Omit<GatewayControlCallerContextRegisterPayload['adapterEvidence'], 'agentAuthority' | 'proof'>
 	> = {},
 ): GatewayControlCallerContextRegisterPayload {
 	return signRegisterPayload({
@@ -62,6 +76,7 @@ function createRegistry(
 	} = {},
 ): ReturnType<typeof createGatewayControlCallerContextRegistry> {
 	return createGatewayControlCallerContextRegistry({
+		agentAuthorityKeys,
 		callerContextProofKey,
 		...options,
 	});
@@ -272,5 +287,48 @@ describe('gateway control caller context registry', () => {
 				session: acceptedSession,
 			}),
 		).toThrow(/proof digest is invalid/u);
+	});
+
+	it('rejects caller context registration when the per-agent authority proof is missing', () => {
+		const registry = createRegistry();
+		const { agentAuthority: _agentAuthority, ...adapterEvidenceWithoutAuthority } =
+			registerPayload.adapterEvidence;
+
+		expect(() =>
+			registry.register({
+				payload: {
+					adapterEvidence: adapterEvidenceWithoutAuthority,
+				} as unknown as GatewayControlCallerContextRegisterPayload,
+				session: acceptedSession,
+			}),
+		).toThrow();
+	});
+
+	it('rejects caller context registration when the per-agent authority proof is for another agent', () => {
+		const registry = createRegistry();
+
+		expect(() =>
+			registry.register({
+				payload: {
+					adapterEvidence: {
+						...registerPayload.adapterEvidence,
+						agentAuthority: {
+							algorithm: 'hmac-sha256',
+							digest: createHmac('sha256', 'test-other-agent-authority-key')
+								.update(
+									buildGatewayControlCallerContextAgentAuthorityPayload({
+										...registerPayload.adapterEvidence,
+										agentId: 'other-agent',
+									}),
+									'utf8',
+								)
+								.digest('base64url'),
+							keyId: 'other-agent',
+						},
+					},
+				},
+				session: acceptedSession,
+			}),
+		).toThrow(/agent authority proof is invalid/u);
 	});
 });

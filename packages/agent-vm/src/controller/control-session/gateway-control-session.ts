@@ -24,7 +24,10 @@ import {
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
-import { GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV } from '@agent-vm/gateway-interface';
+import {
+	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+} from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import {
@@ -41,6 +44,7 @@ import type {
 export const GATEWAY_CONTROL_READY_PATH = '/__agent-vm/ready';
 
 export interface GatewayControlSessionMaterial {
+	readonly agentAuthorityKeys: Readonly<Record<string, string>>;
 	readonly bootId: string;
 	readonly callerContextProofKey: string;
 	readonly controllerEpoch: string;
@@ -52,6 +56,7 @@ export interface GatewayControlSessionMaterial {
 }
 
 export const serializedGatewayControlSessionMaterialSchema = z.strictObject({
+	agentAuthorityKeys: z.record(z.string().min(1), z.string().min(32)).default({}),
 	bootId: z.string().min(1),
 	callerContextProofKey: z.string().min(32),
 	controllerEpoch: z.string().min(1),
@@ -67,6 +72,7 @@ export type SerializedGatewayControlSessionMaterial = z.infer<
 >;
 
 export interface CreateGatewayControlSessionMaterialOptions {
+	readonly agentIds?: readonly string[];
 	readonly controllerEpoch: string;
 	readonly zoneId: string;
 }
@@ -83,7 +89,14 @@ export function createGatewayControlSessionMaterial(
 	options: CreateGatewayControlSessionMaterialOptions,
 ): GatewayControlSessionMaterial {
 	const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+	const agentAuthorityKeys = Object.fromEntries(
+		[...new Set(options.agentIds ?? [])].map((agentId) => [
+			agentId,
+			randomBytes(32).toString('base64url'),
+		]),
+	);
 	return {
+		agentAuthorityKeys,
 		bootId: randomUUID(),
 		callerContextProofKey: randomBytes(32).toString('base64url'),
 		controllerEpoch: options.controllerEpoch,
@@ -106,6 +119,7 @@ export function serializeGatewayControlSessionMaterial(
 		throw new Error('Gateway control private key export did not return PEM text.');
 	}
 	return {
+		agentAuthorityKeys: material.agentAuthorityKeys,
 		bootId: material.bootId,
 		callerContextProofKey: material.callerContextProofKey,
 		controllerEpoch: material.controllerEpoch,
@@ -122,6 +136,7 @@ export function deserializeGatewayControlSessionMaterial(
 ): GatewayControlSessionMaterial {
 	const parsedMaterial = serializedGatewayControlSessionMaterialSchema.parse(material);
 	return {
+		agentAuthorityKeys: parsedMaterial.agentAuthorityKeys,
 		bootId: parsedMaterial.bootId,
 		callerContextProofKey: parsedMaterial.callerContextProofKey,
 		controllerEpoch: parsedMaterial.controllerEpoch,
@@ -147,8 +162,17 @@ export function buildGatewayControlRuntimePluginConfig(
 
 export function buildGatewayControlPrivateEnvironment(
 	material: GatewayControlSessionMaterial,
-): Readonly<Record<typeof GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV, string>> {
+): Readonly<
+	Record<
+		| typeof GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV
+		| typeof GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+		string
+	>
+> {
 	return {
+		[GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV]: JSON.stringify(
+			material.agentAuthorityKeys,
+		),
 		[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: material.callerContextProofKey,
 	};
 }

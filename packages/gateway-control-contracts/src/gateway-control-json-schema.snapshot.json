@@ -135,6 +135,25 @@
 									"adapterEvidence": {
 										"type": "object",
 										"properties": {
+											"agentAuthority": {
+												"type": "object",
+												"properties": {
+													"algorithm": {
+														"type": "string",
+														"const": "hmac-sha256"
+													},
+													"digest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"keyId": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["algorithm", "digest", "keyId"],
+												"additionalProperties": false
+											},
 											"agentId": {
 												"type": "string",
 												"minLength": 1
@@ -176,6 +195,7 @@
 											}
 										},
 										"required": [
+											"agentAuthority",
 											"agentId",
 											"agentWorkspaceDir",
 											"proof",
@@ -1804,68 +1824,111 @@
 								"const": "control_ping"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"approvalRequired": {
-										"not": {}
-									},
-									"callerContext": {
-										"not": {}
-									},
-									"controllerHostAction": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
+											"activeOperationId": {
+												"not": {}
 											},
-											"safeMessage": {
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
 												"type": "string",
-												"minLength": 1
+												"const": "ok"
 											}
 										},
-										"required": ["errorClass"],
+										"required": ["responseToMessageId", "result"],
 										"additionalProperties": false
 									},
-									"lease": {
-										"not": {}
-									},
-									"leaseRejectionReason": {
-										"not": {}
-									},
-									"leaseUse": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"approval_required",
-											"approval_stale"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -1912,77 +1975,120 @@
 								"const": "caller_context_register"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"approvalRequired": {
-										"not": {}
-									},
-									"callerContext": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"callerContextId": {
+											"responseToMessageId": {
 												"type": "string",
 												"format": "uuid",
 												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"type": "object",
+												"properties": {
+													"callerContextId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													}
+												},
+												"required": ["callerContextId"],
+												"additionalProperties": false
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
 											}
 										},
-										"required": ["callerContextId"],
+										"required": ["responseToMessageId", "callerContext", "result"],
 										"additionalProperties": false
 									},
-									"controllerHostAction": {
-										"not": {}
-									},
-									"error": {
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
+											"activeOperationId": {
+												"not": {}
 											},
-											"safeMessage": {
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
 												"type": "string",
-												"minLength": 1
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
 											}
 										},
-										"required": ["errorClass"],
+										"required": ["responseToMessageId", "error", "result"],
 										"additionalProperties": false
-									},
-									"lease": {
-										"not": {}
-									},
-									"leaseRejectionReason": {
-										"not": {}
-									},
-									"leaseUse": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"approval_required",
-											"approval_stale"
-										]
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -2029,160 +2135,265 @@
 								"enum": ["lease_create", "lease_get", "lease_peek", "lease_renew", "lease_release"]
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"approvalRequired": {
-										"not": {}
-									},
-									"callerContext": {
-										"not": {}
-									},
-									"controllerHostAction": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
-												"type": "string",
-												"minLength": 1
-											},
-											"retryable": {
-												"type": "boolean"
-											},
-											"safeMessage": {
-												"type": "string",
-												"minLength": 1
-											}
-										},
-										"required": ["errorClass"],
-										"additionalProperties": false
-									},
-									"lease": {
-										"type": "object",
-										"properties": {
-											"agentId": {
-												"type": "string",
-												"minLength": 1
-											},
-											"activeUseId": {
+											"responseToMessageId": {
 												"type": "string",
 												"format": "uuid",
 												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"expiresAtMs": {
-												"type": "integer",
-												"exclusiveMinimum": 0,
-												"maximum": 9007199254740991
+											"activeOperationId": {
+												"not": {}
 											},
-											"idleTtlMs": {
-												"type": "integer",
-												"exclusiveMinimum": 0,
-												"maximum": 9007199254740991
+											"approvalRequired": {
+												"not": {}
 											},
-											"leaseId": {
-												"type": "string",
-												"minLength": 1
+											"callerContext": {
+												"not": {}
 											},
-											"ssh": {
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
 												"type": "object",
 												"properties": {
-													"host": {
+													"agentId": {
 														"type": "string",
 														"minLength": 1
 													},
-													"identityPem": {
+													"activeUseId": {
 														"type": "string",
-														"minLength": 1
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 													},
-													"knownHostsLine": {
-														"type": "string"
-													},
-													"port": {
+													"expiresAtMs": {
 														"type": "integer",
 														"exclusiveMinimum": 0,
 														"maximum": 9007199254740991
 													},
-													"user": {
+													"idleTtlMs": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"leaseId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"ssh": {
+														"type": "object",
+														"properties": {
+															"host": {
+																"type": "string",
+																"minLength": 1
+															},
+															"identityPem": {
+																"type": "string",
+																"minLength": 1
+															},
+															"knownHostsLine": {
+																"type": "string"
+															},
+															"port": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 9007199254740991
+															},
+															"user": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["host", "port", "user"],
+														"additionalProperties": false
+													},
+													"state": {
+														"type": "string",
+														"enum": ["idle", "active", "expired", "released"]
+													},
+													"tcpSlot": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"transport": {
+														"type": "string",
+														"const": "ssh-sandbox"
+													},
+													"workdir": {
+														"type": "string",
+														"minLength": 1
+													},
+													"zoneId": {
 														"type": "string",
 														"minLength": 1
 													}
 												},
-												"required": ["host", "port", "user"],
+												"required": [
+													"agentId",
+													"idleTtlMs",
+													"leaseId",
+													"state",
+													"tcpSlot",
+													"transport",
+													"workdir",
+													"zoneId"
+												],
 												"additionalProperties": false
 											},
-											"state": {
-												"type": "string",
-												"enum": ["idle", "active", "expired", "released"]
+											"leaseRejectionReason": {
+												"not": {}
 											},
-											"tcpSlot": {
-												"type": "integer",
-												"minimum": 0,
-												"maximum": 9007199254740991
+											"leaseUse": {
+												"not": {}
 											},
-											"transport": {
+											"result": {
 												"type": "string",
-												"const": "ssh-sandbox"
-											},
-											"workdir": {
-												"type": "string",
-												"minLength": 1
-											},
-											"zoneId": {
-												"type": "string",
-												"minLength": 1
+												"const": "ok"
 											}
 										},
-										"required": [
-											"agentId",
-											"idleTtlMs",
-											"leaseId",
-											"state",
-											"tcpSlot",
-											"transport",
-											"workdir",
-											"zoneId"
-										],
+										"required": ["responseToMessageId", "lease", "result"],
 										"additionalProperties": false
 									},
-									"leaseRejectionReason": {
-										"type": "string",
-										"enum": [
-											"absent",
-											"generation_stale",
-											"force_released",
-											"releasing",
-											"use_tombstoned",
-											"runtime_not_ready"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"absent",
+													"generation_stale",
+													"force_released",
+													"releasing",
+													"use_tombstoned",
+													"runtime_not_ready"
+												]
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "rejected"
+											}
+										},
+										"required": ["responseToMessageId", "leaseRejectionReason", "result"],
+										"additionalProperties": false
 									},
-									"leaseUse": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"approval_required",
-											"approval_stale"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"absent",
+													"generation_stale",
+													"force_released",
+													"releasing",
+													"use_tombstoned",
+													"runtime_not_ready"
+												]
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -2229,103 +2440,208 @@
 								"enum": ["lease_use_start", "lease_use_heartbeat", "lease_use_end"]
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"approvalRequired": {
-										"not": {}
-									},
-									"callerContext": {
-										"not": {}
-									},
-									"controllerHostAction": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
-												"type": "string",
-												"minLength": 1
-											},
-											"retryable": {
-												"type": "boolean"
-											},
-											"safeMessage": {
-												"type": "string",
-												"minLength": 1
-											}
-										},
-										"required": ["errorClass"],
-										"additionalProperties": false
-									},
-									"lease": {
-										"not": {}
-									},
-									"leaseRejectionReason": {
-										"type": "string",
-										"enum": [
-											"absent",
-											"generation_stale",
-											"force_released",
-											"releasing",
-											"use_tombstoned",
-											"runtime_not_ready"
-										]
-									},
-									"leaseUse": {
-										"type": "object",
-										"properties": {
-											"expiresAt": {
-												"type": "integer",
-												"exclusiveMinimum": 0,
-												"maximum": 9007199254740991
-											},
-											"heartbeatAfterMs": {
-												"type": "integer",
-												"exclusiveMinimum": 0,
-												"maximum": 9007199254740991
-											},
-											"leaseId": {
-												"type": "string",
-												"minLength": 1
-											},
-											"state": {
-												"type": "string",
-												"enum": ["active", "ended", "expired"]
-											},
-											"useId": {
+											"responseToMessageId": {
 												"type": "string",
 												"format": "uuid",
 												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"type": "object",
+												"properties": {
+													"expiresAt": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"heartbeatAfterMs": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"leaseId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"state": {
+														"type": "string",
+														"enum": ["active", "ended", "expired"]
+													},
+													"useId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													}
+												},
+												"required": ["leaseId", "state", "useId"],
+												"additionalProperties": false
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
 											}
 										},
-										"required": ["leaseId", "state", "useId"],
+										"required": ["responseToMessageId", "leaseUse", "result"],
 										"additionalProperties": false
 									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"absent",
+													"generation_stale",
+													"force_released",
+													"releasing",
+													"use_tombstoned",
+													"runtime_not_ready"
+												]
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "rejected"
+											}
+										},
+										"required": ["responseToMessageId", "leaseRejectionReason", "result"],
+										"additionalProperties": false
 									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"approval_required",
-											"approval_stale"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"absent",
+													"generation_stale",
+													"force_released",
+													"releasing",
+													"use_tombstoned",
+													"runtime_not_ready"
+												]
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -2372,112 +2688,155 @@
 								"const": "tool_portal_controller_host_action"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"approvalRequired": {
-										"not": {}
-									},
-									"callerContext": {
-										"not": {}
-									},
-									"controllerHostAction": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"actionId": {
+											"responseToMessageId": {
 												"type": "string",
-												"const": "zone_git_push"
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"result": {
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
 												"type": "object",
 												"properties": {
-													"branch": {
+													"actionId": {
 														"type": "string",
-														"minLength": 1
+														"const": "zone_git_push"
 													},
-													"localHead": {
-														"type": "string",
-														"minLength": 1
-													},
-													"pushedCommits": {
-														"type": "array",
-														"items": {
-															"type": "object",
-															"properties": {
-																"sha": {
-																	"type": "string",
-																	"minLength": 1
-																},
-																"subject": {
-																	"type": "string"
+													"result": {
+														"type": "object",
+														"properties": {
+															"branch": {
+																"type": "string",
+																"minLength": 1
+															},
+															"localHead": {
+																"type": "string",
+																"minLength": 1
+															},
+															"pushedCommits": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"sha": {
+																			"type": "string",
+																			"minLength": 1
+																		},
+																		"subject": {
+																			"type": "string"
+																		}
+																	},
+																	"required": ["sha", "subject"],
+																	"additionalProperties": false
 																}
 															},
-															"required": ["sha", "subject"],
-															"additionalProperties": false
-														}
+															"remoteHead": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["branch", "localHead", "pushedCommits", "remoteHead"],
+														"additionalProperties": false
+													}
+												},
+												"required": ["actionId", "result"],
+												"additionalProperties": false
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "controllerHostAction", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
 													},
-													"remoteHead": {
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
 														"type": "string",
 														"minLength": 1
 													}
 												},
-												"required": ["branch", "localHead", "pushedCommits", "remoteHead"],
+												"required": ["errorClass"],
 												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
 											}
 										},
-										"required": ["actionId", "result"],
+										"required": ["responseToMessageId", "error", "result"],
 										"additionalProperties": false
-									},
-									"error": {
-										"type": "object",
-										"properties": {
-											"errorClass": {
-												"type": "string",
-												"minLength": 1
-											},
-											"retryable": {
-												"type": "boolean"
-											},
-											"safeMessage": {
-												"type": "string",
-												"minLength": 1
-											}
-										},
-										"required": ["errorClass"],
-										"additionalProperties": false
-									},
-									"lease": {
-										"not": {}
-									},
-									"leaseRejectionReason": {
-										"not": {}
-									},
-									"leaseUse": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"approval_required",
-											"approval_stale"
-										]
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -2524,70 +2883,115 @@
 								"const": "operation_cancel"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"approvalRequired": {
-										"not": {}
-									},
-									"callerContext": {
-										"not": {}
-									},
-									"controllerHostAction": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
-											},
-											"safeMessage": {
+											"activeOperationId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
 											}
 										},
-										"required": ["errorClass"],
+										"required": ["responseToMessageId", "activeOperationId", "result"],
 										"additionalProperties": false
 									},
-									"lease": {
-										"not": {}
-									},
-									"leaseRejectionReason": {
-										"not": {}
-									},
-									"leaseUse": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"approval_required",
-											"approval_stale"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -2634,68 +3038,111 @@
 								"const": "recovery_command"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"approvalRequired": {
-										"not": {}
-									},
-									"callerContext": {
-										"not": {}
-									},
-									"controllerHostAction": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
+											"activeOperationId": {
+												"not": {}
 											},
-											"safeMessage": {
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
 												"type": "string",
-												"minLength": 1
+												"const": "ok"
 											}
 										},
-										"required": ["errorClass"],
+										"required": ["responseToMessageId", "result"],
 										"additionalProperties": false
 									},
-									"lease": {
-										"not": {}
-									},
-									"leaseRejectionReason": {
-										"not": {}
-									},
-									"leaseUse": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"approval_required",
-											"approval_stale"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],

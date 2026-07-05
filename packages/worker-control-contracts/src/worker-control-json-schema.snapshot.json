@@ -710,58 +710,92 @@
 								"const": "control_ping"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
+											"activeOperationId": {
+												"not": {}
 											},
-											"safeMessage": {
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
 												"type": "string",
-												"minLength": 1
+												"const": "ok"
 											}
 										},
-										"required": ["errorClass"],
+										"required": ["responseToMessageId", "result"],
 										"additionalProperties": false
 									},
-									"git": {
-										"not": {}
-									},
-									"gitPullDefault": {
-										"not": {}
-									},
-									"gitPush": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"accepted"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -808,175 +842,209 @@
 								"const": "git_push"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
+											"activeOperationId": {
+												"not": {}
 											},
-											"safeMessage": {
-												"type": "string",
-												"minLength": 1
-											}
-										},
-										"required": ["errorClass"],
-										"additionalProperties": false
-									},
-									"git": {
-										"not": {}
-									},
-									"gitPullDefault": {
-										"not": {}
-									},
-									"gitPush": {
-										"type": "object",
-										"properties": {
-											"results": {
-												"type": "array",
-												"items": {
-													"type": "object",
-													"properties": {
-														"branch": {
-															"type": "string",
-															"minLength": 1
-														},
-														"commitsOnBranch": {
-															"type": "array",
-															"items": {
-																"type": "object",
-																"properties": {
-																	"author": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"date": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"sha": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"subject": {
-																		"type": "string",
-																		"minLength": 1
-																	}
-																},
-																"required": ["sha", "subject"],
-																"additionalProperties": false
-															}
-														},
-														"defaultBranch": {
-															"type": "string",
-															"minLength": 1
-														},
-														"divergence": {
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"type": "object",
+												"properties": {
+													"results": {
+														"type": "array",
+														"items": {
 															"type": "object",
 															"properties": {
-																"aheadOfDefault": {
-																	"type": "integer",
-																	"minimum": 0,
-																	"maximum": 9007199254740991
+																"branch": {
+																	"type": "string",
+																	"minLength": 1
 																},
-																"behindDefault": {
-																	"type": "integer",
-																	"minimum": 0,
-																	"maximum": 9007199254740991
-																}
-															},
-															"required": ["aheadOfDefault", "behindDefault"],
-															"additionalProperties": false
-														},
-														"error": {
-															"type": "string",
-															"minLength": 1
-														},
-														"localHead": {
-															"type": "string",
-															"minLength": 1
-														},
-														"pushedInThisCall": {
-															"type": "array",
-															"items": {
-																"type": "object",
-																"properties": {
-																	"author": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"date": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"sha": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"subject": {
-																		"type": "string",
-																		"minLength": 1
+																"commitsOnBranch": {
+																	"type": "array",
+																	"items": {
+																		"type": "object",
+																		"properties": {
+																			"author": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"date": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"sha": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"subject": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["sha", "subject"],
+																		"additionalProperties": false
 																	}
 																},
-																"required": ["sha", "subject"],
-																"additionalProperties": false
-															}
-														},
-														"remoteAlreadyHadBranch": {
-															"type": "boolean"
-														},
-														"remoteBranchHead": {
-															"type": "string",
-															"minLength": 1
-														},
-														"remoteDefaultHead": {
-															"type": "string",
-															"minLength": 1
-														},
-														"repoUrl": {
-															"type": "string",
-															"minLength": 1
-														},
-														"success": {
-															"type": "boolean"
+																"defaultBranch": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"divergence": {
+																	"type": "object",
+																	"properties": {
+																		"aheadOfDefault": {
+																			"type": "integer",
+																			"minimum": 0,
+																			"maximum": 9007199254740991
+																		},
+																		"behindDefault": {
+																			"type": "integer",
+																			"minimum": 0,
+																			"maximum": 9007199254740991
+																		}
+																	},
+																	"required": ["aheadOfDefault", "behindDefault"],
+																	"additionalProperties": false
+																},
+																"error": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"localHead": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"pushedInThisCall": {
+																	"type": "array",
+																	"items": {
+																		"type": "object",
+																		"properties": {
+																			"author": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"date": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"sha": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"subject": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["sha", "subject"],
+																		"additionalProperties": false
+																	}
+																},
+																"remoteAlreadyHadBranch": {
+																	"type": "boolean"
+																},
+																"remoteBranchHead": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"remoteDefaultHead": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"repoUrl": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"success": {
+																	"type": "boolean"
+																}
+															},
+															"required": ["branch", "repoUrl", "success"],
+															"additionalProperties": false
 														}
-													},
-													"required": ["branch", "repoUrl", "success"],
-													"additionalProperties": false
-												}
+													}
+												},
+												"required": ["results"],
+												"additionalProperties": false
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
 											}
 										},
-										"required": ["results"],
+										"required": ["responseToMessageId", "gitPush", "result"],
 										"additionalProperties": false
 									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"accepted"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -1023,388 +1091,427 @@
 								"const": "git_pull_default"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
+											"activeOperationId": {
+												"not": {}
 											},
-											"safeMessage": {
-												"type": "string",
-												"minLength": 1
-											}
-										},
-										"required": ["errorClass"],
-										"additionalProperties": false
-									},
-									"git": {
-										"not": {}
-									},
-									"gitPullDefault": {
-										"oneOf": [
-											{
-												"type": "object",
-												"properties": {
-													"commitsSinceForkPoint": {
-														"type": "array",
-														"items": {
-															"type": "object",
-															"properties": {
-																"author": {
-																	"type": "string"
-																},
-																"date": {
-																	"type": "string"
-																},
-																"sha": {
-																	"type": "string",
-																	"minLength": 1
-																},
-																"subject": {
-																	"type": "string"
-																}
-															},
-															"required": ["sha", "subject"],
-															"additionalProperties": false
-														}
-													},
-													"currentBranch": {
-														"anyOf": [
-															{
-																"type": "string",
-																"minLength": 1
-															},
-															{
-																"type": "null"
-															}
-														]
-													},
-													"currentBranchSync": {
-														"oneOf": [
-															{
-																"type": "object",
-																"properties": {
-																	"branch": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"localHead": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reason": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"remoteHead": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"status": {
-																		"type": "string",
-																		"enum": ["ahead", "dirty-worktree", "diverged"]
-																	},
-																	"upstreamTrackingRef": {
-																		"type": "string",
-																		"minLength": 1
-																	}
-																},
-																"required": [
-																	"branch",
-																	"localHead",
-																	"remoteHead",
-																	"status",
-																	"upstreamTrackingRef"
-																],
-																"additionalProperties": false
-															},
-															{
-																"type": "object",
-																"properties": {
-																	"branch": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"localHead": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"remoteHead": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"status": {
-																		"type": "string",
-																		"enum": ["default-branch", "fast-forwarded", "up-to-date"]
-																	},
-																	"upstreamTrackingRef": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reason": {
-																		"type": "string",
-																		"minLength": 1
-																	}
-																},
-																"required": [
-																	"branch",
-																	"localHead",
-																	"remoteHead",
-																	"status",
-																	"upstreamTrackingRef"
-																],
-																"additionalProperties": false
-															},
-															{
-																"type": "object",
-																"properties": {
-																	"branch": {
-																		"type": "null"
-																	},
-																	"localHead": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reason": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"status": {
-																		"type": "string",
-																		"const": "detached"
-																	},
-																	"upstreamTrackingRef": {
-																		"type": "null"
-																	}
-																},
-																"required": [
-																	"branch",
-																	"localHead",
-																	"reason",
-																	"status",
-																	"upstreamTrackingRef"
-																],
-																"additionalProperties": false
-															},
-															{
-																"type": "object",
-																"properties": {
-																	"branch": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"localHead": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reason": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"status": {
-																		"type": "string",
-																		"const": "no-upstream"
-																	},
-																	"upstreamTrackingRef": {
-																		"type": "null"
-																	}
-																},
-																"required": ["branch", "reason", "status", "upstreamTrackingRef"],
-																"additionalProperties": false
-															}
-														]
-													},
-													"defaultBranch": {
-														"type": "string",
-														"minLength": 1
-													},
-													"divergence": {
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"oneOf": [
+													{
 														"type": "object",
 														"properties": {
-															"aheadOfDefault": {
-																"type": "integer",
-																"minimum": 0,
-																"maximum": 9007199254740991
-															},
-															"behindDefault": {
-																"type": "integer",
-																"minimum": 0,
-																"maximum": 9007199254740991
-															},
-															"forkPoint": {
-																"type": "string",
-																"minLength": 1
-															}
-														},
-														"required": ["aheadOfDefault", "behindDefault", "forkPoint"],
-														"additionalProperties": false
-													},
-													"fetchedCommits": {
-														"type": "array",
-														"items": {
-															"type": "object",
-															"properties": {
-																"author": {
-																	"type": "string"
-																},
-																"date": {
-																	"type": "string"
-																},
-																"sha": {
-																	"type": "string",
-																	"minLength": 1
-																},
-																"subject": {
-																	"type": "string"
+															"commitsSinceForkPoint": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"author": {
+																			"type": "string"
+																		},
+																		"date": {
+																			"type": "string"
+																		},
+																		"sha": {
+																			"type": "string",
+																			"minLength": 1
+																		},
+																		"subject": {
+																			"type": "string"
+																		}
+																	},
+																	"required": ["sha", "subject"],
+																	"additionalProperties": false
 																}
 															},
-															"required": ["sha", "subject"],
-															"additionalProperties": false
-														}
+															"currentBranch": {
+																"anyOf": [
+																	{
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	{
+																		"type": "null"
+																	}
+																]
+															},
+															"currentBranchSync": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"branch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"localHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"reason": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"remoteHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"status": {
+																				"type": "string",
+																				"enum": ["ahead", "dirty-worktree", "diverged"]
+																			},
+																			"upstreamTrackingRef": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"branch",
+																			"localHead",
+																			"remoteHead",
+																			"status",
+																			"upstreamTrackingRef"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"branch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"localHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"remoteHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"status": {
+																				"type": "string",
+																				"enum": ["default-branch", "fast-forwarded", "up-to-date"]
+																			},
+																			"upstreamTrackingRef": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"reason": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"branch",
+																			"localHead",
+																			"remoteHead",
+																			"status",
+																			"upstreamTrackingRef"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"branch": {
+																				"type": "null"
+																			},
+																			"localHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"reason": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"status": {
+																				"type": "string",
+																				"const": "detached"
+																			},
+																			"upstreamTrackingRef": {
+																				"type": "null"
+																			}
+																		},
+																		"required": [
+																			"branch",
+																			"localHead",
+																			"reason",
+																			"status",
+																			"upstreamTrackingRef"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"branch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"localHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"reason": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"status": {
+																				"type": "string",
+																				"const": "no-upstream"
+																			},
+																			"upstreamTrackingRef": {
+																				"type": "null"
+																			}
+																		},
+																		"required": [
+																			"branch",
+																			"reason",
+																			"status",
+																			"upstreamTrackingRef"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"defaultBranch": {
+																"type": "string",
+																"minLength": 1
+															},
+															"divergence": {
+																"type": "object",
+																"properties": {
+																	"aheadOfDefault": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"behindDefault": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"forkPoint": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": ["aheadOfDefault", "behindDefault", "forkPoint"],
+																"additionalProperties": false
+															},
+															"fetchedCommits": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"author": {
+																			"type": "string"
+																		},
+																		"date": {
+																			"type": "string"
+																		},
+																		"sha": {
+																			"type": "string",
+																			"minLength": 1
+																		},
+																		"subject": {
+																			"type": "string"
+																		}
+																	},
+																	"required": ["sha", "subject"],
+																	"additionalProperties": false
+																}
+															},
+															"kind": {
+																"type": "string",
+																"const": "advanced"
+															},
+															"localDefaultHead": {
+																"type": "string",
+																"minLength": 1
+															},
+															"message": {
+																"type": "string",
+																"minLength": 1
+															},
+															"remoteDefaultHead": {
+																"type": "string",
+																"minLength": 1
+															},
+															"repoUrl": {
+																"type": "string",
+																"minLength": 1
+															},
+															"success": {
+																"type": "boolean",
+																"const": true
+															}
+														},
+														"required": [
+															"commitsSinceForkPoint",
+															"defaultBranch",
+															"divergence",
+															"fetchedCommits",
+															"kind",
+															"localDefaultHead",
+															"message",
+															"remoteDefaultHead",
+															"repoUrl",
+															"success"
+														],
+														"additionalProperties": false
 													},
-													"kind": {
-														"type": "string",
-														"const": "advanced"
+													{
+														"type": "object",
+														"properties": {
+															"defaultBranch": {
+																"type": "string",
+																"minLength": 1
+															},
+															"error": {
+																"type": "string",
+																"minLength": 1
+															},
+															"kind": {
+																"type": "string",
+																"const": "refused-not-fast-forward"
+															},
+															"message": {
+																"type": "string",
+																"minLength": 1
+															},
+															"remoteDefaultHead": {
+																"type": "string",
+																"minLength": 1
+															},
+															"repoUrl": {
+																"type": "string",
+																"minLength": 1
+															},
+															"success": {
+																"type": "boolean",
+																"const": false
+															}
+														},
+														"required": [
+															"defaultBranch",
+															"error",
+															"kind",
+															"message",
+															"remoteDefaultHead",
+															"repoUrl",
+															"success"
+														],
+														"additionalProperties": false
 													},
-													"localDefaultHead": {
-														"type": "string",
-														"minLength": 1
-													},
-													"message": {
-														"type": "string",
-														"minLength": 1
-													},
-													"remoteDefaultHead": {
-														"type": "string",
-														"minLength": 1
-													},
-													"repoUrl": {
-														"type": "string",
-														"minLength": 1
-													},
-													"success": {
-														"type": "boolean",
-														"const": true
+													{
+														"type": "object",
+														"properties": {
+															"error": {
+																"type": "string",
+																"minLength": 1
+															},
+															"kind": {
+																"type": "string",
+																"const": "failed"
+															},
+															"message": {
+																"type": "string",
+																"minLength": 1
+															},
+															"repoUrl": {
+																"type": "string",
+																"minLength": 1
+															},
+															"success": {
+																"type": "boolean",
+																"const": false
+															}
+														},
+														"required": ["error", "kind", "message", "repoUrl", "success"],
+														"additionalProperties": false
 													}
-												},
-												"required": [
-													"commitsSinceForkPoint",
-													"defaultBranch",
-													"divergence",
-													"fetchedCommits",
-													"kind",
-													"localDefaultHead",
-													"message",
-													"remoteDefaultHead",
-													"repoUrl",
-													"success"
-												],
-												"additionalProperties": false
+												]
 											},
-											{
-												"type": "object",
-												"properties": {
-													"defaultBranch": {
-														"type": "string",
-														"minLength": 1
-													},
-													"error": {
-														"type": "string",
-														"minLength": 1
-													},
-													"kind": {
-														"type": "string",
-														"const": "refused-not-fast-forward"
-													},
-													"message": {
-														"type": "string",
-														"minLength": 1
-													},
-													"remoteDefaultHead": {
-														"type": "string",
-														"minLength": 1
-													},
-													"repoUrl": {
-														"type": "string",
-														"minLength": 1
-													},
-													"success": {
-														"type": "boolean",
-														"const": false
-													}
-												},
-												"required": [
-													"defaultBranch",
-													"error",
-													"kind",
-													"message",
-													"remoteDefaultHead",
-													"repoUrl",
-													"success"
-												],
-												"additionalProperties": false
+											"gitPush": {
+												"not": {}
 											},
-											{
-												"type": "object",
-												"properties": {
-													"error": {
-														"type": "string",
-														"minLength": 1
-													},
-													"kind": {
-														"type": "string",
-														"const": "failed"
-													},
-													"message": {
-														"type": "string",
-														"minLength": 1
-													},
-													"repoUrl": {
-														"type": "string",
-														"minLength": 1
-													},
-													"success": {
-														"type": "boolean",
-														"const": false
-													}
-												},
-												"required": ["error", "kind", "message", "repoUrl", "success"],
-												"additionalProperties": false
+											"result": {
+												"type": "string",
+												"const": "ok"
 											}
-										]
+										},
+										"required": ["responseToMessageId", "gitPullDefault", "result"],
+										"additionalProperties": false
 									},
-									"gitPush": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"accepted"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -1451,60 +1558,96 @@
 								"const": "operation_cancel"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
-											},
-											"safeMessage": {
+											"activeOperationId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
 											}
 										},
-										"required": ["errorClass"],
+										"required": ["responseToMessageId", "activeOperationId", "result"],
 										"additionalProperties": false
 									},
-									"git": {
-										"not": {}
-									},
-									"gitPullDefault": {
-										"not": {}
-									},
-									"gitPush": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"accepted"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -1551,58 +1694,92 @@
 								"const": "recovery_command"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"activeOperationId": {
-										"not": {}
-									},
-									"error": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"errorClass": {
+											"responseToMessageId": {
 												"type": "string",
-												"minLength": 1
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
-											"retryable": {
-												"type": "boolean"
+											"activeOperationId": {
+												"not": {}
 											},
-											"safeMessage": {
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
 												"type": "string",
-												"minLength": 1
+												"const": "ok"
 											}
 										},
-										"required": ["errorClass"],
+										"required": ["responseToMessageId", "result"],
 										"additionalProperties": false
 									},
-									"git": {
-										"not": {}
-									},
-									"gitPullDefault": {
-										"not": {}
-									},
-									"gitPush": {
-										"not": {}
-									},
-									"responseToMessageId": {
-										"type": "string",
-										"format": "uuid",
-										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-									},
-									"result": {
-										"type": "string",
-										"enum": [
-											"ok",
-											"failed",
-											"timeout",
-											"rejected",
-											"cancelled",
-											"stale_generation",
-											"accepted"
-										]
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
 									}
-								},
-								"required": ["responseToMessageId", "result"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],

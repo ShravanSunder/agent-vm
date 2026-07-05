@@ -10,6 +10,7 @@ import {
 	GatewayControlRpcMessageSchema,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
+	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import {
@@ -155,6 +156,43 @@ function commandResultEnvelopeFor(requestEnvelope: ControlEnvelope, sequence = 1
 	};
 }
 
+function buildLeaseCreateOkCommandResultMessage(
+	responseToMessageId: string,
+): GatewayControlRpcMessage {
+	return GatewayControlRpcMessageSchema.parse({
+		kind: 'command_result',
+		operation: 'lease_create',
+		payload: {
+			lease: {
+				agentId: 'agent-a',
+				idleTtlMs: 120_000,
+				leaseId: 'lease-a',
+				state: 'idle',
+				tcpSlot: 0,
+				transport: 'ssh-sandbox',
+				workdir: '/work',
+				zoneId: 'zone-a',
+			},
+			responseToMessageId,
+			result: 'ok',
+		},
+	});
+}
+
+function buildOperationCancelOkCommandResultMessage(
+	responseToMessageId: string,
+): GatewayControlRpcMessage {
+	return GatewayControlRpcMessageSchema.parse({
+		kind: 'command_result',
+		operation: 'operation_cancel',
+		payload: {
+			activeOperationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			responseToMessageId,
+			result: 'ok',
+		},
+	});
+}
+
 describe('control session client', () => {
 	it('connects to a Socket.IO server over websocket-only transport and sends hello before messages', async () => {
 		const httpServer = createServer();
@@ -187,14 +225,7 @@ describe('control session client', () => {
 					socket.emit(
 						CONTROL_SESSION_EVENT_NAMES.message,
 						commandResultEnvelopeFor(controlEnvelope),
-						GatewayControlRpcMessageSchema.parse({
-							kind: 'command_result',
-							operation: 'lease_create',
-							payload: {
-								responseToMessageId: controlEnvelope.messageId,
-								result: 'ok',
-							},
-						}),
+						buildLeaseCreateOkCommandResultMessage(controlEnvelope.messageId),
 						() => undefined,
 					);
 				});
@@ -230,14 +261,7 @@ describe('control session client', () => {
 					{ kind: 'command', operation: 'lease_create' },
 					{ leaseId: 'lease-a' },
 				),
-			).resolves.toEqual({
-				kind: 'command_result',
-				operation: 'lease_create',
-				payload: {
-					responseToMessageId: validEnvelope.messageId,
-					result: 'ok',
-				},
-			});
+			).resolves.toEqual(buildLeaseCreateOkCommandResultMessage(validEnvelope.messageId));
 
 			expect(observedTransports).toEqual(['websocket']);
 			expect(observedHelloPayloads).toEqual([
@@ -264,6 +288,7 @@ describe('control session client', () => {
 		const gatewayControlService = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
+				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
 				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
@@ -297,6 +322,7 @@ describe('control session client', () => {
 			'gateway_control',
 			createGatewayControlDomainHandler({
 				callerContexts: createGatewayControlCallerContextRegistry({
+					agentAuthorityKeys: material.agentAuthorityKeys,
 					callerContextProofKey: material.callerContextProofKey,
 				}),
 				recordHealthEvent: (event) => {
@@ -374,14 +400,7 @@ describe('control session client', () => {
 			serveClient: false,
 			transports: ['websocket'],
 		});
-		const commandResultMessage = GatewayControlRpcMessageSchema.parse({
-			kind: 'command_result',
-			operation: 'lease_create',
-			payload: {
-				responseToMessageId: validEnvelope.messageId,
-				result: 'ok',
-			},
-		});
+		const commandResultMessage = buildLeaseCreateOkCommandResultMessage(validEnvelope.messageId);
 
 		socketServer.on('connection', (socket) => {
 			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
@@ -450,14 +469,7 @@ describe('control session client', () => {
 			serveClient: false,
 			transports: ['websocket'],
 		});
-		const commandResultMessage = GatewayControlRpcMessageSchema.parse({
-			kind: 'command_result',
-			operation: 'lease_create',
-			payload: {
-				responseToMessageId: validEnvelope.messageId,
-				result: 'ok',
-			},
-		});
+		const commandResultMessage = buildLeaseCreateOkCommandResultMessage(validEnvelope.messageId);
 		let releaseCommandResult: (() => void) | undefined;
 		const commandResultRelease = new Promise<void>((resolve) => {
 			releaseCommandResult = resolve;
@@ -548,14 +560,7 @@ describe('control session client', () => {
 			serveClient: false,
 			transports: ['websocket'],
 		});
-		const commandResultMessage = GatewayControlRpcMessageSchema.parse({
-			kind: 'command_result',
-			operation: 'lease_create',
-			payload: {
-				responseToMessageId: validEnvelope.messageId,
-				result: 'ok',
-			},
-		});
+		const commandResultMessage = buildLeaseCreateOkCommandResultMessage(validEnvelope.messageId);
 
 		socketServer.on('connection', (socket) => {
 			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
@@ -646,14 +651,7 @@ describe('control session client', () => {
 					socket.emit(
 						CONTROL_SESSION_EVENT_NAMES.message,
 						commandResultEnvelopeFor(controlEnvelope),
-						GatewayControlRpcMessageSchema.parse({
-							kind: 'command_result',
-							operation: 'lease_create',
-							payload: {
-								responseToMessageId: controlEnvelope.messageId,
-								result: 'ok',
-							},
-						}),
+						buildLeaseCreateOkCommandResultMessage(controlEnvelope.messageId),
 						() => undefined,
 					);
 				});
@@ -719,14 +717,7 @@ describe('control session client', () => {
 					socket.emit(
 						CONTROL_SESSION_EVENT_NAMES.message,
 						commandResultEnvelopeFor(controlEnvelope),
-						GatewayControlRpcMessageSchema.parse({
-							kind: 'command_result',
-							operation: 'lease_create',
-							payload: {
-								responseToMessageId: controlEnvelope.messageId,
-								result: 'ok',
-							},
-						}),
+						buildLeaseCreateOkCommandResultMessage(controlEnvelope.messageId),
 						() => undefined,
 					);
 				});
@@ -778,6 +769,7 @@ describe('control session client', () => {
 		const service = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
+				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
 				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
@@ -902,14 +894,7 @@ describe('control session client', () => {
 			},
 			handle: async ({ payload }) => {
 				dispatchedPayloads.push(payload);
-				return {
-					kind: 'command_result',
-					operation: 'lease_create',
-					payload: {
-						responseToMessageId: peerEnvelope.messageId,
-						result: 'ok',
-					},
-				};
+				return buildLeaseCreateOkCommandResultMessage(peerEnvelope.messageId);
 			},
 		});
 
@@ -969,14 +954,7 @@ describe('control session client', () => {
 			});
 			await commandResultObserved;
 			expect(observedCommandResults).toEqual([
-				{
-					kind: 'command_result',
-					operation: 'lease_create',
-					payload: {
-						responseToMessageId: peerEnvelope.messageId,
-						result: 'ok',
-					},
-				},
+				buildLeaseCreateOkCommandResultMessage(peerEnvelope.messageId),
 			]);
 			expect(dispatchedPayloads).toEqual([peerMessage]);
 		} finally {
@@ -1305,6 +1283,7 @@ describe('control session client', () => {
 			createGatewayControlService({
 				identity: {
 					bootId: material.bootId,
+					callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
 					callerContextProofKey: material.callerContextProofKey,
 					controllerEpoch: material.controllerEpoch,
 					generationId: material.generationId,
@@ -1421,14 +1400,7 @@ describe('control session client', () => {
 					socket.emit(
 						CONTROL_SESSION_EVENT_NAMES.message,
 						commandResultEnvelopeFor(controlEnvelope),
-						GatewayControlRpcMessageSchema.parse({
-							kind: 'command_result',
-							operation: 'lease_create',
-							payload: {
-								responseToMessageId: controlEnvelope.messageId,
-								result: 'ok',
-							},
-						}),
+						buildLeaseCreateOkCommandResultMessage(controlEnvelope.messageId),
 						() => undefined,
 					);
 				});
@@ -1484,14 +1456,9 @@ describe('control session client', () => {
 					{ kind: 'command', operation: 'lease_create' },
 					{ leaseId: 'lease-after-reconnect' },
 				),
-			).resolves.toEqual({
-				kind: 'command_result',
-				operation: 'lease_create',
-				payload: {
-					responseToMessageId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-					result: 'ok',
-				},
-			});
+			).resolves.toEqual(
+				buildLeaseCreateOkCommandResultMessage('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
+			);
 
 			expect(observedHelloPayloads).toHaveLength(2);
 			expect(observedHelloPayloads[1]).toEqual({
@@ -1564,14 +1531,7 @@ describe('control session client', () => {
 			},
 			dispatcher: {
 				dispatch: async ({ envelope }) =>
-					GatewayControlRpcMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'lease_create',
-						payload: {
-							responseToMessageId: envelope.messageId,
-							result: 'ok',
-						},
-					}),
+					buildLeaseCreateOkCommandResultMessage(envelope.messageId),
 				register: () => undefined,
 				validate: () => undefined,
 			},
@@ -1677,14 +1637,7 @@ describe('control session client', () => {
 						socket.emit(
 							CONTROL_SESSION_EVENT_NAMES.message,
 							commandResultEnvelopeFor(controlEnvelope),
-							GatewayControlRpcMessageSchema.parse({
-								kind: 'command_result',
-								operation: 'lease_create',
-								payload: {
-									responseToMessageId: controlEnvelope.messageId,
-									result: 'ok',
-								},
-							}),
+							buildLeaseCreateOkCommandResultMessage(controlEnvelope.messageId),
 							() => undefined,
 						);
 					});
@@ -1743,14 +1696,9 @@ describe('control session client', () => {
 					{ kind: 'command', operation: 'lease_create' },
 					{ leaseId: 'lease-after-reconnect' },
 				),
-			).resolves.toEqual({
-				kind: 'command_result',
-				operation: 'lease_create',
-				payload: {
-					responseToMessageId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-					result: 'ok',
-				},
-			});
+			).resolves.toEqual(
+				buildLeaseCreateOkCommandResultMessage('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
+			);
 			expect(client.getDiagnostics().lastHelloResponse).toMatchObject({
 				outcome: 'accepted',
 			});
@@ -1808,14 +1756,7 @@ describe('control session client', () => {
 						socket.emit(
 							CONTROL_SESSION_EVENT_NAMES.message,
 							commandResultEnvelopeFor(controlEnvelope),
-							GatewayControlRpcMessageSchema.parse({
-								kind: 'command_result',
-								operation: 'lease_create',
-								payload: {
-									responseToMessageId: controlEnvelope.messageId,
-									result: 'ok',
-								},
-							}),
+							buildLeaseCreateOkCommandResultMessage(controlEnvelope.messageId),
 							() => undefined,
 						);
 					});
@@ -1879,14 +1820,9 @@ describe('control session client', () => {
 					{ kind: 'command', operation: 'lease_create' },
 					{ leaseId: 'lease-after-timeout' },
 				),
-			).resolves.toEqual({
-				kind: 'command_result',
-				operation: 'lease_create',
-				payload: {
-					responseToMessageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-					result: 'ok',
-				},
-			});
+			).resolves.toEqual(
+				buildLeaseCreateOkCommandResultMessage('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+			);
 			expect(observedHelloPayloads).toHaveLength(3);
 		} finally {
 			client.close();
@@ -1999,14 +1935,7 @@ describe('control session client', () => {
 						socket.emit(
 							CONTROL_SESSION_EVENT_NAMES.message,
 							commandResultEnvelopeFor(controlEnvelope, ++peerSequence),
-							GatewayControlRpcMessageSchema.parse({
-								kind: 'command_result',
-								operation: 'lease_create',
-								payload: {
-									responseToMessageId: controlEnvelope.messageId,
-									result: 'ok',
-								},
-							}),
+							buildLeaseCreateOkCommandResultMessage(controlEnvelope.messageId),
 							() => undefined,
 						);
 					});
@@ -2124,14 +2053,7 @@ describe('control session client', () => {
 						socket.emit(
 							CONTROL_SESSION_EVENT_NAMES.message,
 							commandResultEnvelopeFor(controlEnvelope, ++peerSequence),
-							GatewayControlRpcMessageSchema.parse({
-								kind: 'command_result',
-								operation: 'lease_create',
-								payload: {
-									responseToMessageId: controlEnvelope.messageId,
-									result: 'ok',
-								},
-							}),
+							buildLeaseCreateOkCommandResultMessage(controlEnvelope.messageId),
 							() => undefined,
 						);
 					});
@@ -2264,14 +2186,7 @@ describe('control session client', () => {
 								...commandResultEnvelopeFor(envelope, ++peerSequence),
 								connectionId: '55555555-5555-4555-8555-555555555555',
 							},
-							GatewayControlRpcMessageSchema.parse({
-								kind: 'command_result',
-								operation: 'lease_create',
-								payload: {
-									responseToMessageId: envelope.messageId,
-									result: 'ok',
-								},
-							}),
+							buildLeaseCreateOkCommandResultMessage(envelope.messageId),
 							() => undefined,
 						);
 					});
@@ -2387,14 +2302,7 @@ describe('control session client', () => {
 								...commandResultEnvelopeFor(envelope, ++peerSequence),
 								connectionId: '55555555-5555-4555-8555-555555555555',
 							},
-							GatewayControlRpcMessageSchema.parse({
-								kind: 'command_result',
-								operation: 'operation_cancel',
-								payload: {
-									responseToMessageId: envelope.messageId,
-									result: 'ok',
-								},
-							}),
+							buildOperationCancelOkCommandResultMessage(envelope.messageId),
 							() => undefined,
 						);
 						return;
@@ -2405,14 +2313,7 @@ describe('control session client', () => {
 						socket.emit(
 							CONTROL_SESSION_EVENT_NAMES.message,
 							commandResultEnvelopeFor(envelope, ++peerSequence),
-							GatewayControlRpcMessageSchema.parse({
-								kind: 'command_result',
-								operation: 'lease_create',
-								payload: {
-									responseToMessageId: envelope.messageId,
-									result: 'ok',
-								},
-							}),
+							buildLeaseCreateOkCommandResultMessage(envelope.messageId),
 							() => undefined,
 						);
 					});

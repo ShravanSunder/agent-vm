@@ -103,6 +103,14 @@ export const GatewayControlCallerContextProofSchema = z
 	})
 	.strict();
 
+export const GatewayControlCallerContextAgentAuthoritySchema = z
+	.object({
+		algorithm: GatewayControlCallerContextProofAlgorithmSchema,
+		digest: z.string().min(32),
+		keyId: z.string().min(1),
+	})
+	.strict();
+
 export interface GatewayControlCallerContextProofPayloadInput {
 	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
@@ -127,10 +135,26 @@ export function buildGatewayControlCallerContextProofPayload(
 	].join('\u0000');
 }
 
+export function buildGatewayControlCallerContextAgentAuthorityPayload(
+	input: GatewayControlCallerContextProofPayloadInput,
+): string {
+	const purpose = input.purpose ?? 'tool_vm_lease';
+	return [
+		'gateway-control-agent-authority-v1',
+		input.zoneId,
+		input.agentId,
+		input.agentWorkspaceDir,
+		input.workMountDir,
+		input.sessionKey,
+		purpose,
+	].join('\u0000');
+}
+
 export const GatewayControlCallerContextRegisterPayloadSchema = z
 	.object({
 		adapterEvidence: z
 			.object({
+				agentAuthority: GatewayControlCallerContextAgentAuthoritySchema,
 				agentId: z.string().min(1),
 				agentWorkspaceDir: z.string().min(1),
 				proof: GatewayControlCallerContextProofSchema,
@@ -418,48 +442,150 @@ export const GatewayControlLeaseRejectionReasonSchema = z.enum([
 
 export const GatewayControlRpcDomainCorrelationSchema = ControlCorrelationSchema;
 
-export const GatewayControlRpcResponseBasePayloadSchema = z.object({
+const GatewayControlRpcForbiddenResponseFieldsSchema = {
 	activeOperationId: z.never().optional(),
 	approvalRequired: z.never().optional(),
 	callerContext: z.never().optional(),
 	controllerHostAction: z.never().optional(),
-	error: GatewayControlRpcErrorSchema.optional(),
+	error: z.never().optional(),
 	lease: z.never().optional(),
 	leaseRejectionReason: z.never().optional(),
 	leaseUse: z.never().optional(),
+} as const;
+
+export const GatewayControlRpcResponseBasePayloadSchema = z.object({
+	...GatewayControlRpcForbiddenResponseFieldsSchema,
 	responseToMessageId: z.string().uuid(),
 	result: GatewayControlRpcResultSchema,
 });
 
-export const GatewayControlRpcBareResponsePayloadSchema =
-	GatewayControlRpcResponseBasePayloadSchema.strict();
+const GatewayControlRpcErrorResponseResultSchema = z.enum([
+	'failed',
+	'timeout',
+	'rejected',
+	'cancelled',
+	'stale_generation',
+	'approval_required',
+	'approval_stale',
+]);
 
-export const GatewayControlRpcCallerContextResponsePayloadSchema =
-	GatewayControlRpcResponseBasePayloadSchema.extend({
-		callerContext: GatewayControlCallerContextRefSchema.optional(),
-	}).strict();
+const GatewayControlRpcResponseCorrelationSchema = z
+	.object({
+		responseToMessageId: z.string().uuid(),
+	})
+	.strict();
 
-export const GatewayControlRpcLeaseResponsePayloadSchema =
-	GatewayControlRpcResponseBasePayloadSchema.extend({
-		lease: GatewayControlLeaseSnapshotSchema.optional(),
+export const GatewayControlRpcBareResponsePayloadSchema = z.discriminatedUnion('result', [
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		error: GatewayControlRpcErrorSchema,
+		result: GatewayControlRpcErrorResponseResultSchema,
+	}).strict(),
+]);
+
+export const GatewayControlRpcCallerContextResponsePayloadSchema = z.discriminatedUnion('result', [
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		callerContext: GatewayControlCallerContextRefSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		error: GatewayControlRpcErrorSchema,
+		result: GatewayControlRpcErrorResponseResultSchema,
+	}).strict(),
+]);
+
+export const GatewayControlRpcLeaseResponsePayloadSchema = z.discriminatedUnion('result', [
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		lease: GatewayControlLeaseSnapshotSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		error: GatewayControlRpcErrorSchema.optional(),
+		leaseRejectionReason: GatewayControlLeaseRejectionReasonSchema,
+		result: z.literal('rejected'),
+	}).strict(),
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		error: GatewayControlRpcErrorSchema,
 		leaseRejectionReason: GatewayControlLeaseRejectionReasonSchema.optional(),
-	}).strict();
+		result: z.enum([
+			'failed',
+			'timeout',
+			'cancelled',
+			'stale_generation',
+			'approval_required',
+			'approval_stale',
+		]),
+	}).strict(),
+]);
 
-export const GatewayControlRpcLeaseUseResponsePayloadSchema =
-	GatewayControlRpcResponseBasePayloadSchema.extend({
+export const GatewayControlRpcLeaseUseResponsePayloadSchema = z.discriminatedUnion('result', [
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		leaseUse: GatewayControlLeaseUseSnapshotSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		error: GatewayControlRpcErrorSchema.optional(),
+		leaseRejectionReason: GatewayControlLeaseRejectionReasonSchema,
+		result: z.literal('rejected'),
+	}).strict(),
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		error: GatewayControlRpcErrorSchema,
 		leaseRejectionReason: GatewayControlLeaseRejectionReasonSchema.optional(),
-		leaseUse: GatewayControlLeaseUseSnapshotSchema.optional(),
-	}).strict();
+		result: z.enum([
+			'failed',
+			'timeout',
+			'cancelled',
+			'stale_generation',
+			'approval_required',
+			'approval_stale',
+		]),
+	}).strict(),
+]);
 
-export const GatewayControlRpcControllerHostActionResponsePayloadSchema =
-	GatewayControlRpcResponseBasePayloadSchema.extend({
-		controllerHostAction: GatewayControlToolPortalControllerHostActionResultSchema.optional(),
-	}).strict();
+export const GatewayControlRpcControllerHostActionResponsePayloadSchema = z.discriminatedUnion(
+	'result',
+	[
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			controllerHostAction: GatewayControlToolPortalControllerHostActionResultSchema,
+			result: z.literal('ok'),
+		}).strict(),
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			error: GatewayControlRpcErrorSchema,
+			result: GatewayControlRpcErrorResponseResultSchema,
+		}).strict(),
+	],
+);
 
-export const GatewayControlRpcOperationCancelResponsePayloadSchema =
-	GatewayControlRpcResponseBasePayloadSchema.extend({
-		activeOperationId: GatewayControlActiveOperationIdSchema.optional(),
-	}).strict();
+export const GatewayControlRpcOperationCancelResponsePayloadSchema = z.discriminatedUnion(
+	'result',
+	[
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			activeOperationId: GatewayControlActiveOperationIdSchema,
+			result: z.literal('ok'),
+		}).strict(),
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			activeOperationId: GatewayControlActiveOperationIdSchema.optional(),
+			error: GatewayControlRpcErrorSchema,
+			result: GatewayControlRpcErrorResponseResultSchema,
+		}).strict(),
+	],
+);
 
 export const GatewayControlRpcResponsePayloadSchema = z.union([
 	GatewayControlRpcBareResponsePayloadSchema,
@@ -711,6 +837,9 @@ export type GatewayControlGatewayToControllerEvents =
 export type GatewayControlCallerContextRef = z.infer<typeof GatewayControlCallerContextRefSchema>;
 export type GatewayControlCallerContextProof = z.infer<
 	typeof GatewayControlCallerContextProofSchema
+>;
+export type GatewayControlCallerContextAgentAuthority = z.infer<
+	typeof GatewayControlCallerContextAgentAuthoritySchema
 >;
 export type GatewayControlCallerContextRegisterPayload = z.infer<
 	typeof GatewayControlCallerContextRegisterPayloadSchema

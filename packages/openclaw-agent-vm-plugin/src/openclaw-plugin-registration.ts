@@ -1,4 +1,7 @@
-import { GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV } from '@agent-vm/gateway-interface';
+import {
+	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+} from '@agent-vm/gateway-interface';
 
 import { createGatewayControlCallerContextStore } from './gateway-control-service/gateway-control-caller-context-store.js';
 import { createGatewayControlEventPublisher } from './gateway-control-service/gateway-control-event-publisher.js';
@@ -48,6 +51,34 @@ function resolveGatewayControlCallerContextProofKey(): string {
 	return proofKey;
 }
 
+function isStringRecord(value: unknown): value is Readonly<Record<string, string>> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		return false;
+	}
+	for (const entryValue of Object.values(value)) {
+		if (typeof entryValue !== 'string' || entryValue.length === 0) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function resolveGatewayControlCallerContextAgentAuthorityKeys(): Readonly<Record<string, string>> {
+	const rawKeys = process.env[GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV];
+	if (rawKeys === undefined || rawKeys.length === 0) {
+		throw new Error(
+			`Gondolin full registration requires ${GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV}.`,
+		);
+	}
+	const parsedKeys = JSON.parse(rawKeys) as unknown;
+	if (!isStringRecord(parsedKeys)) {
+		throw new Error(
+			`Gondolin full registration requires ${GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV} to be a JSON object of agent keys.`,
+		);
+	}
+	return parsedKeys;
+}
+
 const plugin = {
 	id: 'gondolin',
 	name: 'Gondolin VM Sandbox',
@@ -89,12 +120,14 @@ const plugin = {
 			throw new Error('Gondolin full registration requires controlSession.');
 		}
 		const callerContextProofKey = resolveGatewayControlCallerContextProofKey();
+		const callerContextAgentAuthorityKeys = resolveGatewayControlCallerContextAgentAuthorityKeys();
 		const registerHttpRoute = api.registerHttpRoute;
 		if (typeof registerHttpRoute !== 'function') {
 			throw new Error('Gondolin control-session registration requires OpenClaw registerHttpRoute.');
 		}
 		const gatewayControlIdentity: GatewayControlIdentity = {
 			bootId: pluginConfig.controlSession.bootId,
+			callerContextAgentAuthorityKeys,
 			callerContextProofKey,
 			controllerEpoch: pluginConfig.controlSession.controllerEpoch,
 			generationId: pluginConfig.controlSession.generationId,

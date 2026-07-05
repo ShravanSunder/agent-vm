@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
 	type GatewayControlCallerContextProof,
 } from '@agent-vm/gateway-control-contracts';
@@ -85,6 +86,7 @@ const defaultGatewayReadinessMaxAttempts = Math.ceil(
 );
 
 export function validateGatewayControlCallerContextRegistration(options: {
+	readonly agentAuthorityKeys: Readonly<Record<string, string>>;
 	readonly callerContextProofKey: string;
 	readonly payload: GatewayControlCallerContextRegisterPayload;
 	readonly zone: GatewayZone;
@@ -107,6 +109,27 @@ export function validateGatewayControlCallerContextRegistration(options: {
 		})
 	) {
 		throw new Error('Gateway control caller context rejected invalid caller-context proof.');
+	}
+	const agentAuthorityKey = options.agentAuthorityKeys[evidence.agentId];
+	if (agentAuthorityKey === undefined) {
+		throw new Error(
+			`Gateway control caller context rejected missing agent authority for OpenClaw agent '${evidence.agentId}'.`,
+		);
+	}
+	if (evidence.agentAuthority === undefined) {
+		throw new Error(
+			`Gateway control caller context rejected missing agent authority proof for OpenClaw agent '${evidence.agentId}'.`,
+		);
+	}
+	if (
+		evidence.agentAuthority.keyId !== evidence.agentId ||
+		!verifyGatewayControlCallerContextProof({
+			proof: evidence.agentAuthority,
+			proofKey: agentAuthorityKey,
+			proofPayload: buildGatewayControlCallerContextAgentAuthorityPayload(evidence),
+		})
+	) {
+		throw new Error('Gateway control caller context rejected invalid agent authority proof.');
 	}
 	assertCanonicalOpenClawAgentWorkspaceDir({
 		agentId: evidence.agentId,
@@ -708,6 +731,7 @@ async function preflightGatewayZoneStartPrerequisites(
 	const controlSessionMaterial =
 		zone.gateway.type === 'openclaw' && options.controlSession !== undefined
 			? createGatewayControlSessionMaterial({
+					agentIds: (zone.agents ?? []).map((agent) => agent.id),
 					controllerEpoch: options.controlSession.controllerEpoch,
 					zoneId: zone.id,
 				})
@@ -783,6 +807,7 @@ export async function startGatewayZone(
 	const controlSessionMaterial =
 		zone.gateway.type === 'openclaw' && options.controlSession !== undefined
 			? (dependencies.createGatewayControlSessionMaterial ?? createGatewayControlSessionMaterial)({
+					agentIds: (zone.agents ?? []).map((agent) => agent.id),
 					controllerEpoch: options.controlSession.controllerEpoch,
 					zoneId: zone.id,
 				})
@@ -1115,6 +1140,7 @@ export async function startGatewayZone(
 							'gateway_control',
 							createGatewayControlDomainHandler({
 								callerContexts: createGatewayControlCallerContextRegistry({
+									agentAuthorityKeys: controlSessionMaterial.agentAuthorityKeys,
 									callerContextProofKey: controlSessionMaterial.callerContextProofKey,
 								}),
 								...(options.gatewayControlControllerHostActions === undefined
@@ -1147,6 +1173,7 @@ export async function startGatewayZone(
 								},
 								validateCallerContextRegistration: (payload) => {
 									validateGatewayControlCallerContextRegistration({
+										agentAuthorityKeys: controlSessionMaterial.agentAuthorityKeys,
 										callerContextProofKey: controlSessionMaterial.callerContextProofKey,
 										payload,
 										zone,

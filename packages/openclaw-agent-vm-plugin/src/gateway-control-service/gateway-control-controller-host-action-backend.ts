@@ -35,7 +35,10 @@ import {
 import type { ToolPortalCapabilityBackend } from '@agent-vm/tool-portal';
 import { z } from 'zod/v4';
 
-import { signGatewayControlCallerContextProof } from './gateway-control-caller-context-proof.js';
+import {
+	signGatewayControlCallerContextAgentAuthority,
+	signGatewayControlCallerContextProof,
+} from './gateway-control-caller-context-proof.js';
 import type {
 	GatewayControlCallerContextCacheScope,
 	GatewayControlCallerContextStore,
@@ -258,6 +261,19 @@ function buildZoneGitPushIdempotencyKey(parts: {
 	return ['zone_git_push', parts.namespace, parts.expectedHead].join('\u0000');
 }
 
+function requireAgentAuthorityKey(options: {
+	readonly agentId: string;
+	readonly keys: Readonly<Record<string, string>>;
+}): string {
+	const key = options.keys[options.agentId];
+	if (key === undefined || key.length === 0) {
+		throw new Error(
+			`gateway control missing caller-context agent authority for '${options.agentId}'`,
+		);
+	}
+	return key;
+}
+
 export function createGatewayControlControllerHostActionBackend(
 	options: GatewayControlControllerHostActionBackendOptions,
 ): ToolPortalCapabilityBackend {
@@ -303,6 +319,21 @@ export function createGatewayControlControllerHostActionBackend(
 			operation: 'caller_context_register',
 			payload: {
 				adapterEvidence: {
+					agentAuthority: signGatewayControlCallerContextAgentAuthority({
+						input: {
+							agentId: options.callerContextScope.agentId,
+							agentWorkspaceDir: options.callerContextScope.agentWorkspaceDir,
+							purpose: 'tool_portal_controller_host_action',
+							sessionKey: options.callerContextScope.sessionKey,
+							workMountDir: options.callerContextScope.workMountDir,
+							zoneId: options.identity.zoneId,
+						},
+						key: requireAgentAuthorityKey({
+							agentId: options.callerContextScope.agentId,
+							keys: options.identity.callerContextAgentAuthorityKeys,
+						}),
+						keyId: options.callerContextScope.agentId,
+					}),
 					agentId: options.callerContextScope.agentId,
 					agentWorkspaceDir: options.callerContextScope.agentWorkspaceDir,
 					proof: signGatewayControlCallerContextProof({

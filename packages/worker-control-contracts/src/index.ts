@@ -293,33 +293,86 @@ export const WorkerControlPullDefaultResultPayloadSchema = z.discriminatedUnion(
 
 export const WorkerControlRpcDomainCorrelationSchema = ControlCorrelationSchema;
 
-export const WorkerControlRpcResponseBasePayloadSchema = z.object({
+const WorkerControlRpcForbiddenResponseFieldsSchema = {
 	activeOperationId: z.never().optional(),
-	error: WorkerControlRpcErrorSchema.optional(),
+	error: z.never().optional(),
 	git: z.never().optional(),
 	gitPullDefault: z.never().optional(),
 	gitPush: z.never().optional(),
+} as const;
+
+export const WorkerControlRpcResponseBasePayloadSchema = z.object({
+	...WorkerControlRpcForbiddenResponseFieldsSchema,
 	responseToMessageId: z.string().uuid(),
 	result: WorkerControlRpcResultSchema,
 });
 
-export const WorkerControlRpcBareResponsePayloadSchema =
-	WorkerControlRpcResponseBasePayloadSchema.strict();
+const WorkerControlRpcErrorResponseResultSchema = z.enum([
+	'accepted',
+	'failed',
+	'timeout',
+	'rejected',
+	'cancelled',
+	'stale_generation',
+]);
 
-export const WorkerControlRpcGitPushResponsePayloadSchema =
-	WorkerControlRpcResponseBasePayloadSchema.extend({
-		gitPush: WorkerControlGitPushResultPayloadSchema.optional(),
-	}).strict();
+const WorkerControlRpcResponseCorrelationSchema = z
+	.object({
+		responseToMessageId: z.string().uuid(),
+	})
+	.strict();
 
-export const WorkerControlRpcGitPullDefaultResponsePayloadSchema =
-	WorkerControlRpcResponseBasePayloadSchema.extend({
-		gitPullDefault: WorkerControlPullDefaultResultPayloadSchema.optional(),
-	}).strict();
+export const WorkerControlRpcBareResponsePayloadSchema = z.discriminatedUnion('result', [
+	WorkerControlRpcResponseCorrelationSchema.extend({
+		...WorkerControlRpcForbiddenResponseFieldsSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	WorkerControlRpcResponseCorrelationSchema.extend({
+		...WorkerControlRpcForbiddenResponseFieldsSchema,
+		error: WorkerControlRpcErrorSchema,
+		result: WorkerControlRpcErrorResponseResultSchema,
+	}).strict(),
+]);
 
-export const WorkerControlRpcOperationCancelResponsePayloadSchema =
-	WorkerControlRpcResponseBasePayloadSchema.extend({
+export const WorkerControlRpcGitPushResponsePayloadSchema = z.discriminatedUnion('result', [
+	WorkerControlRpcResponseCorrelationSchema.extend({
+		...WorkerControlRpcForbiddenResponseFieldsSchema,
+		gitPush: WorkerControlGitPushResultPayloadSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	WorkerControlRpcResponseCorrelationSchema.extend({
+		...WorkerControlRpcForbiddenResponseFieldsSchema,
+		error: WorkerControlRpcErrorSchema,
+		result: WorkerControlRpcErrorResponseResultSchema,
+	}).strict(),
+]);
+
+export const WorkerControlRpcGitPullDefaultResponsePayloadSchema = z.discriminatedUnion('result', [
+	WorkerControlRpcResponseCorrelationSchema.extend({
+		...WorkerControlRpcForbiddenResponseFieldsSchema,
+		gitPullDefault: WorkerControlPullDefaultResultPayloadSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	WorkerControlRpcResponseCorrelationSchema.extend({
+		...WorkerControlRpcForbiddenResponseFieldsSchema,
+		error: WorkerControlRpcErrorSchema,
+		result: WorkerControlRpcErrorResponseResultSchema,
+	}).strict(),
+]);
+
+export const WorkerControlRpcOperationCancelResponsePayloadSchema = z.discriminatedUnion('result', [
+	WorkerControlRpcResponseCorrelationSchema.extend({
+		...WorkerControlRpcForbiddenResponseFieldsSchema,
+		activeOperationId: WorkerControlActiveOperationIdSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	WorkerControlRpcResponseCorrelationSchema.extend({
+		...WorkerControlRpcForbiddenResponseFieldsSchema,
 		activeOperationId: WorkerControlActiveOperationIdSchema.optional(),
-	}).strict();
+		error: WorkerControlRpcErrorSchema,
+		result: WorkerControlRpcErrorResponseResultSchema,
+	}).strict(),
+]);
 
 export const WorkerControlRpcResponsePayloadSchema = z.union([
 	WorkerControlRpcBareResponsePayloadSchema,
