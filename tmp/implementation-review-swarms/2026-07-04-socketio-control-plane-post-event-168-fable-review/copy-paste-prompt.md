@@ -275,6 +275,8 @@ In particular, scrutinize:
       tests.
     - Focused Tool VM unit proof passed 1 file / 18 tests.
     - Fresh full unit proof passed 241 files / 2109 tests.
+    - Fresh `pnpm check` passed 10 checks / 0 failed on the current Event 210
+      head.
 
 Return only grounded candidate findings:
 

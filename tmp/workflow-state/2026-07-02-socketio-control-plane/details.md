@@ -46,6 +46,9 @@ Fresh proof:
 - Full unit proof passed:
   `pnpm test:unit`
   passed 241 files / 2109 tests.
+- Fresh current-head quality gate passed:
+  `pnpm check`
+  passed 10 checks / 0 failed in 25.56s.
 - Focused integration proof passed:
   `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/controller/control-session/worker-control-session.integration.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service.integration.test.ts packages/agent-vm-worker/src/control-session/worker-control-service.integration.test.ts --reporter=verbose`
   passed 3 files / 51 tests.

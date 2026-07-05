@@ -654,6 +654,12 @@ pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/t
 
 pnpm test:unit
   passed, 241 files / 2109 tests
+
+pnpm check
+  passed, 10 passed / 0 failed in 25.56s
+  includes build, package-version sync, Zod guard, test taxonomy, portal
+  architecture audit, portal export audit, lint, format, type-aware lint, and
+  typecheck
 ```
 
 Current Event 200 proof after terminal refresh and host-e2e fixture repairs:
@@ -1047,8 +1053,8 @@ Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
 connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
 fresh allowed-user inbound Discord message after the latest runtime fixes.
 Terminal VM/default e2e are fresh as of Event 200. Full OpenClaw e2e is fresh
-as of Event 205, full Worker e2e is fresh as of Event 208, `pnpm check` is
-fresh as of Event 209, and full unit is fresh as of Event 210. If this review
+as of Event 205, full Worker e2e is fresh as of Event 208, and full unit plus
+`pnpm check` are fresh as of Event 210. If this review
 comes back clean, the next execution step is to obtain beta actual allowed-user
 Discord inbound proof before PR-ready non-merge wrapup.
 
