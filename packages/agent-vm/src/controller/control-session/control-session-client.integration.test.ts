@@ -2177,7 +2177,10 @@ describe('control session client', () => {
 						ack({ received: true });
 						socket.emit(
 							CONTROL_SESSION_EVENT_NAMES.message,
-							commandResultEnvelopeFor(envelope, ++peerSequence),
+							{
+								...commandResultEnvelopeFor(envelope, ++peerSequence),
+								connectionId: '55555555-5555-4555-8555-555555555555',
+							},
 							GatewayControlRpcMessageSchema.parse({
 								kind: 'command_result',
 								operation: 'lease_create',
@@ -2258,6 +2261,153 @@ describe('control session client', () => {
 			await expect(Promise.allSettled(pendingResults)).resolves.toHaveLength(
 				CONTROL_QUEUE_LIMITS.queueMessageCap,
 			);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('preserves the operation_cancel priority lane when the normal critical lane is saturated', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const pendingCommandCompletions: Array<() => void> = [];
+		let observedCommandCount = 0;
+		let observedCancelCount = 0;
+		let resolveAllPendingObserved: (() => void) | undefined;
+		const allPendingObserved = new Promise<void>((resolve) => {
+			resolveAllPendingObserved = resolve;
+		});
+		socketServer.on('connection', (socket) => {
+			let peerSequence = 0;
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: ControlEnvelope, _payload: unknown, ack) => {
+					if (envelope.operation === 'operation_cancel') {
+						observedCancelCount += 1;
+						ack({ received: true });
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							{
+								...commandResultEnvelopeFor(envelope, ++peerSequence),
+								connectionId: '55555555-5555-4555-8555-555555555555',
+							},
+							GatewayControlRpcMessageSchema.parse({
+								kind: 'command_result',
+								operation: 'operation_cancel',
+								payload: {
+									responseToMessageId: envelope.messageId,
+									result: 'ok',
+								},
+							}),
+							() => undefined,
+						);
+						return;
+					}
+					observedCommandCount += 1;
+					pendingCommandCompletions.push(() => {
+						ack({ received: true });
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							commandResultEnvelopeFor(envelope, ++peerSequence),
+							GatewayControlRpcMessageSchema.parse({
+								kind: 'command_result',
+								operation: 'lease_create',
+								payload: {
+									responseToMessageId: envelope.messageId,
+									result: 'ok',
+								},
+							}),
+							() => undefined,
+						);
+					});
+					if (observedCommandCount === CONTROL_QUEUE_LIMITS.queueMessageCap) {
+						resolveAllPendingObserved?.();
+					}
+				},
+			);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+				operation_cancel: 'acked_idempotent',
+			},
+			timeoutMs: 5_000,
+		});
+
+		try {
+			await client.ready;
+			const pendingResults = Array.from(
+				{ length: CONTROL_QUEUE_LIMITS.queueMessageCap },
+				(_unused, commandIndex) =>
+					client.emitApplicationMessage(
+						{
+							...validEnvelope,
+							messageId: `10000000-0000-4000-8000-${String(commandIndex + 1).padStart(12, '0')}`,
+							sequence: commandIndex + 1,
+						},
+						{ kind: 'command', operation: 'lease_create' },
+						{ leaseId: 'lease-a' },
+					),
+			);
+			const cancelEnvelope = {
+				...validEnvelope,
+				commandId: '11111111-2222-4333-8444-555555555555',
+				deliveryPolicy: 'acked_idempotent',
+				idempotencyKey: 'cancel-command-key-a',
+				messageId: '10000000-0000-4000-8000-999999999999',
+				operation: 'operation_cancel',
+				sequence: CONTROL_QUEUE_LIMITS.queueMessageCap + 1,
+			} satisfies ControlEnvelope;
+			for (const pendingResult of pendingResults) {
+				pendingResult.catch(() => undefined);
+			}
+			await allPendingObserved;
+
+			await expect(
+				client.emitApplicationMessage(
+					cancelEnvelope,
+					{ kind: 'command', operation: 'operation_cancel' },
+					{
+						activeOperationId: 'lease-create-a',
+						initiatedBy: 'controller',
+						reason: 'operator_cancelled',
+					},
+				),
+			).resolves.toMatchObject({
+				operation: 'operation_cancel',
+				payload: {
+					result: 'ok',
+				},
+			});
+			expect(observedCancelCount).toBe(1);
+
+			expect(observedCommandCount).toBe(CONTROL_QUEUE_LIMITS.queueMessageCap);
+			expect(pendingCommandCompletions).toHaveLength(CONTROL_QUEUE_LIMITS.queueMessageCap);
 		} finally {
 			client.close();
 			await closeSocketIoServer(socketServer);

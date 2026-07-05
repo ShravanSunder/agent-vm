@@ -263,7 +263,7 @@ export function releasePendingControlSessionMessage(
 }
 
 export function isPriorityControlSessionMessage(envelope: ControlEnvelope): boolean {
-	return envelope.kind === 'heartbeat';
+	return envelope.kind === 'heartbeat' || envelope.operation === 'operation_cancel';
 }
 
 export function buildLatestWinsControlSessionKey(envelope: ControlEnvelope): string {

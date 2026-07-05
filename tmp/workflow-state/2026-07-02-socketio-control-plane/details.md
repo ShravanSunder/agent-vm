@@ -1,13 +1,57 @@
 # 2026-07-02 Socket.IO Control Plane Goal Details
 
-## Current Resume Edge - Event 192
+## Current Resume Edge - Event 205
 
-Event 192 resolves the post-Event-191 Worker-control scope gap before rerunning
+Event 205 resolves the remaining accepted Popper follow-up from the latest
+review reduction: controller-issued `operation_cancel` now uses the priority
+lane instead of being blocked behind a saturated normal critical queue.
+
+Current workflow: `shravan-dev-workflow:implementation-execute-plan`.
+
+Next workflow: reduce the stale `live-openclaw-control-link.openclaw.e2e.test`
+health/recovery failures, then refresh terminal OpenClaw proof and review
+packet evidence before external implementation review.
+
+Checkpoint result:
+
+- Accepted Popper's cancellation/backpressure follow-up as a real transport
+  contract gap.
+- Added integration coverage proving `operation_cancel` crosses the control
+  session while the normal critical command queue is saturated.
+- Fixed `isPriorityControlSessionMessage` so `heartbeat` and
+  `operation_cancel` bypass the normal pending-capacity lane.
+- Rechecked the latest full OpenClaw result artifact:
+  `tmp/vitest-results/e2e-openclaw-54278-JiJTJA/results.json`.
+  It still fails only the stale `live-openclaw-control-link.openclaw.e2e.test`
+  health/recovery assertions, while newer control-session e2e coverage had
+  already passed in that run.
+
+Fresh proof:
+
+- Red proof before the classifier fix:
+  `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/controller/control-session/control-session-client.integration.test.ts -t 'preserves the operation_cancel priority lane' --reporter=verbose`
+  failed with `control session pending queue overflow: messages=257/256`.
+- Green focused proof after the classifier fix:
+  same command passed 1 file / 1 selected test / 30 skipped in 609ms.
+- Full control-session integration proof passed:
+  `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/controller/control-session/control-session-client.integration.test.ts --reporter=verbose`
+  passed 1 file / 31 tests in 1.06s.
+
+Still not PR-ready:
+
+- Fresh full OpenClaw e2e must pass after the stale health/recovery test is
+  reduced or fixed.
+- Fresh `pnpm check` is required after this checkpoint.
+- Implementation review packet and external/Fable review freshness remain
+  required.
+- Live `../shravan-claw-beta` actual allowed-user Discord/OpenClaw inbound
+  proof remains required.
+- PR-ready non-merge wrapup remains required.
+
+## Event 192 Historical Checkpoint
+
+Event 192 resolved the post-Event-191 Worker-control scope gap before rerunning
 Fable / implementation-review.
-
-Current workflow: `shravan-dev-workflow:implementation-review-swarm`.
-
-Next workflow: `shravan-dev-workflow:implementation-review-swarm`.
 
 Checkpoint result:
 
