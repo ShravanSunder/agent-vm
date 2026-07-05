@@ -8789,6 +8789,34 @@ Current status:
   message into the beta channel, then capture fresh log/trajectory/Discord
   readback evidence.
 
+## Event 215 Rechecked Secret-Auth Blocker
+
+Completed in this checkpoint:
+- Re-verified the source branch state after the Event 214 checkpoint:
+  - `HEAD: 59c6f03`
+  - `git rev-list --left-right --count HEAD...origin/mcp-portal-better-interface`
+    returned `0 0`.
+- Re-verified beta runtime health before retrying Discord proof:
+  - controller `/health`: `ok:true`
+  - controller `/zones/beta/health`: `ok:true`, `/readyz`, HTTP 200
+  - direct ingress `/readyz`: `ready:true`
+- Retried the fresh external Discord REST send path with redacted secret
+  handling.
+- The message was not sent. The attempt failed at secret-read before the Discord
+  API call because 1Password authorization failed or timed out.
+- Tried a bounded `op signin --account ...` session refresh path.
+- The session refresh also timed out.
+- No Discord token value, raw secret value, or secret-bearing command output was
+  printed or recorded.
+
+Current status:
+- This is still an external 1Password authorization blocker, not a beta,
+  Discord API, OpenClaw, or control-plane failure.
+- Live beta remains the proof target, but the final allowed-user inbound proof
+  needs either:
+  - an authorized 1Password session for the redacted test sender bot secret, or
+  - a manual allowed-user Discord message in the configured beta channel.
+
 ## Event 205 OpenClaw Health Rerun Reduction
 
 Completed in this checkpoint:
