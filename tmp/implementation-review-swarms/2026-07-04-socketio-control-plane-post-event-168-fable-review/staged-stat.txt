@@ -371,7 +371,7 @@
  .../agent-portal/fake-tool-portal-controller.ts    |   30 +
  .../agent-portal/portal-contract-assertions.ts     |   65 +
  .../debug-investigation.md                         |   41 +
- .../copy-paste-prompt.md                           |  270 +
+ .../copy-paste-prompt.md                           |  282 +
  .../execution-report-event-186.md                  |  120 +
  .../execution-report-event-187.md                  |   75 +
  .../execution-report-event-188.md                  |   96 +
@@ -394,12 +394,12 @@
  .../reducer-report-event-194.md                    |   71 +
  .../reducer-report-event-197.md                    |  160 +
  .../reducer-report.md                              |  120 +
- .../review-packet.md                               | 1061 +++
- .../staged-name-status.txt                         |  401 +
- .../staged-stat.txt                                |  402 +
- .../2026-07-02-socketio-control-plane/details.md   | 8621 ++++++++++++++++++++
- .../2026-07-02-socketio-control-plane/events.jsonl |  207 +
+ .../review-packet.md                               | 1086 +++
+ .../staged-name-status.txt                         |  404 +
+ .../staged-stat.txt                                |  405 +
+ .../2026-07-02-socketio-control-plane/details.md   | 8641 ++++++++++++++++++++
+ .../2026-07-02-socketio-control-plane/events.jsonl |  208 +
  tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
  vitest.config.ts                                   |   57 +-
- 404 files changed, 69859 insertions(+), 11059 deletions(-)
+ 404 files changed, 69923 insertions(+), 11059 deletions(-)

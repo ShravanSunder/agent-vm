@@ -8468,6 +8468,23 @@ Still not PR-ready:
   required.
 - PR-ready non-merge wrapup remains required.
 
+## Event 208 Review Packet Self-Reference Refresh
+
+Completed in this checkpoint:
+- Rechecked the committed branch after `b99e702` landed.
+- Regenerated review inventory aids from the live branch diff:
+  - `origin/master...HEAD`
+  - `HEAD: b99e702`
+  - 404 files changed, 69923 insertions, 11059 deletions.
+- Updated the review packet's branch scope and proof shortstat so Fable does
+  not see the previous packet commit's `HEAD: 147457e` as current.
+
+Still not PR-ready:
+- Implementation review/Fable refresh remains required.
+- Live `../shravan-claw-beta` actual Discord/OpenClaw inbound proof remains
+  required.
+- PR-ready non-merge wrapup remains required.
+
 ## Event 207 Review Packet Refresh After OpenClaw Checkpoint
 
 Completed in this checkpoint:
