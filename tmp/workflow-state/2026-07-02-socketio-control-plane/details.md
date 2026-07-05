@@ -8468,6 +8468,26 @@ Still not PR-ready:
   required.
 - PR-ready non-merge wrapup remains required.
 
+## Event 207 Review Packet Refresh After OpenClaw Checkpoint
+
+Completed in this checkpoint:
+- Refreshed the Fable implementation-review packet and copy-paste prompt for
+  the current committed branch diff:
+  - `origin/master...HEAD`
+  - `HEAD: 147457e`
+  - 404 files changed, 69859 insertions, 11059 deletions.
+- Regenerated the legacy-named inventory aids from the live branch diff:
+  - `tmp/implementation-review-swarms/2026-07-04-socketio-control-plane-post-event-168-fable-review/staged-name-status.txt`
+  - `tmp/implementation-review-swarms/2026-07-04-socketio-control-plane-post-event-168-fable-review/staged-stat.txt`
+- Updated the review packet to include Event 205 OpenClaw health/recovery proof
+  and Event 206 post-OpenClaw `pnpm check` proof.
+
+Still not PR-ready:
+- Implementation review/Fable refresh remains required.
+- Live `../shravan-claw-beta` actual Discord/OpenClaw inbound proof remains
+  required.
+- PR-ready non-merge wrapup remains required.
+
 ## Event 202 Review Drift And Bugbot Fixes
 
 Completed in this checkpoint:

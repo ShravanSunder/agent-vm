@@ -1,4 +1,4 @@
-Socket.IO Control Plane Post-Event-200 Fable Review Packet
+Socket.IO Control Plane Post-Event-206 Fable Review Packet
 ==========================================================
 
 Purpose
@@ -13,8 +13,9 @@ post-Event-190 accepted findings were fixed in Event 191, the Event 192
 Worker-control scope gap was fixed, the Event 193 post-Fable findings were
 fixed, the Event 194 accepted findings were fixed, the Event 195 accepted
 findings were fixed, the post-Event-197 terminal proof repairs were folded in,
-the Event 202 Bugbot documentation drift fixes were committed, and the Event 203
-beta runtime proof status was recorded.
+the Event 202 Bugbot documentation drift fixes were committed, the Event 203
+beta runtime proof status was recorded, the Event 205 OpenClaw health/recovery
+rerun passed, and the Event 206 post-OpenClaw `pnpm check` refresh passed.
 
 Review the current repository state, not the older final-terminal review packet.
 Older packets and reducers remain useful as finding history only:
@@ -72,7 +73,7 @@ Branch/base:
 
 ```text
 branch: mcp-portal-better-interface
-HEAD: 3a9cdf5
+HEAD: 147457e
 base: origin/master 479ad73
 working tree: expected clean
 branch diff: `origin/master...HEAD`
@@ -134,10 +135,10 @@ Workflow state:
 
 Important current-state note:
 
-- `events.jsonl` is the official transition log. After this packet is staged,
-  latest event should include Event 200, keeping the workflow in
-  implementation-review-swarm after fresh VM/default e2e and `pnpm check`
-  proof were restored.
+- `events.jsonl` is the official transition log. After this packet refresh,
+  latest event should include Event 206, keeping the workflow in
+  implementation-review-swarm after the focused OpenClaw health/recovery rerun,
+  full OpenClaw e2e rerun, and post-OpenClaw `pnpm check` refresh passed.
 - This packet was refreshed after accepted Event 185 findings were fixed:
   caller contexts now bind to gateway boot/session and evict/release by
   lifecycle, managed OpenClaw rejects runtime `mcp-portal` plugin config and
@@ -226,6 +227,13 @@ Important current-state note:
   gate, default e2e gate, and `pnpm check` refresh were checkpointed in commit
   `af018d2`. After that checkpoint, the review surface is the committed branch
   diff `origin/master...HEAD`, not the empty staged index.
+- This packet was refreshed after Event 205 and Event 206:
+  the previously failing `live-openclaw-control-link.openclaw.e2e.test.ts`
+  health/recovery assertions passed in a focused file rerun and again inside
+  the full OpenClaw e2e gate. The full OpenClaw gate passed 7 files / 12 tests
+  / 0 skipped / 0 todo with result
+  `tmp/vitest-results/e2e-openclaw-36144-GAir0U/results.json`. The
+  post-OpenClaw `pnpm check` refresh passed 10 checks / 0 failed.
 
 Implementation Scope
 --------------------
@@ -575,6 +583,23 @@ hard-cutover blocker.
 Proof Claims
 ------------
 
+Current Event 205 / Event 206 proof after OpenClaw health/recovery reduction:
+
+```text
+AGENT_VM_OPENCLAW_E2E=1 mise exec -- pnpm exec vitest run --config vitest.config.ts --project e2e-openclaw packages/agent-vm/src/integration-tests/live-openclaw-control-link.openclaw.e2e.test.ts --reporter=verbose
+  passed, 1 file / 3 tests
+
+mise exec -- pnpm run test:e2e:openclaw
+  passed, 7 files / 12 tests / 0 skipped / 0 todo in 552.57s
+  result: tmp/vitest-results/e2e-openclaw-36144-GAir0U/results.json
+
+pnpm check
+  passed, 10 passed / 0 failed in 25.19s
+  includes build, package-version sync, Zod guard, test taxonomy, portal
+  architecture audit, portal export audit, lint, format, type-aware lint, and
+  typecheck
+```
+
 Current Event 200 proof after terminal refresh and host-e2e fixture repairs:
 
 ```text
@@ -660,10 +685,10 @@ git diff --name-only | wc -l
   0
 
 git diff --name-only origin/master...HEAD | wc -l
-  401
+  404
 
 git diff --shortstat origin/master...HEAD
-  401 files changed, 69416 insertions(+), 11059 deletions(-)
+  404 files changed, 69859 insertions(+), 11059 deletions(-)
 
 pnpm vitest run --config vitest.config.ts --project unit packages/control-protocol-contracts/src/control-protocol-contracts.unit.test.ts packages/gateway-control-contracts/src/gateway-control-contracts.unit.test.ts packages/worker-control-contracts/src/worker-control-contracts.unit.test.ts packages/gateway-interface/src/health/controller-request-policy.unit.test.ts packages/agent-vm/src/controller/control-session/gateway-control-domain-handler.unit.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-controller-host-action-backend.unit.test.ts
   passed after Event 188 fixes, 6 files / 72 tests
@@ -952,10 +977,10 @@ pnpm check
   passed, 10 passed / 0 failed in about 27.9s
 
 git diff --name-only origin/master...HEAD | wc -l
-  401
+  404
 
 git diff --stat origin/master...HEAD
-  401 files changed; use live `git diff --stat origin/master...HEAD` for
+  404 files changed; use live `git diff --stat origin/master...HEAD` for
   exact insertion/deletion counts.
 ```
 
@@ -963,10 +988,10 @@ Fable should treat beta Discord/OpenClaw proof as incomplete for PR readiness.
 Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
 connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
 fresh allowed-user inbound Discord message after the latest runtime fixes.
-Terminal VM/default e2e and `pnpm check` are fresh as of Event 200, and
-`pnpm check` was refreshed again for Event 202 Bugbot drift fixes. If this
-review comes back clean, the next execution step is to obtain beta actual
-allowed-user Discord inbound proof before PR-ready non-merge wrapup.
+Terminal VM/default e2e are fresh as of Event 200. Full OpenClaw e2e is fresh
+as of Event 205, and `pnpm check` is fresh as of Event 206. If this review
+comes back clean, the next execution step is to obtain beta actual allowed-user
+Discord inbound proof before PR-ready non-merge wrapup.
 
 Latest beta Discord/OpenClaw proof recorded in workflow state:
 

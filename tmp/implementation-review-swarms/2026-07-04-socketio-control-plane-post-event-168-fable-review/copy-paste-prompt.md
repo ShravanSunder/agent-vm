@@ -43,7 +43,9 @@ fixes captured in reducer-report-event-191.md, plus the Event 192 Worker-control
 scope fixes captured in execution-report-event-192.md, plus the Event 193
 post-Fable fixes captured in reducer-report-event-193.md, plus the Event 194
 accepted findings captured in reducer-report-event-194.md, plus the Event 195
-accepted findings fixed in execution-report-event-196.md.
+accepted findings fixed in execution-report-event-196.md, plus the Event 205
+OpenClaw health/recovery rerun and Event 206 post-OpenClaw `pnpm check`
+refresh recorded in workflow state.
 In particular, scrutinize:
 
 1. empty and multi-agent `zones[].agents` fail-closed behavior for managed OpenClaw
@@ -53,7 +55,8 @@ In particular, scrutinize:
 5. Worker git retry command/message identity across ack-before-result reconnect/flap
 6. portal export verifier freshness and new in-process named export coverage
 7. standalone `pnpm lint` proof in addition to `pnpm check`
-8. terminal e2e freshness after Event 200 and remaining stale beta
+8. terminal e2e freshness after Event 200, OpenClaw freshness after Event 205,
+    `pnpm check` freshness after Event 206, and remaining stale beta
     Discord/OpenClaw proof after Event 172
 9. remaining old raw-controller string matches, especially whether deletion of
     `scripts/live-sandbox-manual.mjs` fully removes shippable manual raw-control
@@ -240,6 +243,15 @@ In particular, scrutinize:
     - Fresh actual allowed-user Discord inbound proof is still missing and
       remains a PR-readiness blocker, not a code-review finding unless code
       makes the proof impossible.
+30. Event 205 OpenClaw health/recovery reduction:
+    - Focused `live-openclaw-control-link.openclaw.e2e.test.ts` rerun passed
+      1 file / 3 tests.
+    - Full `mise exec -- pnpm run test:e2e:openclaw` passed 7 files / 12 tests
+      / 0 skipped / 0 todo.
+    - The previously failing control-session health and gateway-recovery
+      assertions passed inside the full OpenClaw gate.
+31. Event 206 post-OpenClaw check refresh:
+    - Fresh `pnpm check` passed 10 checks / 0 failed after the OpenClaw rerun.
 
 Return only grounded candidate findings:
 

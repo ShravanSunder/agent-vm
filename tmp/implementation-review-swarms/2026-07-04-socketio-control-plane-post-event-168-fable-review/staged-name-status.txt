@@ -113,8 +113,10 @@ M	packages/agent-vm/src/build/managed-image-dockerfile.ts
 M	packages/agent-vm/src/build/managed-image-release.unit.test.ts
 M	packages/agent-vm/src/cli/agent-vm-entrypoint.unit.test.ts
 M	packages/agent-vm/src/cli/backup-commands.ts
+M	packages/agent-vm/src/cli/backup-commands.unit.test.ts
 M	packages/agent-vm/src/cli/build-command.integration.test.ts
 M	packages/agent-vm/src/cli/build-command.ts
+M	packages/agent-vm/src/cli/cache-commands.unit.test.ts
 M	packages/agent-vm/src/cli/commands/controller-definition.ts
 M	packages/agent-vm/src/cli/controller-operation-commands.unit.test.ts
 M	packages/agent-vm/src/cli/init-command.integration.test.ts
@@ -219,6 +221,7 @@ M	packages/agent-vm/src/observability/observability-config.unit.test.ts
 M	packages/agent-vm/src/operations/config-validation.integration.test.ts
 M	packages/agent-vm/src/operations/config-validation.ts
 M	packages/agent-vm/src/operations/controller-status.unit.test.ts
+M	packages/agent-vm/src/operations/doctor.unit.test.ts
 M	packages/agent-vm/src/operations/mcp-portal-live-validation.ts
 M	packages/agent-vm/src/operations/openclaw-deployment-doctor.ts
 M	packages/agent-vm/src/operations/openclaw-deployment-doctor.unit.test.ts

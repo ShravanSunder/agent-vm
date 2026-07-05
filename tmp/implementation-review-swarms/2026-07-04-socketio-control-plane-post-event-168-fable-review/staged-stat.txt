@@ -39,7 +39,7 @@
  .../slices/13-s5b-mcp-portal-identity-removal.md   |   40 +
  .../slices/14-s5c-collector-fail-closed.md         |   36 +
  .../slices/15-sg-ssh-egress-git-policy.md          |   62 +
- .../slices/README.md                               |   47 +
+ .../slices/README.md                               |   50 +
  docs/subsystems/controller.md                      |   70 +-
  docs/subsystems/gateway-lifecycle.md               |   10 +-
  docs/subsystems/gondolin-vm-layer.md               |   26 +-
@@ -113,8 +113,10 @@
  .../src/build/managed-image-release.unit.test.ts   |   20 +-
  .../src/cli/agent-vm-entrypoint.unit.test.ts       |  177 +-
  packages/agent-vm/src/cli/backup-commands.ts       |    3 +
+ .../agent-vm/src/cli/backup-commands.unit.test.ts  |    1 +
  .../src/cli/build-command.integration.test.ts      |   46 +-
  packages/agent-vm/src/cli/build-command.ts         |    6 +-
+ .../agent-vm/src/cli/cache-commands.unit.test.ts   |    1 +
  .../src/cli/commands/controller-definition.ts      |   64 +-
  .../cli/controller-operation-commands.unit.test.ts |   36 +-
  .../src/cli/init-command.integration.test.ts       |   19 +-
@@ -128,17 +130,17 @@
  packages/agent-vm/src/cli/zone-git-commands.ts     |    3 +
  packages/agent-vm/src/config/system-config.ts      |  125 +-
  .../agent-vm/src/config/system-config.unit.test.ts |  169 +-
- .../control-session-client.integration.test.ts     | 2752 +++++++
- .../control-session/control-session-client.ts      |  897 +++
+ .../control-session-client.integration.test.ts     | 2902 +++++++
+ .../control-session/control-session-client.ts      |  902 ++
  .../control-session/control-session-death-grace.ts |   64 +
  .../control-session-death-grace.unit.test.ts       |   58 +
- .../control-session/control-session-dispatcher.ts  |  253 +
+ .../control-session/control-session-dispatcher.ts  |  259 +
  .../gateway-control-caller-context.ts              |  184 +
  .../gateway-control-caller-context.unit.test.ts    |  227 +
  ...control-controller-host-action-authorization.ts |  130 +
  ...ntroller-host-action-authorization.unit.test.ts |  392 +
- .../gateway-control-domain-handler.ts              |  866 ++
- .../gateway-control-domain-handler.unit.test.ts    | 1195 +++
+ .../gateway-control-domain-handler.ts              |  868 ++
+ .../gateway-control-domain-handler.unit.test.ts    | 1224 +++
  .../control-session/gateway-control-lease-rpc.ts   |  250 +
  .../gateway-control-lease-rpc.unit.test.ts         |  485 ++
  .../gateway-control-session-material-store.ts      |   89 +
@@ -215,13 +217,14 @@
  .../src/observability/controller-telemetry.ts      |    2 +-
  .../src/observability/health-event-telemetry.ts    |    2 +-
  .../health-event-telemetry.unit.test.ts            |   10 +-
- .../observability-config.unit.test.ts              |   42 +-
+ .../observability-config.unit.test.ts              |   43 +-
  .../config-validation.integration.test.ts          |   57 +-
  .../agent-vm/src/operations/config-validation.ts   |   17 +-
  .../src/operations/controller-status.unit.test.ts  |    2 +-
+ .../agent-vm/src/operations/doctor.unit.test.ts    |    1 +
  .../src/operations/mcp-portal-live-validation.ts   |    4 +-
  .../src/operations/openclaw-deployment-doctor.ts   |  105 +-
- .../openclaw-deployment-doctor.unit.test.ts        |  122 +-
+ .../openclaw-deployment-doctor.unit.test.ts        |  123 +-
  .../operations/openclaw-deployment-requirements.ts |   58 +-
  .../operations/zone-git-doctor.host.e2e.test.ts    |    3 +
  .../agent-vm/src/operations/zone-git-doctor.ts     |    3 +
@@ -258,9 +261,9 @@
  .../controller-execution-contracts/tsconfig.json   |    5 +
  .../tsdown.config.ts                               |   20 +
  packages/gateway-control-contracts/package.json    |   45 +
- .../src/gateway-control-contracts.unit.test.ts     |  549 ++
- .../src/gateway-control-json-schema.snapshot.json  | 2711 +++++++
- packages/gateway-control-contracts/src/index.ts    |  700 ++
+ .../src/gateway-control-contracts.unit.test.ts     |  569 ++
+ .../src/gateway-control-json-schema.snapshot.json  | 2711 ++++++
+ packages/gateway-control-contracts/src/index.ts    |  733 ++
  .../gateway-control-contracts/tsconfig.build.json  |   15 +
  packages/gateway-control-contracts/tsconfig.json   |    5 +
  .../gateway-control-contracts/tsdown.config.ts     |   14 +
@@ -303,10 +306,10 @@
  .../gateway-control-event-publisher.unit.test.ts   |  222 +
  .../gateway-control-lease-client.ts                |  693 ++
  .../gateway-control-lease-client.unit.test.ts      |  712 ++
- .../gateway-control-service-runtime.ts             |  190 +
- .../gateway-control-service-runtime.unit.test.ts   |   42 +
+ .../gateway-control-service-runtime.ts             |  191 +
+ .../gateway-control-service-runtime.unit.test.ts   |   60 +
  .../gateway-control-service.integration.test.ts    | 1903 +++++
- .../gateway-control-service.ts                     | 1136 +++
+ .../gateway-control-service.ts                     | 1126 +++
  .../src/gondolin-plugin-config.ts                  |   98 +-
  .../src/gondolin-plugin-config.unit.test.ts        |   46 +-
  packages/openclaw-agent-vm-plugin/src/index.ts     |    5 +-
@@ -368,7 +371,7 @@
  .../agent-portal/fake-tool-portal-controller.ts    |   30 +
  .../agent-portal/portal-contract-assertions.ts     |   65 +
  .../debug-investigation.md                         |   41 +
- .../copy-paste-prompt.md                           |  255 +
+ .../copy-paste-prompt.md                           |  270 +
  .../execution-report-event-186.md                  |  120 +
  .../execution-report-event-187.md                  |   75 +
  .../execution-report-event-188.md                  |   96 +
@@ -391,12 +394,12 @@
  .../reducer-report-event-194.md                    |   71 +
  .../reducer-report-event-197.md                    |  160 +
  .../reducer-report.md                              |  120 +
- .../review-packet.md                               | 1057 +++
- .../staged-name-status.txt                         |  400 +
- .../staged-stat.txt                                |  401 +
- .../2026-07-02-socketio-control-plane/details.md   | 8465 ++++++++++++++++++++
- .../2026-07-02-socketio-control-plane/events.jsonl |  203 +
+ .../review-packet.md                               | 1061 +++
+ .../staged-name-status.txt                         |  401 +
+ .../staged-stat.txt                                |  402 +
+ .../2026-07-02-socketio-control-plane/details.md   | 8621 ++++++++++++++++++++
+ .../2026-07-02-socketio-control-plane/events.jsonl |  207 +
  tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
  vitest.config.ts                                   |   57 +-
- 401 files changed, 69416 insertions(+), 11059 deletions(-)
+ 404 files changed, 69859 insertions(+), 11059 deletions(-)
