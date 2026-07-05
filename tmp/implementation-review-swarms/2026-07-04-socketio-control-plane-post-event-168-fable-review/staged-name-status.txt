@@ -150,6 +150,7 @@ A	packages/agent-vm/src/controller/control-session/gateway-control-session.unit.
 A	packages/agent-vm/src/controller/control-session/index.ts
 A	packages/agent-vm/src/controller/control-session/worker-control-domain-handler.ts
 A	packages/agent-vm/src/controller/control-session/worker-control-domain-handler.unit.test.ts
+A	packages/agent-vm/src/controller/control-session/worker-control-session.integration.test.ts
 A	packages/agent-vm/src/controller/control-session/worker-control-session.ts
 A	packages/agent-vm/src/controller/control-session/worker-control-session.unit.test.ts
 M	packages/agent-vm/src/controller/controller-runtime-types.ts
@@ -228,6 +229,7 @@ M	packages/agent-vm/src/operations/openclaw-deployment-doctor.unit.test.ts
 M	packages/agent-vm/src/operations/openclaw-deployment-requirements.ts
 M	packages/agent-vm/src/operations/zone-git-doctor.host.e2e.test.ts
 M	packages/agent-vm/src/operations/zone-git-doctor.ts
+M	packages/agent-vm/src/tool-vm/tool-vm-lifecycle.unit.test.ts
 M	packages/agent-vm/tsconfig.build.json
 M	packages/config-contracts/src/index.ts
 M	packages/config-contracts/src/schema-artifacts.ts

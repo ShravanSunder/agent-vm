@@ -1,19 +1,23 @@
 # 2026-07-02 Socket.IO Control Plane Goal Details
 
-## Current Resume Edge - Event 209
+## Current Resume Edge - Event 210
 
-Event 209 fixes the accepted implementation-review findings recorded after the
-Event 208 Worker e2e refresh.
+Event 210 fixes the stale Tool VM unit fixture exposed by the full unit rerun
+after Event 209.
 
-Current workflow: `shravan-dev-workflow:implementation-execute-plan`.
+Current workflow: `shravan-dev-workflow:implementation-review-swarm`.
 
-Next workflow: checkpoint this reducer/fix set, then refresh implementation
-review/Fable over the current branch diff. If review comes back clean, continue
-to live `../shravan-claw-beta` allowed-user Discord/OpenClaw inbound proof and
-PR-ready non-merge wrapup.
+Next workflow: refresh implementation review/Fable over the current branch diff.
+If review comes back clean, continue to live `../shravan-claw-beta`
+allowed-user Discord/OpenClaw inbound proof and PR-ready non-merge wrapup.
 
 Checkpoint result:
 
+- Checkpoint commit `e8b8e6a` fixes
+  `packages/agent-vm/src/tool-vm/tool-vm-lifecycle.unit.test.ts` so the test
+  helper declares only the trusted `sun` agent used by every Tool VM lifecycle
+  test. The dedicated system-config unit test remains the owner for multi-agent
+  managed OpenClaw fail-closed validation.
 - Wired `connectWorkerControlSession()` to
   `workerControlDeliveryPolicyByOperation`, so controller-originated Worker
   control commands derive delivery policy through the real controller client
@@ -36,6 +40,12 @@ Checkpoint result:
 
 Fresh proof:
 
+- Focused Tool VM unit proof passed:
+  `pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/tool-vm/tool-vm-lifecycle.unit.test.ts --reporter=verbose`
+  passed 1 file / 18 tests.
+- Full unit proof passed:
+  `pnpm test:unit`
+  passed 241 files / 2109 tests.
 - Focused integration proof passed:
   `pnpm vitest run --config vitest.config.ts --project integration packages/agent-vm/src/controller/control-session/worker-control-session.integration.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-service.integration.test.ts packages/agent-vm-worker/src/control-session/worker-control-service.integration.test.ts --reporter=verbose`
   passed 3 files / 51 tests.

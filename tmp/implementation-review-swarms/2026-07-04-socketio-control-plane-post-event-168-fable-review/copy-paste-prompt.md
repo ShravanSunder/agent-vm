@@ -45,8 +45,8 @@ post-Fable fixes captured in reducer-report-event-193.md, plus the Event 194
 accepted findings captured in reducer-report-event-194.md, plus the Event 195
 accepted findings fixed in execution-report-event-196.md, plus the Event 205
 OpenClaw health/recovery rerun, Event 206 post-OpenClaw `pnpm check`
-refresh, Event 208 full Worker e2e refresh, and Event 209 accepted finding
-fixes recorded in workflow state.
+refresh, Event 208 full Worker e2e refresh, Event 209 accepted finding fixes,
+and Event 210 stale Tool VM unit fixture repair recorded in workflow state.
 In particular, scrutinize:
 
 1. empty and multi-agent `zones[].agents` fail-closed behavior for managed OpenClaw
@@ -58,7 +58,8 @@ In particular, scrutinize:
 7. standalone `pnpm lint` proof in addition to `pnpm check`
 8. terminal e2e freshness after Event 200, OpenClaw freshness after Event 205,
     Worker freshness after Event 208, `pnpm check` freshness after Event 209,
-    and remaining stale beta Discord/OpenClaw proof after Event 172
+    full unit freshness after Event 210, and remaining stale beta
+    Discord/OpenClaw proof after Event 172
 9. remaining old raw-controller string matches, especially whether deletion of
     `scripts/live-sandbox-manual.mjs` fully removes shippable manual raw-control
     residue
@@ -267,6 +268,13 @@ In particular, scrutinize:
     - Portal export audit covers all published `@agent-vm/mcp-portal` subpath
       exports.
     - Fresh focused integration/config/export proof and `pnpm check` passed.
+34. Event 210 stale Tool VM unit fixture repair:
+    - `tool-vm-lifecycle.unit.test.ts` helper now declares only the trusted
+      `sun` agent used by all Tool VM lifecycle calls, so the new managed
+      OpenClaw multi-agent fail-closed rule is not tripped by unrelated Tool VM
+      tests.
+    - Focused Tool VM unit proof passed 1 file / 18 tests.
+    - Fresh full unit proof passed 241 files / 2109 tests.
 
 Return only grounded candidate findings:
 

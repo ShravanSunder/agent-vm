@@ -150,6 +150,7 @@
  .../src/controller/control-session/index.ts        |   10 +
  .../worker-control-domain-handler.ts               |  265 +
  .../worker-control-domain-handler.unit.test.ts     |  436 +
+ .../worker-control-session.integration.test.ts     |  145 +
  .../control-session/worker-control-session.ts      |  335 +
  .../worker-control-session.unit.test.ts            |  151 +
  .../src/controller/controller-runtime-types.ts     |    7 +-
@@ -228,6 +229,7 @@
  .../operations/openclaw-deployment-requirements.ts |   58 +-
  .../operations/zone-git-doctor.host.e2e.test.ts    |    3 +
  .../agent-vm/src/operations/zone-git-doctor.ts     |    3 +
+ .../src/tool-vm/tool-vm-lifecycle.unit.test.ts     |    2 +-
  packages/agent-vm/tsconfig.build.json              |    1 -
  packages/config-contracts/src/index.ts             |    1 +
  packages/config-contracts/src/schema-artifacts.ts  |    9 +
@@ -396,10 +398,10 @@
  .../reducer-report.md                              |  120 +
  .../review-packet.md                               | 1128 +++
  .../staged-name-status.txt                         |  404 +
- .../staged-stat.txt                                |    0
+ .../staged-stat.txt                                |  405 +
  .../2026-07-02-socketio-control-plane/details.md   | 8794 ++++++++++++++++++++
  .../2026-07-02-socketio-control-plane/events.jsonl |  212 +
  tsconfig.base.json                                 |   51 +-
  tsconfig.json                                      |    2 +-
  vitest.config.ts                                   |   57 +-
- 404 files changed, 69930 insertions(+), 11073 deletions(-)
+ 406 files changed, 70481 insertions(+), 11074 deletions(-)

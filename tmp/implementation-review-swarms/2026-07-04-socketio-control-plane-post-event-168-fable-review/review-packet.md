@@ -1,4 +1,4 @@
-Socket.IO Control Plane Post-Event-209 Fable Review Packet
+Socket.IO Control Plane Post-Event-210 Fable Review Packet
 ==========================================================
 
 Purpose
@@ -18,7 +18,8 @@ beta runtime proof status was recorded, the Event 205 OpenClaw health/recovery
 rerun passed, the Event 206 post-OpenClaw `pnpm check` refresh passed, and the
 Event 208 full Worker e2e refresh passed after the shared control-session
 priority-lane change. Event 209 fixes the accepted implementation-review
-findings from that pass.
+findings from that pass. Event 210 fixes the stale Tool VM unit fixture exposed
+by the full unit rerun after Event 209.
 
 Review the current repository state, not the older final-terminal review packet.
 Older packets and reducers remain useful as finding history only:
@@ -251,6 +252,12 @@ Important current-state note:
   registration; active docs/manuals no longer advertise shared multi-agent
   managed OpenClaw zones for this cutover; and the portal export verifier covers
   every published `@agent-vm/mcp-portal` subpath export.
+- This packet was refreshed after Event 210:
+  `tool-vm-lifecycle.unit.test.ts` no longer declares three managed OpenClaw
+  zone agents in a helper where every Tool VM lifecycle test uses `agentId:
+  "sun"`. The dedicated system-config unit coverage still owns multi-agent
+  fail-closed validation. Focused Tool VM unit proof passed 1 file / 18 tests,
+  and the full unit gate passed 241 files / 2109 tests.
 
 Implementation Scope
 --------------------
@@ -637,6 +644,16 @@ pnpm exec tsx scripts/verify-portal-package-exports.ts
 
 pnpm check
   passed, 10 passed / 0 failed in 25.41s
+```
+
+Current Event 210 proof after stale Tool VM unit fixture repair:
+
+```text
+pnpm vitest run --config vitest.config.ts --project unit packages/agent-vm/src/tool-vm/tool-vm-lifecycle.unit.test.ts --reporter=verbose
+  passed, 1 file / 18 tests
+
+pnpm test:unit
+  passed, 241 files / 2109 tests
 ```
 
 Current Event 200 proof after terminal refresh and host-e2e fixture repairs:
@@ -1030,10 +1047,10 @@ Event 203 freshly proves beta controller, OpenClaw ingress, Discord gateway
 connectivity, and plugin loading on OpenClaw `2026.6.8`, but it does not prove a
 fresh allowed-user inbound Discord message after the latest runtime fixes.
 Terminal VM/default e2e are fresh as of Event 200. Full OpenClaw e2e is fresh
-as of Event 205, full Worker e2e is fresh as of Event 208, and `pnpm check` is
-fresh as of Event 209. If this review comes back clean, the next execution step
-is to obtain beta actual allowed-user Discord inbound proof before PR-ready
-non-merge wrapup.
+as of Event 205, full Worker e2e is fresh as of Event 208, `pnpm check` is
+fresh as of Event 209, and full unit is fresh as of Event 210. If this review
+comes back clean, the next execution step is to obtain beta actual allowed-user
+Discord inbound proof before PR-ready non-merge wrapup.
 
 Latest beta Discord/OpenClaw proof recorded in workflow state:
 
