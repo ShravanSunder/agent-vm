@@ -8414,6 +8414,36 @@ Still not PR-ready:
 - Live `../shravan-claw-beta` actual Discord/OpenClaw proof remains required.
 - PR-ready non-merge wrapup remains required.
 
+## Event 205 OpenClaw Health Rerun Reduction
+
+Completed in this checkpoint:
+- Confirmed the branch worktree was clean at the start of the reduction pass.
+- Reran the focused live OpenClaw control-link file:
+  - `AGENT_VM_OPENCLAW_E2E=1 mise exec -- pnpm exec vitest run --config vitest.config.ts --project e2e-openclaw packages/agent-vm/src/integration-tests/live-openclaw-control-link.openclaw.e2e.test.ts --reporter=verbose`
+  - 1 file / 3 tests passed.
+- Reran the authoritative OpenClaw e2e gate:
+  - `mise exec -- pnpm run test:e2e:openclaw`
+  - 7 files / 12 tests passed.
+  - 0 skipped / 0 todo.
+  - Result JSON: `tmp/vitest-results/e2e-openclaw-36144-GAir0U/results.json`.
+- The previously failing `live-openclaw-control-link.openclaw.e2e.test.ts`
+  passed inside the full OpenClaw gate:
+  - control-session and gateway-service health observation passed.
+  - same-VM gateway process restart passed.
+  - repeated gateway-service failure auto-restart passed.
+
+Reduction result:
+- The earlier full-gate health/recovery timeout was not reproduced after the
+  focused file rerun and full OpenClaw rerun.
+- No test or source changes were made for this reduction checkpoint.
+
+Still not PR-ready:
+- Fresh `pnpm check` after this OpenClaw rerun remains required.
+- Implementation review/Fable refresh remains required.
+- Live `../shravan-claw-beta` actual Discord/OpenClaw inbound proof remains
+  required.
+- PR-ready non-merge wrapup remains required.
+
 ## Event 202 Review Drift And Bugbot Fixes
 
 Completed in this checkpoint:
