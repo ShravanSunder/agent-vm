@@ -368,6 +368,9 @@ describe('manual templates', () => {
 		)?.content;
 		expect(toolVmLeaseManual).toContain('defaultToolVmProfile');
 		expect(toolVmLeaseManual).toContain('one compatible Tool VM per zone and OpenClaw agent id');
+		expect(toolVmLeaseManual).toContain(
+			'Managed OpenClaw supports multiple declared agents in the same zone',
+		);
 		expect(toolVmLeaseManual).toContain('discarded before controller-owned lease resolution');
 		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_renew');
 		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_use_heartbeat');
@@ -438,6 +441,9 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('tool-access.md'))?.content).toContain(
 			'agentToolVmProfiles',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('tool-access.md'))?.content).toContain(
+			'Managed OpenClaw zones may declare multiple trusted agents',
+		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('gateway.authProfilesByAgent');
@@ -463,6 +469,10 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.content).join('\n')).not.toContain('one workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('which workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('allowedHosts');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('exactly one trusted agent');
+		expect(files.map((file) => file.content).join('\n')).not.toContain(
+			'controller-signed agent attestation',
+		);
 	});
 
 	it('documents graceful stop and scoped offline cleanup without broad qemu pkill', () => {

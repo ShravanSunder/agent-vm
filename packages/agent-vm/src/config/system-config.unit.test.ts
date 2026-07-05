@@ -593,17 +593,26 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('rejects multi-agent OpenClaw zones before caller-context registration', async () => {
+	test('loads same-zone multi-agent OpenClaw zones with declared per-agent policy', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }, { id: 'sun' }];
+		config.zones[0].agentToolVmProfiles = { sun: 'standard' };
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-multi-agent-openclaw-',
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/OpenClaw zone 'shravan' declares multiple agents/u,
-		);
+		const loadedConfig = await loadSystemConfig(configPath);
+		const loadedZone = loadedConfig.zones.at(0);
+		if (loadedZone === undefined) {
+			throw new Error('Expected first loaded zone.');
+		}
+
+		expect(loadedZone.agents).toEqual([
+			{ id: 'shravan', toolVmProfile: 'standard' },
+			{ id: 'sun' },
+		]);
+		expect(loadedZone.agentToolVmProfiles).toEqual({ sun: 'standard' });
 	});
 
 	test('rejects legacy OpenClaw zone tool portal config keys', async () => {

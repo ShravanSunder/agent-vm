@@ -716,17 +716,6 @@ function resolveOpenClawScaffoldAgentIds(
 	return agentIds && agentIds.length > 0 ? agentIds : [defaultOpenClawScaffoldAgentId];
 }
 
-function assertManagedOpenClawScaffoldAgentSupport(
-	gatewayType: GatewayType,
-	agentIds: readonly string[] | undefined,
-): void {
-	if (gatewayType === 'openclaw' && agentIds !== undefined && agentIds.length > 1) {
-		throw new Error(
-			'Managed OpenClaw scaffolds support exactly one --openclaw-agents id during the Socket.IO control-plane hard cutover.',
-		);
-	}
-}
-
 function defaultOpenClawPortalToolDenyList(
 	_agentId: string,
 	_agentIds: readonly string[],
@@ -1060,8 +1049,6 @@ async function scaffoldAgentVmProjectInternal(
 	options: ScaffoldAgentVmProjectOptions,
 	dependencies: ScaffoldAgentVmProjectDependencies = {},
 ): Promise<ScaffoldAgentVmProjectResult> {
-	assertManagedOpenClawScaffoldAgentSupport(options.gatewayType, options.agents);
-
 	if (options.hostSystemType === 'container') {
 		if (options.gatewayType !== 'worker') {
 			throw new Error('Container-host scaffolds currently support only worker gateways.');

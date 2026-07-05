@@ -462,32 +462,41 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
-	it('rejects multi-agent managed OpenClaw init during the control-plane cutover', async () => {
-		await expect(
-			runAgentVmCli(
-				[
-					'init',
-					'test-zone',
-					'--type',
-					'openclaw',
-					'--secrets',
-					'1password',
-					'--arch',
-					'aarch64',
-					'--openclaw-agents',
-					'sun,shravan,alevtina',
-				],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				{
-					...defaultCliDependencies,
-					getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
-				},
-			),
-		).rejects.toThrow(
-			'Managed OpenClaw scaffolds support exactly one --openclaw-agents id during the Socket.IO control-plane hard cutover.',
+	it('passes multi-agent managed OpenClaw init requests to the scaffolder', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.jsonc'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--openclaw-agents',
+				'sun,shravan,alevtina',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agents: ['sun', 'shravan', 'alevtina'],
+			}),
 		);
 	});
 

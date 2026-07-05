@@ -83,11 +83,6 @@ export function validateGatewayControlCallerContextRegistration(options: {
 			`Gateway control caller context rejected undeclared OpenClaw agent '${evidence.agentId}'.`,
 		);
 	}
-	if (configuredAgentIds.size !== 1) {
-		throw new Error(
-			`Gateway control caller context rejected multi-agent OpenClaw zone '${options.zone.id}' until controller-signed agent attestation is implemented.`,
-		);
-	}
 	if (
 		evidence.purpose === 'tool_portal_controller_host_action' &&
 		options.zone.toolPortal === undefined

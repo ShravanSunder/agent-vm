@@ -3680,7 +3680,7 @@ describe('startGatewayZone', () => {
 		expect(controllerOnlyMaterialText).toContain('BEGIN PRIVATE KEY');
 	});
 
-	it('rejects caller context registration for multi-agent OpenClaw zones until agent attestation exists', async () => {
+	it('accepts caller context registration for declared non-default agents in multi-agent OpenClaw zones', async () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined || zone.gateway.type !== 'openclaw') {
@@ -3704,6 +3704,6 @@ describe('startGatewayZone', () => {
 				},
 				zone: multiAgentZone,
 			}),
-		).toThrow(/multi-agent OpenClaw zone/u);
+		).not.toThrow();
 	});
 });

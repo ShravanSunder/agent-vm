@@ -1461,6 +1461,66 @@ describe('runConfigValidation', () => {
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('accepts matching same-zone multi-agent MCP Portal bindings', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await updateJsonFile(systemConfigPath, (systemConfig) => {
+			const zones = systemConfig.zones;
+			if (!Array.isArray(zones)) {
+				throw new Error('Expected zones array.');
+			}
+			const firstZone = zones[0];
+			if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
+				throw new Error('Expected first zone object.');
+			}
+			const zone = firstZone as Record<string, unknown>;
+			zone.agents = [{ id: 'shravan' }, { id: 'sun' }];
+			zone.agentToolVmProfiles = { sun: 'default' };
+		});
+		await writeMcpPortalConfigWithAgents(temporaryDirectoryPath, {
+			shravan: { profile: 'default' },
+			sun: { profile: 'default' },
+		});
+		await updateJsonFile(
+			path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+			(openClawConfig) => {
+				openClawConfig.tools = {
+					sandbox: {
+						tools: {
+							alsoAllow: ['group:plugins'],
+						},
+					},
+				};
+			},
+		);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.checks.filter((check) => !check.ok)).toEqual([]);
+		expect(result.ok).toBe(true);
+		expect(
+			result.checks.find((check) => check.name === 'mcp-portal-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: true,
+		});
+		expect(
+			result.checks.find((check) => check.name === 'mcp-portal-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
+		});
+		expect(
+			result.checks.find((check) => check.name === 'zone-agent-tool-vm-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('reports MCP Portal agents not declared in system config', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);

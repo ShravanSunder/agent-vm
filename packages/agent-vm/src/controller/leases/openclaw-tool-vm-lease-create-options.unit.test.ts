@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -162,6 +162,50 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 				requestedIdleTtlMs: 90_000,
 			}),
 		).rejects.toThrow(/at most 60000ms/u);
+	});
+
+	it('resolves agent-specific Tool VM profiles for declared same-zone OpenClaw agents', async () => {
+		const systemConfig = await createSystemConfigFixture();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined) {
+			throw new Error('Expected OpenClaw fixture zone');
+		}
+		await mkdir(path.join(testRoot, 'state', 'zone-a', 'sandboxes', 'second', 'work'), {
+			recursive: true,
+		});
+		zone.agents = [{ id: 'main' }, { id: 'second' }];
+		zone.agentToolVmProfiles = { second: 'larger' };
+		systemConfig.toolVmProfiles.larger = {
+			cpus: 4,
+			imageProfile: 'default',
+			memory: '4G',
+		};
+		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
+		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
+		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
+			openClawRuntimeStatusStore,
+			systemConfig,
+		});
+
+		const options = await resolveLeaseCreateOptions({
+			authorityContext: {
+				agentId: 'second',
+				agentWorkspaceDir: '/home/openclaw/workspace-second',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
+				zoneId: 'zone-a',
+			},
+		});
+
+		expect(options.agentId).toBe('second');
+		expect(options.profileId).toBe('larger');
+		expect(options.profile).toEqual({
+			cpus: 4,
+			imageProfile: 'default',
+			memory: '4G',
+		});
+		await expect(
+			realpath(path.join(testRoot, 'state', 'zone-a', 'sandboxes', 'second', 'work')),
+		).resolves.toBe(options.hostWorkMountDir);
 	});
 
 	it('does not trust a gateway-supplied profileId when zone policy has no profile mapping', async () => {

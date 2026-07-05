@@ -150,9 +150,9 @@ Example:
 - shravan agent uses agentId=shravan.
 - alevtina agent uses agentId=alevtina.
 - Each agent gets its own compatible Tool VM lease mounted at /workspace in its Tool VM.
-- During the Socket.IO control-plane hard cutover, managed OpenClaw supports exactly one trusted agent per zone.
-- defaultToolVmProfile selects that agent's Tool VM image unless agentToolVmProfiles is configured for a future attested multi-agent layout.
-- Use separate zones when agents need different Tool VM images.
+- Managed OpenClaw supports multiple declared agents in the same zone when their per-agent config is explicit and consistent.
+- defaultToolVmProfile is the fallback Tool VM image; agentToolVmProfiles can select a different image per declared agent.
+- Use separate zones when gateway lifecycle or channel isolation matters more than sharing a gateway VM.
 - Configure gateway.authProfilesByAgent and agentSandboxSeeds for per-agent auth/profile files.
 - Use separate zones when gateway lifecycle isolation or shared-zone cost is worse than another gateway VM.
 `,
@@ -302,7 +302,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 		Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension. The gondolin extension registers Tool Portal native tools and calls Tool Portal with MCP providers as an internal backend when configured.
 		Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in packageOverrides.openclaw. Transitive workarounds use packageOverrides.pnpm, and the rebuilt image must be inspected before calling that workaround active.
 
-	During the Socket.IO control-plane hard cutover, use agent-vm init --openclaw-agents sun to scaffold one managed OpenClaw agent with a /zone/agents/<id> workspace. Multi-agent managed OpenClaw zones are rejected until controller-signed agent attestation exists.
+	Use agent-vm init --openclaw-agents sun,shravan to scaffold declared same-zone managed OpenClaw agents with /zone/agents/<id> workspaces. Keep OpenClaw agents.list, zones[].agents, Tool Portal/MCP Portal bindings, and per-agent auth/profile files aligned before validation.
 
 	Run agent-vm validate after editing OpenClaw config or system config. Validate owns static schema and policy shape, including removed fields and WebSocket upgrade policy. Run agent-vm doctor after rebuilding or starting the deployment to check runtime host readiness, plugin paths, memory slots, workspace access, sandbox plugin tools, and configured auth profile material.
 	`,
@@ -396,9 +396,9 @@ There are three isolation layers:
    Per-agent tool policy can stop an agent from invoking certain named tools. This is useful, but it is not binary-level isolation if a broad shell tool can still run arbitrary commands.
 
 3. Per-zone Tool VM images.
-   During this cutover, managed OpenClaw uses one trusted agent per zone, so binary-level image differences require separate zones.
+   Use separate zones when binary-level differences must also carry gateway lifecycle, channel, or zone-files isolation.
 
-During the Socket.IO control-plane hard cutover, a managed OpenClaw zone must declare exactly one trusted agent. Use multiple zones when gateway lifecycle, channel, secret, Tool VM image, or zone-files isolation matters more than memory cost. Future controller-signed agent attestation can reopen same-zone multi-agent layouts and agentToolVmProfiles.
+Managed OpenClaw zones may declare multiple trusted agents in zones[].agents. Use agentToolVmProfiles for per-agent Tool VM image selection inside the same zone, and use separate zones only when gateway lifecycle, channel, secret, or zone-files isolation matters more than sharing the gateway VM.
 `,
 			),
 		},
@@ -469,7 +469,7 @@ When gateway.zoneGit is configured:
 			content: generatedPage(
 				'Per-Agent Setup',
 				`
-During the Socket.IO control-plane hard cutover, a managed OpenClaw gateway zone must declare exactly one trusted agent. Multi-agent OpenClaw zones are rejected until controller-signed agent attestation exists. Use scope=agent so OpenClaw resolves that agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
+Managed OpenClaw gateway zones may declare multiple trusted agents. Use scope=agent so OpenClaw resolves each agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
 
 Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for prebuilt OpenClaw auth profiles, gateway.authLogin for interactive OpenClaw profile login helpers, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
 agent-vm auth openclaw login <provider> --all-configured-profiles logs in each configured gateway.authLogin.providers.<provider>.profileIds entry for gateway.authLogin.defaultAgent and verifies those profile IDs afterward. Use --dry-run before a refresh when you want to inspect the target agent and profile list.
@@ -477,7 +477,7 @@ Native Codex-runtime agents use codex-harness --all-agents to run one device-aut
 
 OpenClaw tool allowlists are a policy layer. They do not remove binaries from the Tool VM image if a broad shell tool can still run them.
 
-Binary-level isolation requires different Tool VM images. During this cutover, use separate managed OpenClaw zones for per-agent image differences. agentToolVmProfiles remains reserved for future attested same-zone multi-agent layouts.
+Binary-level isolation requires different Tool VM images. Use agentToolVmProfiles for per-agent image differences inside one managed OpenClaw zone when gateway lifecycle can be shared. Use separate zones when the gateway VM, channel, secret, or zone-files boundary must also be separate.
 
 Git workflow with gateway.zoneGit:
 - Agents may inspect, stage, and commit workspace changes with git status, git add, and git commit.

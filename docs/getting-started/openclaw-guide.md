@@ -208,18 +208,19 @@ For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-g
 
 ## Managed Agent Scaffold
 
-During the Socket.IO control-plane hard cutover, managed OpenClaw supports one
-trusted agent per gateway zone. Scaffold that agent explicitly:
+During the Socket.IO control-plane hard cutover, managed OpenClaw supports
+multiple declared trusted agents in the same gateway zone. Scaffold the declared
+agents explicitly:
 
 ```bash
-agent-vm init sunfam --type openclaw --openclaw-agents sun
+agent-vm init sunfam --type openclaw --openclaw-agents sun,shravan
 ```
 
-This writes one `agents.list` entry with a `/zone/agents/<id>` workspace and an
-identity-name stub. Multi-agent managed OpenClaw zones are rejected until
-controller-signed agent attestation exists. Channel bindings, Discord allowlists,
-and auth profiles stay deployment-owned because those depend on real account
-and guild IDs.
+This writes one `agents.list` entry per agent with a `/zone/agents/<id>`
+workspace and an identity-name stub. Keep `zones[].agents`, OpenClaw
+`agents.list`, Tool Portal/MCP Portal bindings, and per-agent auth/profile files
+aligned. Channel bindings, Discord allowlists, and auth profiles stay
+deployment-owned because those depend on real account and guild IDs.
 
 ---
 

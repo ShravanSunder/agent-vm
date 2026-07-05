@@ -179,6 +179,32 @@ describe('MCP Portal effective config materialization', () => {
 		).rejects.toThrow(/declared agent "second" is missing from mcp-portal\.config\.jsonc agents/u);
 	});
 
+	it('materializes matching same-zone multi-agent Tool Portal bindings', async () => {
+		const plan = await planMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				declaredAgentIds: ['main', 'second'],
+				mcpConfig: { providers: {}, schemaVersion: 1 },
+				portalConfig: {
+					agents: {
+						main: { profile: 'default' },
+						second: { profile: 'readonly' },
+					},
+					profiles: {
+						default: { namespaces: {} },
+						readonly: { namespaces: {} },
+					},
+					schemaVersion: 1,
+				},
+				zoneId: 'zone-a',
+			}),
+		);
+
+		expect(plan.effectivePortalConfig.agents).toEqual({
+			main: { credentialVersion: 1, profile: 'default' },
+			second: { credentialVersion: 1, profile: 'readonly' },
+		});
+	});
+
 	it('does not report loopback HTTP provider URLs as external gateway egress', async () => {
 		const mcpConfig = {
 			providers: {

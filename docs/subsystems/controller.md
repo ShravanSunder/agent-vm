@@ -300,10 +300,11 @@ For the canonical name/location/storage vocabulary, see
 
 For OpenClaw leases, the route resolves `profileId` from the request `agentId`
 and the zone's Tool VM policy. During the Socket.IO control-plane hard cutover,
-managed OpenClaw zones declare exactly one trusted agent, so the active policy is
-the zone fallback `defaultToolVmProfile`. `agentToolVmProfiles` remains a schema
-surface for future controller-signed agent attestation and for non-managed
-topologies, but managed same-zone multi-agent leases are rejected in this PR.
+managed OpenClaw zones may declare multiple trusted agents. The active policy is
+`agentToolVmProfiles[agentId]` when present, otherwise the zone fallback
+`defaultToolVmProfile`. Caller context must still be controller-vetted before a
+Tool VM lease is issued: undeclared agents, mismatched session keys, and
+cross-agent workspace/work-mount provenance fail closed.
 
 ### TCP Pool
 
