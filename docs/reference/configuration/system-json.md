@@ -610,10 +610,12 @@ DeepWiki, Tavily, 1Password, or real upstream MCP credentials; credentialed
 upstream providers belong in an explicit deployment e2e outside the default
 local suite.
 
-`agent-vm init --type openclaw --openclaw-agents sun,shravan,alevtina` scaffolds
-`agents.list` entries with `/zone/agents/<id>` workspaces. It deliberately does
-not scaffold channel bindings or Discord guild allowlists because those are
-deployment-owned IDs.
+During the Socket.IO control-plane hard cutover,
+`agent-vm init --type openclaw --openclaw-agents sun` scaffolds one managed
+OpenClaw agent with a `/zone/agents/<id>` workspace. Managed OpenClaw zones with
+multiple `zones[].agents` entries are rejected until controller-signed agent
+attestation exists. The scaffold deliberately does not create channel bindings
+or Discord guild allowlists because those are deployment-owned IDs.
 
 OpenClaw `web_fetch` in Gondolin deployments needs fake-IP SSRF policy for
 mediated DNS and proxy-style environments:
@@ -847,11 +849,9 @@ files:
       "shravan": { "source": "environment", "envVar": "SHRAVAN_AUTH_PROFILES" }
     }
   },
+  "agents": [{ "id": "shravan" }],
   "defaultToolVmProfile": "standard",
-  "agentToolVmProfiles": {
-    "shravan": "tools-dev",
-    "alevtina": "tools-light"
-  },
+  "agentToolVmProfiles": {},
   "agentSandboxSeeds": {
     "shravan": [
       {
@@ -865,12 +865,12 @@ files:
 ```
 
 New OpenClaw scaffolds set `agents.defaults.workspace` to
-`/zone/agents/default`. This keeps the default agent's authored workspace files
+`/zone/agents/default`. This keeps the trusted agent's authored workspace files
 under `zoneFilesDir` while leaving `/zone` itself available for shared
-zone-level notes and reference material. Multi-agent deployments should set
-explicit `agents.list[].workspace` values such as `/zone/agents/shravan` and
-`/zone/agents/sun`; otherwise OpenClaw derives non-default agent workspaces
-under the fallback path.
+zone-level notes and reference material. During the Socket.IO control-plane hard
+cutover, managed OpenClaw zones must declare exactly one trusted agent. Use
+separate zones for multiple managed agents until controller-signed agent
+attestation reopens same-zone multi-agent layouts.
 
 `agentToolVmProfiles` values must reference entries in top-level `toolVmProfiles`.
 Unmapped agents use the zone fallback `defaultToolVmProfile`.

@@ -350,7 +350,7 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						zoneGit: {
 							remote: {
 								repoUrl: 'ShravanSunder/zone-files',
-								branch: 'main',
+								branch: 'agent/main',
 							},
 						},
 					},
@@ -3319,7 +3319,7 @@ describe('startGatewayZone', () => {
 			startLeaseUse: vi.fn(async () => undefined),
 		} satisfies GatewayControlLeaseRpcOperations;
 		const pushZoneGit = vi.fn(async () => ({
-			branch: 'main',
+			branch: 'agent/main',
 			localHead: 'abc123',
 			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
 			remoteHead: 'abc123',
@@ -3601,7 +3601,7 @@ describe('startGatewayZone', () => {
 				controllerHostAction: {
 					actionId: 'zone_git_push',
 					result: {
-						branch: 'main',
+						branch: 'agent/main',
 						localHead: 'abc123',
 						pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
 						remoteHead: 'abc123',

@@ -977,7 +977,7 @@ describe('scaffoldAgentVmProject', () => {
 		]);
 	});
 
-	it('scaffolds OpenClaw agent list from requested multi-agent ids', async () => {
+	it('scaffolds OpenClaw agent list from the requested single managed agent id', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -986,7 +986,7 @@ describe('scaffoldAgentVmProject', () => {
 				zoneId: 'my-zone',
 				gatewayType: 'openclaw',
 				architecture: 'aarch64',
-				agents: ['sun', 'shravan', 'alevtina'],
+				agents: ['sun'],
 				secretsProvider: '1password',
 			},
 			noGeneratedAgeIdentityDependencies,
@@ -1029,18 +1029,6 @@ describe('scaffoldAgentVmProject', () => {
 				identity: { name: 'Sun' },
 				tools: { deny: [] },
 			},
-			{
-				id: 'shravan',
-				workspace: '/zone/agents/shravan',
-				identity: { name: 'Shravan' },
-				tools: { deny: [] },
-			},
-			{
-				id: 'alevtina',
-				workspace: '/zone/agents/alevtina',
-				identity: { name: 'Alevtina' },
-				tools: { deny: [] },
-			},
 		]);
 		expect(openClawConfig.mcp?.servers?.mcp_portal_sun).toBeUndefined();
 		await expect(
@@ -1059,11 +1047,29 @@ describe('scaffoldAgentVmProject', () => {
 			schemaVersion: 1,
 			agents: {
 				sun: { profile: 'default' },
-				shravan: { profile: 'default' },
-				alevtina: { profile: 'default' },
 			},
 			profiles: { default: { namespaces: {} } },
 		});
+	});
+
+	it('rejects multi-agent managed OpenClaw scaffolds during the control-plane cutover', async () => {
+		const targetDir = await createTestDirectory();
+
+		await expect(
+			scaffoldAgentVmProject(
+				{
+					targetDir,
+					zoneId: 'my-zone',
+					gatewayType: 'openclaw',
+					architecture: 'aarch64',
+					agents: ['sun', 'shravan', 'alevtina'],
+					secretsProvider: '1password',
+				},
+				noGeneratedAgeIdentityDependencies,
+			),
+		).rejects.toThrow(
+			'Managed OpenClaw scaffolds support exactly one --openclaw-agents id during the Socket.IO control-plane hard cutover.',
+		);
 	});
 
 	it('scaffolds control-ui allowed origins from an existing zone ingress port', async () => {

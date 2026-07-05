@@ -65,6 +65,7 @@ function createSystemConfig(
 						zoneFilesDir: '/zone-files/beta',
 					},
 					id: 'beta',
+					agents: [{ id: 'main' }],
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							audience: 'gateway',

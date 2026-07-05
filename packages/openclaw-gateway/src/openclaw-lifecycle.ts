@@ -598,6 +598,11 @@ function omitPluginConfigEntry(
 	return Object.fromEntries(Object.entries(config).filter(([key]) => key !== pluginId));
 }
 
+function isDeprecatedMcpPortalLoadPath(value: string): boolean {
+	const normalizedValue = value.replace(/\/+$/u, '');
+	return path.posix.basename(normalizedValue) === deprecatedMcpPortalPluginId;
+}
+
 function stripDeprecatedMcpPortalLoadConfig(loadConfig: unknown): unknown {
 	if (!isObjectRecord(loadConfig)) {
 		return loadConfig;
@@ -605,7 +610,7 @@ function stripDeprecatedMcpPortalLoadConfig(loadConfig: unknown): unknown {
 	const paths = Array.isArray(loadConfig.paths)
 		? loadConfig.paths.filter(
 				(value): value is string =>
-					typeof value === 'string' && !value.includes(deprecatedMcpPortalPluginId),
+					typeof value === 'string' && !isDeprecatedMcpPortalLoadPath(value),
 			)
 		: undefined;
 	return {

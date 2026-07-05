@@ -299,9 +299,11 @@ For the canonical name/location/storage vocabulary, see
 [Lease Path Vocabulary](../architecture/storage-model.md#lease-path-vocabulary).
 
 For OpenClaw leases, the route resolves `profileId` from the request `agentId`
-and the zone's Tool VM policy. `agentToolVmProfiles[agentId]` wins when
-present; otherwise the lease uses `defaultToolVmProfile`. This lets one zone
-serve multiple agents with different disposable Tool VM images.
+and the zone's Tool VM policy. During the Socket.IO control-plane hard cutover,
+managed OpenClaw zones declare exactly one trusted agent, so the active policy is
+the zone fallback `defaultToolVmProfile`. `agentToolVmProfiles` remains a schema
+surface for future controller-signed agent attestation and for non-managed
+topologies, but managed same-zone multi-agent leases are rejected in this PR.
 
 ### TCP Pool
 

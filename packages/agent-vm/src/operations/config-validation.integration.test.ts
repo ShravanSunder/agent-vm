@@ -150,6 +150,7 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 		zones: [
 			{
 				id: 'shravan',
+				agents: [{ id: 'shravan' }],
 				gateway: {
 					type: 'openclaw',
 					controlAuth: {
@@ -498,7 +499,7 @@ describe('runConfigValidation', () => {
 				throw new Error('Expected first zone object.');
 			}
 			const zoneRecord = zone as Record<string, unknown>;
-			zoneRecord.agents = [{ id: 'sun' }, { id: 'mak' }];
+			zoneRecord.agents = [{ id: 'shravan' }];
 			zoneRecord.egressHosts = [
 				{ host: 'api.openai.com', audience: 'gateway' },
 				{ host: 'api.github.com', audience: 'both' },
@@ -512,7 +513,7 @@ describe('runConfigValidation', () => {
 					injection: 'http-mediation',
 					audience: 'both',
 					hosts: ['api.github.com'],
-					agentAccess: ['sun'],
+					agentAccess: ['shravan'],
 				},
 				LINEAR_API_KEY: {
 					source: 'environment',
@@ -534,7 +535,7 @@ describe('runConfigValidation', () => {
 		expect(result.checks).toContainEqual({
 			name: 'zone-agent-secret-access-shravan-GITHUB_TOKEN',
 			ok: true,
-			hint: 'tool-vm: sun; gateway: zone-wide',
+			hint: 'tool-vm: shravan; gateway: zone-wide',
 		});
 		expect(result.checks).toContainEqual({
 			name: 'zone-agent-secret-access-shravan-LINEAR_API_KEY',

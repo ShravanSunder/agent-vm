@@ -191,6 +191,7 @@ function createTestSystemConfig(): LoadedSystemConfig {
 						zoneFilesDir: '/zone-files/test',
 					},
 					id: 'test-zone',
+					agents: [{ id: 'main' }],
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							source: 'environment',

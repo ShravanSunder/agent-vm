@@ -1408,6 +1408,12 @@ describe('openclawLifecycle', () => {
 									},
 								},
 							},
+							load: {
+								paths: [
+									'/home/openclaw/.openclaw/extensions/mcp-portal',
+									'/home/openclaw/.openclaw/extensions/acme-mcp-portal-bridge',
+								],
+							},
 						},
 					},
 					null,
@@ -1446,11 +1452,14 @@ describe('openclawLifecycle', () => {
 				readonly plugins?: {
 					readonly allow?: readonly string[];
 					readonly entries?: Record<string, unknown>;
+					readonly load?: { readonly paths?: readonly string[] };
 				};
 			};
 			expect(effectiveOpenClawConfig.plugins?.allow).not.toContain('mcp-portal');
 			expect(effectiveOpenClawConfig.plugins?.entries?.['mcp-portal']).toBeUndefined();
-			expect(effectiveOpenClawConfigContent).not.toContain('mcp-portal');
+			expect(effectiveOpenClawConfig.plugins?.load?.paths).toEqual([
+				'/home/openclaw/.openclaw/extensions/acme-mcp-portal-bridge',
+			]);
 			expect(effectiveOpenClawConfigContent).not.toContain('stale-portal-binary');
 			expect(effectiveOpenClawConfigContent).not.toContain('binPath');
 			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
