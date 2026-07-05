@@ -17,6 +17,7 @@ import {
 	assertControlMessageReceiptAccepted,
 	assertControlEnvelopeMatchesDomainMessage,
 	assertDerivedControlDeliveryPolicy,
+	buildControlMessageExceptionRejectionReceipt,
 	buildControlMessageRejectionReceipt,
 	buildControlHandshakeSignaturePayload,
 	buildControlReadyRequestSignaturePayload,
@@ -88,6 +89,42 @@ describe('control protocol contracts', () => {
 		expect(() => assertControlMessageReceiptAccepted(rejectedReceipt)).toThrow(
 			/control message was rejected/u,
 		);
+	});
+
+	it('classifies schema parse failures separately from processing failures', () => {
+		let schemaError: unknown;
+		try {
+			z.object({ messageId: z.string().uuid() }).strict().parse({ messageId: 'not-a-uuid' });
+		} catch (error: unknown) {
+			schemaError = error;
+		}
+		if (schemaError === undefined) {
+			throw new Error('expected schema fixture to throw');
+		}
+
+		expect(
+			buildControlMessageExceptionRejectionReceipt({
+				error: schemaError,
+				processingErrorClass: 'control_message_processing_failed',
+				safeMessage: 'control message was rejected',
+			}),
+		).toEqual({
+			errorClass: 'schema_validation_failed',
+			received: false,
+			safeMessage: 'control message was rejected',
+		});
+
+		expect(
+			buildControlMessageExceptionRejectionReceipt({
+				error: new Error('dispatcher unavailable'),
+				processingErrorClass: 'control_message_processing_failed',
+				safeMessage: 'control message was rejected',
+			}),
+		).toEqual({
+			errorClass: 'control_message_processing_failed',
+			received: false,
+			safeMessage: 'control message was rejected',
+		});
 	});
 
 	it('rejects cross-layer kind and operation mismatches', () => {

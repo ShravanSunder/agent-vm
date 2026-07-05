@@ -14,6 +14,7 @@ import {
 	type ControlHello,
 	type ControlReadyRequestProof,
 } from '@agent-vm/control-protocol-contracts';
+import { WorkerControlRpcMessageSchema } from '@agent-vm/worker-control-contracts';
 import { io as createSocketIoClient, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -1870,6 +1871,57 @@ describe('worker control service', () => {
 			safeMessage: 'worker control message was rejected',
 		});
 		expect(handledPayloads).toEqual([]);
+	});
+
+	it('rejects worker control processing failures without labeling them as schema failures', async () => {
+		const fixture = createFixture(() => 1_000);
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: WORKER_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		await waitForSocketConnect(client);
+
+		const helloPayload = {
+			bootId: identity.bootId,
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'worker_control',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello;
+		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
+		const acceptedSession = await fixture.service.getAcceptedSession();
+		const envelope = workerGitPushEnvelopeFor(acceptedSession);
+		const workerMessage = WorkerControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'git_push',
+			payload: {
+				branchName: 'agent/task-1',
+				command: {
+					commandId: envelope.commandId,
+					idempotencyKey: envelope.idempotencyKey,
+				},
+				repoUrl: 'https://github.com/example/repo.git',
+				task: {
+					taskId: 'task-1',
+				},
+			},
+		});
+
+		await expect(
+			client.timeout(1_000).emitWithAck('control:message', envelope, workerMessage),
+		).resolves.toEqual({
+			errorClass: 'worker_control_message_processing_failed',
+			received: false,
+			safeMessage: 'worker control message was rejected',
+		});
 	});
 
 	it('closes instead of handling controller-originated critical messages after a sequence gap', async () => {

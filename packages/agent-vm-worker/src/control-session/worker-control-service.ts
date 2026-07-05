@@ -17,7 +17,7 @@ import {
 	assertControlMessageReceiptAccepted,
 	assertControlEnvelopeMatchesDomainMessage,
 	assertDerivedControlDeliveryPolicy,
-	buildControlMessageRejectionReceipt,
+	buildControlMessageExceptionRejectionReceipt,
 	buildControlMessageReceipt,
 	buildControlHandshakeSignaturePayload,
 	buildControlReadyRequestSignaturePayload,
@@ -814,10 +814,11 @@ export function createWorkerControlService(
 							closeWorkerControlSessionForReservedResponseFailure(socket, error);
 						});
 					}
-				} catch {
+				} catch (error: unknown) {
 					acknowledge?.(
-						buildControlMessageRejectionReceipt({
-							errorClass: 'schema_validation_failed',
+						buildControlMessageExceptionRejectionReceipt({
+							error,
+							processingErrorClass: 'worker_control_message_processing_failed',
 							safeMessage: 'worker control message was rejected',
 						}),
 					);

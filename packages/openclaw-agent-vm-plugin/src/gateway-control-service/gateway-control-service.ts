@@ -16,7 +16,7 @@ import {
 	ControlHelloSchema,
 	assertControlMessageReceiptAccepted,
 	assertControlEnvelopeMatchesDomainMessage,
-	buildControlMessageRejectionReceipt,
+	buildControlMessageExceptionRejectionReceipt,
 	buildControlMessageReceipt,
 	evaluateControlSequenceContinuity,
 	extractDomainCommandResultResponseToMessageId,
@@ -750,10 +750,11 @@ export function createGatewayControlService(
 							closeGatewayControlSessionForReservedResponseFailure(socket, error);
 						});
 					}
-				} catch {
+				} catch (error: unknown) {
 					acknowledge?.(
-						buildControlMessageRejectionReceipt({
-							errorClass: 'schema_validation_failed',
+						buildControlMessageExceptionRejectionReceipt({
+							error,
+							processingErrorClass: 'gateway_control_message_processing_failed',
 							safeMessage: 'gateway control message was rejected',
 						}),
 					);

@@ -353,6 +353,23 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		});
 	});
 
+	it('rejects with policy unavailable when the effective Tool Portal snapshot cannot be loaded', async () => {
+		const systemConfig = await createSystemConfigFixture();
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createZoneGitPushPayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_host_action_policy_unavailable',
+			safeMessage: 'controller host action policy is unavailable',
+		});
+	});
+
 	it('rejects zones without Tool Portal controller host action configuration', async () => {
 		const systemConfig = await createSystemConfigFixture({ toolPortal: false });
 

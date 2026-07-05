@@ -88,31 +88,30 @@ export async function authorizeGatewayControlControllerHostAction(
 		);
 	}
 
-	const projectionResult = await (async () => {
-		try {
-			const effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
-				path.join(request.systemConfig.cacheDir, 'gateways', zone.id, 'tool-portal-effective'),
-			);
-			return {
-				ok: true,
-				projection: createToolPortalControllerHostActionProjection({
-					agentId: request.callerContext.agentId,
-					config: effectiveConfig.effectiveToolPortalConfig,
-				}),
-			} as const;
-		} catch {
-			return {
-				ok: false,
-			} as const;
-		}
-	})();
-	if (!projectionResult.ok) {
+	let effectiveConfig: Awaited<ReturnType<typeof loadMcpPortalEffectiveToolPortalConfigSnapshot>>;
+	try {
+		effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+			path.join(request.systemConfig.cacheDir, 'gateways', zone.id, 'tool-portal-effective'),
+		);
+	} catch {
+		return rejectAuthorization(
+			'controller_host_action_policy_unavailable',
+			'controller host action policy is unavailable',
+		);
+	}
+
+	let projection: ReturnType<typeof createToolPortalControllerHostActionProjection>;
+	try {
+		projection = createToolPortalControllerHostActionProjection({
+			agentId: request.callerContext.agentId,
+			config: effectiveConfig.effectiveToolPortalConfig,
+		});
+	} catch {
 		return rejectAuthorization(
 			'controller_host_action_policy_denied',
 			'controller host action policy denied the requested capability',
 		);
 	}
-	const projection = projectionResult.projection;
 	const namespaceProjection = projection.namespaces[capability.namespace];
 	if (
 		namespaceProjection === undefined ||

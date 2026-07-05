@@ -15,6 +15,7 @@ import {
 	type ControlReadyRequestProof,
 	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
+import { GatewayControlRpcMessageSchema } from '@agent-vm/gateway-control-contracts';
 import { io as createSocketIoClient, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -1813,6 +1814,51 @@ describe('gateway control service', () => {
 			safeMessage: 'gateway control message was rejected',
 		});
 		expect(handledPayloads).toEqual([]);
+	});
+
+	it('rejects gateway control processing failures without labeling them as schema failures', async () => {
+		const fixture = createFixture(() => 1_000);
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		await waitForSocketConnect(client);
+
+		const helloPayload = {
+			bootId: identity.bootId,
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello;
+		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
+		const acceptedSession = await fixture.service.getAcceptedSession();
+		const envelope = gatewayLeaseCreateEnvelopeFor(acceptedSession);
+		const gatewayMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: {
+					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+				},
+			},
+		});
+
+		await expect(
+			client.timeout(1_000).emitWithAck('control:message', envelope, gatewayMessage),
+		).resolves.toEqual({
+			errorClass: 'gateway_control_message_processing_failed',
+			received: false,
+			safeMessage: 'gateway control message was rejected',
+		});
 	});
 
 	it('closes instead of handling controller-originated critical messages after a sequence gap', async () => {

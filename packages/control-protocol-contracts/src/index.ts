@@ -1,4 +1,4 @@
-import { z } from 'zod/v4';
+import { ZodError, z } from 'zod/v4';
 
 export const CONTROL_PROTOCOL_VERSION = 1;
 
@@ -356,6 +356,21 @@ export function buildControlMessageRejectionReceipt(props: {
 		errorClass: props.errorClass,
 		received: false,
 		...(props.safeMessage === undefined ? {} : { safeMessage: props.safeMessage }),
+	});
+}
+
+export function buildControlMessageExceptionRejectionReceipt(props: {
+	readonly error: unknown;
+	readonly processingErrorClass: string;
+	readonly safeMessage: string;
+	readonly schemaErrorClass?: string;
+}): ControlMessageReceipt {
+	return buildControlMessageRejectionReceipt({
+		errorClass:
+			props.error instanceof ZodError
+				? (props.schemaErrorClass ?? 'schema_validation_failed')
+				: props.processingErrorClass,
+		safeMessage: props.safeMessage,
 	});
 }
 

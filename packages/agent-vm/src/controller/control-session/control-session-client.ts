@@ -10,7 +10,7 @@ import {
 	assertControlMessageReceiptAccepted,
 	assertControlEnvelopeMatchesDomainMessage,
 	assertDerivedControlDeliveryPolicy,
-	buildControlMessageRejectionReceipt,
+	buildControlMessageExceptionRejectionReceipt,
 	buildControlMessageReceipt,
 	evaluateControlSequenceContinuity,
 	extractDomainCommandResultResponseToMessageId,
@@ -670,10 +670,11 @@ export function createControlSessionClient(
 								});
 							});
 					}
-				} catch {
+				} catch (error: unknown) {
 					acknowledge?.(
-						buildControlMessageRejectionReceipt({
-							errorClass: 'schema_validation_failed',
+						buildControlMessageExceptionRejectionReceipt({
+							error,
+							processingErrorClass: 'control_message_processing_failed',
 							safeMessage: 'control message was rejected',
 						}),
 					);

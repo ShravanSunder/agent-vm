@@ -981,6 +981,84 @@ describe('control session client', () => {
 		}
 	});
 
+	it('rejects controller-side processing failures without labeling them as schema failures', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const peerEnvelope = {
+			...validEnvelope,
+			deliveryPolicy: 'critical_idempotent',
+			messageId: 'abababab-abab-4bab-8bab-abababababab',
+			sequence: 1,
+		} satisfies ControlEnvelope;
+		const peerMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: {
+					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+				},
+				gatewayWorkspaceDir: '/workspace/from-gateway',
+			},
+		});
+		let emitPeerMessage:
+			| ((envelope: ControlEnvelope, payload: unknown) => Promise<unknown>)
+			| undefined;
+
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			emitPeerMessage = async (envelope, payload) => {
+				const receiptPayload: unknown = await socket
+					.timeout(500)
+					.emitWithAck(CONTROL_SESSION_EVENT_NAMES.message, envelope, payload);
+				return receiptPayload;
+			};
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			timeoutMs: 500,
+		});
+
+		try {
+			await client.ready;
+			if (emitPeerMessage === undefined) {
+				throw new Error('peer socket was not connected');
+			}
+			await expect(emitPeerMessage(peerEnvelope, peerMessage)).resolves.toEqual({
+				errorClass: 'control_message_processing_failed',
+				received: false,
+				safeMessage: 'control message was rejected',
+			});
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
 	it('returns a failed command_result when controller dispatch throws after accepting a peer command', async () => {
 		const httpServer = createServer();
 		const socketServer = new SocketIoServer(httpServer, {
