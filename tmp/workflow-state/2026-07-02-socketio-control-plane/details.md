@@ -8468,6 +8468,28 @@ Still not PR-ready:
   required.
 - PR-ready non-merge wrapup remains required.
 
+## Event 209 Review Packet Live-Head Wording
+
+Completed in this checkpoint:
+- Updated the review packet branch scope to tell reviewers to run
+  `git rev-parse --short HEAD` at review time instead of trusting a literal
+  embedded HEAD value.
+- Kept the branch diff and generated inventory aids anchored to
+  `origin/master...HEAD`.
+- Added a note beside the generated shortstat telling reviewers to use live
+  `git diff --shortstat origin/master...HEAD` if packet-only commits have
+  landed after the captured count.
+
+Reason:
+- A committed review packet cannot contain a literal "current HEAD" without
+  becoming stale as soon as the packet commit lands.
+
+Still not PR-ready:
+- Implementation review/Fable refresh remains required.
+- Live `../shravan-claw-beta` actual Discord/OpenClaw inbound proof remains
+  required.
+- PR-ready non-merge wrapup remains required.
+
 ## Event 208 Review Packet Self-Reference Refresh
 
 Completed in this checkpoint:

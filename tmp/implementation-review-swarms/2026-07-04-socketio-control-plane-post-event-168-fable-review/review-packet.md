@@ -73,7 +73,7 @@ Branch/base:
 
 ```text
 branch: mcp-portal-better-interface
-HEAD: b99e702
+HEAD: verify live with `git rev-parse --short HEAD`
 base: origin/master 479ad73
 working tree: expected clean
 branch diff: `origin/master...HEAD`
@@ -689,6 +689,8 @@ git diff --name-only origin/master...HEAD | wc -l
 
 git diff --shortstat origin/master...HEAD
   404 files changed, 69923 insertions(+), 11059 deletions(-)
+  note: use live `git diff --shortstat origin/master...HEAD` for exact counts
+  if additional packet-only commits have landed after this capture.
 
 pnpm vitest run --config vitest.config.ts --project unit packages/control-protocol-contracts/src/control-protocol-contracts.unit.test.ts packages/gateway-control-contracts/src/gateway-control-contracts.unit.test.ts packages/worker-control-contracts/src/worker-control-contracts.unit.test.ts packages/gateway-interface/src/health/controller-request-policy.unit.test.ts packages/agent-vm/src/controller/control-session/gateway-control-domain-handler.unit.test.ts packages/openclaw-agent-vm-plugin/src/gateway-control-service/gateway-control-controller-host-action-backend.unit.test.ts
   passed after Event 188 fixes, 6 files / 72 tests
