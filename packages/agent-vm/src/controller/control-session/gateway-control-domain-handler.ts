@@ -16,6 +16,7 @@ import {
 	type GatewayControlZoneGitPushResult,
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
+	assertGatewayControlEnvelopeDeliveryPolicy,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
@@ -489,6 +490,7 @@ export function createGatewayControlDomainHandler(
 	options: GatewayControlDomainHandlerOptions,
 ): ControlSessionDomainHandler {
 	return {
+		assertEnvelopeDeliveryPolicy: assertGatewayControlEnvelopeDeliveryPolicy,
 		policyByKind: gatewayControlDeliveryPolicyByKind,
 		policyByOperation: gatewayControlDeliveryPolicyByOperation,
 		messageIdentity: ({ payload }) => {

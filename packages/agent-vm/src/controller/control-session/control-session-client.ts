@@ -152,6 +152,7 @@ export function buildControlHello(identity: ControlSessionIdentity): ControlHell
 }
 
 export function assertControlSessionDispatchAllowed(options: {
+	readonly assertEnvelopeDeliveryPolicy?: (envelope: ControlEnvelope) => void;
 	readonly domainMessage: DomainControlMessageIdentity;
 	readonly envelope: ControlEnvelope;
 	readonly policyByKind?: Partial<Record<ControlEnvelope['kind'], ControlDeliveryPolicy>>;
@@ -159,11 +160,15 @@ export function assertControlSessionDispatchAllowed(options: {
 }): void {
 	ControlEnvelopeSchema.parse(options.envelope);
 	assertControlEnvelopeMatchesDomainMessage(options.envelope, options.domainMessage);
-	assertDerivedControlDeliveryPolicy({
-		envelope: options.envelope,
-		policyByOperation: options.policyByOperation,
-		...(options.policyByKind === undefined ? {} : { policyByKind: options.policyByKind }),
-	});
+	if (options.assertEnvelopeDeliveryPolicy === undefined) {
+		assertDerivedControlDeliveryPolicy({
+			envelope: options.envelope,
+			policyByOperation: options.policyByOperation,
+			...(options.policyByKind === undefined ? {} : { policyByKind: options.policyByKind }),
+		});
+		return;
+	}
+	options.assertEnvelopeDeliveryPolicy(options.envelope);
 }
 
 export function measureControlSessionMessageBytes(

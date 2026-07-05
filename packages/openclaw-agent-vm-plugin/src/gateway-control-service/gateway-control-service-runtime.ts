@@ -162,6 +162,7 @@ export function getOrCreateGatewayControlServiceRuntime(
 	if (previousCacheKey !== undefined && previousCacheKey !== cacheKey) {
 		const previousRuntime = runtimes.get(previousCacheKey);
 		previousRuntime?.heartbeat?.stop();
+		void previousRuntime?.service.close();
 		runtimes.delete(previousCacheKey);
 	}
 	const runtime = {

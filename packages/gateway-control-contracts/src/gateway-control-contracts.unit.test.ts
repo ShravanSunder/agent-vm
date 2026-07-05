@@ -22,6 +22,8 @@ import {
 	GatewayControlToolPortalControllerHostActionPayloadSchema,
 	buildGatewayControlJsonSchemas,
 	assertGatewayControlDomainRegistered,
+	assertGatewayControlEnvelopeDeliveryPolicy,
+	deriveGatewayControlDeliveryPolicy,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
@@ -543,6 +545,24 @@ describe('gateway control contract', () => {
 					deliveryPolicy: 'latest_wins',
 				},
 				policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			}),
+		).toThrow(/delivery policy mismatch/u);
+	});
+
+	it('derives lease_create as single-use when idempotency material is absent', () => {
+		const leaseCreateWithoutIdempotency = ControlEnvelopeSchema.parse({
+			...gatewayCommandEnvelope,
+			deliveryPolicy: 'single_use_critical',
+			idempotencyKey: undefined,
+		});
+
+		expect(deriveGatewayControlDeliveryPolicy(leaseCreateWithoutIdempotency)).toBe(
+			'single_use_critical',
+		);
+		expect(() =>
+			assertGatewayControlEnvelopeDeliveryPolicy({
+				...leaseCreateWithoutIdempotency,
+				deliveryPolicy: 'critical_idempotent',
 			}),
 		).toThrow(/delivery policy mismatch/u);
 	});

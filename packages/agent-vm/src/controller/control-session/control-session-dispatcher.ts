@@ -13,6 +13,9 @@ export interface ControlSessionDispatchContext {
 }
 
 export interface ControlSessionDomainHandler {
+	assertEnvelopeDeliveryPolicy?: Parameters<
+		typeof assertControlSessionDispatchAllowed
+	>[0]['assertEnvelopeDeliveryPolicy'];
 	buildHandlerFailureResult?(context: ControlSessionDispatchContext, error: unknown): unknown;
 	readonly policyByKind?: Parameters<typeof assertControlSessionDispatchAllowed>[0]['policyByKind'];
 	readonly policyByOperation: Parameters<
@@ -146,6 +149,9 @@ function validateControlSessionDispatchContext(options: {
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry | undefined;
 }): void {
 	assertControlSessionDispatchAllowed({
+		...(options.handler.assertEnvelopeDeliveryPolicy === undefined
+			? {}
+			: { assertEnvelopeDeliveryPolicy: options.handler.assertEnvelopeDeliveryPolicy }),
 		domainMessage: options.handler.messageIdentity(options.context),
 		envelope: options.context.envelope,
 		policyByOperation: options.handler.policyByOperation,

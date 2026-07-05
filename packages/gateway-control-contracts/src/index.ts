@@ -7,6 +7,7 @@ import {
 	type ControlSessionPeerToControllerEvents,
 	KnownControlDomainSchema,
 	type ControlDeliveryPolicy,
+	type ControlEnvelope,
 	type ControlMessageKind,
 } from '@agent-vm/control-protocol-contracts';
 import { z } from 'zod/v4';
@@ -616,6 +617,38 @@ export const gatewayControlDeliveryPolicyByOperation = {
 	runtime_status: 'latest_wins',
 	tool_portal_controller_host_action: 'single_use_critical',
 } as const satisfies Record<GatewayControlRpcOperation, ControlDeliveryPolicy>;
+
+export function deriveGatewayControlDeliveryPolicy(
+	envelope: Pick<ControlEnvelope, 'idempotencyKey' | 'kind' | 'operation'>,
+): ControlDeliveryPolicy {
+	if (envelope.operation === 'lease_create' && envelope.idempotencyKey === undefined) {
+		return 'single_use_critical';
+	}
+	const parsedOperation = GatewayControlRpcOperationSchema.safeParse(envelope.operation);
+	if (parsedOperation.success) {
+		const operationPolicy = gatewayControlDeliveryPolicyByOperation[parsedOperation.data];
+		if (operationPolicy !== undefined) {
+			return operationPolicy;
+		}
+	}
+	const kindPolicy =
+		envelope.kind === 'heartbeat' ? gatewayControlDeliveryPolicyByKind.heartbeat : undefined;
+	if (kindPolicy !== undefined) {
+		return kindPolicy;
+	}
+	throw new Error(
+		`no gateway control delivery policy for ${envelope.kind}:${envelope.operation ?? '<none>'}`,
+	);
+}
+
+export function assertGatewayControlEnvelopeDeliveryPolicy(envelope: ControlEnvelope): void {
+	const derivedPolicy = deriveGatewayControlDeliveryPolicy(envelope);
+	if (envelope.deliveryPolicy !== derivedPolicy) {
+		throw new Error(
+			`control delivery policy mismatch: ${envelope.deliveryPolicy} !== ${derivedPolicy}`,
+		);
+	}
+}
 
 export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 	caller_context_register: 5_000,

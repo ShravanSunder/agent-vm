@@ -16,7 +16,6 @@ import {
 	ControlHelloSchema,
 	assertControlMessageReceiptAccepted,
 	assertControlEnvelopeMatchesDomainMessage,
-	assertDerivedControlDeliveryPolicy,
 	buildControlMessageRejectionReceipt,
 	buildControlMessageReceipt,
 	evaluateControlSequenceContinuity,
@@ -36,9 +35,8 @@ import {
 } from '@agent-vm/control-protocol-contracts';
 import {
 	GatewayControlRpcMessageSchema,
+	assertGatewayControlEnvelopeDeliveryPolicy,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
-	gatewayControlDeliveryPolicyByKind,
-	gatewayControlDeliveryPolicyByOperation,
 	type GatewayControlControllerToGatewayEvents,
 	type GatewayControlGatewayToControllerEvents,
 } from '@agent-vm/gateway-control-contracts';
@@ -710,11 +708,7 @@ export function createGatewayControlService(
 							payload: gatewayPayload,
 						}),
 					);
-					assertDerivedControlDeliveryPolicy({
-						envelope,
-						policyByKind: gatewayControlDeliveryPolicyByKind,
-						policyByOperation: gatewayControlDeliveryPolicyByOperation,
-					});
+					assertGatewayControlEnvelopeDeliveryPolicy(envelope);
 					acknowledge?.(buildControlMessageReceipt());
 					let responsePayload: unknown;
 					try {
@@ -794,11 +788,7 @@ export function createGatewayControlService(
 	): Promise<unknown> {
 		ControlEnvelopeSchema.parse(envelope);
 		assertControlEnvelopeMatchesDomainMessage(envelope, domainMessage);
-		assertDerivedControlDeliveryPolicy({
-			envelope,
-			policyByKind: gatewayControlDeliveryPolicyByKind,
-			policyByOperation: gatewayControlDeliveryPolicyByOperation,
-		});
+		assertGatewayControlEnvelopeDeliveryPolicy(envelope);
 		if (envelope.deliveryPolicy === 'forbidden_bulk') {
 			throw new Error('forbidden bulk message cannot be sent on the gateway control session');
 		}

@@ -260,6 +260,35 @@ describe('gateway control domain handler', () => {
 		});
 	});
 
+	it('rejects lease_create that claims idempotent delivery without an idempotency key', async () => {
+		const createLease = vi.fn(async () => leaseSnapshot);
+		const leaseRpc = createLeaseRpcStub({ createLease });
+		const dispatcher = createControlSessionDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				callerContexts: createRegisteredCallerContexts(),
+				leaseRpc,
+				session: acceptedSession,
+			}),
+		);
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: createEnvelope('lease_create', {
+					deliveryPolicy: 'critical_idempotent',
+					idempotencyKey: undefined,
+				}),
+				payload: {
+					kind: 'command',
+					operation: 'lease_create',
+					payload: callerContextPayload,
+				},
+			}),
+		).rejects.toThrow(/delivery policy mismatch/u);
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
 	it('rejects lease_create when callerContextId is unknown', async () => {
 		const createLease = vi.fn(async () => leaseSnapshot);
 		const leaseRpc = createLeaseRpcStub({ createLease });

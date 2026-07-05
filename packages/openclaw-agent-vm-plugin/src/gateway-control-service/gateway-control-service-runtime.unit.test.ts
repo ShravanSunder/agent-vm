@@ -39,4 +39,22 @@ describe('gateway control service runtime cache', () => {
 		expect(secondRuntime).not.toBe(firstRuntime);
 		expect(stopHeartbeat).toHaveBeenCalledTimes(1);
 	});
+
+	it('closes the old service when a new active identity replaces the same zone peer', async () => {
+		const verifierPublicKeyPem = createVerifierPublicKeyPem();
+		const firstRuntime = getOrCreateGatewayControlServiceRuntime({
+			identity: createIdentity(),
+			verifierPublicKeyPem,
+		});
+		const closeService = vi.spyOn(firstRuntime.service, 'close');
+
+		const secondRuntime = getOrCreateGatewayControlServiceRuntime({
+			identity: createIdentity({ bootId: 'boot-c' }),
+			verifierPublicKeyPem,
+		});
+
+		expect(secondRuntime).not.toBe(firstRuntime);
+		expect(closeService).toHaveBeenCalledTimes(1);
+		await secondRuntime.service.close();
+	});
 });
