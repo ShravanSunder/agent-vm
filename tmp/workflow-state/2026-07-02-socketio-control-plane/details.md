@@ -8727,6 +8727,68 @@ Still not PR-ready:
 - Live `../shravan-claw-beta` actual Discord/OpenClaw proof remains required.
 - PR-ready non-merge wrapup remains required.
 
+## Event 214 Beta Build/Restart Checkpoint And Secret-Auth Blocker
+
+Completed in this checkpoint:
+- Recovered the beta build that was mid-flight across context compaction.
+- Confirmed `../shravan-claw-beta` build completed successfully:
+  - `mise exec -- pnpm build`
+  - Docker gateway/OpenClaw image build completed.
+  - Docker default Tool VM image build completed.
+  - Gondolin gateway/OpenClaw artifact build completed.
+  - Gondolin default Tool VM artifact build completed.
+  - Cache auto-prune was skipped because beta runtime records still existed.
+  - Host observability preparation was skipped because no OpenClaw zone opted in.
+- Verified pre-restart beta health:
+  - `curl -fsS http://127.0.0.1:18900/health`
+    returned `{"ok":true,"port":18900,"state":"ready"}`.
+  - `curl -fsS http://127.0.0.1:18900/zones/beta/health`
+    returned `ok:true`, `/readyz`, HTTP 200, zone `beta`.
+  - `curl -fsS http://127.0.0.1:18891/readyz`
+    returned `{"ready":true}`.
+- Ran the deployment restart path:
+  - `mise exec -- pnpm restart`
+  - The first stop returned `{"ok":true}`.
+  - The restart script's nested stop then returned `fetch failed`, force-stop
+    cleaned no processes, and start reported an `EADDRINUSE` listener on
+    `127.0.0.1:18900`.
+- Investigated the restart anomaly without broad process killing:
+  - `lsof -nP -iTCP:18900 -sTCP:LISTEN` showed the listener was the beta
+    `agent-vm controller start --config config/system.jsonc --zone beta`
+    process.
+  - The controller process had a live `qemu-system-aarch64` child for the beta
+    OpenClaw gateway VM.
+  - Fresh health checks after the anomaly still returned controller ok, zone
+    ok, and direct ingress ready.
+  - `pnpm exec agent-vm controller status --config config/system.jsonc`
+    reported zone `beta` running, readiness `running`, gateway infrastructure
+    `running`, active leases `0`, ingress port `18891`, booted at
+    `2026-07-05T04:37:47.527Z`, VM id
+    `c23e498b-2b08-4859-a703-c54307201efb`.
+- Confirmed OpenClaw logs after the fresh boot show:
+  - Discord channels resolved for the configured beta guild/channel.
+  - Discord client initialized and awaited gateway readiness.
+  - Discord gateway WebSocket opened.
+  - The agent-vm OpenClaw plugin loaded from the freshly synced local package
+    tarball path.
+
+Blocked proof attempt:
+- Attempted to send the required fresh external Discord REST message from the
+  test sender bot after the `04:37:47Z` beta boot.
+- The message was not sent. The secret read failed before the Discord API call:
+  1Password authorization timed out.
+- No Discord token value was printed or captured.
+- There was no exported fallback test-token environment variable in the shell.
+
+Current status:
+- Beta build and post-restart runtime health are freshly captured.
+- Live beta is running and ready for the final allowed-user Discord/OpenClaw
+  inbound proof.
+- Remaining blocker for PR readiness: authorize/unlock 1Password access to the
+  redacted test sender bot secret, or manually send an allowed-user Discord
+  message into the beta channel, then capture fresh log/trajectory/Discord
+  readback evidence.
+
 ## Event 205 OpenClaw Health Rerun Reduction
 
 Completed in this checkpoint:
