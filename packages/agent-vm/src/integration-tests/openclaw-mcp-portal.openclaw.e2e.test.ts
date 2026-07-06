@@ -24,14 +24,15 @@ import {
 	type OpenClawE2eProject,
 	type E2eHarnessRuntime,
 	useLocalOpenClawGatewayImagePackages,
-	writeOpenClawMcpPortalE2eConfigs,
 } from './e2e-harness.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawMcpPortalSmoke =
 	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
 const describeOpenClawMcpPortalSmoke = runOpenClawMcpPortalSmoke ? describe : describe.skip;
-const agentId = 'smoke';
+const agentIds = ['main', 'beta'] as const;
+const mainAgentId = agentIds[0];
+const betaAgentId = agentIds[1];
 const gatewayToken = 'mcp-portal-smoke-gateway-token';
 const portalToolNames = [
 	'tool_portal_list',
@@ -99,6 +100,79 @@ async function allowPortalNativeToolsInOpenClawConfig(configPath: string): Promi
 	await writeFile(configPath, `${JSON.stringify(parsed, null, '\t')}\n`, 'utf8');
 }
 
+async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
+	readonly configDir: string;
+	readonly namespace: string;
+	readonly portalAccessHeaderName: string;
+	readonly upstreamUrl: string;
+}): Promise<void> {
+	await writeFile(
+		path.join(options.configDir, 'mcp.config.jsonc'),
+		`${JSON.stringify(
+			{
+				$schema: '../../schemas/mcp.schema.json',
+				providers: {
+					upstreamMock: {
+						discovery: { summary: 'Mock upstream MCP server for e2e tests' },
+						kind: 'mcp',
+						namespace: options.namespace,
+						transport: {
+							kind: 'streamable-http',
+							url: options.upstreamUrl,
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+	await writeFile(
+		path.join(options.configDir, 'mcp-portal.config.jsonc'),
+		`${JSON.stringify(
+			{
+				$schema: '../../schemas/mcp-portal.schema.json',
+				agents: {
+					[mainAgentId]: { profile: 'reader' },
+					[betaAgentId]: { profile: 'writer' },
+				},
+				profiles: {
+					reader: {
+						namespaces: {
+							[options.namespace]: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['read_thing'] },
+								},
+								tools: { allow: ['read_thing', 'write_thing'] },
+							},
+						},
+						promptContext: { enabled: true, maxNamespaces: 12 },
+					},
+					writer: {
+						namespaces: {
+							[options.namespace]: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['write_thing'] },
+								},
+								tools: { allow: ['read_thing', 'write_thing'] },
+							},
+						},
+						promptContext: { enabled: true, maxNamespaces: 12 },
+					},
+				},
+				schemaVersion: 1,
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+}
+
 function parseNativePortalToolResult(value: unknown): unknown {
 	if (!isObjectRecord(value) || value.ok !== true || !isObjectRecord(value.result)) {
 		throw new Error(`Expected successful OpenClaw /tools/invoke result: ${JSON.stringify(value)}`);
@@ -139,7 +213,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		const upstreamHost = 'smoke-upstream.vm.host';
 		const upstreamUrl = `http://${upstreamHost}:${String(upstreamServer.port)}/mcp`;
 		project = await scaffoldOpenClawE2eProject({
-			agents: [agentId],
+			agents: agentIds,
 			architecture,
 			prefix: 'openclaw-mcp-portal-e2e-',
 			zoneId: 'mcp-portal-smoke',
@@ -152,12 +226,16 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			...systemZone.egressHosts,
 			{ audience: 'gateway', host: upstreamHost },
 		];
-		await mkdir(path.join(systemZone.gateway.zoneFilesDir, 'agents', agentId), {
-			recursive: true,
-		});
+		const zoneFilesDir = project.zone.gateway.zoneFilesDir;
+		await Promise.all(
+			agentIds.map(async (agentId) => {
+				await mkdir(path.join(zoneFilesDir, 'agents', agentId), {
+					recursive: true,
+				});
+			}),
+		);
 		await allowPortalNativeToolsInOpenClawConfig(systemZone.gateway.config);
-		await writeOpenClawMcpPortalE2eConfigs({
-			agentId,
+		await writeOpenClawMultiAgentMcpPortalE2eConfigs({
 			configDir: path.dirname(systemZone.gateway.config),
 			namespace: fakeUpstreamNamespace,
 			portalAccessHeaderName: 'unused-native-smoke-header',
@@ -267,7 +345,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 	it('discovers the fake upstream namespace through tool_portal_list', async () => {
 		const result = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
-				agentId,
+				agentId: mainAgentId,
 				args: { requests: [{ id: 'list', limit: 10 }] },
 				tool: 'tool_portal_list',
 			}),
@@ -281,11 +359,11 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 	});
 
-	it('calls read tools and denies non-callable write tools', async () => {
+	it('keeps same-zone agents on their own Tool Portal profiles', async () => {
 		const readArguments = { title: 'Read from full OpenClaw smoke' };
 		const readResult = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
-				agentId,
+				agentId: mainAgentId,
 				args: {
 					calls: [
 						{
@@ -325,9 +403,9 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 
 		const writeArguments = { title: 'Write from full OpenClaw smoke' };
-		const writeResult = parseNativePortalToolResult(
+		const deniedWriteResult = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
-				agentId,
+				agentId: mainAgentId,
 				args: {
 					calls: [
 						{
@@ -341,7 +419,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 				tool: 'tool_portal_call',
 			}),
 		);
-		expect(writeResult).toMatchObject({
+		expect(deniedWriteResult).toMatchObject({
 			items: [
 				{
 					error: {
@@ -355,6 +433,86 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 		expect(upstreamServer?.calls).not.toContainEqual({
 			argumentsValue: writeArguments,
+			name: 'write_thing',
+		});
+
+		const betaListResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: betaAgentId,
+				args: { requests: [{ id: 'beta-list', limit: 10 }] },
+				tool: 'tool_portal_list',
+			}),
+		);
+		expect(readSingleItem(betaListResult)).toMatchObject({
+			id: 'beta-list',
+			status: 'ok',
+			value: {
+				namespaces: [fakeUpstreamNamespace],
+			},
+		});
+
+		const betaReadDeniedResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: betaAgentId,
+				args: {
+					calls: [
+						{
+							arguments: { title: 'Beta read should stay denied' },
+							id: 'beta-read-denied',
+							name: 'read_thing',
+							namespace: fakeUpstreamNamespace,
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+		);
+		expect(betaReadDeniedResult).toMatchObject({
+			items: [
+				{
+					error: {
+						code: 'capability_denied',
+					},
+					id: 'beta-read-denied',
+					status: 'error',
+				},
+			],
+			ok: false,
+		});
+
+		const betaWriteArguments = { title: 'Write from beta agent' };
+		const betaWriteResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: betaAgentId,
+				args: {
+					calls: [
+						{
+							arguments: betaWriteArguments,
+							id: 'beta-write',
+							name: 'write_thing',
+							namespace: fakeUpstreamNamespace,
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+		);
+		expect(readSingleItem(betaWriteResult)).toMatchObject({
+			id: 'beta-write',
+			status: 'ok',
+			value: {
+				namespace: fakeUpstreamNamespace,
+				result: {
+					structuredContent: {
+						name: 'write_thing',
+						ok: true,
+					},
+				},
+				name: 'write_thing',
+			},
+		});
+		expect(upstreamServer?.calls).toContainEqual({
+			argumentsValue: betaWriteArguments,
 			name: 'write_thing',
 		});
 	});
