@@ -451,13 +451,14 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			},
 		});
 
+		const betaReadDeniedArguments = { title: 'Beta read should stay denied' };
 		const betaReadDeniedResult = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
 				agentId: betaAgentId,
 				args: {
 					calls: [
 						{
-							arguments: { title: 'Beta read should stay denied' },
+							arguments: betaReadDeniedArguments,
 							id: 'beta-read-denied',
 							name: 'read_thing',
 							namespace: fakeUpstreamNamespace,
@@ -478,6 +479,10 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 				},
 			],
 			ok: false,
+		});
+		expect(upstreamServer?.calls).not.toContainEqual({
+			argumentsValue: betaReadDeniedArguments,
+			name: 'read_thing',
 		});
 
 		const betaWriteArguments = { title: 'Write from beta agent' };
