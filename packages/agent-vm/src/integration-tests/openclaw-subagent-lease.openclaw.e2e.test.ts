@@ -1,8 +1,13 @@
 /* oxlint-disable eslint/no-await-in-loop -- E2E steps are sequential against live VMs */
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { type ManagedVm } from '@agent-vm/gondolin-adapter';
+import {
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
+} from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { ControlSessionClient } from '../controller/control-session/control-session-client.js';
@@ -24,7 +29,9 @@ const architecture = currentE2eArchitecture();
 const runOpenClawSubagentE2e =
 	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
 const describeOpenClawSubagentE2e = runOpenClawSubagentE2e ? describe : describe.skip;
-const agentId = 'smoke';
+const mainAgentId = 'main';
+const betaAgentId = 'beta';
+const agentIds = [mainAgentId, betaAgentId] as const;
 const gatewayToken = 'subagent-lease-smoke-gateway-token';
 const mockOpenAiPort = 18231;
 const subagentE2eResultPrefix = 'AGENT_VM_SUBAGENT_E2E_RESULT ';
@@ -58,6 +65,17 @@ interface ObservedLeaseCreateRequest {
 	readonly agentWorkspaceDir: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
+}
+
+interface OpenClawToolVmWriteReadProbeResult {
+	readonly agentId: string;
+	readonly filePath: string;
+	readonly marker: string;
+	readonly readBack: string;
+	readonly runtimeId: string;
+	readonly sessionKey: string;
+	readonly status: 'ok';
+	readonly workdir: string;
 }
 
 function shellSingleQuote(value: string): string {
@@ -112,6 +130,76 @@ function parseSubagentSpawnProbeResult(stdout: string): OpenClawSubagentSpawnPro
 	};
 }
 
+function parseToolVmWriteReadProbeResult(value: unknown): OpenClawToolVmWriteReadProbeResult {
+	if (!isObjectRecord(value) || value.ok !== true || !isObjectRecord(value.details)) {
+		throw new Error(
+			`Expected successful OpenClaw Tool VM write/read route result: ${JSON.stringify(value)}`,
+		);
+	}
+	const parsed = value.details;
+	if (!isObjectRecord(parsed)) {
+		throw new Error('OpenClaw Tool VM write/read e2e result was not a JSON object.');
+	}
+	if (
+		parsed.status !== 'ok' ||
+		typeof parsed.agentId !== 'string' ||
+		typeof parsed.filePath !== 'string' ||
+		typeof parsed.marker !== 'string' ||
+		typeof parsed.readBack !== 'string' ||
+		typeof parsed.runtimeId !== 'string' ||
+		typeof parsed.sessionKey !== 'string' ||
+		typeof parsed.workdir !== 'string'
+	) {
+		throw new Error(`Unexpected OpenClaw Tool VM write/read e2e result: ${JSON.stringify(parsed)}`);
+	}
+	return {
+		agentId: parsed.agentId,
+		filePath: parsed.filePath,
+		marker: parsed.marker,
+		readBack: parsed.readBack,
+		runtimeId: parsed.runtimeId,
+		sessionKey: parsed.sessionKey,
+		status: parsed.status,
+		workdir: parsed.workdir,
+	};
+}
+
+async function callToolVmWriteReadProbeRoute(options: {
+	readonly agentId: string;
+	readonly filePath: string;
+	readonly harness: E2eHarnessRuntime;
+	readonly marker: string;
+	readonly sessionKey: string;
+}): Promise<unknown> {
+	const gatewayIngress = options.harness.runtime.zones[0]?.gateway?.ingress;
+	if (!gatewayIngress) {
+		throw new Error('OpenClaw subagent e2e did not expose a gateway ingress URL.');
+	}
+	const response = await fetch(
+		`http://${gatewayIngress.host}:${String(gatewayIngress.port)}${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH}`,
+		{
+			body: JSON.stringify({
+				agentId: options.agentId,
+				filePath: options.filePath,
+				marker: options.marker,
+				sessionKey: options.sessionKey,
+			}),
+			headers: {
+				authorization: `Bearer ${gatewayToken}`,
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		},
+	);
+	const responseBody: unknown = await response.json();
+	if (!response.ok) {
+		throw new Error(
+			`OpenClaw Tool VM write/read route returned HTTP ${String(response.status)}: ${JSON.stringify(responseBody)}`,
+		);
+	}
+	return responseBody;
+}
+
 async function configureOpenClawMockModel(options: {
 	readonly configPath: string;
 	readonly mockPort: number;
@@ -133,9 +221,6 @@ async function configureOpenClawMockModel(options: {
 	const existingOpenAiProvider = isObjectRecord(existingProviders.openai)
 		? existingProviders.openai
 		: {};
-	const existingTools = isObjectRecord(config.tools) ? config.tools : {};
-	const smokeTools = { ...existingTools };
-	delete smokeTools.allow;
 	config.models = {
 		...existingModels,
 		mode: 'merge',
@@ -163,7 +248,6 @@ async function configureOpenClawMockModel(options: {
 			},
 		},
 	};
-	config.tools = smokeTools;
 	config.agents = {
 		...existingAgents,
 		defaults: {
@@ -760,7 +844,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
 		project = await scaffoldOpenClawE2eProject({
-			agents: [agentId],
+			agents: agentIds,
 			architecture,
 			prefix: 'openclaw-subagent-lease-e2e-',
 			zoneId: 'subagent-lease-smoke',
@@ -779,13 +863,25 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			injection: 'env',
 			source: 'environment',
 		};
+		systemZone.secrets[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV] = {
+			audience: 'gateway',
+			envVar: AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+			injection: 'env',
+			source: 'environment',
+		};
 		systemZone.gateway.rawEnvSecrets = [
 			...(systemZone.gateway.rawEnvSecrets ?? []),
 			'OPENAI_API_KEY',
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 		];
-		await fs.mkdir(path.join(systemZone.gateway.zoneFilesDir, 'agents', agentId), {
-			recursive: true,
-		});
+		const zoneFilesDir = systemZone.gateway.zoneFilesDir;
+		await Promise.all(
+			agentIds.map(async (agentId) => {
+				await fs.mkdir(path.join(zoneFilesDir, 'agents', agentId), {
+					recursive: true,
+				});
+			}),
+		);
 		await useLocalOpenClawGatewayImagePackages({
 			profileName: systemZone.gateway.imageProfile,
 			projectRoot: project.tempRoot,
@@ -803,6 +899,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 				});
 			},
 			secrets: {
+				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV]: '1',
 				GITHUB_TOKEN: 'unused-subagent-smoke-token',
 				OPENAI_API_KEY: 'subagent-smoke-mock-openai-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
@@ -862,7 +959,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 		for (const contextWorkspaceDir of ['/workspace', '/workspace/subdir', '/work/tmp']) {
 			spawnResults.push(
 				await runOpenClawSubagentSpawnProbe({
-					agentId,
+					agentId: mainAgentId,
 					contextWorkspaceDir,
 					gatewayVm,
 					guestListenPort: gatewayGuestListenPort,
@@ -873,7 +970,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 
 		for (const spawnResult of spawnResults) {
 			const spawnResultDiagnostic = JSON.stringify(spawnResult);
-			expect(spawnResult.childSessionKey).toContain(`agent:${agentId}:subagent:`);
+			expect(spawnResult.childSessionKey).toContain(`agent:${mainAgentId}:subagent:`);
 			expect(spawnResult.error ?? '').not.toContain('outside-allowed-roots');
 			expect(spawnResult.error ?? '').not.toContain('/workspace');
 			expect(JSON.stringify(spawnResult.historyResponse), spawnResultDiagnostic).toContain(
@@ -887,9 +984,9 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 		).toBe(1);
 		expect(observedLeaseRequests).toEqual(
 			Array.from({ length: spawnResults.length }, () => ({
-				agentId,
-				agentWorkspaceDir: '/zone/agents/smoke',
-				workMountDir: '/zone/agents/smoke',
+				agentId: mainAgentId,
+				agentWorkspaceDir: '/zone/agents/main',
+				workMountDir: '/zone/agents/main',
 				zoneId: 'subagent-lease-smoke',
 			})),
 		);
@@ -899,5 +996,44 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			expect(request.workMountDir).not.toBe('/work');
 			expect(request.workMountDir.startsWith('/work/')).toBe(false);
 		}
+	});
+
+	it('creates a beta-agent Tool VM lease and proves file write/read through the registered backend', async () => {
+		if (gatewayVm === undefined || harness === undefined) {
+			throw new Error('Expected smoke harness to be initialized.');
+		}
+		const marker = `TOOLVM_BETA_WRITE_READ_${randomUUID()}`;
+		const sessionKey = `agent:${betaAgentId}:tool-vm-write-read:${randomUUID()}`;
+		const filePath = `.agent-vm/s16-tool-vm-write-read-${randomUUID()}.txt`;
+		const result = parseToolVmWriteReadProbeResult(
+			await callToolVmWriteReadProbeRoute({
+				agentId: betaAgentId,
+				filePath,
+				harness,
+				marker,
+				sessionKey,
+			}),
+		);
+
+		expect(result).toMatchObject({
+			agentId: betaAgentId,
+			marker,
+			readBack: marker,
+			status: 'ok',
+			workdir: '/workspace',
+		});
+		expect(result.filePath).toMatch(/^\.agent-vm\/s16-tool-vm-write-read-/u);
+		expect(result.sessionKey).toContain(`agent:${betaAgentId}:tool-vm-write-read:`);
+
+		const controllerStatusPayload = await readControllerStatus(harness.controllerUrl);
+		expect(
+			activeLeaseCountFromControllerStatus(controllerStatusPayload, 'subagent-lease-smoke'),
+		).toBeGreaterThanOrEqual(1);
+		expect(observedLeaseRequests).toContainEqual({
+			agentId: betaAgentId,
+			agentWorkspaceDir: '/zone/agents/beta',
+			workMountDir: '/zone/agents/beta',
+			zoneId: 'subagent-lease-smoke',
+		});
 	});
 });

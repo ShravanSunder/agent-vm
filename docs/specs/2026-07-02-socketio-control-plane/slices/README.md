@@ -4,7 +4,8 @@ These files are the implementor-facing vertical slice plans for the hard
 cutover. The root implementation plan owns the global DAG and terminal proof
 gates; each slice file owns one executable work unit.
 
-Slice file count: 19 including this README, after adding SMA on 2026-07-05.
+Slice file count: 20 including this README, after adding S16 full-path proof on
+2026-07-06.
 
 Execution rule:
 - SMA (`00b-sma-openclaw-same-zone-multi-agent.md`) is an independent plan/code repair and may run before GATE-0a.
@@ -36,6 +37,10 @@ Slice order:
 7. Last/removal: `12-s5a-raw-control-removal.md`,
    `13-s5b-mcp-portal-identity-removal.md`,
    `14-s5c-collector-fail-closed.md`
+8. Proof hardening: `16-tool-vm-and-mcp-full-path-proof.md`.
+   This slice may run after S2/S3/S4a/S7 have enough implementation to expose
+   Tool Portal MCP calls and Tool VM lease/use through gateway control RPC. It
+   owns full-path evidence, not the base protocol implementation.
 
 Terminal proof:
 - `mise exec -- pnpm run test:e2e:openclaw`
@@ -51,5 +56,7 @@ Terminal proof:
   this live deployment lane when making the PR-ready claim. Refresh beta with
   local tarballs, reconcile the OpenClaw runtime target, stage at least two
   same-zone agents for SMA proof, exercise the real non-default-agent
-  Discord/OpenClaw path, and capture redacted controller/OpenClaw/Discord
-  evidence.
+  Discord/OpenClaw path, prove a non-default-agent Tool VM write/read path when
+  S16 is in scope, run live MCP discovery with settled per-namespace results,
+  prove at least one full MCP tool call through Tool Portal, and capture
+  redacted controller/OpenClaw/Discord evidence.

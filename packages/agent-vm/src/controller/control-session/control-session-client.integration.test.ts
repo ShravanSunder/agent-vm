@@ -17,6 +17,7 @@ import {
 	GATEWAY_CONTROL_READY_PATH,
 	GATEWAY_CONTROL_SOCKET_PATH,
 	createGatewayControlService,
+	createGatewayControlEventPublisher,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { Server as SocketIoServer, type Socket as SocketIoServerSocket } from 'socket.io';
 import { io as createSocketIoClient } from 'socket.io-client';
@@ -379,6 +380,110 @@ describe('control session client', () => {
 					elapsedMs: 7,
 					kind: 'gateway-control-session',
 					observedAtMs,
+					operation: 'control-session-heartbeat',
+					peerId: material.peerId,
+					result: 'ok',
+					zoneId: material.zoneId,
+				},
+			]);
+		} finally {
+			client.close();
+			await gatewayControlService.close();
+			await closeHttpServer(httpServer);
+		}
+	});
+
+	it('dispatches heartbeat frames from the production gateway control publisher', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'epoch-publisher-heartbeat',
+			zoneId: 'zone-publisher-heartbeat',
+		});
+		const gatewayControlService = createGatewayControlService({
+			identity: {
+				bootId: material.bootId,
+				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
+				callerContextProofKey: material.callerContextProofKey,
+				controllerEpoch: material.controllerEpoch,
+				generationId: material.generationId,
+				peerId: material.peerId,
+				zoneId: material.zoneId,
+			},
+			verifierPublicKeyPem: material.verifierPublicKeyPem,
+		});
+		const httpServer = createServer((req, res) => {
+			const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
+				gatewayControlService.handleReadyRequest(req, res);
+				return;
+			}
+			res.statusCode = 404;
+			res.end('not found\n');
+		});
+		httpServer.on('upgrade', (req, socket, head) => {
+			const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
+				gatewayControlService.handleUpgrade(req, socket, head);
+				return;
+			}
+			socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+			socket.destroy();
+		});
+		const recordedHealthEvents: AgentVmHealthEvent[] = [];
+		const sessionFenceRegistry = createControlSessionFenceRegistry();
+		const dispatcher = createControlSessionDispatcher({ sessionFenceRegistry });
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				callerContexts: createGatewayControlCallerContextRegistry({
+					agentAuthorityKeys: material.agentAuthorityKeys,
+					callerContextProofKey: material.callerContextProofKey,
+				}),
+				recordHealthEvent: (event) => {
+					recordedHealthEvents.push(event);
+				},
+				session: {
+					bootId: material.bootId,
+					controllerEpoch: material.controllerEpoch,
+					peerId: material.peerId,
+					zoneId: material.zoneId,
+				},
+			}),
+		);
+		const port = await listen(httpServer);
+		const client = await connectGatewayControlSession({
+			dispatcher,
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port }),
+			material,
+			sessionFenceRegistry,
+		});
+
+		try {
+			const publisher = createGatewayControlEventPublisher({
+				controlService: gatewayControlService,
+				createId: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+				identity: {
+					bootId: material.bootId,
+					callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
+					callerContextProofKey: material.callerContextProofKey,
+					controllerEpoch: material.controllerEpoch,
+					generationId: material.generationId,
+					peerId: material.peerId,
+					zoneId: material.zoneId,
+				},
+				now: () => 10_000,
+			});
+
+			await publisher.publishControlSessionHeartbeat({
+				elapsedMs: 4,
+				observedAtMs: 9_996,
+			});
+
+			expect(recordedHealthEvents).toEqual([
+				{
+					domain: 'gateway_control',
+					elapsedMs: 4,
+					kind: 'gateway-control-session',
+					observedAtMs: 9_996,
 					operation: 'control-session-heartbeat',
 					peerId: material.peerId,
 					result: 'ok',

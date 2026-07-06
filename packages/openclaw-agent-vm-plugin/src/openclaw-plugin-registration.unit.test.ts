@@ -14,6 +14,10 @@ import defaultPlugin, {
 	type SshHelpers,
 } from './openclaw-plugin-registration.js';
 import type { OpenClawSandboxFsBridge } from './sandbox-backend-factory.js';
+import {
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
+} from './tool-vm-write-read-e2e-tool.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 const TOOL_PORTAL_NATIVE_TOOL_NAMES = [
@@ -349,6 +353,32 @@ describe('createGondolinPlugin', () => {
 				'tool_portal_call',
 			]);
 			expect(JSON.stringify(tools)).not.toContain('mcp_portal_');
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers the private e2e Tool VM write/read route during full plugin registration when enabled', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerHttpRoute = vi.fn();
+		const registerTool = vi.fn();
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute,
+				registerTool,
+				registrationMode: 'full',
+			});
+
+			expect(registerTool).not.toHaveBeenCalledWith(expect.any(Function), expect.any(Object));
+			expect(
+				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			).toEqual(expect.objectContaining({ handler: expect.any(Function) }));
 		} finally {
 			stderrWrite.mockRestore();
 		}

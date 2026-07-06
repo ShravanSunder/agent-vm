@@ -10,7 +10,7 @@ import {
 } from '../portal-access-policy.js';
 import { hashCallArguments, type ApprovalTokenCallDigest } from '../portal-auth/hmac-token.js';
 import { generateTypescriptCatalogArtifact } from '../portal-config/typescript-artifact.js';
-import type { PortalSession } from '../portal-session.js';
+import type { PortalDiscoveryFailure, PortalSession } from '../portal-session.js';
 import type { ToolSearchResult } from '../search-index.js';
 import { decodeToolRef } from '../tool-ref.js';
 import { createToolSummary, type ToolSchemaHint, type ToolSummary } from '../tool-summary.js';
@@ -347,6 +347,27 @@ function findTool(session: PortalSession, selector: PortalToolSelector): PortalT
 	);
 }
 
+function discoveryFailureForNamespace(
+	session: PortalSession,
+	namespace: string,
+): PortalDiscoveryFailure | null {
+	return (
+		session.catalog.discoveryFailures.find((failure) => failure.namespace === namespace) ?? null
+	);
+}
+
+function unavailableNamespaceError(props: {
+	readonly failure: PortalDiscoveryFailure;
+	readonly selector: PortalToolSelector;
+}): Readonly<Record<string, unknown>> {
+	return {
+		kind: 'namespace_unavailable',
+		message: `MCP namespace "${props.selector.namespace}" is disabled/unavailable: ${props.failure.message}`,
+		namespace: props.selector.namespace,
+		toolName: props.selector.toolName,
+	};
+}
+
 function selectorsFromInput(
 	tools?: readonly PortalToolSelector[],
 	refs?: readonly string[],
@@ -610,6 +631,16 @@ function preparePortalCall(
 ): PreparedPortalCall | PortalToolResult {
 	const tool = findTool(session, request);
 	if (!tool) {
+		const discoveryFailure = discoveryFailureForNamespace(session, request.namespace);
+		if (discoveryFailure !== null) {
+			return itemError({
+				error: unavailableNamespaceError({
+					failure: discoveryFailure,
+					selector: request,
+				}),
+				input: request,
+			});
+		}
 		return itemError({
 			error: {
 				kind: 'unknown_or_denied_tool',

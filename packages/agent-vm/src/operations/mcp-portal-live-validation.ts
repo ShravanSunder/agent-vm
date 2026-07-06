@@ -163,15 +163,17 @@ async function validateMcpPortalNamespace(props: {
 				hint: `${props.namespace} discovered ${String(tools.length)} tools.`,
 				name: `mcp-live-${props.zoneId}-${props.namespace}`,
 				ok: true,
+				status: 'available',
 			},
 			...profileToolChecks,
 		];
 	} catch (error) {
 		return [
 			{
-				hint: validationHintForError(error),
+				hint: `${props.namespace} disabled/unavailable: ${validationHintForError(error)}`,
 				name: `mcp-live-${props.zoneId}-${props.namespace}`,
-				ok: false,
+				ok: true,
+				status: 'unavailable',
 			},
 		];
 	}

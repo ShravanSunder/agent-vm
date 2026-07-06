@@ -746,6 +746,102 @@ describe('runConfigValidation', () => {
 		});
 	});
 
+	it('marks failed MCP namespaces unavailable without suppressing successful namespaces', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {
+					deepwiki: {
+						kind: 'mcp',
+						namespace: 'deepwiki',
+						secretPolicies: {},
+						transport: {
+							kind: 'streamable-http',
+							url: 'https://deepwiki.example.test/mcp',
+						},
+					},
+					tavily: {
+						kind: 'mcp',
+						namespace: 'tavily',
+						secretPolicies: {},
+						transport: {
+							kind: 'streamable-http',
+							url: 'https://tavily.example.test/mcp',
+						},
+					},
+				},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['ask_question'] },
+								},
+								tools: { allow: ['ask_question'] },
+							},
+							tavily: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['tavily_search'] },
+								},
+								tools: { allow: ['tavily_search'] },
+							},
+						},
+					},
+				},
+			},
+		});
+		const listTools = vi.fn(async (call: { readonly namespace: string }) => {
+			if (call.namespace === 'deepwiki') {
+				throw new Error('MCP listTools timed out after 12000ms');
+			}
+			return [{ inputSchema: { type: 'object' as const }, name: 'tavily_search' }];
+		});
+		const runtime = {
+			callTool: vi.fn(),
+			closeAgentScope: vi.fn(),
+			closeSession: vi.fn(),
+			listTools,
+		} satisfies UpstreamMcpClientRuntime;
+
+		const checks = await runLiveMcpPortalValidation({
+			createRuntime: () => runtime,
+			secretResolver: createTestSecretResolver(),
+			systemConfig,
+		});
+
+		expect(checks).toContainEqual({
+			hint: expect.stringContaining('disabled/unavailable'),
+			name: 'mcp-live-shravan-deepwiki',
+			ok: true,
+			status: 'unavailable',
+		});
+		expect(checks).toContainEqual({
+			hint: 'tavily discovered 1 tools.',
+			name: 'mcp-live-shravan-tavily',
+			ok: true,
+			status: 'available',
+		});
+		expect(checks).not.toContainEqual(
+			expect.objectContaining({
+				name: 'mcp-live-profile-tools-shravan-shravan-deepwiki',
+			}),
+		);
+		expect(listTools).toHaveBeenCalledWith({
+			agentScopeId: 'validate:shravan',
+			namespace: 'deepwiki',
+		});
+		expect(listTools).toHaveBeenCalledWith({
+			agentScopeId: 'validate:shravan',
+			namespace: 'tavily',
+		});
+	});
+
 	it('reports live MCP config load failures as validation checks', async () => {
 		const systemConfig = await createSystemConfigWithLiveMcpFiles({
 			mcpConfig: {

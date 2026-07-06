@@ -699,15 +699,28 @@ External proof runbook:
 3. For SMA proof only, stage beta with at least two declared same-zone OpenClaw agents plus matching Tool Portal/MCP
    Portal agent bindings. Do not count a single-agent beta run as proof of the multi-agent repair.
 4. In `../shravan-claw-beta`, run `pnpm validate` and `pnpm exec agent-vm validate --config config/system.jsonc --mcp-live`.
+   Live MCP discovery must attempt every MCP Portal namespace concurrently, use
+   a configurable per-namespace timeout that defaults to 12 seconds, settle all
+   namespace results, use discovered tools from successful namespaces, and mark
+   timed-out or failed namespaces disabled/unavailable with a safe reason in the
+   validation/catalog evidence.
 5. In `../shravan-claw-beta`, run `mise exec -- pnpm build`.
 6. Start the beta controller with `mise exec -- pnpm start`.
 7. Exercise the real Discord channel path configured by beta's OpenClaw config. The current beta target is the
    `#beta-debug` channel binding for `pulse-bot`; the proof may use a manual/operator Discord message or a
    token-backed Discord API send, but tokens and 1Password refs must stay redacted.
-8. Capture evidence that the message traversed actual Discord, the managed OpenClaw gateway, the plugin/control
+8. Prove at least one full MCP call through Tool Portal, not only `tools/list`.
+   The proof may call a deterministic available provider first; unavailable
+   provider calls must return a structured disabled/unavailable error before
+   ambiguous upstream behavior.
+9. Prove the non-default beta agent Tool VM path when S16 is in scope: the
+   request must create a controller-vetted lease over gateway control RPC, write
+   a nonce marker file in the Tool VM, read it back, and return the marker.
+   The only raw SSH leg is gateway VM to Tool VM.
+10. Capture evidence that the message traversed actual Discord, the managed OpenClaw gateway, the plugin/control
    plane, and the controller-owned backend path. Acceptable evidence includes redacted command transcript, controller
    logs, OpenClaw logs, and the visible Discord reply/result.
-9. Stop or clean up the beta controller after evidence capture unless another operator is intentionally keeping the
+11. Stop or clean up the beta controller after evidence capture unless another operator is intentionally keeping the
    deployment running.
 
 ## Vertical Slice Files

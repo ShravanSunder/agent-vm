@@ -146,6 +146,28 @@ Plan consequences:
   managed wiring and runtime behavior; it does not change the non-goal that gateway-internal Discord/queue durability
   is out of scope for the control-session cutover.
 
+## Interactive correction (2026-07-06) — full MCP and Tool VM path proof
+
+The proof contract now requires a complete Tool VM and MCP path, not only
+connected-session or discovery evidence.
+
+Plan consequences:
+- Added slice `slices/16-tool-vm-and-mcp-full-path-proof.md`.
+- Slice file count is now 20 including `slices/README.md`.
+- Added proof rows MCP-DISCOVERY-1, MCP-DISCOVERY-2, MCP-CALL-1, TOOLVM-BETA-1,
+  and TOOLVM-BETA-2 to the canonical matrix.
+- MCP Portal live discovery must attempt all referenced namespaces concurrently,
+  enforce a configurable per-namespace timeout defaulting to 12 seconds, settle
+  all namespace results, use discovered tools from successful namespaces, and
+  expose failed or timed-out namespaces as disabled/unavailable with safe
+  diagnostics.
+- Full MCP proof must include at least one real `tool_portal_call`, not only
+  `tools/list`.
+- Full Tool VM proof must include a non-default `beta` agent path that creates a
+  controller-vetted lease over gateway control RPC, writes a nonce marker file in
+  the Tool VM, reads it back, and returns the marker. Only gateway VM to Tool VM
+  uses raw SSH.
+
 ## Route
 Independent plan review DONE and folded. Architecture re-review pass 2 DONE and folded. Focused SMA plan review DONE
 and folded. Implementation-execute-plan may start with SMA. Remaining before the broader control-plane cutover can

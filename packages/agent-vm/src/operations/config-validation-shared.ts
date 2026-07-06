@@ -7,10 +7,13 @@ import {
 	runtimeConfigRoot,
 } from './runtime-config-paths.js';
 
+export type ConfigValidationAvailabilityStatus = 'available' | 'unavailable';
+
 export interface ConfigValidationCheck {
 	readonly name: string;
 	readonly ok: boolean;
 	readonly hint?: string;
+	readonly status?: ConfigValidationAvailabilityStatus;
 }
 
 export interface ConfigValidationResult {

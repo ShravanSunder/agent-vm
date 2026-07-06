@@ -181,6 +181,52 @@ describe('portal tool handlers', () => {
 		).resolves.toMatchObject({ diagnostics: expectedDiagnostics, ok: true });
 	});
 
+	it('fails closed with a disabled namespace error when a degraded namespace is called', async () => {
+		const callUpstreamTool = vi.fn(async () => ({ content: [] }));
+		const handlers = createPortalToolHandlers({
+			approval: allowDecision,
+			callUpstreamTool,
+			getSession: vi.fn(async () => degradedSession),
+		});
+
+		await expect(
+			handlers.call({
+				identity: session.identity,
+				input: {
+					calls: [
+						{
+							arguments: { query: 'deployment' },
+							id: 'call-readwise',
+							namespace: 'readwise',
+							toolName: 'search_highlights',
+						},
+					],
+				},
+			}),
+		).resolves.toMatchObject({
+			diagnostics: [
+				{
+					kind: 'upstream_discovery_failed',
+					message: 'readwise unavailable',
+					namespace: 'readwise',
+				},
+			],
+			ok: false,
+			results: {
+				'call-readwise': {
+					error: {
+						kind: 'namespace_unavailable',
+						message: 'MCP namespace "readwise" is disabled/unavailable: readwise unavailable',
+						namespace: 'readwise',
+						toolName: 'search_highlights',
+					},
+					ok: false,
+				},
+			},
+		});
+		expect(callUpstreamTool).not.toHaveBeenCalled();
+	});
+
 	it('returns structured discovery diagnostics in portal tool responses', async () => {
 		const structuredDegradedSession = {
 			...session,

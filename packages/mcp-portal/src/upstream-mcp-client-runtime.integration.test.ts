@@ -251,6 +251,32 @@ describe('upstream MCP client runtime', () => {
 		).rejects.not.toThrow(/secret-token-value/u);
 	});
 
+	it('uses 12 seconds as the default namespace discovery timeout', async () => {
+		const failingClient: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => {
+				throw new Error('list failed');
+			}),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => failingClient,
+			createTransport: vi.fn(() => ({})),
+			servers: [createServer()],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toMatchObject({
+			details: {
+				namespace: 'linear',
+				phase: 'list_tools',
+				timeoutMs: 12_000,
+			},
+		});
+	});
+
 	it('wraps stdio connect failures with command and arg count diagnostics', async () => {
 		const runtime = createUpstreamMcpClientRuntime({
 			createClient: () => ({

@@ -38,6 +38,7 @@ import {
 	createGondolinSandboxBackendManager,
 } from './sandbox-backend-factory.js';
 import { registerToolPortalNativeTools } from './tool-portal-native-tools.js';
+import { registerToolVmWriteReadE2eRoute } from './tool-vm-write-read-e2e-tool.js';
 
 const gatewayControlLeaseClientEndpoint = 'gateway-control://control-session';
 
@@ -201,40 +202,40 @@ const plugin = {
 		};
 
 		const sdkPath = '/opt/openclaw-sdk/sandbox.js';
-		const sdkPromise = import(sdkPath).then((sdkRaw: Record<string, unknown>) => {
-			assertSdkShape(sdkRaw);
+		const gondolinSandboxBackendFactoryPromise = import(sdkPath).then(
+			(sdkRaw: Record<string, unknown>) => {
+				assertSdkShape(sdkRaw);
 
-			const sshHelpers: SshHelpers = {
-				buildExecRemoteCommand: sdkRaw.buildExecRemoteCommand,
-				buildRemoteCommand: sdkRaw.buildRemoteCommand,
-				buildSshSandboxArgv: sdkRaw.buildSshSandboxArgv,
-				createRemoteShellSandboxFsBridge: sdkRaw.createRemoteShellSandboxFsBridge,
-				createSshSandboxSessionFromSettings: sdkRaw.createSshSandboxSessionFromSettings,
-				...(typeof sdkRaw.disposeSshSandboxSession === 'function'
-					? {
-							disposeSshSandboxSession: sdkRaw.disposeSshSandboxSession as (
-								session: SshSandboxSession,
-							) => Promise<void>,
-						}
-					: {}),
-				runSshSandboxCommand: sdkRaw.runSshSandboxCommand,
-				sanitizeEnvVars: sdkRaw.sanitizeEnvVars,
-			};
+				const sshHelpers: SshHelpers = {
+					buildExecRemoteCommand: sdkRaw.buildExecRemoteCommand,
+					buildRemoteCommand: sdkRaw.buildRemoteCommand,
+					buildSshSandboxArgv: sdkRaw.buildSshSandboxArgv,
+					createRemoteShellSandboxFsBridge: sdkRaw.createRemoteShellSandboxFsBridge,
+					createSshSandboxSessionFromSettings: sdkRaw.createSshSandboxSessionFromSettings,
+					...(typeof sdkRaw.disposeSshSandboxSession === 'function'
+						? {
+								disposeSshSandboxSession: sdkRaw.disposeSshSandboxSession as (
+									session: SshSandboxSession,
+								) => Promise<void>,
+							}
+						: {}),
+					runSshSandboxCommand: sdkRaw.runSshSandboxCommand,
+					sanitizeEnvVars: sdkRaw.sanitizeEnvVars,
+				};
 
-			const backendDependencies = createBackendDeps(sshHelpers);
-			const gatewayControlLeaseClient = createGatewayControlLeaseClient({
-				callerContextStore: gatewayControlCallerContextStore,
-				controlService: gatewayControlService,
-				identity: gatewayControlIdentity,
-			});
-			const backendDependenciesWithLeaseClient = {
-				...backendDependencies,
-				createLeaseClient: () => gatewayControlLeaseClient,
-				publishHealthEvent: gatewayControlEventPublisher.publishHealthEvent,
-				publishOpenClawRuntimeStatus: publishRuntimeStatus,
-			};
-			sdkRaw.registerSandboxBackend('gondolin', {
-				factory: createGondolinSandboxBackendFactory(
+				const backendDependencies = createBackendDeps(sshHelpers);
+				const gatewayControlLeaseClient = createGatewayControlLeaseClient({
+					callerContextStore: gatewayControlCallerContextStore,
+					controlService: gatewayControlService,
+					identity: gatewayControlIdentity,
+				});
+				const backendDependenciesWithLeaseClient = {
+					...backendDependencies,
+					createLeaseClient: () => gatewayControlLeaseClient,
+					publishHealthEvent: gatewayControlEventPublisher.publishHealthEvent,
+					publishOpenClawRuntimeStatus: publishRuntimeStatus,
+				};
+				const gondolinSandboxBackendFactory = createGondolinSandboxBackendFactory(
 					{
 						...pluginConfig,
 						controllerUrl: gatewayControlLeaseClientEndpoint,
@@ -242,18 +243,26 @@ const plugin = {
 						openClawRuntimeStatusProvider: buildRuntimeStatus,
 					},
 					backendDependenciesWithLeaseClient,
-				),
-				manager: createGondolinSandboxBackendManager(
-					{
-						controllerUrl: gatewayControlLeaseClientEndpoint,
-						zoneId: pluginConfig.zoneId,
-					},
-					backendDependenciesWithLeaseClient,
-				),
-			});
+				);
+				sdkRaw.registerSandboxBackend('gondolin', {
+					factory: gondolinSandboxBackendFactory,
+					manager: createGondolinSandboxBackendManager(
+						{
+							controllerUrl: gatewayControlLeaseClientEndpoint,
+							zoneId: pluginConfig.zoneId,
+						},
+						backendDependenciesWithLeaseClient,
+					),
+				});
+				return gondolinSandboxBackendFactory;
+			},
+		);
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => await gondolinSandboxBackendFactoryPromise,
 		});
 
-		sdkPromise.catch((error: unknown) => {
+		gondolinSandboxBackendFactoryPromise.catch((error: unknown) => {
 			const message = error instanceof Error ? error.message : JSON.stringify(error);
 			process.stderr.write(`[gondolin] failed to load OpenClaw SDK: ${message}\n`);
 		});
