@@ -93,6 +93,36 @@ function gatewayCommandResultEnvelopeFor(
 	};
 }
 
+function gatewayLeaseOkResponsePayloadFor(responseToMessageId: string): {
+	readonly lease: {
+		readonly agentId: string;
+		readonly idleTtlMs: number;
+		readonly leaseId: string;
+		readonly state: 'idle';
+		readonly tcpSlot: number;
+		readonly transport: 'ssh-sandbox';
+		readonly workdir: string;
+		readonly zoneId: string;
+	};
+	readonly responseToMessageId: string;
+	readonly result: 'ok';
+} {
+	return {
+		lease: {
+			agentId: 'main',
+			idleTtlMs: 120_000,
+			leaseId: 'lease-main',
+			state: 'idle',
+			tcpSlot: 7,
+			transport: 'ssh-sandbox',
+			workdir: '/workspace',
+			zoneId: identity.zoneId,
+		},
+		responseToMessageId,
+		result: 'ok',
+	};
+}
+
 function gatewayRuntimeStatusEnvelopeFor(
 	session: GatewayControlAcceptedSession,
 	sequence: number,
@@ -683,10 +713,7 @@ describe('gateway control service', () => {
 					{
 						kind: 'command_result',
 						operation: 'lease_create',
-						payload: {
-							responseToMessageId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-							result: 'ok',
-						},
+						payload: gatewayLeaseOkResponsePayloadFor('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
 					},
 				),
 		).resolves.toEqual({ received: true });
@@ -842,10 +869,7 @@ describe('gateway control service', () => {
 			const commandResultMessage = {
 				kind: 'command_result',
 				operation: 'lease_create',
-				payload: {
-					responseToMessageId: controlEnvelope.messageId,
-					result: 'ok',
-				},
+				payload: gatewayLeaseOkResponsePayloadFor(controlEnvelope.messageId),
 			};
 			acknowledge({ received: true });
 			setImmediate(() => {
@@ -899,10 +923,7 @@ describe('gateway control service', () => {
 		).resolves.toEqual({
 			kind: 'command_result',
 			operation: 'lease_create',
-			payload: {
-				responseToMessageId: gatewayLeaseCreateEnvelope.messageId,
-				result: 'ok',
-			},
+			payload: gatewayLeaseOkResponsePayloadFor(gatewayLeaseCreateEnvelope.messageId),
 		});
 		expect(observedMessages).toEqual([
 			{
@@ -945,10 +966,7 @@ describe('gateway control service', () => {
 					{
 						kind: 'command_result',
 						operation: 'lease_create',
-						payload: {
-							responseToMessageId: controlEnvelope.messageId,
-							result: 'ok',
-						},
+						payload: gatewayLeaseOkResponsePayloadFor(controlEnvelope.messageId),
 					},
 					() => undefined,
 				);
@@ -1028,10 +1046,7 @@ describe('gateway control service', () => {
 					{
 						kind: 'command_result',
 						operation: 'lease_create',
-						payload: {
-							responseToMessageId: controlEnvelope.messageId,
-							result: 'ok',
-						},
+						payload: gatewayLeaseOkResponsePayloadFor(controlEnvelope.messageId),
 					},
 					() => undefined,
 				);
@@ -1137,10 +1152,7 @@ describe('gateway control service', () => {
 					return {
 						kind: 'command_result',
 						operation: 'lease_create',
-						payload: {
-							responseToMessageId: envelope.messageId,
-							result: 'ok',
-						},
+						payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
 					};
 				},
 				messageIdentity: ({ payload }) => {
@@ -1208,10 +1220,7 @@ describe('gateway control service', () => {
 			{
 				kind: 'command_result',
 				operation: 'lease_create',
-				payload: {
-					responseToMessageId: envelope.messageId,
-					result: 'ok',
-				},
+				payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
 			},
 		]);
 	});
@@ -1321,10 +1330,7 @@ describe('gateway control service', () => {
 				handle: async ({ envelope }) => ({
 					kind: 'command_result',
 					operation: 'lease_create',
-					payload: {
-						responseToMessageId: envelope.messageId,
-						result: 'ok',
-					},
+					payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
 				}),
 				messageIdentity: ({ payload }) => {
 					const message = payload as { readonly kind: 'command'; readonly operation: string };
@@ -1442,10 +1448,7 @@ describe('gateway control service', () => {
 							{
 								kind: 'command_result',
 								operation: 'lease_create',
-								payload: {
-									responseToMessageId: controlEnvelope.messageId,
-									result: 'ok',
-								},
+								payload: gatewayLeaseOkResponsePayloadFor(controlEnvelope.messageId),
 							},
 							() => undefined,
 						);
@@ -1461,10 +1464,7 @@ describe('gateway control service', () => {
 						{
 							kind: 'command_result',
 							operation: 'lease_create',
-							payload: {
-								responseToMessageId: controlEnvelope.messageId,
-								result: 'ok',
-							},
+							payload: gatewayLeaseOkResponsePayloadFor(controlEnvelope.messageId),
 						},
 						() => undefined,
 					);
@@ -1531,18 +1531,12 @@ describe('gateway control service', () => {
 			{
 				kind: 'command_result',
 				operation: 'lease_create',
-				payload: {
-					responseToMessageId: firstEnvelope.messageId,
-					result: 'ok',
-				},
+				payload: gatewayLeaseOkResponsePayloadFor(firstEnvelope.messageId),
 			},
 			{
 				kind: 'command_result',
 				operation: 'lease_create',
-				payload: {
-					responseToMessageId: secondEnvelope.messageId,
-					result: 'ok',
-				},
+				payload: gatewayLeaseOkResponsePayloadFor(secondEnvelope.messageId),
 			},
 		]);
 		expect(client.connected).toBe(true);
@@ -1950,10 +1944,7 @@ describe('gateway control service', () => {
 			const commandResultMessage = {
 				kind: 'command_result',
 				operation: 'lease_create',
-				payload: {
-					responseToMessageId: controlEnvelope.messageId,
-					result: 'ok',
-				},
+				payload: gatewayLeaseOkResponsePayloadFor(controlEnvelope.messageId),
 			};
 			acknowledge({ received: true });
 			setImmediate(() => {
@@ -2003,10 +1994,7 @@ describe('gateway control service', () => {
 		).resolves.toEqual({
 			kind: 'command_result',
 			operation: 'lease_create',
-			payload: {
-				responseToMessageId: gatewayLeaseCreateEnvelope.messageId,
-				result: 'ok',
-			},
+			payload: gatewayLeaseOkResponsePayloadFor(gatewayLeaseCreateEnvelope.messageId),
 		});
 	});
 });

@@ -91,6 +91,34 @@ function workerCommandResultEnvelopeFor(
 	};
 }
 
+function workerGitPushOkResponsePayloadFor(responseToMessageId: string): {
+	readonly gitPush: {
+		readonly results: readonly [
+			{
+				readonly branch: string;
+				readonly repoUrl: string;
+				readonly success: true;
+			},
+		];
+	};
+	readonly responseToMessageId: string;
+	readonly result: 'ok';
+} {
+	return {
+		gitPush: {
+			results: [
+				{
+					branch: 'agent/task-1',
+					repoUrl: 'https://github.com/example/repo.git',
+					success: true,
+				},
+			],
+		},
+		responseToMessageId,
+		result: 'ok',
+	};
+}
+
 function workerRuntimeStatusEnvelopeFor(
 	session: WorkerControlAcceptedSession,
 	sequence: number,
@@ -698,10 +726,7 @@ describe('worker control service', () => {
 					{
 						kind: 'command_result',
 						operation: 'git_push',
-						payload: {
-							responseToMessageId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-							result: 'ok',
-						},
+						payload: workerGitPushOkResponsePayloadFor('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
 					},
 				),
 		).resolves.toEqual({ received: true });
@@ -859,10 +884,7 @@ describe('worker control service', () => {
 				const commandResultMessage = {
 					kind: 'command_result',
 					operation: 'git_push',
-					payload: {
-						responseToMessageId: controlEnvelope.messageId,
-						result: 'ok',
-					},
+					payload: workerGitPushOkResponsePayloadFor(controlEnvelope.messageId),
 				};
 				acknowledge({ received: true });
 				setImmediate(() => {
@@ -912,10 +934,7 @@ describe('worker control service', () => {
 		).resolves.toEqual({
 			kind: 'command_result',
 			operation: 'git_push',
-			payload: {
-				responseToMessageId: envelope.messageId,
-				result: 'ok',
-			},
+			payload: workerGitPushOkResponsePayloadFor(envelope.messageId),
 		});
 		expect(observedMessages).toEqual([
 			{
@@ -960,10 +979,7 @@ describe('worker control service', () => {
 						{
 							kind: 'command_result',
 							operation: 'git_push',
-							payload: {
-								responseToMessageId: controlEnvelope.messageId,
-								result: 'ok',
-							},
+							payload: workerGitPushOkResponsePayloadFor(controlEnvelope.messageId),
 						},
 						() => undefined,
 					);
@@ -1049,10 +1065,7 @@ describe('worker control service', () => {
 						{
 							kind: 'command_result',
 							operation: 'git_push',
-							payload: {
-								responseToMessageId: controlEnvelope.messageId,
-								result: 'ok',
-							},
+							payload: workerGitPushOkResponsePayloadFor(controlEnvelope.messageId),
 						},
 						() => undefined,
 					);
@@ -1165,10 +1178,7 @@ describe('worker control service', () => {
 					return {
 						kind: 'command_result',
 						operation: 'git_push',
-						payload: {
-							responseToMessageId: envelope.messageId,
-							result: 'ok',
-						},
+						payload: workerGitPushOkResponsePayloadFor(envelope.messageId),
 					};
 				},
 				messageIdentity: ({ payload }) => {
@@ -1242,10 +1252,7 @@ describe('worker control service', () => {
 			{
 				kind: 'command_result',
 				operation: 'git_push',
-				payload: {
-					responseToMessageId: envelope.messageId,
-					result: 'ok',
-				},
+				payload: workerGitPushOkResponsePayloadFor(envelope.messageId),
 			},
 		]);
 	});
@@ -1360,10 +1367,7 @@ describe('worker control service', () => {
 				handle: async ({ envelope }) => ({
 					kind: 'command_result',
 					operation: 'git_push',
-					payload: {
-						responseToMessageId: envelope.messageId,
-						result: 'ok',
-					},
+					payload: workerGitPushOkResponsePayloadFor(envelope.messageId),
 				}),
 				messageIdentity: ({ payload }) => {
 					const message = payload as { readonly kind: 'command'; readonly operation: string };
@@ -1483,10 +1487,7 @@ describe('worker control service', () => {
 							{
 								kind: 'command_result',
 								operation: 'git_push',
-								payload: {
-									responseToMessageId: controlEnvelope.messageId,
-									result: 'ok',
-								},
+								payload: workerGitPushOkResponsePayloadFor(controlEnvelope.messageId),
 							},
 							() => undefined,
 						);
@@ -1502,10 +1503,7 @@ describe('worker control service', () => {
 						{
 							kind: 'command_result',
 							operation: 'git_push',
-							payload: {
-								responseToMessageId: controlEnvelope.messageId,
-								result: 'ok',
-							},
+							payload: workerGitPushOkResponsePayloadFor(controlEnvelope.messageId),
 						},
 						() => undefined,
 					);
@@ -1578,18 +1576,12 @@ describe('worker control service', () => {
 			{
 				kind: 'command_result',
 				operation: 'git_push',
-				payload: {
-					responseToMessageId: firstEnvelope.messageId,
-					result: 'ok',
-				},
+				payload: workerGitPushOkResponsePayloadFor(firstEnvelope.messageId),
 			},
 			{
 				kind: 'command_result',
 				operation: 'git_push',
-				payload: {
-					responseToMessageId: secondEnvelope.messageId,
-					result: 'ok',
-				},
+				payload: workerGitPushOkResponsePayloadFor(secondEnvelope.messageId),
 			},
 		]);
 		expect(client.connected).toBe(true);
