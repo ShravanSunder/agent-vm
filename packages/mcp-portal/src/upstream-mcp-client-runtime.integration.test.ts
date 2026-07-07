@@ -243,7 +243,7 @@ describe('upstream MCP client runtime', () => {
 				namespace: 'linear',
 				phase: 'list_tools',
 				timeoutMs: 5,
-				transport: { kind: 'streamable-http', url: 'https://mcp.example.test' },
+				transport: { kind: 'streamable-http', url: 'https://mcp.example.test/' },
 			},
 		});
 		await expect(
