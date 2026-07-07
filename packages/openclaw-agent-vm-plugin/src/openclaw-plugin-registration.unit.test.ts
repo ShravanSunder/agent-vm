@@ -9,6 +9,7 @@ import {
 } from '@agent-vm/gateway-interface';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import e2ePlugin from './openclaw-plugin-registration.e2e.js';
 import defaultPlugin, {
 	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 	createBackendDeps,
@@ -481,6 +482,32 @@ describe('createGondolinPlugin', () => {
 			expect(
 				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
 			).toBeUndefined();
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers the private Tool VM write/read route only through the e2e plugin entrypoint', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerHttpRoute = vi.fn();
+		const registerTool = vi.fn();
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		try {
+			e2ePlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute,
+				registerTool,
+				registrationMode: 'full',
+			});
+
+			expect(
+				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			).toBeDefined();
 		} finally {
 			stderrWrite.mockRestore();
 		}

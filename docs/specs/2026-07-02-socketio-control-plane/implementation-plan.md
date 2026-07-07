@@ -428,7 +428,14 @@ S6c — correlation/trace to operator evidence:
 - Behavior: worker_control_rpc for git_push/git_pull_default + runtime observations/recovery; worker VM-side
   Socket.IO server + /__agent-vm/worker-ready; controller-originated
   `operation_cancel` is hard-rejected in this PR so it cannot become a second
-  task-close path; task submit/state/close STAY on ingress HTTP.
+  task-close path; task submit/state/close STAY on ingress HTTP. Worker runtime
+  observations/status/capacity snapshots are agent-progress diagnostics, not
+  zone health or VM-recovery inputs in this cutover. VM/session liveness stays
+  owned by `/health`, private control-session heartbeat, and recovery evidence.
+  If worker-progress correlation becomes operator-visible beyond the append-only
+  task event log, it must be added to task evidence/task snapshots with a real
+  worker-owned correlation source; do not invent one from the ready-handshake
+  requestId or route it through `AgentVmHealthEvent` without a spec revision.
 - NOTE: worker control service is plain Node/Hono on the standard Node `upgrade` event — NOT gated by GATE-0's
   pinned-OpenClaw-API STOP. Still needs its own HANDSHAKE proof (e2e-worker).
 

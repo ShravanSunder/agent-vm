@@ -513,6 +513,7 @@ describe('startE2eControllerRuntime', () => {
 			'ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm"',
 		);
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/gondolin');
+		expect(dockerfile).not.toContain('/opt/agent-vm/e2e-openclaw-gondolin-extension');
 		expect(dockerfile).not.toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
 		expect(dockerfile).not.toContain('portal-server.js');
 		expect(dockerfile).not.toContain('/work/repo/packages/mcp-portal');
@@ -642,6 +643,49 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).toContain('file:/tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz');
 		expect(dockerfile).not.toContain('agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz');
 		expect(systemConfig.imageProfiles.toolVms.tool).toEqual(originalToolVmProfile);
+	});
+
+	it('writes the e2e Tool VM proof plugin entrypoint only when requested explicitly', async () => {
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const repoRoot = path.join(temporaryRoot, 'repo');
+		const systemConfig = createMinimalOpenClawSystemConfig();
+		systemConfig.imageProfiles.gateways.openclaw = {
+			type: 'openclaw',
+			buildConfig: path.join(temporaryRoot, 'build-config.jsonc'),
+			source: { kind: 'managedBase', base: 'openclaw-gateway' },
+		};
+
+		await createFakeAgentPortalSdkPackage(repoRoot);
+		await createFakeConfigContractsPackage(repoRoot);
+		await createFakeSecretsPackage(repoRoot);
+		await createFakeGondolinAdapterPackage(repoRoot);
+		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeControlProtocolContractsPackage(repoRoot);
+		await createFakeControllerExecutionContractsPackage(repoRoot);
+		await createFakeGatewayControlContractsPackage(repoRoot);
+		await createFakePortalDist(repoRoot);
+		await createFakeToolPortalPackage(repoRoot);
+		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
+
+		await useLocalOpenClawPluginGatewayImage({
+			enableToolVmWriteReadE2eRoute: true,
+			profileName: 'openclaw',
+			projectRoot: temporaryRoot,
+			repoRoot,
+			systemConfig,
+		});
+
+		const dockerfilePath = systemConfig.imageProfiles.gateways.openclaw.dockerfile;
+		if (dockerfilePath === undefined) {
+			throw new Error('Expected plugin-only helper to set dockerfile path.');
+		}
+		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
+		expect(dockerfile).toContain('/opt/agent-vm/e2e-openclaw-gondolin-extension');
+		expect(dockerfile).toContain('openclaw-agent-vm-plugin/dist/e2e.js');
+		expect(dockerfile).toContain(
+			'ln -sfn "$e2e_extension" /home/openclaw/.openclaw/extensions/gondolin',
+		);
+		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
 	});
 
 	it('writes local MCP Portal Tool VM smoke images only when requested explicitly', async () => {
@@ -1222,6 +1266,7 @@ async function createFakePackageDist(
 		'utf8',
 	);
 	await fs.writeFile(path.join(distDir, 'index.js'), 'export default {};\n', 'utf8');
+	await fs.writeFile(path.join(distDir, 'e2e.js'), 'export default {};\n', 'utf8');
 }
 
 async function createFakeSimplePackage(

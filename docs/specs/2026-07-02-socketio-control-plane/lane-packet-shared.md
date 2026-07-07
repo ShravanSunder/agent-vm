@@ -99,8 +99,9 @@ Mode: plan-creation, READ-ONLY. Do not edit product code, tests, configs, or pla
   window, Engine.IO pingInterval/pingTimeout. Ordering invariants are NORMATIVE (PROTO backpressure §):
   heartbeat cadence < active-use TTL (current heartbeatAfterMs=30s, stale>=3x=90s); connect+ack < the current
   10s active-use-start policy budget; app timeouts ordered vs Engine.IO ping.
-- Collector-mode observability disposition (only zone observability mode; fail-closed strands zones) — product
-  ruling still open; plan should isolate it so it doesn't block the control-plane slices.
+- Collector-mode observability disposition is accepted: OpenClaw diagnostics use
+  mediated OTLP HTTP through the synthetic collector host. The old raw collector
+  `tcpHosts` path stays forbidden; Tool VM SSH is the only raw TCP exception.
 
 ## Output contract (all lanes)
 

@@ -1290,6 +1290,7 @@ export async function disableOpenClawMcpPortalPlugin(configPath: string): Promis
 }
 
 export async function useLocalOpenClawGatewayImagePackages(options: {
+	readonly enableToolVmWriteReadE2eRoute?: boolean | undefined;
 	readonly profileName: string;
 	readonly projectRoot: string;
 	readonly repoRoot: string;
@@ -1429,6 +1430,16 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
 				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
 				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
+				...(options.enableToolVmWriteReadE2eRoute === true
+					? [
+							'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
+							'    e2e_extension="/opt/agent-vm/e2e-openclaw-gondolin-extension" && \\',
+							'    mkdir -p "$e2e_extension" && \\',
+							'    cp "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist/openclaw.plugin.json" "$e2e_extension/openclaw.plugin.json" && \\',
+							'    printf "%s\\n" "export { default } from \\"$package_root/@agent-vm/openclaw-agent-vm-plugin/dist/e2e.js\\";" > "$e2e_extension/index.js" && \\',
+							'    ln -sfn "$e2e_extension" /home/openclaw/.openclaw/extensions/gondolin',
+						]
+					: []),
 				'',
 			].join('\n'),
 			'utf8',
@@ -1454,6 +1465,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 }
 
 export async function useLocalOpenClawPluginGatewayImage(options: {
+	readonly enableToolVmWriteReadE2eRoute?: boolean | undefined;
 	readonly profileName: string;
 	readonly projectRoot: string;
 	readonly repoRoot: string;
@@ -1585,6 +1597,16 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
 				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
 				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
+				...(options.enableToolVmWriteReadE2eRoute === true
+					? [
+							'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
+							'    e2e_extension="/opt/agent-vm/e2e-openclaw-gondolin-extension" && \\',
+							'    mkdir -p "$e2e_extension" && \\',
+							'    cp "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist/openclaw.plugin.json" "$e2e_extension/openclaw.plugin.json" && \\',
+							'    printf "%s\\n" "export { default } from \\"$package_root/@agent-vm/openclaw-agent-vm-plugin/dist/e2e.js\\";" > "$e2e_extension/index.js" && \\',
+							'    ln -sfn "$e2e_extension" /home/openclaw/.openclaw/extensions/gondolin',
+						]
+					: []),
 				'',
 			].join('\n'),
 			'utf8',

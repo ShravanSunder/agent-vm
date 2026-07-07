@@ -900,6 +900,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			}),
 		);
 		await useLocalOpenClawGatewayImagePackages({
+			enableToolVmWriteReadE2eRoute: true,
 			profileName: systemZone.gateway.imageProfile,
 			projectRoot: project.tempRoot,
 			repoRoot,

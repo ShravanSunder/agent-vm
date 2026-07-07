@@ -54,13 +54,15 @@ lease creation, and lease/use state must not fall back to
 callbacks.
 
 Any deterministic proof route added for this slice is not a general product API.
-If the route is present in the plugin bundle, it must remain disabled by
-default and must require a separate e2e proof key in addition to normal plugin
-auth. The route must sign the exact request body, derive the effective agent
-from the authenticated session key instead of trusting a caller-selected
-`agentId`, reject foreign-agent bodies, reject absolute paths, `..`, NUL bytes,
-and paths outside `.agent-vm/`, and cap request body size. A failure in any of
-those checks must return a typed 4xx response without creating a Tool VM lease.
+Production/full plugin registration must not expose it. The OpenClaw e2e harness
+may opt into a separate plugin entrypoint that performs normal full registration
+and then adds the private proof route. That route must remain disabled by default
+and must require a separate e2e proof key in addition to normal plugin auth. The
+route must sign the exact request body, derive the effective agent from the
+authenticated session key instead of trusting a caller-selected `agentId`, reject
+foreign-agent bodies, reject absolute paths, `..`, NUL bytes, and paths outside
+`.agent-vm/`, and cap request body size. A failure in any of those checks must
+return a typed 4xx response without creating a Tool VM lease.
 
 ## Write Surface
 
@@ -73,7 +75,8 @@ Likely product files:
 - `packages/tool-portal/src/**`, if Tool Portal catalog/result shapes need a
   typed unavailable namespace variant
 - `packages/openclaw-agent-vm-plugin/src/**`, if native Tool Portal tools need
-  to surface disabled namespace state or structured unavailable errors
+  to surface disabled namespace state, structured unavailable errors, or the
+  e2e-only Tool VM proof entrypoint
 
 Likely proof files:
 
