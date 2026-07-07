@@ -884,8 +884,13 @@ describe('gateway control domain handler', () => {
 
 		expect(response).toBeUndefined();
 		expect(recordRuntimeStatus).toHaveBeenCalledWith({
+			bootId: acceptedSession.bootId,
+			connectionId: acceptedSession.connectionId,
+			controllerEpoch: acceptedSession.controllerEpoch,
 			findings: [{ hint: 'runtime-config', id: 'runtime-config', ok: true }],
+			peerId: acceptedSession.peerId,
 			pluginId: 'gondolin',
+			sessionId: acceptedSession.sessionId,
 			zoneId: acceptedSession.zoneId,
 		});
 	});

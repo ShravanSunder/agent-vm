@@ -344,6 +344,7 @@ function healthEventFromHeartbeat(options: {
 }
 
 function runtimeStatusFromPayload(options: {
+	readonly envelope: ControlEnvelope;
 	readonly payload: GatewayControlRuntimeStatusPayload;
 	readonly zoneId: string;
 }): OpenClawRuntimeStatusReport {
@@ -351,12 +352,17 @@ function runtimeStatusFromPayload(options: {
 		throw new Error(`unsupported gateway runtime status kind '${options.payload.statusKind}'`);
 	}
 	return {
+		bootId: options.envelope.bootId,
+		connectionId: options.envelope.connectionId,
+		controllerEpoch: options.envelope.controllerEpoch,
 		findings: options.payload.findings.map((finding) => ({
 			hint: finding.safeMessage ?? finding.id,
 			id: finding.id,
 			ok: finding.ok,
 		})),
+		peerId: options.envelope.peerId,
 		pluginId: 'gondolin',
+		sessionId: options.envelope.sessionId,
 		zoneId: options.zoneId,
 	};
 }
@@ -594,6 +600,7 @@ export function createGatewayControlDomainHandler(
 						}
 						options.recordRuntimeStatus(
 							runtimeStatusFromPayload({
+								envelope,
 								payload: message.payload,
 								zoneId: options.session.zoneId,
 							}),

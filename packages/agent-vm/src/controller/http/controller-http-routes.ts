@@ -208,7 +208,7 @@ export function createControllerService(options: {
 			if (!zone || zone.gateway.type !== 'openclaw') {
 				return;
 			}
-			openClawRuntimeStatusStore.assertFreshOk(zoneId);
+			openClawRuntimeStatusStore.assertAnyFreshOk(zoneId);
 		},
 		resolveLeaseWorkMountDir: async ({ agentId, workMountDir, zoneId }) => {
 			const zone = zonesById.get(zoneId);

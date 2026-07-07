@@ -139,6 +139,8 @@ same source the runtime uses. Values below satisfy PROTO's timing-order invarian
 | dedupe/replay window | 512 messageIds AND >= 60s | PLANNING DEFAULT (no code anchor) — sized to cover max in-flight + max reconnect gap; proof asserts no-replay-outside-window behavior, not the magnitude; tune in impl |
 | recovery consecutiveFailureThreshold | 3 | = existing gateway-vm-recovery-policy.ts:32 (reuse for control-session-unhealthy) |
 | control-session-death / recovery grace | large multiple of heartbeat cadence — PLANNING DEFAULT (tune under load, NOT guessed here) | DAYS-LONG model: SEPARATE from the 120s active-use TTL. This is how long a control session may be disconnected/reconnecting before the owning controller process gives up and RECREATES the VM. Transport death (~20s Engine.IO) triggers cheap RECONNECT; recovery (expensive VM recreate) fires ONLY after this grace elapses with no reconnect. Must be resilient enough that a network blip or peer/socket flap does NOT trigger recreation while the controller process still owns the VM/ingress handle. Controller process restart/redeploy is not covered by this reconnect promise in this cutover; it is a recreate boundary unless a future Gondolin VM-adoption API is specified and proven. Applies to BOTH gateway and worker (workers get the same large grace) |
+| manual reconnect backoff | initial 250 ms, max 5_000 ms, jitter 20% | controller-owned manual reconnect must not run as a fixed 1s loop; retries use bounded exponential backoff with jitter so multi-zone reconnects do not thundering-herd after a shared network blip |
+| priority ack stale threshold | 3 consecutive failures | a single heartbeat/operation_cancel ack miss is operator evidence, not terminal session death; terminal stale requires N consecutive priority ack failures and resets on a successful priority ack |
 | recovery budget (max failed recoveries, cooldown, reset) | unchanged | reuse existing recoveryBudgets |
 | per-source observation budget | mirror threshold (NEW) | forged-observation cap; NEW value, tune in impl |
 
@@ -391,7 +393,10 @@ S6b — recovery corroboration + per-source budget (LOAD-BEARING incident-amplif
   NEW bootId; the lingering old-boot/old-epoch session is fenced.
 - Checkpoint: recovery requires probe corroboration AND the death-grace elapsed with no reconnect; forged failing
   observations under one controller-owned source key cannot exceed per-source budget nor drive recovery without
-  corroboration; an in-process reconnect within grace cancels any pending recovery.
+  corroboration; an in-process reconnect within grace cancels any pending recovery. Runtime-status evidence used to
+  authorize Tool VM lease creation is bound to the accepted session that delivered it (`bootId`, `controllerEpoch`,
+  `peerId`, `sessionId`, and `connectionId`); a prior boot/session snapshot is stale for lease authority even inside
+  the wall-clock freshness window.
 - Proof: RECOVERY-1/2 (budget key = controller identity; spoofed payload source rejected) + RESILIENT-GRACE (no
   recovery before grace; in-process reconnect within grace cancels it; controller process restart is a recreate
   boundary) + RECREATE-FENCE (post-recreate new-bootId session accepted, old-boot/old-epoch fenced). Layer: unit +

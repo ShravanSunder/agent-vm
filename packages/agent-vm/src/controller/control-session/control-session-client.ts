@@ -67,6 +67,7 @@ export interface ControlSessionClientOptions {
 	readonly policyByKind?: Partial<Record<ControlEnvelope['kind'], ControlDeliveryPolicy>>;
 	readonly policyByOperation: Readonly<Record<string, ControlDeliveryPolicy>>;
 	readonly refreshExtraHeaders?: (() => Promise<Readonly<Record<string, string>>>) | undefined;
+	readonly reconnectJitterRandom?: () => number;
 	readonly timeoutMs?: number;
 }
 
@@ -276,6 +277,24 @@ export function buildLatestWinsControlSessionKey(envelope: ControlEnvelope): str
 	].join('\u0000');
 }
 
+export function computeControlSessionManualReconnectDelayMs(options: {
+	readonly attempt: number;
+	readonly random?: () => number;
+}): number {
+	const boundedAttempt = Math.max(0, Math.min(options.attempt, 16));
+	const exponentialDelay = Math.min(
+		CONTROL_SESSION_TIMING_MS.manualReconnectInitialDelay * 2 ** boundedAttempt,
+		CONTROL_SESSION_TIMING_MS.manualReconnectMaxDelay,
+	);
+	const jitterWindow = Math.floor(
+		exponentialDelay * CONTROL_SESSION_TIMING_MS.manualReconnectJitterRatio,
+	);
+	const randomValue = options.random?.() ?? Math.random();
+	const normalizedRandomValue = Math.min(1, Math.max(0, randomValue));
+	const jitter = Math.floor(normalizedRandomValue * (jitterWindow * 2 + 1)) - jitterWindow;
+	return Math.max(0, exponentialDelay + jitter);
+}
+
 function buildControlSessionResponseEnvelope(options: {
 	readonly requestEnvelope: ControlEnvelope;
 	readonly sequence: number;
@@ -364,7 +383,9 @@ export function createControlSessionClient(
 	let closeRequested = false;
 	let manualReconnectTimer: NodeJS.Timeout | undefined;
 	let manualReconnectInFlight = false;
+	let manualReconnectAttempt = 0;
 	let outboundResponseQueue: Promise<void> = Promise.resolve();
+	let priorityAckFailureCount = 0;
 
 	function buildNextHello(): ControlHello {
 		return buildControlHello({
@@ -431,6 +452,7 @@ export function createControlSessionClient(
 				currentConnectionAccepted = true;
 				lastAcceptedConnectionId = parsedResponse.connectionId;
 				lastAcceptedSessionId = parsedResponse.sessionId;
+				manualReconnectAttempt = 0;
 				nextControllerSequenceValue = lastSeenControllerSequence + 1;
 				return parsedResponse;
 			});
@@ -445,7 +467,7 @@ export function createControlSessionClient(
 		clearControlSessionSendBuffer(socket);
 		socket.io.engine?.close();
 		if (manualReconnect) {
-			queueManualReconnect(Math.min(timeoutMs, 1_000));
+			queueManualReconnect();
 		}
 	}
 
@@ -505,7 +527,7 @@ export function createControlSessionClient(
 		socket.io.opts.extraHeaders = { ...headers };
 	}
 
-	function queueManualReconnect(delayMs = 0): void {
+	function queueManualReconnect(delayMs?: number): void {
 		if (
 			options.refreshExtraHeaders === undefined ||
 			closeRequested ||
@@ -516,10 +538,19 @@ export function createControlSessionClient(
 		) {
 			return;
 		}
+		const reconnectDelayMs =
+			delayMs ??
+			computeControlSessionManualReconnectDelayMs({
+				attempt: manualReconnectAttempt,
+				...(options.reconnectJitterRandom === undefined
+					? {}
+					: { random: options.reconnectJitterRandom }),
+			});
+		manualReconnectAttempt += 1;
 		manualReconnectTimer = setTimeout(() => {
 			manualReconnectTimer = undefined;
 			void runManualReconnect();
-		}, delayMs);
+		}, reconnectDelayMs);
 	}
 
 	async function runManualReconnect(): Promise<void> {
@@ -550,7 +581,7 @@ export function createControlSessionClient(
 		} finally {
 			manualReconnectInFlight = false;
 		}
-		queueManualReconnect(Math.min(timeoutMs, 1_000));
+		queueManualReconnect();
 	}
 
 	const ready = new Promise<ControlHelloResponse>((resolve, reject) => {
@@ -587,7 +618,7 @@ export function createControlSessionClient(
 	});
 	socket.on('connect_error', () => {
 		if (initialHelloCompleted) {
-			queueManualReconnect(Math.min(timeoutMs, 1_000));
+			queueManualReconnect();
 		}
 	});
 	socket.on(
@@ -876,6 +907,9 @@ export function createControlSessionClient(
 					.timeout(timeoutMs)
 					.emitWithAck(CONTROL_SESSION_EVENT_NAMES.message, envelope, payload);
 				assertControlMessageReceiptAccepted(receiptPayload);
+				if (isPriorityControlSessionMessage(envelope)) {
+					priorityAckFailureCount = 0;
+				}
 				lastSeenControllerSequence = Math.max(
 					lastSeenControllerSequence,
 					sequenceDecision.nextLastSeenSequence,
@@ -886,11 +920,14 @@ export function createControlSessionClient(
 				return receiptPayload;
 			} catch (error) {
 				if (isPriorityControlSessionMessage(envelope)) {
-					markControlSessionStale({
-						reason: 'transport_error',
-						safeMessage: 'control session priority heartbeat timed out',
-						sessionId: envelope.sessionId,
-					});
+					priorityAckFailureCount += 1;
+					if (priorityAckFailureCount >= CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold) {
+						markControlSessionStale({
+							reason: 'transport_error',
+							safeMessage: `control session priority message failed ${String(priorityAckFailureCount)} consecutive times`,
+							sessionId: envelope.sessionId,
+						});
+					}
 				}
 				throw error;
 			} finally {

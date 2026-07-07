@@ -6,8 +6,22 @@ import {
 export const defaultOpenClawRuntimeStatusMaxAgeMs = 60_000;
 
 export interface OpenClawRuntimeStatusReport {
+	readonly bootId: string;
+	readonly connectionId: string;
+	readonly controllerEpoch: string;
 	readonly findings: readonly OpenClawDeploymentRequirementFinding[];
+	readonly peerId: string;
 	readonly pluginId: 'gondolin';
+	readonly sessionId: string;
+	readonly zoneId: string;
+}
+
+export interface OpenClawRuntimeStatusSessionRef {
+	readonly bootId: string;
+	readonly connectionId: string;
+	readonly controllerEpoch: string;
+	readonly peerId: string;
+	readonly sessionId: string;
 	readonly zoneId: string;
 }
 
@@ -24,6 +38,25 @@ export class OpenClawRuntimeStatusUnavailableError extends Error {
 
 interface OpenClawRuntimeStatusSnapshot extends OpenClawRuntimeStatusReport {
 	readonly receivedAtMs: number;
+}
+
+function assertRuntimeStatusSnapshotOk(options: {
+	readonly maxAgeMs: number;
+	readonly nowMs: number;
+	readonly snapshot: OpenClawRuntimeStatusSnapshot;
+}): void {
+	const ageMs = options.nowMs - options.snapshot.receivedAtMs;
+	if (ageMs > options.maxAgeMs) {
+		throw new OpenClawRuntimeStatusUnavailableError(
+			options.snapshot.zoneId,
+			`last gondolin plugin status is stale by ${String(ageMs - options.maxAgeMs)}ms`,
+		);
+	}
+
+	const failedFindings = options.snapshot.findings.filter((finding) => !finding.ok);
+	if (failedFindings.length > 0) {
+		throw new OpenClawDeploymentRequirementError(options.snapshot.zoneId, failedFindings);
+	}
 }
 
 export class OpenClawRuntimeStatusStore {
@@ -45,7 +78,7 @@ export class OpenClawRuntimeStatusStore {
 		return snapshot;
 	}
 
-	assertFreshOk(zoneId: string): void {
+	assertAnyFreshOk(zoneId: string): void {
 		const snapshot = this.snapshotsByZoneId.get(zoneId);
 		if (!snapshot) {
 			throw new OpenClawRuntimeStatusUnavailableError(
@@ -53,18 +86,38 @@ export class OpenClawRuntimeStatusStore {
 				'gondolin plugin has not reported runtime status',
 			);
 		}
+		assertRuntimeStatusSnapshotOk({
+			maxAgeMs: this.maxAgeMs,
+			nowMs: this.nowMs(),
+			snapshot,
+		});
+	}
 
-		const ageMs = this.nowMs() - snapshot.receivedAtMs;
-		if (ageMs > this.maxAgeMs) {
+	assertFreshOk(session: OpenClawRuntimeStatusSessionRef): void {
+		const snapshot = this.snapshotsByZoneId.get(session.zoneId);
+		if (!snapshot) {
 			throw new OpenClawRuntimeStatusUnavailableError(
-				zoneId,
-				`last gondolin plugin status is stale by ${String(ageMs - this.maxAgeMs)}ms`,
+				session.zoneId,
+				'gondolin plugin has not reported runtime status',
+			);
+		}
+		if (
+			snapshot.bootId !== session.bootId ||
+			snapshot.connectionId !== session.connectionId ||
+			snapshot.controllerEpoch !== session.controllerEpoch ||
+			snapshot.peerId !== session.peerId ||
+			snapshot.sessionId !== session.sessionId
+		) {
+			throw new OpenClawRuntimeStatusUnavailableError(
+				session.zoneId,
+				'gondolin plugin runtime status belongs to a stale control session',
 			);
 		}
 
-		const failedFindings = snapshot.findings.filter((finding) => !finding.ok);
-		if (failedFindings.length > 0) {
-			throw new OpenClawDeploymentRequirementError(zoneId, failedFindings);
-		}
+		assertRuntimeStatusSnapshotOk({
+			maxAgeMs: this.maxAgeMs,
+			nowMs: this.nowMs(),
+			snapshot,
+		});
 	}
 }

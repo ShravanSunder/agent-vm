@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
-import { createOpenClawToolVmLeaseCreateOptionsResolver } from './openclaw-tool-vm-lease-create-options.js';
+import {
+	createOpenClawToolVmLeaseCreateOptionsResolver,
+	type OpenClawToolVmLeaseAuthorityContext,
+} from './openclaw-tool-vm-lease-create-options.js';
 
 let testRoot: string;
 
@@ -119,11 +122,42 @@ async function createSystemConfigFixture(
 	} satisfies LoadedSystemConfig;
 }
 
+const acceptedRuntimeSession = {
+	bootId: 'gateway-boot-a',
+	connectionId: '55555555-5555-4555-8555-555555555555',
+	controllerEpoch: 'controller-epoch-a',
+	peerId: 'gateway-zone-a',
+	sessionId: '33333333-3333-4333-8333-333333333333',
+	zoneId: 'zone-a',
+} satisfies Omit<
+	OpenClawToolVmLeaseAuthorityContext,
+	'agentId' | 'agentWorkspaceDir' | 'workMountDir'
+>;
+
+function authorityContextFor(options?: {
+	readonly agentId?: string;
+	readonly agentWorkspaceDir?: string;
+	readonly sessionId?: string;
+	readonly workMountDir?: string;
+	readonly zoneId?: string;
+}): OpenClawToolVmLeaseAuthorityContext {
+	const agentId = options?.agentId ?? 'main';
+	return {
+		...acceptedRuntimeSession,
+		agentId,
+		agentWorkspaceDir: options?.agentWorkspaceDir ?? `/zone/agents/${agentId}`,
+		...(options?.sessionId === undefined ? {} : { sessionId: options.sessionId }),
+		workMountDir:
+			options?.workMountDir ?? `/home/openclaw/.openclaw/state/sandboxes/${agentId}/work`,
+		...(options?.zoneId === undefined ? {} : { zoneId: options.zoneId }),
+	};
+}
+
 function recordFreshRuntimeStatus(store: OpenClawRuntimeStatusStore): void {
 	store.record({
+		...acceptedRuntimeSession,
 		findings: [{ hint: 'ok', id: 'tool-vm-runtime-config', ok: true }],
 		pluginId: 'gondolin',
-		zoneId: 'zone-a',
 	});
 }
 
@@ -142,23 +176,13 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 		});
 
 		const options = await resolveLeaseCreateOptions({
-			authorityContext: {
-				agentId: 'main',
-				agentWorkspaceDir: '/zone/agents/main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-				zoneId: 'zone-a',
-			},
+			authorityContext: authorityContextFor(),
 		});
 
 		expect(options.effectiveIdleTtlMs).toBe(42_000);
 		await expect(
 			resolveLeaseCreateOptions({
-				authorityContext: {
-					agentId: 'main',
-					agentWorkspaceDir: '/zone/agents/main',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-					zoneId: 'zone-a',
-				},
+				authorityContext: authorityContextFor(),
 				requestedIdleTtlMs: 90_000,
 			}),
 		).rejects.toThrow(/at most 60000ms/u);
@@ -188,12 +212,9 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 		});
 
 		const options = await resolveLeaseCreateOptions({
-			authorityContext: {
+			authorityContext: authorityContextFor({
 				agentId: 'second',
-				agentWorkspaceDir: '/zone/agents/second',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
-				zoneId: 'zone-a',
-			},
+			}),
 		});
 
 		expect(options.agentId).toBe('second');
@@ -227,14 +248,30 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 
 		await expect(
 			resolveLeaseCreateOptions({
-				authorityContext: {
+				authorityContext: authorityContextFor({
 					agentId: 'second',
 					agentWorkspaceDir: '/home/openclaw/workspace-second',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
-					zoneId: 'zone-a',
-				},
+				}),
 			}),
 		).rejects.toThrow(/agentWorkspaceDir/u);
+	});
+
+	it('rejects a runtime status snapshot from a stale control session', async () => {
+		const systemConfig = await createSystemConfigFixture();
+		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
+		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
+		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
+			openClawRuntimeStatusStore,
+			systemConfig,
+		});
+
+		await expect(
+			resolveLeaseCreateOptions({
+				authorityContext: authorityContextFor({
+					sessionId: '99999999-9999-4999-8999-999999999999',
+				}),
+			}),
+		).rejects.toThrow(/stale control session/u);
 	});
 
 	it('does not trust a gateway-supplied profileId when zone policy has no profile mapping', async () => {
@@ -254,12 +291,7 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 
 		await expect(
 			resolveLeaseCreateOptions({
-				authorityContext: {
-					agentId: 'main',
-					agentWorkspaceDir: '/zone/agents/main',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-					zoneId: 'zone-a',
-				},
+				authorityContext: authorityContextFor(),
 			}),
 		).rejects.toThrow(/does not have a tool VM profile configured/u);
 	});
@@ -279,12 +311,11 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 
 		await expect(
 			resolveLeaseCreateOptions({
-				authorityContext: {
+				authorityContext: authorityContextFor({
 					agentId: 'victim',
 					agentWorkspaceDir: '/home/openclaw/workspace',
 					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-					zoneId: 'zone-a',
-				},
+				}),
 			}),
 		).rejects.toThrow(/does not declare OpenClaw agent 'victim'/u);
 	});

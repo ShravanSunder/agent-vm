@@ -813,7 +813,12 @@ describe('startControllerRuntime', () => {
 			vmId: 'gateway-vm-1',
 		});
 		recordOpenClawRuntimeStatus(capturedOpenClawRuntimeStatusStore, {
+			bootId: 'gateway-boot-a',
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			controllerEpoch: 'controller-epoch-a',
 			pluginId: 'gondolin',
+			peerId: 'gateway-zone-a',
+			sessionId: '33333333-3333-4333-8333-333333333333',
 			zoneId: 'shravan',
 			findings: [
 				{

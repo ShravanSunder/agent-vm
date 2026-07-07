@@ -347,6 +347,13 @@ describe('control protocol contracts', () => {
 		expect(CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace).toBeGreaterThan(
 			CONTROL_SESSION_TIMING_MS.activeUseStaleTtl,
 		);
+		expect(CONTROL_SESSION_TIMING_MS.manualReconnectInitialDelay).toBeGreaterThan(0);
+		expect(CONTROL_SESSION_TIMING_MS.manualReconnectInitialDelay).toBeLessThan(
+			CONTROL_SESSION_TIMING_MS.manualReconnectMaxDelay,
+		);
+		expect(CONTROL_SESSION_TIMING_MS.manualReconnectJitterRatio).toBeGreaterThan(0);
+		expect(CONTROL_SESSION_TIMING_MS.manualReconnectJitterRatio).toBeLessThan(1);
+		expect(CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold).toBeGreaterThan(1);
 		expect(CONTROL_QUEUE_LIMITS.maxHttpBufferBytes).toBe(65_536);
 	});
 

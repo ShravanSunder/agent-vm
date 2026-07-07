@@ -699,6 +699,21 @@ dedupe key
 terminal-result cache rule
 ```
 
+Priority control messages are high-priority but not hair-trigger recovery
+authority. A single missed priority ack is operator evidence and a failed send,
+not a terminal stale transition by itself. The controller only marks the
+session stale after the configured consecutive priority-ack failure threshold.
+Successful priority acks reset that counter. Manual reconnect after an
+accepted session uses bounded exponential backoff with jitter; it does not run a
+fixed-delay unbounded reconnect loop across zones.
+
+Runtime status evidence that gates Tool VM lease creation is bound to the
+accepted control session that delivered it. A zone-wide runtime-status snapshot
+may support operator display, but lease authority requires the snapshot's
+bootId, controllerEpoch, peerId, sessionId, and connectionId to match the
+caller context's accepted session. A status row from a previous boot/session is
+stale even if it is younger than the wall-clock freshness window.
+
 Timeout names must be specific:
 
 ```text

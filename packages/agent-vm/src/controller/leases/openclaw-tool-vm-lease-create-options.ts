@@ -23,6 +23,11 @@ type LeaseCreateOptions = Parameters<LeaseManager['createLease']>[0];
 export interface OpenClawToolVmLeaseAuthorityContext {
 	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
+	readonly bootId: string;
+	readonly connectionId: string;
+	readonly controllerEpoch: string;
+	readonly peerId: string;
+	readonly sessionId: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
 }
@@ -74,7 +79,14 @@ export function createOpenClawToolVmLeaseCreateOptionsResolver(
 			agentWorkspaceDir: authorityContext.agentWorkspaceDir,
 			context: `OpenClaw tool VM lease for zone '${authorityContext.zoneId}'`,
 		});
-		options.openClawRuntimeStatusStore.assertFreshOk(authorityContext.zoneId);
+		options.openClawRuntimeStatusStore.assertFreshOk({
+			bootId: authorityContext.bootId,
+			connectionId: authorityContext.connectionId,
+			controllerEpoch: authorityContext.controllerEpoch,
+			peerId: authorityContext.peerId,
+			sessionId: authorityContext.sessionId,
+			zoneId: authorityContext.zoneId,
+		});
 		const resolvedProfileId =
 			zone.agentToolVmProfiles?.[authorityContext.agentId] ?? zone.defaultToolVmProfile;
 		if (!resolvedProfileId) {

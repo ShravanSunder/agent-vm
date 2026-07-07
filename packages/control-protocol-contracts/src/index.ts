@@ -11,6 +11,10 @@ export const CONTROL_SESSION_TIMING_MS = {
 	controlSessionDeathGrace: 600_000,
 	engineIoPingInterval: 10_000,
 	engineIoPingTimeout: 10_000,
+	manualReconnectInitialDelay: 250,
+	manualReconnectJitterRatio: 0.2,
+	manualReconnectMaxDelay: 5_000,
+	priorityAckFailureThreshold: 3,
 	resyncTimeout: 5_000,
 } as const;
 

@@ -3,6 +3,7 @@ import { createServer, type Server as HttpServer } from 'node:http';
 import {
 	CONTROL_QUEUE_LIMITS,
 	CONTROL_PROTOCOL_VERSION,
+	CONTROL_SESSION_TIMING_MS,
 	type ControlEnvelope,
 	type ControlHello,
 } from '@agent-vm/control-protocol-contracts';
@@ -28,6 +29,7 @@ import {
 	CONTROL_SESSION_EVENT_NAMES,
 	type ControlSessionClient,
 	clearControlSessionSendBuffer,
+	computeControlSessionManualReconnectDelayMs,
 	createControlSessionClient,
 } from './control-session-client.js';
 import {
@@ -1465,6 +1467,39 @@ describe('control session client', () => {
 		}
 	});
 
+	it('computes bounded jittered delays for manual reconnect attempts', () => {
+		expect(
+			computeControlSessionManualReconnectDelayMs({
+				attempt: 0,
+				random: () => 0.5,
+			}),
+		).toBe(CONTROL_SESSION_TIMING_MS.manualReconnectInitialDelay);
+		expect(
+			computeControlSessionManualReconnectDelayMs({
+				attempt: 1,
+				random: () => 0.5,
+			}),
+		).toBe(CONTROL_SESSION_TIMING_MS.manualReconnectInitialDelay * 2);
+		expect(
+			computeControlSessionManualReconnectDelayMs({
+				attempt: 99,
+				random: () => 0.5,
+			}),
+		).toBe(CONTROL_SESSION_TIMING_MS.manualReconnectMaxDelay);
+		expect(
+			computeControlSessionManualReconnectDelayMs({
+				attempt: 0,
+				random: () => 0,
+			}),
+		).toBeLessThan(CONTROL_SESSION_TIMING_MS.manualReconnectInitialDelay);
+		expect(
+			computeControlSessionManualReconnectDelayMs({
+				attempt: 0,
+				random: () => 1,
+			}),
+		).toBeGreaterThan(CONTROL_SESSION_TIMING_MS.manualReconnectInitialDelay);
+	});
+
 	it('sends hello again before application messages after reconnect', async () => {
 		const httpServer = createServer();
 		const socketServer = new SocketIoServer(httpServer, {
@@ -2503,7 +2538,7 @@ describe('control session client', () => {
 		}
 	});
 
-	it('marks the session stale when a priority heartbeat cannot be acknowledged', async () => {
+	it('marks the session stale after consecutive priority heartbeat acknowledgements fail', async () => {
 		const httpServer = createServer();
 		const socketServer = new SocketIoServer(httpServer, {
 			addTrailingSlash: false,
@@ -2564,24 +2599,34 @@ describe('control session client', () => {
 
 		try {
 			await client.ready;
-			const firstHeartbeatEnvelope = {
-				...heartbeatEnvelope,
-				sequence: 1,
-			} satisfies ControlEnvelope;
-			await expect(
-				client.emitApplicationMessage(
-					firstHeartbeatEnvelope,
-					{ kind: 'heartbeat' },
-					{ observedAtMs: 1 },
-				),
-			).rejects.toThrow(/operation has timed out/u);
+			await Array.from(
+				{ length: CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold },
+				(_unused, heartbeatIndex) => heartbeatIndex,
+			).reduce<Promise<void>>(async (previousHeartbeat, heartbeatIndex) => {
+				await previousHeartbeat;
+				const heartbeatSequence = heartbeatIndex + 1;
+				await expect(
+					client.emitApplicationMessage(
+						{
+							...heartbeatEnvelope,
+							messageId: `10000000-0000-4000-8000-${String(heartbeatSequence).padStart(12, '0')}`,
+							sequence: heartbeatSequence,
+						},
+						{ kind: 'heartbeat' },
+						{ observedAtMs: heartbeatSequence },
+					),
+				).rejects.toThrow(/operation has timed out/u);
+				if (heartbeatSequence < CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold) {
+					expect(client.getDiagnostics().ready).toBe(true);
+				}
+			}, Promise.resolve());
 			await closeObserved;
-			expect(observedHeartbeatCount).toBe(1);
+			expect(observedHeartbeatCount).toBe(CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold);
 			expect(observedCloseReasons).toEqual([
 				{
 					reason: 'transport_error',
-					safeMessage: 'control session priority heartbeat timed out',
-					sessionId: firstHeartbeatEnvelope.sessionId,
+					safeMessage: `control session priority message failed ${String(CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold)} consecutive times`,
+					sessionId: heartbeatEnvelope.sessionId,
 				},
 			]);
 			await expect(
