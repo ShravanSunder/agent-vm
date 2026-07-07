@@ -207,9 +207,12 @@ function mergeToolVmCorrelation(
 	sessionCorrelation: ToolVmActiveUseCorrelation,
 	correlation: ToolVmActiveUseCorrelation | undefined,
 ): ToolVmActiveUseCorrelation {
+	if (correlation === undefined) {
+		return sessionCorrelation;
+	}
 	return {
 		...sessionCorrelation,
-		...(correlation === undefined ? {} : correlation),
+		...correlation,
 	};
 }
 
