@@ -161,7 +161,9 @@ Plan consequences:
   enforce a configurable per-namespace timeout defaulting to 12 seconds, settle
   all namespace results, use discovered tools from successful namespaces, and
   expose failed or timed-out namespaces as disabled/unavailable with safe
-  diagnostics.
+  diagnostics. Referenced unavailable namespaces are operator-visible but fail
+  validation proof; discovered tool input schemas must build validators during
+  live validation.
 - Full MCP proof must include at least one real `tool_portal_call`, not only
   `tools/list`.
 - Full Tool VM proof must include a non-default `beta` agent path that creates a

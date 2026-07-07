@@ -8,7 +8,12 @@ import {
 	type ResolvedMcpPortalProfile,
 	type SecretValue,
 } from '@agent-vm/config-contracts';
-import { createUpstreamMcpClientRuntime, UpstreamMcpError } from '@agent-vm/mcp-portal';
+import {
+	assertJsonObject,
+	buildZodValidatorFromJsonSchema,
+	createUpstreamMcpClientRuntime,
+	UpstreamMcpError,
+} from '@agent-vm/mcp-portal';
 import { resolveUpstreamServers } from '@agent-vm/mcp-portal/core';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
@@ -117,6 +122,42 @@ function validationHintForError(error: unknown): string {
 	].join('; ');
 }
 
+function validateLiveToolSchemas(options: {
+	readonly namespace: string;
+	readonly tools: Awaited<
+		ReturnType<ReturnType<typeof createUpstreamMcpClientRuntime>['listTools']>
+	>;
+	readonly zoneId: string;
+}): readonly ConfigValidationCheck[] {
+	return options.tools.flatMap((tool) => {
+		try {
+			const inputSchema = assertJsonObject(
+				tool.inputSchema,
+				`${options.namespace}.${tool.name} inputSchema`,
+			);
+			const validator = buildZodValidatorFromJsonSchema(inputSchema);
+			if (validator.ok) {
+				return [];
+			}
+			return [
+				{
+					hint: `${options.namespace}.${tool.name} input schema uses unsupported JSON Schema feature '${validator.error.feature}' at ${validator.error.path.join('.') || '<root>'}: ${validator.error.message}`,
+					name: `mcp-live-tool-schema-${options.zoneId}-${options.namespace}-${tool.name}`,
+					ok: false,
+				} satisfies ConfigValidationCheck,
+			];
+		} catch (error) {
+			return [
+				{
+					hint: `${options.namespace}.${tool.name} input schema is not a supported JSON object: ${errorMessage(error)}`,
+					name: `mcp-live-tool-schema-${options.zoneId}-${options.namespace}-${tool.name}`,
+					ok: false,
+				} satisfies ConfigValidationCheck,
+			];
+		}
+	});
+}
+
 function zoneConfigFailure(zoneId: string, error: unknown): readonly ConfigValidationCheck[] {
 	return [
 		{
@@ -165,6 +206,11 @@ async function validateMcpPortalNamespace(props: {
 				ok: true,
 				status: 'available',
 			},
+			...validateLiveToolSchemas({
+				namespace: props.namespace,
+				tools,
+				zoneId: props.zoneId,
+			}),
 			...profileToolChecks,
 		];
 	} catch (error) {
@@ -172,7 +218,7 @@ async function validateMcpPortalNamespace(props: {
 			{
 				hint: `${props.namespace} disabled/unavailable: ${validationHintForError(error)}`,
 				name: `mcp-live-${props.zoneId}-${props.namespace}`,
-				ok: true,
+				ok: false,
 				status: 'unavailable',
 			},
 		];

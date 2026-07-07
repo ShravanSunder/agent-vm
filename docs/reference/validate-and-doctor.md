@@ -50,9 +50,12 @@ deployment configs should not carry a raw WebSocket TCP passthrough field.
 
 Use `agent-vm validate --config config/system.jsonc --mcp-live` after changing
 MCP providers, provider secrets, or MCP Portal profile tool names. The live MCP
-pass resolves configured secrets, starts each provider, runs `tools/list`, and
-reports namespace, transport, phase, and hints for provider failures. That
-live upstream proof belongs to `validate --mcp-live`, not `doctor`.
+pass resolves configured secrets, starts each referenced provider, runs
+`tools/list`, checks discovered tool input schemas can build validators, and
+reports namespace, transport, phase, and hints for provider failures. A
+referenced namespace may still be reported as `unavailable` for operator
+diagnostics, but it fails validation proof. That live upstream proof belongs to
+`validate --mcp-live`, not `doctor`.
 
 ## doctor
 

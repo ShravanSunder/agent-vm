@@ -399,6 +399,20 @@ function deriveRepoDirectoryName(repoUrl: string, usedNames: Set<string>): strin
 	return candidate;
 }
 
+function normalizeWorkerRepoPolicyUrl(repoUrl: string): string {
+	try {
+		const parsedUrl = new URL(repoUrl);
+		parsedUrl.protocol = parsedUrl.protocol.toLowerCase();
+		parsedUrl.hostname = parsedUrl.hostname.toLowerCase();
+		parsedUrl.hash = '';
+		parsedUrl.search = '';
+		parsedUrl.pathname = parsedUrl.pathname.replace(/\/+$/u, '').replace(/\.git$/u, '');
+		return parsedUrl.toString();
+	} catch {
+		return repoUrl.replace(/\/+$/u, '').replace(/\.git$/u, '');
+	}
+}
+
 function trustedWorkerRepoPushPolicyFor(options: {
 	readonly repoUrl: string;
 	readonly zoneConfig: WorkerTaskZoneConfig;
@@ -406,8 +420,9 @@ function trustedWorkerRepoPushPolicyFor(options: {
 	if (options.zoneConfig.gateway.type !== 'worker') {
 		return { kind: 'missing' };
 	}
+	const normalizedRepoUrl = normalizeWorkerRepoPolicyUrl(options.repoUrl);
 	const policy = options.zoneConfig.gateway.repoPushPolicies?.find(
-		(candidate) => candidate.repoUrl === options.repoUrl,
+		(candidate) => normalizeWorkerRepoPolicyUrl(candidate.repoUrl) === normalizedRepoUrl,
 	);
 	if (policy === undefined) {
 		return { kind: 'missing' };

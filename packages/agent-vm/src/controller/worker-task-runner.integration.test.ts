@@ -554,7 +554,7 @@ describe('worker-task-runner', () => {
 				requestTaskId: 'request-task-1',
 				prompt: 'cross repo task',
 				repos: [
-					{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' },
+					{ repoUrl: 'https://github.com/org/frontend', baseBranch: 'main' },
 					{ repoUrl: 'https://github.com/org/backend.git', baseBranch: 'develop' },
 				],
 				context: {},
@@ -572,7 +572,7 @@ describe('worker-task-runner', () => {
 				'--bare',
 				'--branch',
 				'main',
-				'https://github.com/org/frontend.git',
+				'https://github.com/org/frontend',
 				path.join(result.taskRuntimeRoot, 'gitdirs', 'frontend.git'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
@@ -594,7 +594,7 @@ describe('worker-task-runner', () => {
 		expect(result.repos).toEqual([
 			{
 				repoId: 'frontend',
-				repoUrl: 'https://github.com/org/frontend.git',
+				repoUrl: 'https://github.com/org/frontend',
 				baseBranch: 'main',
 				pushPolicy: {
 					kind: 'trusted_config',

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path/posix';
 
 import {
@@ -149,6 +150,7 @@ function activeUseOutcomeForFinalizeParams(finalizeParams: {
 
 async function publishFinalizeToolVmSshHealthEvent(options: {
 	readonly agentId: string;
+	readonly correlation?: ToolVmActiveUseCorrelation | undefined;
 	readonly leaseId: string;
 	readonly publishHealthEvent: (event: AgentVmHealthEvent) => Promise<void>;
 	readonly timedOut: boolean;
@@ -156,6 +158,17 @@ async function publishFinalizeToolVmSshHealthEvent(options: {
 }): Promise<void> {
 	const event = {
 		agentId: options.agentId,
+		...(options.correlation?.requestId === undefined
+			? {}
+			: { requestId: options.correlation.requestId }),
+		...(options.correlation?.runId === undefined ? {} : { runId: options.correlation.runId }),
+		...(options.correlation?.sessionKeyDigest === undefined
+			? {}
+			: { sessionKeyDigest: options.correlation.sessionKeyDigest }),
+		...(options.correlation?.toolCallId === undefined
+			? {}
+			: { toolCallId: options.correlation.toolCallId }),
+		...(options.correlation?.traceId === undefined ? {} : { traceId: options.correlation.traceId }),
 		elapsedMs: 0,
 		...(options.timedOut ? { errorCode: 'ssh-command-timed-out' } : {}),
 		kind: 'tool-vm-ssh',
@@ -182,6 +195,22 @@ function mergedAbortSignal(
 		return secondSignal;
 	}
 	return AbortSignal.any([firstSignal, secondSignal]);
+}
+
+function sessionKeyCorrelation(sessionKey: string): ToolVmActiveUseCorrelation {
+	return {
+		sessionKeyDigest: createHash('sha256').update(sessionKey, 'utf8').digest('hex'),
+	};
+}
+
+function mergeToolVmCorrelation(
+	sessionCorrelation: ToolVmActiveUseCorrelation,
+	correlation: ToolVmActiveUseCorrelation | undefined,
+): ToolVmActiveUseCorrelation {
+	return {
+		...sessionCorrelation,
+		...(correlation === undefined ? {} : correlation),
+	};
 }
 
 function mergedAbortSignals(
@@ -330,6 +359,7 @@ export function createGondolinSandboxBackendFactory(
 				await runToolVmSshOperationWithGuard({
 					healthEvent: {
 						agentId,
+						correlation: sessionKeyCorrelation(params.sessionKey),
 						leaseId: renewedLease.leaseId,
 						operation: 'probe',
 						publish: publishHealthEvent,
@@ -446,12 +476,13 @@ function createSandboxBackendHandle(options: {
 	readonly sessionKey: string;
 	readonly zoneId: string;
 }): OpenClawSandboxBackendHandle {
+	const defaultCorrelation = sessionKeyCorrelation(options.sessionKey);
 	const createActiveUseHandle = async (
 		correlation?: ToolVmActiveUseCorrelation,
 	): Promise<ToolVmActiveUseHandle> => {
 		try {
 			return await createToolVmActiveUseHandle({
-				correlation,
+				correlation: mergeToolVmCorrelation(defaultCorrelation, correlation),
 				endActiveUse: async (useId: string, request: EndToolVmActiveUseRequest): Promise<void> => {
 					await options.leaseClient.endActiveUse(options.lease.leaseId, useId, request);
 				},
@@ -489,7 +520,8 @@ function createSandboxBackendHandle(options: {
 		correlation: ToolVmActiveUseCorrelation | undefined,
 		fn: (activeUseHandle: ToolVmActiveUseHandle) => Promise<TResult>,
 	): Promise<TResult> => {
-		const activeUseHandle = await createActiveUseHandle(correlation);
+		const operationCorrelation = mergeToolVmCorrelation(defaultCorrelation, correlation);
+		const activeUseHandle = await createActiveUseHandle(operationCorrelation);
 		try {
 			const result = await fn(activeUseHandle);
 			await activeUseHandle.dispose('completed');
@@ -522,6 +554,7 @@ function createSandboxBackendHandle(options: {
 				await runToolVmSshOperationWithGuard({
 					healthEvent: {
 						agentId: options.lease.agentId,
+						correlation: defaultCorrelation,
 						leaseId: options.lease.leaseId,
 						operation: 'file-bridge',
 						publish: options.publishHealthEvent,
@@ -642,6 +675,7 @@ function createSandboxBackendHandle(options: {
 				);
 				void publishFinalizeToolVmSshHealthEvent({
 					agentId: options.lease.agentId,
+					correlation: defaultCorrelation,
 					leaseId: options.lease.leaseId,
 					publishHealthEvent: options.publishHealthEvent,
 					timedOut: finalizeParams.timedOut,
@@ -661,6 +695,7 @@ function createSandboxBackendHandle(options: {
 					await runToolVmSshOperationWithGuard({
 						healthEvent: {
 							agentId: options.lease.agentId,
+							correlation: defaultCorrelation,
 							leaseId: options.lease.leaseId,
 							operation: 'command',
 							publish: options.publishHealthEvent,

@@ -568,6 +568,19 @@ export function createGatewayControlService(
 		pendingFullResyncSockets.add(socket);
 	}
 
+	function refreshGatewayFullResyncPending(): void {
+		fullResyncPending = pendingFullResyncSockets.size > 0;
+	}
+
+	function pruneDisconnectedFullResyncSockets(): void {
+		for (const pendingSocket of pendingFullResyncSockets) {
+			if (!pendingSocket.connected) {
+				pendingFullResyncSockets.delete(pendingSocket);
+			}
+		}
+		refreshGatewayFullResyncPending();
+	}
+
 	function resetGatewayControlStateAfterAcceptedFullResync(): void {
 		fullResyncPending = false;
 		latestWinsQueue.clear();
@@ -648,10 +661,10 @@ export function createGatewayControlService(
 	socketServer.on('connection', (socket) => {
 		socket.once('disconnect', () => {
 			pendingFullResyncSockets.delete(socket);
+			refreshGatewayFullResyncPending();
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
-				fullResyncPending = false;
 				latestWinsQueue.clear();
 				resolveAcceptedSessionWaiters(undefined);
 				rejectPendingGatewayControlCommandResults(
@@ -806,6 +819,7 @@ export function createGatewayControlService(
 	});
 
 	async function waitForAcceptedSession(): Promise<GatewayControlAcceptedSession | undefined> {
+		pruneDisconnectedFullResyncSockets();
 		if (fullResyncPending) {
 			return undefined;
 		}

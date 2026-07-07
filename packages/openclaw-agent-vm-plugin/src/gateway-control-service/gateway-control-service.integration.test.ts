@@ -345,6 +345,29 @@ async function waitForSocketDisconnect(socket: Socket): Promise<void> {
 	});
 }
 
+async function waitForGatewayAcceptedSession(
+	service: ReturnType<typeof createGatewayControlService>,
+): Promise<
+	Awaited<ReturnType<ReturnType<typeof createGatewayControlService>['getAcceptedSession']>>
+> {
+	const attemptRead = async (
+		attempt: number,
+	): Promise<
+		Awaited<ReturnType<ReturnType<typeof createGatewayControlService>['getAcceptedSession']>>
+	> => {
+		try {
+			return await service.getAcceptedSession();
+		} catch (error) {
+			if (attempt >= 20) {
+				throw error;
+			}
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			return await attemptRead(attempt + 1);
+		}
+	};
+	return await attemptRead(1);
+}
+
 function waitForNodeEvent(emitter: EventEmitter, eventName: string): Promise<void> {
 	return new Promise((resolve) => {
 		emitter.once(eventName, () => resolve());
@@ -555,6 +578,67 @@ describe('gateway control service', () => {
 		});
 		await waitForSocketDisconnect(firstClient);
 		expect(firstClient.connected).toBe(false);
+	});
+
+	it('keeps the incumbent usable after an abandoned full-resync challenger disconnects', async () => {
+		const fixture = createFixture();
+		const port = await listenWithService(fixture.service);
+		const firstCredential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const firstClient = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(firstCredential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(firstClient);
+		await waitForSocketConnect(firstClient);
+		const firstHelloResponse = ControlHelloResponseSchema.parse(
+			await firstClient.timeout(1_000).emitWithAck('control:hello', {
+				bootId: identity.bootId,
+				controllerEpoch: identity.controllerEpoch,
+				domain: 'gateway_control',
+				peerId: identity.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+			} satisfies ControlHello),
+		);
+		expect(firstHelloResponse.outcome).toBe('accepted');
+
+		const secondCredential = await fetchIssuedCredential(
+			port,
+			fixture.readyHeadersFor({ requestId: '88888888-8888-4888-8888-888888888888' }),
+		);
+		const secondClient = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(secondCredential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(secondClient);
+		await waitForSocketConnect(secondClient);
+
+		const secondHelloResponse = ControlHelloResponseSchema.parse(
+			await secondClient.timeout(1_000).emitWithAck('control:hello', {
+				bootId: identity.bootId,
+				controllerEpoch: identity.controllerEpoch,
+				domain: 'gateway_control',
+				peerId: identity.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+			} satisfies ControlHello),
+		);
+		expect(secondHelloResponse.outcome).toBe('resync_required');
+
+		secondClient.disconnect();
+		await waitForSocketDisconnect(secondClient);
+		await expect(waitForGatewayAcceptedSession(fixture.service)).resolves.toMatchObject({
+			sessionId: firstHelloResponse.sessionId,
+		});
+		expect(firstClient.connected).toBe(true);
 	});
 
 	it('accepts reconnect hello continuity after service process state is lost', async () => {

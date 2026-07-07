@@ -746,7 +746,7 @@ describe('runConfigValidation', () => {
 		});
 	});
 
-	it('marks failed MCP namespaces unavailable without suppressing successful namespaces', async () => {
+	it('fails referenced MCP namespaces that are unavailable without suppressing successful namespaces', async () => {
 		const systemConfig = await createSystemConfigWithLiveMcpFiles({
 			mcpConfig: {
 				schemaVersion: 1,
@@ -818,7 +818,7 @@ describe('runConfigValidation', () => {
 		expect(checks).toContainEqual({
 			hint: expect.stringContaining('disabled/unavailable'),
 			name: 'mcp-live-shravan-deepwiki',
-			ok: true,
+			ok: false,
 			status: 'unavailable',
 		});
 		expect(checks).toContainEqual({
@@ -839,6 +839,72 @@ describe('runConfigValidation', () => {
 		expect(listTools).toHaveBeenCalledWith({
 			agentScopeId: 'validate:shravan',
 			namespace: 'tavily',
+		});
+	});
+
+	it('fails live MCP validation when discovered tool schemas cannot build validators', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {
+					deepwiki: {
+						kind: 'mcp',
+						namespace: 'deepwiki',
+						secretPolicies: {},
+						transport: {
+							kind: 'streamable-http',
+							url: 'https://deepwiki.example.test/mcp',
+						},
+					},
+				},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['ask_question'] },
+								},
+								tools: { allow: ['ask_question'] },
+							},
+						},
+					},
+				},
+			},
+		});
+		const runtime = {
+			callTool: vi.fn(),
+			closeAgentScope: vi.fn(),
+			closeSession: vi.fn(),
+			listTools: vi.fn(async () => [
+				{
+					inputSchema: {
+						properties: { repo: { type: 'string' } },
+						required: ['repo'],
+						type: 'object' as const,
+						unevaluatedProperties: false,
+					},
+					name: 'ask_question',
+				},
+			]),
+		} satisfies UpstreamMcpClientRuntime;
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => runtime,
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toContainEqual({
+			hint: expect.stringContaining(
+				"deepwiki.ask_question input schema uses unsupported JSON Schema feature 'unevaluatedProperties'",
+			),
+			name: 'mcp-live-tool-schema-shravan-deepwiki-ask_question',
+			ok: false,
 		});
 	});
 

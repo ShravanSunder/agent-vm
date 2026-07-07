@@ -604,6 +604,19 @@ export function createWorkerControlService(
 		pendingFullResyncSockets.add(socket);
 	}
 
+	function refreshWorkerFullResyncPending(): void {
+		fullResyncPending = pendingFullResyncSockets.size > 0;
+	}
+
+	function pruneDisconnectedFullResyncSockets(): void {
+		for (const pendingSocket of pendingFullResyncSockets) {
+			if (!pendingSocket.connected) {
+				pendingFullResyncSockets.delete(pendingSocket);
+			}
+		}
+		refreshWorkerFullResyncPending();
+	}
+
 	function resetWorkerControlStateAfterAcceptedFullResync(): void {
 		fullResyncPending = false;
 		latestWinsQueue.clear();
@@ -680,10 +693,10 @@ export function createWorkerControlService(
 	socketServer.on('connection', (socket) => {
 		socket.once('disconnect', () => {
 			pendingFullResyncSockets.delete(socket);
+			refreshWorkerFullResyncPending();
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
-				fullResyncPending = false;
 				latestWinsQueue.clear();
 				resolveAcceptedSessionWaiters(undefined);
 				rejectPendingWorkerControlCommandResults(
@@ -844,6 +857,7 @@ export function createWorkerControlService(
 	});
 
 	async function waitForAcceptedSession(): Promise<WorkerControlAcceptedSession | undefined> {
+		pruneDisconnectedFullResyncSockets();
 		if (fullResyncPending) {
 			return undefined;
 		}

@@ -88,7 +88,10 @@ Likely proof files:
 - `validate --mcp-live` or its extracted discovery helper runs all referenced
   namespaces concurrently and returns settled results.
 - A timed-out namespace returns a typed disabled/unavailable result and does not
-  suppress successful namespace tool discovery.
+  suppress successful namespace tool discovery. Referenced unavailable
+  namespaces remain visible as unavailable but fail validation proof.
+- Discovered tools build input-schema validators during live validation, so
+  schema-unsupported tools fail before call time.
 - The default per-namespace discovery timeout is 12 seconds.
 - The timeout is configurable through the accepted config or runtime options,
   with docs/manual guidance and tests.

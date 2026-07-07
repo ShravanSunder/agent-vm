@@ -1494,6 +1494,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				leaseId: testToolVmLeaseId('lease-finalize-health'),
 				operation: 'finalize',
 				result: 'ok',
+				sessionKeyDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
 				zoneId: 'shravan',
 			}),
 		);
