@@ -98,9 +98,9 @@ conditions in the current plan:
      explicitly choose operator-auth-gate per route family before S4b.
 
 4. OPEN-2:
-   - Accepted disposition for this hard cutover: collector-mode raw tcpHosts
-     fail closed. A future collector replacement transport or exception must
-     route through a new spec update.
+   - Superseded by the 2026-07-06 user correction and current plan: collector-mode
+     raw tcpHosts fail closed, but enabled OpenClaw zone observability must remain
+     supported through mediated OTLP HTTP to the configured host collector.
 
 5. Q2:
    - Spec confirmation for Worker corroboration probe source. Blocks only the
@@ -166,7 +166,7 @@ Design discussion — long-running workers / multi-day tasks (user model):
   durable-session-store seam (user: skip). New proofs: RESILIENT-GRACE,
   RECREATE-FENCE. Liveness constants stay session-scoped.
 
-Confirmed non-issues (no change): collector-mode deferral gating, S4b 4-family
+Confirmed non-issues (no change): mediated OpenClaw observability replacement, S4b 4-family
 coverage, eventKind enum staying in gateway-interface, constant ordering,
 handshake trust root, and (library-verified) `io.engine.handleUpgrade` +
 `allowRequest` pre-101 rejection.
