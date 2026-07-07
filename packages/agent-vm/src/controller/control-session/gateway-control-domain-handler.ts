@@ -224,11 +224,44 @@ function assertUnreachableHealthPayload(payload: never): never {
 	);
 }
 
+function healthEventCorrelationFromPayload(
+	correlation: GatewayControlHealthEventPayload['correlation'],
+): Partial<
+	Pick<
+		AgentVmHealthEvent,
+		| 'causationId'
+		| 'correlationId'
+		| 'requestId'
+		| 'runId'
+		| 'sessionKeyDigest'
+		| 'toolCallId'
+		| 'traceId'
+	>
+> {
+	if (correlation === undefined) {
+		return {};
+	}
+	return {
+		...(correlation.causationId === undefined ? {} : { causationId: correlation.causationId }),
+		...(correlation.correlationId === undefined
+			? {}
+			: { correlationId: correlation.correlationId }),
+		...(correlation.requestId === undefined ? {} : { requestId: correlation.requestId }),
+		...(correlation.runId === undefined ? {} : { runId: correlation.runId }),
+		...(correlation.sessionKeyDigest === undefined
+			? {}
+			: { sessionKeyDigest: correlation.sessionKeyDigest }),
+		...(correlation.toolCallId === undefined ? {} : { toolCallId: correlation.toolCallId }),
+		...(correlation.traceId === undefined ? {} : { traceId: correlation.traceId }),
+	};
+}
+
 function healthEventFromPayload(options: {
 	readonly payload: GatewayControlHealthEventPayload;
 	readonly zoneId: string;
 }): AgentVmHealthEvent {
 	const base = {
+		...healthEventCorrelationFromPayload(options.payload.correlation),
 		observedAtMs: options.payload.observedAtMs,
 		result: healthResultForGatewayInterface(options.payload.result),
 		zoneId: options.zoneId,

@@ -78,4 +78,38 @@ describe('mapHealthEventToTelemetry', () => {
 			'agent_vm.health.result': 'failed',
 		});
 	});
+
+	it('maps health correlation into operator-visible log attributes only', () => {
+		const event = {
+			agentId: 'main',
+			causationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			correlationId: 'correlation-main',
+			elapsedMs: 17,
+			kind: 'tool-vm-ssh',
+			leaseId: 'lease-main',
+			observedAtMs: 1_781_445_000_000,
+			operation: 'probe',
+			requestId: 'request-main',
+			result: 'ok',
+			runId: 'run-main',
+			sessionKeyDigest: 'b'.repeat(64),
+			toolCallId: 'tool-call-main',
+			traceId: '0123456789abcdef0123456789abcdef',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		const telemetry = mapHealthEventToTelemetry(event);
+
+		expect(telemetry.log.attributes).toMatchObject({
+			'agent_vm.causation.id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			'agent_vm.correlation.id': 'correlation-main',
+			'agent_vm.request.id': 'request-main',
+			'agent_vm.run.id': 'run-main',
+			'agent_vm.session_key.digest': 'b'.repeat(64),
+			'agent_vm.tool_call.id': 'tool-call-main',
+			'agent_vm.trace.id': '0123456789abcdef0123456789abcdef',
+		});
+		expect(telemetry.metricSamples[0]?.attributes).not.toHaveProperty('agent_vm.trace.id');
+		expect(telemetry.metricSamples[0]?.attributes).not.toHaveProperty('agent_vm.correlation.id');
+	});
 });

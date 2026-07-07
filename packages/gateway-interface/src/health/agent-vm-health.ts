@@ -24,8 +24,15 @@ export const agentVmHealthResultKinds = ['ok', 'failed', 'timeout', 'stale'] as 
 export type AgentVmHealthResultKind = (typeof agentVmHealthResultKinds)[number];
 
 export interface AgentVmHealthEventBase {
+	readonly causationId?: string | undefined;
+	readonly correlationId?: string | undefined;
 	readonly observedAtMs: number;
+	readonly requestId?: string | undefined;
 	readonly result: AgentVmHealthResultKind;
+	readonly runId?: string | undefined;
+	readonly sessionKeyDigest?: string | undefined;
+	readonly toolCallId?: string | undefined;
+	readonly traceId?: string | undefined;
 	readonly zoneId: string;
 }
 

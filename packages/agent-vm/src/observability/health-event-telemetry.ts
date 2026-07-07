@@ -42,6 +42,7 @@ export function mapHealthEventToTelemetry(event: AgentVmHealthEvent): HealthEven
 		addSafeErrorCode(baseAttributes, event.errorCode);
 	}
 
+	addCorrelationAttributes(baseAttributes, event);
 	addKindSpecificAttributes(baseAttributes, event);
 
 	const metricSamples: HealthEventTelemetryMetricSample[] = [
@@ -67,6 +68,33 @@ export function mapHealthEventToTelemetry(event: AgentVmHealthEvent): HealthEven
 		},
 		metricSamples,
 	};
+}
+
+function addCorrelationAttributes(
+	attributes: Record<string, TelemetryAttributeValue>,
+	event: AgentVmHealthEvent,
+): void {
+	if (event.traceId !== undefined) {
+		attributes['agent_vm.trace.id'] = event.traceId;
+	}
+	if (event.correlationId !== undefined) {
+		attributes['agent_vm.correlation.id'] = event.correlationId;
+	}
+	if (event.causationId !== undefined) {
+		attributes['agent_vm.causation.id'] = event.causationId;
+	}
+	if (event.requestId !== undefined) {
+		attributes['agent_vm.request.id'] = event.requestId;
+	}
+	if (event.runId !== undefined) {
+		attributes['agent_vm.run.id'] = event.runId;
+	}
+	if (event.sessionKeyDigest !== undefined) {
+		attributes['agent_vm.session_key.digest'] = event.sessionKeyDigest;
+	}
+	if (event.toolCallId !== undefined) {
+		attributes['agent_vm.tool_call.id'] = event.toolCallId;
+	}
 }
 
 function addKindSpecificAttributes(

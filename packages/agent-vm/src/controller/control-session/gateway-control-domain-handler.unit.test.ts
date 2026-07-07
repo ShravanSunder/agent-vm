@@ -737,6 +737,15 @@ describe('gateway control domain handler', () => {
 				operation: 'health_event',
 				payload: {
 					agentId: 'main',
+					correlation: {
+						causationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+						correlationId: 'correlation-main',
+						requestId: 'request-main',
+						runId: 'run-main',
+						sessionKeyDigest: 'a'.repeat(64),
+						toolCallId: 'tool-call-main',
+						traceId: '0123456789abcdef0123456789abcdef',
+					},
 					elapsedMs: 25,
 					eventKind: 'tool-vm-ssh',
 					leaseId: 'lease-main',
@@ -751,11 +760,18 @@ describe('gateway control domain handler', () => {
 		expect(recordHealthEvent).toHaveBeenCalledWith({
 			kind: 'tool-vm-ssh',
 			agentId: 'main',
+			causationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			correlationId: 'correlation-main',
 			elapsedMs: 25,
 			leaseId: 'lease-main',
 			observedAtMs: 1_000,
 			operation: 'probe',
+			requestId: 'request-main',
 			result: 'ok',
+			runId: 'run-main',
+			sessionKeyDigest: 'a'.repeat(64),
+			toolCallId: 'tool-call-main',
+			traceId: '0123456789abcdef0123456789abcdef',
 			zoneId: acceptedSession.zoneId,
 		});
 	});
