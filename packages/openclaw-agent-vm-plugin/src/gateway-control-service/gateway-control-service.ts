@@ -446,6 +446,9 @@ export function createGatewayControlService(
 		| Socket<GatewayControlControllerToGatewayEvents, GatewayControlGatewayToControllerEvents>
 		| undefined;
 	let acceptedSession: GatewayControlAcceptedSession | undefined;
+	const pendingFullResyncSockets = new Set<
+		Socket<GatewayControlControllerToGatewayEvents, GatewayControlGatewayToControllerEvents>
+	>();
 	let lastSeenControllerSequence = 0;
 	let lastSeenPeerSequence = 0;
 	let nextPeerSequenceValue = 1;
@@ -559,20 +562,17 @@ export function createGatewayControlService(
 			GatewayControlGatewayToControllerEvents
 		>,
 	): void {
-		const previousSocket = acceptedSocket;
-		acceptedSocket = undefined;
-		acceptedSession = undefined;
+		pendingFullResyncSockets.add(socket);
+	}
+
+	function resetGatewayControlStateAfterAcceptedFullResync(): void {
 		latestWinsQueue.clear();
 		lastSeenControllerSequence = 0;
 		lastSeenPeerSequence = 0;
 		nextPeerSequenceValue = 1;
-		resolveAcceptedSessionWaiters(undefined);
 		rejectPendingGatewayControlCommandResults(
 			new Error('resync_required: gateway control session requires full hello resync'),
 		);
-		if (previousSocket !== undefined && previousSocket !== socket) {
-			previousSocket.disconnect(true);
-		}
 	}
 
 	const engine = new EngineIoServer({
@@ -612,7 +612,16 @@ export function createGatewayControlService(
 		return 'accepted';
 	}
 
-	function helloContinuityOutcome(hello: ControlHello): ControlHelloResponse['outcome'] {
+	function helloContinuityOutcome(
+		socket: Socket<
+			GatewayControlControllerToGatewayEvents,
+			GatewayControlGatewayToControllerEvents
+		>,
+		hello: ControlHello,
+	): ControlHelloResponse['outcome'] {
+		if (pendingFullResyncSockets.has(socket) && hello.previousSessionId === undefined) {
+			return 'accepted';
+		}
 		const previousSession = acceptedSession;
 		if (previousSession === undefined) {
 			if (hello.previousSessionId === undefined) {
@@ -634,6 +643,7 @@ export function createGatewayControlService(
 
 	socketServer.on('connection', (socket) => {
 		socket.once('disconnect', () => {
+			pendingFullResyncSockets.delete(socket);
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
@@ -664,7 +674,7 @@ export function createGatewayControlService(
 				socket.disconnect(true);
 				return;
 			}
-			const outcome = helloContinuityOutcome(parsedHello.data);
+			const outcome = helloContinuityOutcome(socket, parsedHello.data);
 			const response = {
 				connectionId: randomUUID(),
 				controllerEpoch: options.identity.controllerEpoch,
@@ -680,6 +690,10 @@ export function createGatewayControlService(
 				acknowledge(response);
 				socket.disconnect(true);
 				return;
+			}
+			const acceptedAfterFullResync = pendingFullResyncSockets.delete(socket);
+			if (acceptedAfterFullResync) {
+				resetGatewayControlStateAfterAcceptedFullResync();
 			}
 			if (acceptedSocket !== undefined && acceptedSocket !== socket) {
 				acceptedSocket.disconnect(true);

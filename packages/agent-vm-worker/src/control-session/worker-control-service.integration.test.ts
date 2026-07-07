@@ -549,8 +549,10 @@ describe('worker control service', () => {
 		);
 
 		expect(secondHelloResponse.outcome).toBe('resync_required');
-		await waitForSocketDisconnect(firstClient);
-		expect(firstClient.connected).toBe(false);
+		expect(firstClient.connected).toBe(true);
+		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
+			sessionId: firstHelloResponse.sessionId,
+		});
 		const freshHelloResponse = ControlHelloResponseSchema.parse(
 			await secondClient.timeout(1_000).emitWithAck('control:hello', {
 				bootId: identity.bootId,
@@ -561,6 +563,8 @@ describe('worker control service', () => {
 			} satisfies ControlHello),
 		);
 		expect(freshHelloResponse.outcome).toBe('accepted');
+		await waitForSocketDisconnect(firstClient);
+		expect(firstClient.connected).toBe(false);
 	});
 
 	it('accepts reconnect hello continuity after service process state is lost', async () => {

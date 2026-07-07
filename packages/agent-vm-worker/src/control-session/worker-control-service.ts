@@ -491,6 +491,9 @@ export function createWorkerControlService(
 		| Socket<WorkerControlControllerToWorkerEvents, WorkerControlWorkerToControllerEvents>
 		| undefined;
 	let acceptedSession: WorkerControlAcceptedSession | undefined;
+	const pendingFullResyncSockets = new Set<
+		Socket<WorkerControlControllerToWorkerEvents, WorkerControlWorkerToControllerEvents>
+	>();
 	let lastSeenControllerSequence = 0;
 	let lastSeenPeerSequence = 0;
 	let nextPeerSequenceValue = 1;
@@ -595,20 +598,17 @@ export function createWorkerControlService(
 	function resetWorkerControlSessionForFullResync(
 		socket: Socket<WorkerControlControllerToWorkerEvents, WorkerControlWorkerToControllerEvents>,
 	): void {
-		const previousSocket = acceptedSocket;
-		acceptedSocket = undefined;
-		acceptedSession = undefined;
+		pendingFullResyncSockets.add(socket);
+	}
+
+	function resetWorkerControlStateAfterAcceptedFullResync(): void {
 		latestWinsQueue.clear();
 		lastSeenControllerSequence = 0;
 		lastSeenPeerSequence = 0;
 		nextPeerSequenceValue = 1;
-		resolveAcceptedSessionWaiters(undefined);
 		rejectPendingWorkerControlCommandResults(
 			new Error('resync_required: worker control session requires full hello resync'),
 		);
-		if (previousSocket !== undefined && previousSocket !== socket) {
-			previousSocket.disconnect(true);
-		}
 	}
 
 	const engine = new EngineIoServer({
@@ -647,7 +647,13 @@ export function createWorkerControlService(
 		return 'accepted';
 	}
 
-	function helloContinuityOutcome(hello: ControlHello): ControlHelloResponse['outcome'] {
+	function helloContinuityOutcome(
+		socket: Socket<WorkerControlControllerToWorkerEvents, WorkerControlWorkerToControllerEvents>,
+		hello: ControlHello,
+	): ControlHelloResponse['outcome'] {
+		if (pendingFullResyncSockets.has(socket) && hello.previousSessionId === undefined) {
+			return 'accepted';
+		}
 		const previousSession = acceptedSession;
 		if (previousSession === undefined) {
 			if (hello.previousSessionId === undefined) {
@@ -669,6 +675,7 @@ export function createWorkerControlService(
 
 	socketServer.on('connection', (socket) => {
 		socket.once('disconnect', () => {
+			pendingFullResyncSockets.delete(socket);
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
@@ -701,7 +708,7 @@ export function createWorkerControlService(
 					socket.disconnect(true);
 					return;
 				}
-				const outcome = helloContinuityOutcome(parsedHello.data);
+				const outcome = helloContinuityOutcome(socket, parsedHello.data);
 				const response = {
 					connectionId: randomUUID(),
 					controllerEpoch: options.identity.controllerEpoch,
@@ -717,6 +724,10 @@ export function createWorkerControlService(
 					acknowledge(response);
 					socket.disconnect(true);
 					return;
+				}
+				const acceptedAfterFullResync = pendingFullResyncSockets.delete(socket);
+				if (acceptedAfterFullResync) {
+					resetWorkerControlStateAfterAcceptedFullResync();
 				}
 				if (acceptedSocket !== undefined && acceptedSocket !== socket) {
 					acceptedSocket.disconnect(true);
