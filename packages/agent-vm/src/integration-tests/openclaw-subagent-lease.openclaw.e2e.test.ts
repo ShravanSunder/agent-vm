@@ -6,7 +6,10 @@ import path from 'node:path';
 import { type ManagedVm } from '@agent-vm/gondolin-adapter';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
+	testExports as toolVmWriteReadE2eToolTestExports,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -33,6 +36,7 @@ const mainAgentId = 'main';
 const betaAgentId = 'beta';
 const agentIds = [mainAgentId, betaAgentId] as const;
 const gatewayToken = 'subagent-lease-smoke-gateway-token';
+const toolVmWriteReadProbeKey = 'subagent-e2e-tool-vm-write-read-proof-key';
 const mockOpenAiPort = 18231;
 const subagentE2eResultPrefix = 'AGENT_VM_SUBAGENT_E2E_RESULT ';
 const defaultFlapCount = 3;
@@ -175,18 +179,24 @@ async function callToolVmWriteReadProbeRoute(options: {
 	if (!gatewayIngress) {
 		throw new Error('OpenClaw subagent e2e did not expose a gateway ingress URL.');
 	}
+	const body = JSON.stringify({
+		agentId: options.agentId,
+		filePath: options.filePath,
+		marker: options.marker,
+		sessionKey: options.sessionKey,
+	});
 	const response = await fetch(
 		`http://${gatewayIngress.host}:${String(gatewayIngress.port)}${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH}`,
 		{
-			body: JSON.stringify({
-				agentId: options.agentId,
-				filePath: options.filePath,
-				marker: options.marker,
-				sessionKey: options.sessionKey,
-			}),
+			body,
 			headers: {
 				authorization: `Bearer ${gatewayToken}`,
 				'content-type': 'application/json',
+				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER]:
+					toolVmWriteReadE2eToolTestExports.signToolVmWriteReadE2eRouteBody(
+						body,
+						toolVmWriteReadProbeKey,
+					),
 			},
 			method: 'POST',
 		},
@@ -869,10 +879,17 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			injection: 'env',
 			source: 'environment',
 		};
+		systemZone.secrets[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV] = {
+			audience: 'gateway',
+			envVar: AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
+			injection: 'env',
+			source: 'environment',
+		};
 		systemZone.gateway.rawEnvSecrets = [
 			...(systemZone.gateway.rawEnvSecrets ?? []),
 			'OPENAI_API_KEY',
 			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
 		];
 		const zoneFilesDir = systemZone.gateway.zoneFilesDir;
 		await Promise.all(
@@ -900,6 +917,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			},
 			secrets: {
 				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV]: '1',
+				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV]: toolVmWriteReadProbeKey,
 				GITHUB_TOKEN: 'unused-subagent-smoke-token',
 				OPENAI_API_KEY: 'subagent-smoke-mock-openai-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,

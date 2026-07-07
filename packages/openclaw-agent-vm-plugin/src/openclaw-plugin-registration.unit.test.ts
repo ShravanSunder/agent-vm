@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
@@ -13,10 +14,18 @@ import defaultPlugin, {
 	createBackendDeps,
 	type SshHelpers,
 } from './openclaw-plugin-registration.js';
-import type { OpenClawSandboxFsBridge } from './sandbox-backend-factory.js';
+import type { OpenClawHttpRouteRegistration } from './openclaw-sandbox-sdk-contract.js';
+import type {
+	OpenClawSandboxBackendHandle,
+	OpenClawSandboxFsBridge,
+} from './sandbox-backend-factory.js';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
+	registerToolVmWriteReadE2eRoute,
+	testExports as toolVmWriteReadE2eToolTestExports,
 } from './tool-vm-write-read-e2e-tool.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
@@ -94,21 +103,100 @@ function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 function registeredRoute(
 	registerHttpRoute: ReturnType<typeof vi.fn>,
 	pathname: string,
-): { readonly handleUpgrade?: unknown; readonly handler?: unknown } {
+): OpenClawHttpRouteRegistration {
 	const route = registerHttpRoute.mock.calls
-		.map(
-			(call) =>
-				call[0] as {
-					readonly handleUpgrade?: unknown;
-					readonly handler?: unknown;
-					readonly path?: string;
-				},
-		)
+		.map((call) => call[0] as OpenClawHttpRouteRegistration)
 		.find((candidate) => candidate.path === pathname);
 	if (route === undefined) {
 		throw new Error(`Expected route ${pathname} to be registered.`);
 	}
 	return route;
+}
+
+interface CapturedHttpResponse {
+	readonly bodyText: string;
+	readonly headers: Readonly<Record<string, string>>;
+	readonly statusCode: number;
+}
+
+async function invokeRegisteredRoute(options: {
+	readonly bodyText: string;
+	readonly headers?: Readonly<Record<string, string>>;
+	readonly route: OpenClawHttpRouteRegistration;
+}): Promise<CapturedHttpResponse> {
+	const responseHeaders: Record<string, string> = {};
+	let statusCode = 200;
+	let bodyText = '';
+	const request = Readable.from([Buffer.from(options.bodyText, 'utf8')]) as Readable & {
+		headers: Readonly<Record<string, string>>;
+	};
+	request.headers = options.headers ?? {};
+	const response = {
+		get statusCode(): number {
+			return statusCode;
+		},
+		set statusCode(value: number) {
+			statusCode = value;
+		},
+		end: (chunk?: string | Buffer): void => {
+			bodyText = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : (chunk ?? '');
+		},
+		setHeader: (name: string, value: number | string | readonly string[]): void => {
+			responseHeaders[name.toLowerCase()] = Array.isArray(value) ? value.join(', ') : String(value);
+		},
+	};
+	await options.route.handler(
+		request as unknown as Parameters<OpenClawHttpRouteRegistration['handler']>[0],
+		response as Parameters<OpenClawHttpRouteRegistration['handler']>[1],
+	);
+	return {
+		bodyText,
+		headers: responseHeaders,
+		statusCode,
+	};
+}
+
+function createToolVmWriteReadProbeBody(options?: {
+	readonly agentId?: string;
+	readonly filePath?: string;
+	readonly marker?: string;
+	readonly sessionKey?: string;
+}): string {
+	return JSON.stringify({
+		agentId: options?.agentId ?? 'beta',
+		filePath: options?.filePath ?? '.agent-vm/proof.txt',
+		marker: options?.marker ?? 'probe-marker',
+		sessionKey: options?.sessionKey ?? 'agent:beta:tool-vm-write-read:test-session',
+	});
+}
+
+function createToolVmWriteReadProbeHeaders(bodyText: string): Readonly<Record<string, string>> {
+	return {
+		[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER]:
+			toolVmWriteReadE2eToolTestExports.signToolVmWriteReadE2eRouteBody(
+				bodyText,
+				'test-tool-vm-write-read-proof-key',
+			),
+	};
+}
+
+function createMockToolVmWriteReadBackend(): OpenClawSandboxBackendHandle {
+	return {
+		buildExecSpec: vi.fn(async () => ({
+			argv: ['sh', '-lc', 'true'],
+			env: {},
+			stdinMode: 'pipe-closed' as const,
+		})),
+		id: 'mock-tool-vm-backend',
+		runShellCommand: vi.fn(async () => ({
+			code: 0,
+			stderr: Buffer.from(''),
+			stdout: Buffer.from('probe-marker'),
+		})),
+		runtimeId: 'mock-runtime',
+		runtimeLabel: 'mock-runtime',
+		workdir: '/workspace',
+	};
 }
 
 describe('createGondolinPlugin', () => {
@@ -363,6 +451,7 @@ describe('createGondolinPlugin', () => {
 		const registerHttpRoute = vi.fn();
 		const registerTool = vi.fn();
 		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
 
 		try {
 			defaultPlugin.register({
@@ -382,6 +471,127 @@ describe('createGondolinPlugin', () => {
 		} finally {
 			stderrWrite.mockRestore();
 		}
+	});
+
+	it('rejects the private e2e Tool VM write/read route without a proof signature', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText: createToolVmWriteReadProbeBody(),
+			route: registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(401);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: { message: 'tool-vm-write-read-e2e: missing proof signature.' },
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('rejects the private e2e Tool VM write/read route when body agent does not match the session key', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			agentId: 'main',
+			sessionKey: 'agent:beta:tool-vm-write-read:test-session',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(403);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: { message: 'tool-vm-write-read-e2e: body agentId does not match sessionKey agent.' },
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('rejects the private e2e Tool VM write/read route for unsafe proof paths', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '../outside.txt',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(400);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: { message: 'tool-vm-write-read-e2e: filePath must stay under .agent-vm/.' },
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('runs the private e2e Tool VM write/read route with a signed same-agent proof', async () => {
+		const registerHttpRoute = vi.fn();
+		const backend = createMockToolVmWriteReadBackend();
+		const backendFactory = vi.fn(async () => backend);
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody();
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(200);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			details: {
+				agentId: 'beta',
+				filePath: '.agent-vm/proof.txt',
+				marker: 'probe-marker',
+				readBack: 'probe-marker',
+				sessionKey: 'agent:beta:tool-vm-write-read:test-session',
+			},
+			ok: true,
+		});
+		expect(backendFactory).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentWorkspaceDir: '/zone/agents/beta',
+				scopeKey: 'agent:beta:tool-vm-write-read:test-session',
+				sessionKey: 'agent:beta:tool-vm-write-read:test-session',
+			}),
+		);
+		expect(backend.runShellCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				script: expect.stringContaining("proof_file='.agent-vm/proof.txt'"),
+			}),
+		);
 	});
 
 	it('does not publish Tool VM runtime status through controller HTTP during full registration', async () => {

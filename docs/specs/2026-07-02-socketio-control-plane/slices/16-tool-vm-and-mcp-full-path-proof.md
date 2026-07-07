@@ -53,6 +53,15 @@ lease creation, and lease/use state must not fall back to
 `controller.vm.host:18800`, `CONTROLLER_BASE_URL`, or old direct controller HTTP
 callbacks.
 
+Any deterministic proof route added for this slice is not a general product API.
+If the route is present in the plugin bundle, it must remain disabled by
+default and must require a separate e2e proof key in addition to normal plugin
+auth. The route must sign the exact request body, derive the effective agent
+from the authenticated session key instead of trusting a caller-selected
+`agentId`, reject foreign-agent bodies, reject absolute paths, `..`, NUL bytes,
+and paths outside `.agent-vm/`, and cap request body size. A failure in any of
+those checks must return a typed 4xx response without creating a Tool VM lease.
+
 ## Write Surface
 
 Likely product files:
