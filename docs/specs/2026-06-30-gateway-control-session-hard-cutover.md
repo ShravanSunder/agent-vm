@@ -991,6 +991,14 @@ export const GatewayControlRpcResultSchema = z.enum([
 ]);
 ```
 
+`operation_cancel` is a reserved typed control operation in this cutover, not a
+claim that gateway or worker work can already be aborted. Implementations must
+parse and policy-check it so priority-lane, kind-exact, and domain-separation
+proofs cover the operation, then return a typed unimplemented/error result. A
+future real cancel slice must define active-operation identity, idempotent
+terminal races, and an abort path through the owning executor before changing
+this into a successful cancel path.
+
 Operation payload schemas are defined per operation. Every payload is strict and
 rejects controller-owned authority fields before dispatch:
 
@@ -1353,7 +1361,10 @@ lease_use_start/heartbeat/end           result plus sanitized active-use
                                         leaseRejectionReason so force-released,
                                         generation-stale, and absent leases are
                                         operator-distinguishable
-operation_cancel                        result plus activeOperationId
+operation_cancel                        typed unimplemented/error result in
+                                        this cutover; no successful
+                                        activeOperationId claim until a real
+                                        cancel slice defines abort semantics
 recovery_command                        result only
 tool_portal_controller_host_action      result plus sanitized controller action
                                         result; for zone_git_push, expectedHead
@@ -1429,9 +1440,11 @@ host_action             gateway       controller        controller_host_action
                                                         Tool Portal config;
                                                         includes zone_git_push
 
-operation_cancel        either        controller        request/ack cancellation
-                                                        for a known active
-                                                        operation id only
+operation_cancel        either        controller        reserved typed cancel
+                                                        intent; hard-rejected in
+                                                        this cutover unless a
+                                                        later cancel slice owns
+                                                        active-operation abort
 
 recovery_command        controller    controller        narrow recovery action;
                                                         never arbitrary guest
@@ -1465,7 +1478,8 @@ runtime_status                     latest_wins snapshot plus append-only
                                    operation row when failure evidence matters
 tool_portal_controller_host_action single_use_critical unless the action schema
                                    defines stable idempotency and terminal cache
-operation_cancel                   acked_idempotent
+operation_cancel                   acked_idempotent reserved operation;
+                                   current handlers return typed rejection
 recovery_command                   critical_idempotent with preconditions
 ```
 
@@ -1838,8 +1852,10 @@ git_push                   worker        controller        single-use critical
 
 git_pull_default           worker        controller        single-use critical
 
-operation_cancel           either        controller        controller-authorized
-                                                         control
+operation_cancel           either        controller        reserved typed cancel
+                                                         intent; hard-rejected
+                                                         until active-operation
+                                                         abort is specified
 
 recovery_command           controller    controller        controller-authorized
                                                          control
@@ -1858,7 +1874,8 @@ git_push                  single_use_critical unless expectedHead +
                           idempotencyKey define a stable terminal cache
 git_pull_default          single_use_critical unless currentHead/currentBranch
                           preconditions and terminal cache are defined
-operation_cancel          acked_idempotent
+operation_cancel          acked_idempotent reserved operation; current handlers
+                          return typed rejection
 recovery_command          critical_idempotent with preconditions
 ```
 
@@ -2001,8 +2018,11 @@ liveness mutation
 
 controller-authorized control
   operation_cancel, recovery_command
-  Must target known active operation/session ids. It cannot become a generic
-  guest command, file operation, provider RPC, or shell channel.
+  `recovery_command` must target known session ids. `operation_cancel` is
+  reserved and hard-rejected in this cutover; a later successful cancel design
+  must target known active operation ids and prove abort semantics. Neither
+  operation can become a generic guest command, file operation, provider RPC, or
+  shell channel.
 ```
 
 The session contract must include:
