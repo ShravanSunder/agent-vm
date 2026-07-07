@@ -247,6 +247,7 @@ describe('worker control domain handler', () => {
 				kind: 'event',
 				operation: 'worker_runtime_observation',
 				payload: {
+					correlation: { runId: 'worker-run-1', traceId: '0123456789abcdef0123456789abcdef' },
 					observedAtMs: 1,
 					state: 'running',
 					task: { taskId: 'task-1' },
@@ -256,6 +257,7 @@ describe('worker control domain handler', () => {
 
 		expect(response).toBeUndefined();
 		expect(onRuntimeObservation).toHaveBeenCalledWith({
+			correlation: { runId: 'worker-run-1', traceId: '0123456789abcdef0123456789abcdef' },
 			observedAtMs: 1,
 			state: 'running',
 			task: { taskId: 'task-1' },

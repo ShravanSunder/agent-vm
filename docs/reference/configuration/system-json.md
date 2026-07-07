@@ -529,7 +529,7 @@ Important fields in `mcp.config.jsonc` provider entries:
 - Remote provider `transport.url` must use `http` or `https`.
 - `transport.connectionTimeoutMs` optionally overrides the provider connection,
   `tools/list`, and call timeout budget when a real upstream MCP provider is
-  slower than the default 30000 ms budget.
+  slower than the default 12000 ms budget.
 - Stdio providers must declare `transport.networkAccess`.
 - `transport.networkAccess: "declared"` requires non-empty
   `transport.requiredEgressHosts`.
@@ -785,7 +785,15 @@ Each zone selects one gateway image profile and one gateway behavior config:
     "port": 18791,
     "config": "./gateways/coding-agent/worker.jsonc",
     "imageProfile": "worker",
-    "stateDir": "../state/coding-agent"
+    "stateDir": "../state/coding-agent",
+    "repoPushPolicies": [
+      {
+        "repoUrl": "https://github.com/example/example-repo.git",
+        "defaultBranch": "main",
+        "protectedBranches": ["release"],
+        "protectedBranchPatterns": ["hotfix/*"]
+      }
+    ]
   },
   "resources": {
     "allowRepoResources": false
@@ -816,6 +824,12 @@ Each zone selects one gateway image profile and one gateway behavior config:
   ]
 }
 ```
+
+For worker gateways, `gateway.repoPushPolicies` is the controller-trusted
+source for host-token branch push safety. Worker task requests name repos and
+base branches to prepare; they do not define protected branch policy. If a
+worker task repo has no matching `repoPushPolicies[].repoUrl`, controller-owned
+push for that repo fails closed before Git I/O.
 
 Worker zones do not declare Tool VM profile fields. OpenClaw zones must declare
 `defaultToolVmProfile` and `agentToolVmProfiles`, even when the agent mapping is

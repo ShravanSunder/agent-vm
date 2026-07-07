@@ -156,6 +156,7 @@ const systemConfig = {
 				port: 18791,
 				config: '',
 				stateDir: '',
+				repoPushPolicies: [],
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -513,7 +514,24 @@ describe('worker-task-runner', () => {
 
 	it('clones repos into named work directories and merges primary repo config', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
-		const zone = systemConfig.zones[0];
+		const baseZone = systemConfig.zones[0];
+		const zone =
+			baseZone?.gateway.type === 'worker'
+				? {
+						...baseZone,
+						gateway: {
+							...baseZone.gateway,
+							repoPushPolicies: [
+								{
+									repoUrl: 'https://github.com/org/frontend.git',
+									defaultBranch: 'main',
+									protectedBranches: ['release'],
+									protectedBranchPatterns: ['hotfix/*'],
+								},
+							],
+						},
+					}
+				: baseZone;
 		if (!zone) {
 			throw new Error('Expected zone config.');
 		}
@@ -578,8 +596,12 @@ describe('worker-task-runner', () => {
 				repoId: 'frontend',
 				repoUrl: 'https://github.com/org/frontend.git',
 				baseBranch: 'main',
-				protectedBranches: [],
-				protectedBranchPatterns: [],
+				pushPolicy: {
+					kind: 'trusted_config',
+					defaultBranch: 'main',
+					protectedBranches: ['release'],
+					protectedBranchPatterns: ['hotfix/*'],
+				},
 				gitDirPath: '/gitdirs/frontend.git',
 				hostGitDir: path.join(result.taskRuntimeRoot, 'gitdirs', 'frontend.git'),
 				hostMetadataPath: path.join(result.taskRuntimeRoot, 'repo-metadata', 'frontend'),
@@ -589,8 +611,7 @@ describe('worker-task-runner', () => {
 				repoId: 'backend',
 				repoUrl: 'https://github.com/org/backend.git',
 				baseBranch: 'develop',
-				protectedBranches: [],
-				protectedBranchPatterns: [],
+				pushPolicy: { kind: 'missing' },
 				gitDirPath: '/gitdirs/backend.git',
 				hostGitDir: path.join(result.taskRuntimeRoot, 'gitdirs', 'backend.git'),
 				hostMetadataPath: path.join(result.taskRuntimeRoot, 'repo-metadata', 'backend'),

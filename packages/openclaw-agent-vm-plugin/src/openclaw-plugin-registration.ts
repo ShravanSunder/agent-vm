@@ -38,7 +38,6 @@ import {
 	createGondolinSandboxBackendManager,
 } from './sandbox-backend-factory.js';
 import { registerToolPortalNativeTools } from './tool-portal-native-tools.js';
-import { registerToolVmWriteReadE2eRoute } from './tool-vm-write-read-e2e-tool.js';
 
 const gatewayControlLeaseClientEndpoint = 'gateway-control://control-session';
 
@@ -257,11 +256,6 @@ const plugin = {
 				return gondolinSandboxBackendFactory;
 			},
 		);
-		registerToolVmWriteReadE2eRoute({
-			api: { registerHttpRoute },
-			factoryProvider: async () => await gondolinSandboxBackendFactoryPromise,
-		});
-
 		gondolinSandboxBackendFactoryPromise.catch((error: unknown) => {
 			const message = error instanceof Error ? error.message : JSON.stringify(error);
 			process.stderr.write(`[gondolin] failed to load OpenClaw SDK: ${message}\n`);

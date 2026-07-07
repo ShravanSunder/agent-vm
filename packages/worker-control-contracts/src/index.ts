@@ -75,6 +75,7 @@ export const WorkerControlSessionStateSchema = ControlSessionStateSchema;
 
 export const WorkerControlRuntimeObservationPayloadSchema = z
 	.object({
+		correlation: ControlCorrelationSchema.optional(),
 		observedAtMs: z.number().int().positive(),
 		sessionState: WorkerControlSessionStateSchema.optional(),
 		state: z.enum(['running', 'closing', 'closed', 'failed']).optional(),

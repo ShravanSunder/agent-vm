@@ -103,10 +103,17 @@ function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 function registeredRoute(
 	registerHttpRoute: ReturnType<typeof vi.fn>,
 	pathname: string,
-): OpenClawHttpRouteRegistration {
-	const route = registerHttpRoute.mock.calls
+): OpenClawHttpRouteRegistration | undefined {
+	return registerHttpRoute.mock.calls
 		.map((call) => call[0] as OpenClawHttpRouteRegistration)
 		.find((candidate) => candidate.path === pathname);
+}
+
+function expectRegisteredRoute(
+	registerHttpRoute: ReturnType<typeof vi.fn>,
+	pathname: string,
+): OpenClawHttpRouteRegistration {
+	const route = registeredRoute(registerHttpRoute, pathname);
 	if (route === undefined) {
 		throw new Error(`Expected route ${pathname} to be registered.`);
 	}
@@ -395,12 +402,14 @@ describe('createGondolinPlugin', () => {
 				registrationMode: 'full',
 			});
 
-			expect(registeredRoute(firstRegisterHttpRoute, '/__agent-vm/ready').handler).toBe(
-				registeredRoute(secondRegisterHttpRoute, '/__agent-vm/ready').handler,
+			expect(expectRegisteredRoute(firstRegisterHttpRoute, '/__agent-vm/ready').handler).toBe(
+				expectRegisteredRoute(secondRegisterHttpRoute, '/__agent-vm/ready').handler,
 			);
 			expect(
-				registeredRoute(firstRegisterHttpRoute, '/__agent-vm/gateway-control').handleUpgrade,
-			).toBe(registeredRoute(secondRegisterHttpRoute, '/__agent-vm/gateway-control').handleUpgrade);
+				expectRegisteredRoute(firstRegisterHttpRoute, '/__agent-vm/gateway-control').handleUpgrade,
+			).toBe(
+				expectRegisteredRoute(secondRegisterHttpRoute, '/__agent-vm/gateway-control').handleUpgrade,
+			);
 		} finally {
 			stderrWrite.mockRestore();
 		}
@@ -450,7 +459,7 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
-	it('registers the private e2e Tool VM write/read route during full plugin registration when enabled', () => {
+	it('does not register the private e2e Tool VM write/read route during full plugin registration', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerHttpRoute = vi.fn();
 		const registerTool = vi.fn();
@@ -471,7 +480,7 @@ describe('createGondolinPlugin', () => {
 			expect(registerTool).not.toHaveBeenCalledWith(expect.any(Function), expect.any(Object));
 			expect(
 				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
-			).toEqual(expect.objectContaining({ handler: expect.any(Function) }));
+			).toBeUndefined();
 		} finally {
 			stderrWrite.mockRestore();
 		}
@@ -489,7 +498,7 @@ describe('createGondolinPlugin', () => {
 		});
 		const response = await invokeRegisteredRoute({
 			bodyText: createToolVmWriteReadProbeBody(),
-			route: registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
 		});
 
 		expect(response.statusCode).toBe(401);
@@ -517,7 +526,7 @@ describe('createGondolinPlugin', () => {
 		const response = await invokeRegisteredRoute({
 			bodyText,
 			headers: createToolVmWriteReadProbeHeaders(bodyText),
-			route: registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
 		});
 
 		expect(response.statusCode).toBe(403);
@@ -544,7 +553,7 @@ describe('createGondolinPlugin', () => {
 		const response = await invokeRegisteredRoute({
 			bodyText,
 			headers: createToolVmWriteReadProbeHeaders(bodyText),
-			route: registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
 		});
 
 		expect(response.statusCode).toBe(400);
@@ -575,7 +584,7 @@ describe('createGondolinPlugin', () => {
 		const response = await invokeRegisteredRoute({
 			bodyText,
 			headers: createToolVmWriteReadProbeHeaders(bodyText),
-			route: registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
 		});
 
 		expect(response.statusCode).toBe(200);

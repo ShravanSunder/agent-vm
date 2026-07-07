@@ -130,7 +130,10 @@ describe('manual templates', () => {
 		);
 		expect(observabilityManual).toContain('controllerStartPolicy=degraded');
 		expect(observabilityManual).toContain('host.observability.dataDir');
-		expect(observabilityManual).toContain('Validation rejects it');
+		expect(observabilityManual).toContain('Gondolin HTTP mediation');
+		expect(observabilityManual).toContain(
+			'Tool VM SSH is the only managed gateway raw TCP exception',
+		);
 		expect(observabilityManual).toContain('Never log secrets');
 		const gatewayIngressManual = files.find((file) =>
 			file.relativePath.endsWith('gateway-ingress.md'),

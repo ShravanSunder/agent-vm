@@ -410,9 +410,19 @@ const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 	})
 	.strict();
 
+const workerRepoPushPolicySchema = z
+	.object({
+		repoUrl: z.string().min(1),
+		defaultBranch: gitBranchNameSchema.default('main'),
+		protectedBranches: z.array(gitBranchNameSchema).default([]),
+		protectedBranchPatterns: z.array(gitBranchPatternSchema).default([]),
+	})
+	.strict();
+
 const workerZoneGatewaySchema = zoneGatewayBaseSchema
 	.extend({
 		type: z.literal('worker'),
+		repoPushPolicies: z.array(workerRepoPushPolicySchema).optional(),
 	})
 	.strict();
 

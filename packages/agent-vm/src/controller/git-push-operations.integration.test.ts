@@ -24,6 +24,12 @@ function buildActiveTask(): ActiveWorkerTask {
 			{
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
+				pushPolicy: {
+					kind: 'trusted_config',
+					defaultBranch: 'main',
+					protectedBranches: [],
+					protectedBranchPatterns: [],
+				},
 				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
 				vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 			},
@@ -38,12 +44,24 @@ function buildMultiRepoActiveTask(): ActiveWorkerTask {
 			{
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
+				pushPolicy: {
+					kind: 'trusted_config',
+					defaultBranch: 'main',
+					protectedBranches: [],
+					protectedBranchPatterns: [],
+				},
 				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
 				vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 			},
 			{
 				repoUrl: 'https://github.com/acme/api.git',
 				baseBranch: 'main',
+				pushPolicy: {
+					kind: 'trusted_config',
+					defaultBranch: 'main',
+					protectedBranches: [],
+					protectedBranchPatterns: [],
+				},
 				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/api.git'),
 				vmWorkPath: createVmWorkPath('/work/repos/api'),
 			},
@@ -726,6 +744,28 @@ describe('git-push-operations', () => {
 		});
 	});
 
+	it('soft-fails before git IO when a worker repo has no trusted push policy', async () => {
+		const activeTask = buildActiveTask();
+		const result = await pushBranchesForTask({
+			activeTask: {
+				...activeTask,
+				repos: activeTask.repos.map((repo) => ({
+					...repo,
+					pushPolicy: { kind: 'missing' },
+				})),
+			},
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: false,
+		});
+		expect(result.results[0]?.error).toContain('no trusted controller push policy');
+		expect(execaMock).not.toHaveBeenCalled();
+	});
+
 	it('soft-fails if controller is asked to push a protected worker repo branch', async () => {
 		const activeTask = buildActiveTask();
 		const result = await pushBranchesForTask({
@@ -733,7 +773,12 @@ describe('git-push-operations', () => {
 				...activeTask,
 				repos: activeTask.repos.map((repo) => ({
 					...repo,
-					protectedBranches: ['agent/release'],
+					pushPolicy: {
+						kind: 'trusted_config',
+						defaultBranch: 'main',
+						protectedBranches: ['agent/release'],
+						protectedBranchPatterns: [],
+					},
 				})),
 			},
 			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/release' }],
@@ -755,7 +800,12 @@ describe('git-push-operations', () => {
 				...activeTask,
 				repos: activeTask.repos.map((repo) => ({
 					...repo,
-					protectedBranchPatterns: ['agent/release/*'],
+					pushPolicy: {
+						kind: 'trusted_config',
+						defaultBranch: 'main',
+						protectedBranches: [],
+						protectedBranchPatterns: ['agent/release/*'],
+					},
 				})),
 			},
 			branches: [

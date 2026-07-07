@@ -452,6 +452,7 @@ export function createGatewayControlService(
 	let lastSeenControllerSequence = 0;
 	let lastSeenPeerSequence = 0;
 	let nextPeerSequenceValue = 1;
+	let fullResyncPending = false;
 	let latestWinsFlushScheduled = false;
 	const acceptedSessionWaiters: ((session: GatewayControlAcceptedSession | undefined) => void)[] =
 		[];
@@ -536,6 +537,7 @@ export function createGatewayControlService(
 		if (acceptedSocket === socket) {
 			acceptedSocket = undefined;
 			acceptedSession = undefined;
+			fullResyncPending = false;
 			latestWinsQueue.clear();
 			resolveAcceptedSessionWaiters(undefined);
 		}
@@ -562,10 +564,12 @@ export function createGatewayControlService(
 			GatewayControlGatewayToControllerEvents
 		>,
 	): void {
+		fullResyncPending = true;
 		pendingFullResyncSockets.add(socket);
 	}
 
 	function resetGatewayControlStateAfterAcceptedFullResync(): void {
+		fullResyncPending = false;
 		latestWinsQueue.clear();
 		lastSeenControllerSequence = 0;
 		lastSeenPeerSequence = 0;
@@ -647,6 +651,7 @@ export function createGatewayControlService(
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
+				fullResyncPending = false;
 				latestWinsQueue.clear();
 				resolveAcceptedSessionWaiters(undefined);
 				rejectPendingGatewayControlCommandResults(
@@ -801,6 +806,9 @@ export function createGatewayControlService(
 	});
 
 	async function waitForAcceptedSession(): Promise<GatewayControlAcceptedSession | undefined> {
+		if (fullResyncPending) {
+			return undefined;
+		}
 		const session = acceptedSession;
 		const socket = acceptedSocket;
 		if (session !== undefined && socket !== undefined && socket.connected) {

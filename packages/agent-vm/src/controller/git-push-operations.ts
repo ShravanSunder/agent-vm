@@ -93,12 +93,18 @@ function gitBranchPatternMatches(pattern: string, branch: string): boolean {
 
 function protectedBranchPolicyDescription(options: {
 	readonly branchName: string;
-	readonly repo: ActiveWorkerTask['repos'][number];
+	readonly pushPolicy: Extract<
+		ActiveWorkerTask['repos'][number]['pushPolicy'],
+		{ readonly kind: 'trusted_config' }
+	>;
 }): string | undefined {
-	if (new Set(options.repo.protectedBranches ?? []).has(options.branchName)) {
+	if (new Set(options.pushPolicy.protectedBranches).has(options.branchName)) {
 		return `protected branch "${options.branchName}"`;
 	}
-	const protectedBranchPattern = options.repo.protectedBranchPatterns?.find((pattern) =>
+	if (options.pushPolicy.defaultBranch === options.branchName) {
+		return `protected default branch "${options.branchName}"`;
+	}
+	const protectedBranchPattern = options.pushPolicy.protectedBranchPatterns.find((pattern) =>
 		gitBranchPatternMatches(pattern, options.branchName),
 	);
 	return protectedBranchPattern === undefined
@@ -562,17 +568,18 @@ async function pushOneBranchForTask(options: {
 	const branchName = sanitizeBranchName(options.branch.branchName);
 	let pushAttempts = 0;
 	try {
-		if (branchName === options.repo.baseBranch) {
+		const pushPolicy = options.repo.pushPolicy;
+		if (pushPolicy.kind === 'missing') {
 			return {
 				repoUrl: options.branch.repoUrl,
 				branch: branchName,
 				success: false,
-				error: `Refusing to push: you are on the default branch "${options.repo.baseBranch}". Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
+				error: `Refusing to push: repo "${options.repo.repoUrl}" has no trusted controller push policy. Configure the worker zone repoPushPolicies entry before controller push.`,
 			};
 		}
 		const protectedBranchDescription = protectedBranchPolicyDescription({
 			branchName,
-			repo: options.repo,
+			pushPolicy,
 		});
 		if (protectedBranchDescription !== undefined) {
 			return {
@@ -593,7 +600,7 @@ async function pushOneBranchForTask(options: {
 
 		await fetchRemoteRefs({
 			gitDir: options.repo.hostGitDir,
-			defaultBranch: options.repo.baseBranch,
+			defaultBranch: pushPolicy.defaultBranch,
 			repoUrl: options.branch.repoUrl,
 			githubToken: options.githubToken,
 			...(options.recordEvent ? { recordEvent: options.recordEvent } : {}),
@@ -647,7 +654,7 @@ async function pushOneBranchForTask(options: {
 		const state = await buildBranchState({
 			gitDir: options.repo.hostGitDir,
 			branchName,
-			defaultBranch: options.repo.baseBranch,
+			defaultBranch: pushPolicy.defaultBranch,
 			previousRemoteBranchHead,
 			...(options.signal ? { signal: options.signal } : {}),
 		});

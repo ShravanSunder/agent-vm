@@ -276,6 +276,7 @@ describe('createWorkerControlRuntimeEventPublisher', () => {
 		const publisher = createWorkerControlRuntimeEventPublisher(service);
 
 		await publisher.emitRuntimeObservation({
+			correlation: { runId: 'worker-run-1', traceId: '0123456789abcdef0123456789abcdef' },
 			observedAtMs: 123,
 			state: 'running',
 			task: { taskId: 'task-1' },
@@ -297,6 +298,7 @@ describe('createWorkerControlRuntimeEventPublisher', () => {
 				kind: 'event',
 				operation: 'worker_runtime_observation',
 				payload: {
+					correlation: { runId: 'worker-run-1', traceId: '0123456789abcdef0123456789abcdef' },
 					observedAtMs: 123,
 					state: 'running',
 					task: { taskId: 'task-1' },

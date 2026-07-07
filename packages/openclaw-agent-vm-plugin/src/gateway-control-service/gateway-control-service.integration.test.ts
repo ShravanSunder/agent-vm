@@ -537,9 +537,9 @@ describe('gateway control service', () => {
 
 		expect(secondHelloResponse.outcome).toBe('resync_required');
 		expect(firstClient.connected).toBe(true);
-		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
-			sessionId: firstHelloResponse.sessionId,
-		});
+		await expect(fixture.service.getAcceptedSession()).rejects.toThrow(
+			/gateway control session is not connected/u,
+		);
 		const freshHelloResponse = ControlHelloResponseSchema.parse(
 			await secondClient.timeout(1_000).emitWithAck('control:hello', {
 				bootId: identity.bootId,
@@ -550,6 +550,9 @@ describe('gateway control service', () => {
 			} satisfies ControlHello),
 		);
 		expect(freshHelloResponse.outcome).toBe('accepted');
+		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
+			sessionId: freshHelloResponse.sessionId,
+		});
 		await waitForSocketDisconnect(firstClient);
 		expect(firstClient.connected).toBe(false);
 	});

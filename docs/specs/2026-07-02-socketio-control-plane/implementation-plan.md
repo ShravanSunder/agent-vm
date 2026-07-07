@@ -456,8 +456,10 @@ SWc — controller handlers + rewire + residue:
   controller-request-policy.ts (HOT FILE; remove worker-push-branches/worker-pull-default via single owner
   sequence — I1); CREATE controller worker-RPC handlers REGISTERED on the S3 dispatch seam (additive — I2),
   invoking git-push-operations.ts / git-pull-default-operations.ts. ADD controller-side pre-push checks (Imp5):
-  refuse default/protected branch resolved from trusted state, force/non-ff, ref delete; expectedHead is a
-  ff-precondition, never --force-with-lease. ORPHAN CLEANUP (PC-2): the worker's LOCAL
+  refuse default/protected branch resolved from trusted worker gateway `repoPushPolicies` config, force/non-ff,
+  ref delete; expectedHead is a ff-precondition, never --force-with-lease. Worker task request repos are not trusted
+  policy input; if a task repo lacks a matching controller-configured push policy, controller push fails closed before
+  Git I/O. ORPHAN CLEANUP (PC-2): the worker's LOCAL
   agent-vm-worker/src/work-phase/controller-tools/controller-request-policy.ts is NOT a re-export barrel — it
   defines its own fetchWorkerControllerWithPolicy, whose sole caller is controller-tool-support.ts:132 (the file
   this slice rewires). Once the worker op group is gone, delete that wrapper + its controller-request-policy.unit.test.ts.

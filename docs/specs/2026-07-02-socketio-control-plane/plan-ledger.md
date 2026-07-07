@@ -169,6 +169,17 @@ Plan consequences:
   the Tool VM, reads it back, and returns the marker. Only gateway VM to Tool VM
   uses raw SSH.
 
+## Implementation review correction (2026-07-06) — worker push policy trust source
+
+The first F4 repair incorrectly treated worker task request repo metadata as a
+trusted protected-branch policy source. That is rejected. Worker task requests
+only declare repo intent and base branch for preparation. Controller-owned worker
+push safety is configured on the trusted worker gateway `repoPushPolicies`
+source; prepared active task state stores a typed `trusted_config` policy or a
+typed `missing` policy. Controller push fails closed before Git I/O when a task
+repo lacks matching trusted policy. This preserves the host-token confused-deputy
+boundary for worker `git_push`.
+
 ## Route
 Independent plan review DONE and folded. Architecture re-review pass 2 DONE and folded. Focused SMA plan review DONE
 and folded. Implementation-execute-plan may start with SMA. Remaining before the broader control-plane cutover can

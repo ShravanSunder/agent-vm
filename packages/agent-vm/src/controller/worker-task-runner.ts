@@ -58,6 +58,8 @@ import {
 	type ControlSessionClient,
 	type WorkerControlRpcOperations,
 } from './control-session/index.js';
+
+type WorkerTaskZoneConfig = LoadedSystemConfig['zones'][number];
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
 	buildResolvedRuntimeResources,
@@ -363,8 +365,14 @@ export interface PreStartResult {
 		readonly repoId: string;
 		readonly repoUrl: string;
 		readonly baseBranch: string;
-		readonly protectedBranches: readonly string[];
-		readonly protectedBranchPatterns: readonly string[];
+		readonly pushPolicy:
+			| {
+					readonly kind: 'trusted_config';
+					readonly defaultBranch: string;
+					readonly protectedBranches: readonly string[];
+					readonly protectedBranchPatterns: readonly string[];
+			  }
+			| { readonly kind: 'missing' };
 		readonly gitDirPath: string;
 		readonly hostGitDir: string;
 		readonly hostMetadataPath: string;
@@ -389,6 +397,27 @@ function deriveRepoDirectoryName(repoUrl: string, usedNames: Set<string>): strin
 	}
 	usedNames.add(candidate);
 	return candidate;
+}
+
+function trustedWorkerRepoPushPolicyFor(options: {
+	readonly repoUrl: string;
+	readonly zoneConfig: WorkerTaskZoneConfig;
+}): PreStartResult['repos'][number]['pushPolicy'] {
+	if (options.zoneConfig.gateway.type !== 'worker') {
+		return { kind: 'missing' };
+	}
+	const policy = options.zoneConfig.gateway.repoPushPolicies?.find(
+		(candidate) => candidate.repoUrl === options.repoUrl,
+	);
+	if (policy === undefined) {
+		return { kind: 'missing' };
+	}
+	return {
+		kind: 'trusted_config',
+		defaultBranch: policy.defaultBranch,
+		protectedBranches: policy.protectedBranches,
+		protectedBranchPatterns: policy.protectedBranchPatterns,
+	};
 }
 
 export interface WorkerTaskResult {
@@ -506,8 +535,10 @@ export async function preStartGateway(
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
-					protectedBranches: repo.protectedBranches ?? [],
-					protectedBranchPatterns: repo.protectedBranchPatterns ?? [],
+					pushPolicy: trustedWorkerRepoPushPolicyFor({
+						repoUrl: repo.repoUrl,
+						zoneConfig,
+					}),
 					gitDirPath: repo.gitDirPath,
 					hostGitDir: repo.hostGitDir,
 					hostMetadataPath: repo.hostMetadataPath,
@@ -534,8 +565,7 @@ export async function preStartGateway(
 			readonly repoId: string;
 			readonly repoUrl: string;
 			readonly baseBranch: string;
-			readonly protectedBranches: readonly string[];
-			readonly protectedBranchPatterns: readonly string[];
+			readonly pushPolicy: PreStartResult['repos'][number]['pushPolicy'];
 			readonly gitDirPath: string;
 			readonly hostGitDir: string;
 			readonly hostMetadataPath: string;
@@ -922,8 +952,7 @@ export async function prepareWorkerTask(
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
-				protectedBranches: repo.protectedBranches,
-				protectedBranchPatterns: repo.protectedBranchPatterns,
+				pushPolicy: repo.pushPolicy,
 				hostGitDir: createHostGitDir(repo.hostGitDir),
 				vmWorkPath: createVmWorkPath(repo.workPath),
 			})),
@@ -1001,6 +1030,7 @@ export async function executeWorkerTask(
 						onRuntimeObservation: async (payload) => {
 							await prepared.recordEvent({
 								event: 'worker-control-runtime-observation',
+								...(payload.correlation === undefined ? {} : { correlation: payload.correlation }),
 								observedAtMs: payload.observedAtMs,
 								...(payload.sessionState === undefined
 									? {}

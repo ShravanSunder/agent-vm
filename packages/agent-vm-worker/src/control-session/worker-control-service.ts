@@ -497,6 +497,7 @@ export function createWorkerControlService(
 	let lastSeenControllerSequence = 0;
 	let lastSeenPeerSequence = 0;
 	let nextPeerSequenceValue = 1;
+	let fullResyncPending = false;
 	let latestWinsFlushScheduled = false;
 	const acceptedSessionWaiters: ((session: WorkerControlAcceptedSession | undefined) => void)[] =
 		[];
@@ -578,6 +579,7 @@ export function createWorkerControlService(
 		if (acceptedSocket === socket) {
 			acceptedSocket = undefined;
 			acceptedSession = undefined;
+			fullResyncPending = false;
 			latestWinsQueue.clear();
 			resolveAcceptedSessionWaiters(undefined);
 		}
@@ -598,10 +600,12 @@ export function createWorkerControlService(
 	function resetWorkerControlSessionForFullResync(
 		socket: Socket<WorkerControlControllerToWorkerEvents, WorkerControlWorkerToControllerEvents>,
 	): void {
+		fullResyncPending = true;
 		pendingFullResyncSockets.add(socket);
 	}
 
 	function resetWorkerControlStateAfterAcceptedFullResync(): void {
+		fullResyncPending = false;
 		latestWinsQueue.clear();
 		lastSeenControllerSequence = 0;
 		lastSeenPeerSequence = 0;
@@ -679,6 +683,7 @@ export function createWorkerControlService(
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
+				fullResyncPending = false;
 				latestWinsQueue.clear();
 				resolveAcceptedSessionWaiters(undefined);
 				rejectPendingWorkerControlCommandResults(
@@ -839,6 +844,9 @@ export function createWorkerControlService(
 	});
 
 	async function waitForAcceptedSession(): Promise<WorkerControlAcceptedSession | undefined> {
+		if (fullResyncPending) {
+			return undefined;
+		}
 		const session = acceptedSession;
 		const socket = acceptedSocket;
 		if (session !== undefined && socket !== undefined && socket.connected) {

@@ -1,3 +1,4 @@
+import { ControlCorrelationSchema } from '@agent-vm/control-protocol-contracts';
 import { z } from 'zod';
 
 import { workerConfigSchema } from '../config/worker-config.js';
@@ -178,6 +179,7 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 	}),
 	z.object({
 		event: z.literal('worker-control-runtime-observation'),
+		correlation: ControlCorrelationSchema.optional(),
 		observedAtMs: z.number().int().positive(),
 		sessionState: z
 			.enum([
