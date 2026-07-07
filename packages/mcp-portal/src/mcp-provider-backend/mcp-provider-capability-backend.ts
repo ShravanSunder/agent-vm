@@ -720,7 +720,12 @@ function safeDiagnosticCode(code: string): SafeDiagnostic['code'] {
 	if (code === 'cancelled') {
 		return 'cancelled';
 	}
-	if (code === 'upstream_discovery_failed' || code === 'upstream_mcp_failed') {
+	if (
+		code === 'provider_unavailable' ||
+		code === 'namespace_unavailable' ||
+		code === 'upstream_discovery_failed' ||
+		code === 'upstream_mcp_failed'
+	) {
 		return 'provider_unavailable';
 	}
 	return 'execution_failed';

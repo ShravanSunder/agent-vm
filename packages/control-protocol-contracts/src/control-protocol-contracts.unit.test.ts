@@ -173,6 +173,7 @@ describe('control protocol contracts', () => {
 
 		expect(mappedKinds).toEqual([...ControlMessageKindSchema.options].toSorted());
 		expect(ControlMessageKindSchema.options).not.toContain('command_ack');
+		expect(ControlMessageKindSchema.options).not.toContain('observation');
 		expect(ControlMessageKindSchema.options).not.toContain('resync_request');
 		expect(ControlMessageKindSchema.options).not.toContain('resync_response');
 		expect(ControlMessageKindSchema.options).not.toContain('snapshot');

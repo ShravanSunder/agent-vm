@@ -349,6 +349,42 @@ describe('MCP provider capability backend', () => {
 		expect(JSON.stringify(result)).not.toContain('Capability execution failed');
 	});
 
+	it('maps degraded MCP namespaces to provider unavailable on the capability surface', async () => {
+		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
+		const backend = createBackendFixture({
+			callUpstreamTool,
+			listTools: async () => {
+				throw new Error('github unavailable');
+			},
+		});
+
+		const result = await backend.call({
+			calls: [
+				{
+					arguments: { number: 42 },
+					id: 'read-issue',
+					namespace: 'github',
+					name: 'get_issue',
+				},
+			],
+		});
+
+		expect(PortalCallResultSchema.parse(result)).toMatchObject({
+			items: [
+				{
+					error: {
+						code: 'provider_unavailable',
+						message: 'Capability provider is unavailable.',
+					},
+					id: 'read-issue',
+					status: 'error',
+				},
+			],
+			ok: false,
+		});
+		expect(callUpstreamTool).not.toHaveBeenCalled();
+	});
+
 	it('requires approval for projected write calls and rejects model-supplied tokens', async () => {
 		const backend = createBackendFixture();
 

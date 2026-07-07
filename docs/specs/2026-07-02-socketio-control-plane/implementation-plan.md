@@ -696,7 +696,7 @@ USER IMPLEMENTATION DECISION (not a spec loop — review Q1 reclassification; sp
 TUNE-DURING (not blocking; magnitude/behavior tuned in implementation):
 - OPEN-1 constants: ordering resolved with grounded values; 4 labeled PLANNING-DEFAULT magnitudes (queue msg/byte
   caps, replay window, per-source budget) tune under load — proof asserts ordering/behavior, not magnitude.
-- OPEN-3 ControlMessageKindSchema "observation" unused: default retain-with-note; decide before S1 enum-exactness test.
+- OPEN-3 ControlMessageKindSchema "observation" unused: resolved by hard-cut removal. Append-only observations use `kind: "event"` with operation-derived `append_only_observation` delivery.
 
 ## Next skill
 

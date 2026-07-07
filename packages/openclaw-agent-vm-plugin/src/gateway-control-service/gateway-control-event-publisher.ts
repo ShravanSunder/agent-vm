@@ -66,11 +66,36 @@ function stringRecordFromDetails(details: unknown): Record<string, string> {
 	return Object.fromEntries(Object.entries(details).map(([key, value]) => [key, String(value)]));
 }
 
+function healthEventCorrelation(event: AgentVmHealthEvent): Record<string, string> | undefined {
+	const correlation = {
+		...('causationId' in event && event.causationId !== undefined
+			? { causationId: event.causationId }
+			: {}),
+		...('correlationId' in event && event.correlationId !== undefined
+			? { correlationId: event.correlationId }
+			: {}),
+		...('requestId' in event && event.requestId !== undefined
+			? { requestId: event.requestId }
+			: {}),
+		...('runId' in event && event.runId !== undefined ? { runId: event.runId } : {}),
+		...('sessionKeyDigest' in event && event.sessionKeyDigest !== undefined
+			? { sessionKeyDigest: event.sessionKeyDigest }
+			: {}),
+		...('toolCallId' in event && event.toolCallId !== undefined
+			? { toolCallId: event.toolCallId }
+			: {}),
+		...('traceId' in event && event.traceId !== undefined ? { traceId: event.traceId } : {}),
+	};
+	return Object.keys(correlation).length === 0 ? undefined : correlation;
+}
+
 function healthEventPayload(event: AgentVmHealthEvent): unknown {
+	const correlation = healthEventCorrelation(event);
 	return {
 		...('agentId' in event ? { agentId: event.agentId } : {}),
 		...('attempt' in event ? { attempt: event.attempt } : {}),
 		...('channelProviderId' in event ? { channelProviderId: event.channelProviderId } : {}),
+		...(correlation === undefined ? {} : { correlation }),
 		...('elapsedMs' in event ? { elapsedMs: event.elapsedMs } : {}),
 		...('errorCode' in event ? { errorCode: event.errorCode } : {}),
 		eventKind: event.kind,

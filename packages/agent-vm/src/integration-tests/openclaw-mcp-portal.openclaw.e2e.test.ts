@@ -34,6 +34,7 @@ const agentIds = ['main', 'beta'] as const;
 const mainAgentId = agentIds[0];
 const betaAgentId = agentIds[1];
 const gatewayToken = 'mcp-portal-smoke-gateway-token';
+const unavailableNamespace = 'unavailable-mock';
 const portalToolNames = [
 	'tool_portal_list',
 	'tool_portal_search',
@@ -104,6 +105,8 @@ async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
 	readonly configDir: string;
 	readonly namespace: string;
 	readonly portalAccessHeaderName: string;
+	readonly unavailableNamespace: string;
+	readonly unavailableUpstreamUrl: string;
 	readonly upstreamUrl: string;
 }): Promise<void> {
 	await writeFile(
@@ -119,6 +122,15 @@ async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
 						transport: {
 							kind: 'streamable-http',
 							url: options.upstreamUrl,
+						},
+					},
+					unavailableMock: {
+						discovery: { summary: 'Unavailable upstream MCP server for e2e tests' },
+						kind: 'mcp',
+						namespace: options.unavailableNamespace,
+						transport: {
+							kind: 'streamable-http',
+							url: options.unavailableUpstreamUrl,
 						},
 					},
 				},
@@ -147,6 +159,13 @@ async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
 									withoutApproval: { allow: ['read_thing'] },
 								},
 								tools: { allow: ['read_thing', 'write_thing'] },
+							},
+							[options.unavailableNamespace]: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['read_thing'] },
+								},
+								tools: { allow: ['read_thing'] },
 							},
 						},
 						promptContext: { enabled: true, maxNamespaces: 12 },
@@ -212,6 +231,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		upstreamServer = await startFakeUpstreamMcpServer();
 		const upstreamHost = 'smoke-upstream.vm.host';
 		const upstreamUrl = `http://${upstreamHost}:${String(upstreamServer.port)}/mcp`;
+		const unavailableUpstreamUrl = `http://${upstreamHost}:${String(upstreamServer.port)}/missing-mcp`;
 		project = await scaffoldOpenClawE2eProject({
 			agents: agentIds,
 			architecture,
@@ -239,6 +259,8 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			configDir: path.dirname(systemZone.gateway.config),
 			namespace: fakeUpstreamNamespace,
 			portalAccessHeaderName: 'unused-native-smoke-header',
+			unavailableNamespace,
+			unavailableUpstreamUrl,
 			upstreamUrl,
 		});
 		await useLocalOpenClawGatewayImagePackages({
@@ -519,6 +541,39 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		expect(upstreamServer?.calls).toContainEqual({
 			argumentsValue: betaWriteArguments,
 			name: 'write_thing',
+		});
+	});
+
+	it('fails closed for unavailable MCP namespaces without calling upstream tools', async () => {
+		const unavailableArguments = { title: 'Unavailable should not call upstream' };
+		const unavailableResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: mainAgentId,
+				args: {
+					calls: [
+						{
+							arguments: unavailableArguments,
+							id: 'unavailable-read',
+							name: 'read_thing',
+							namespace: unavailableNamespace,
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+		);
+
+		expect(readSingleItem(unavailableResult)).toMatchObject({
+			error: {
+				code: 'provider_unavailable',
+				message: 'Capability provider is unavailable.',
+			},
+			id: 'unavailable-read',
+			status: 'error',
+		});
+		expect(upstreamServer?.calls).not.toContainEqual({
+			argumentsValue: unavailableArguments,
+			name: 'read_thing',
 		});
 	});
 });

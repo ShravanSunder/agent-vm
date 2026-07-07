@@ -53,11 +53,16 @@ describe('gateway control event publisher', () => {
 		await publisher.publishHealthEvent({
 			agentId: 'main',
 			elapsedMs: 15,
+			requestId: 'request-1',
 			kind: 'tool-vm-ssh',
 			leaseId: 'lease-main',
 			observedAtMs: 1_000,
 			operation: 'probe',
 			result: 'ok',
+			runId: 'run-1',
+			sessionKeyDigest: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+			toolCallId: 'tool-call-1',
+			traceId: '0123456789abcdef0123456789abcdef',
 			zoneId: identity.zoneId,
 		});
 
@@ -78,6 +83,13 @@ describe('gateway control event publisher', () => {
 				operation: 'health_event',
 				payload: expect.objectContaining({
 					agentId: 'main',
+					correlation: {
+						requestId: 'request-1',
+						runId: 'run-1',
+						sessionKeyDigest: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+						toolCallId: 'tool-call-1',
+						traceId: '0123456789abcdef0123456789abcdef',
+					},
 					eventKind: 'tool-vm-ssh',
 					leaseId: 'lease-main',
 					operation: 'probe',

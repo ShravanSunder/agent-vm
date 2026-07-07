@@ -127,7 +127,7 @@ Spec hardening (PROTO edited):
 - AF-3: message kinds must resolve to real domain ownership. `resync_request`/
   `resync_response` contradicted hello-based resync; `snapshot` was a dead shared
   kind because snapshots ride as domain `event` messages with latest_wins delivery.
-  Removed those kinds, pinned heartbeat/observation dispositions, and added the
+  Removed those kinds, pinned heartbeat/append-only event dispositions, and added the
   KIND-EXACT proof row.
 
 Plan-accuracy corrections (anchors verified):

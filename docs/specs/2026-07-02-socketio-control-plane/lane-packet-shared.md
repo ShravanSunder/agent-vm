@@ -21,7 +21,7 @@ Mode: plan-creation, READ-ONLY. Do not edit product code, tests, configs, or pla
   recovery-trigger mapping, Git Access And Push Policy, Slice Routes For Planning (§ near line 2325),
   Proof Expectations (§ near line 2210), Stop Conditions.
 - docs/specs/2026-07-02-socketio-control-plane/plan-ledger.md — accepted decisions +
-  open planning inputs (deferred constants, collector ruling, unused "observation" kind, 2319-line cap).
+  open planning inputs (deferred constants, collector ruling, removed unused "observation" kind, 2319-line cap).
 
 ## Accepted normative decisions (do not relitigate)
 

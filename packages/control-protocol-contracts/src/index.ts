@@ -30,13 +30,7 @@ export const ControlDomainSchema = z.string().regex(/^[a-z][a-z0-9_]*$/u);
 
 export const KnownControlDomainSchema = z.enum(['gateway_control', 'worker_control']);
 
-export const ControlMessageKindSchema = z.enum([
-	'command',
-	'command_result',
-	'event',
-	'heartbeat',
-	'observation',
-]);
+export const ControlMessageKindSchema = z.enum(['command', 'command_result', 'event', 'heartbeat']);
 
 export const ControlDeliveryPolicySchema = z.enum([
 	'latest_wins',
@@ -280,7 +274,6 @@ export const controlMessageKindDisposition = {
 	command_result: 'rpc_lifecycle',
 	event: 'domain_event',
 	heartbeat: 'priority_liveness',
-	observation: 'append_only_observation',
 } as const satisfies Record<ControlMessageKind, string>;
 
 export type ControlDomain = z.infer<typeof ControlDomainSchema>;

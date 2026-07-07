@@ -296,7 +296,6 @@ export const ControlMessageKindSchema = z.enum([
   "command_result",
   "event",
   "heartbeat",
-  "observation",
 ]);
 
 export const ControlDeliveryPolicySchema = z.enum([
@@ -350,9 +349,10 @@ heartbeat
   (Backpressure And Queue Policy), never routed through command lifecycle.
   Each domain defines its minimal heartbeat payload (or an empty payload).
 
-observation
-  append_only_observation records: discrete health events, control RPC
-  operation rows, failed-attempt evidence. Must not coalesce.
+append-only observations
+  use `kind: "event"` with an operation whose derived delivery policy is
+  `append_only_observation`: discrete health events, control RPC operation rows,
+  and failed-attempt evidence. Must not coalesce.
 ```
 
 The S1 enum-exactness proof asserts every kind above resolves to an owning
