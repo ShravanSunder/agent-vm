@@ -429,6 +429,21 @@ async function createOpenClawSystemConfigWithMcpPortal(): Promise<
 	const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 	const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 	await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+	await updateJsonFile(
+		path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+		(openClawConfig) => {
+			openClawConfig.tools = {
+				...(typeof openClawConfig.tools === 'object' && openClawConfig.tools !== null
+					? openClawConfig.tools
+					: {}),
+				sandbox: {
+					tools: {
+						alsoAllow: ['group:plugins'],
+					},
+				},
+			};
+		},
+	);
 	await writeMcpPortalConfigFiles(temporaryDirectoryPath, 'default');
 	return await loadSystemConfig(systemConfigPath);
 }
@@ -544,6 +559,47 @@ describe('runConfigValidation', () => {
 			hint: 'perplexity connect failed: stdio MCP command failed before tool discovery; verify command, package bin name, gateway PATH, and arg count.',
 			name: 'mcp-live-beta-perplexity',
 			ok: false,
+		});
+	});
+
+	it('keeps degraded MCP namespaces visible without failing the whole validation', async () => {
+		const systemConfig = await createOpenClawSystemConfigWithMcpPortal();
+		const secretResolver = createTestSecretResolver();
+		const runLiveMcpPortalValidationMock = vi.fn(async () => [
+			{
+				hint: 'deepwiki disabled/unavailable: list_tools timed out',
+				name: 'mcp-live-beta-deepwiki',
+				ok: false,
+				status: 'unavailable' as const,
+			},
+			{
+				hint: 'tavily discovered 5 tools.',
+				name: 'mcp-live-beta-tavily',
+				ok: true,
+				status: 'available' as const,
+			},
+		]);
+
+		const result = await runConfigValidation({
+			mcpLive: true,
+			runCommand: successfulOpenClawValidationCommand,
+			runLiveMcpPortalValidation: runLiveMcpPortalValidationMock,
+			secretResolver,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.checks).toContainEqual({
+			hint: 'deepwiki disabled/unavailable: list_tools timed out',
+			name: 'mcp-live-beta-deepwiki',
+			ok: false,
+			status: 'unavailable',
+		});
+		expect(result.checks).toContainEqual({
+			hint: 'tavily discovered 5 tools.',
+			name: 'mcp-live-beta-tavily',
+			ok: true,
+			status: 'available',
 		});
 	});
 

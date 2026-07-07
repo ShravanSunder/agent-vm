@@ -48,6 +48,10 @@ function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function isBlockingValidationCheck(check: ConfigValidationCheck): boolean {
+	return !check.ok && check.status !== 'unavailable';
+}
+
 const validationOnlySecretResolver = {
 	resolve: async (): Promise<string> => '',
 	resolveAll: async (): Promise<Record<string, string>> => ({}),
@@ -588,7 +592,7 @@ export async function runConfigValidation(
 	] as const satisfies readonly ConfigValidationCheck[];
 
 	return {
-		ok: checks.every((check) => check.ok),
+		ok: !checks.some(isBlockingValidationCheck),
 		checks,
 	};
 }
