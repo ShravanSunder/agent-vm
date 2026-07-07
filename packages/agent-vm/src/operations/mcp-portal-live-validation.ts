@@ -63,7 +63,7 @@ function isControllerBackedToolPortalNamespace(zone: LoadedZoneConfig, namespace
 	return (
 		namespace === 'controller_host_action' &&
 		zone.gateway.type === 'openclaw' &&
-		zone.gateway.zoneGit !== undefined
+		zone.toolPortal !== undefined
 	);
 }
 

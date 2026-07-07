@@ -830,6 +830,40 @@ describe('runConfigValidation', () => {
 		).resolves.toEqual([]);
 	});
 
+	it('does not require controller host probe to be declared as an upstream MCP provider', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							controller_host_action: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['controller_host_probe'] },
+								},
+								tools: { allow: ['controller_host_probe'] },
+							},
+						},
+					},
+				},
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({}),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toEqual([]);
+	});
+
 	it('checks hidden and approval tool names, not only enabled tools', async () => {
 		const systemConfig = await createSystemConfigWithLiveMcpFiles({
 			mcpConfig: createSingleToolMcpConfig({
