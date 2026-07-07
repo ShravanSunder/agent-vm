@@ -67,6 +67,7 @@ import {
 import {
 	findGatewayZone,
 	mapSystemGatewayZoneToLifecycleZone,
+	observabilityCollectorHost,
 	type GatewayZone,
 	type GatewayControlSessionConnector,
 	type GatewayControlSessionMaterialFactory,
@@ -146,6 +147,25 @@ function createGatewayVmRequestHook(options: {
 		}
 		return observabilityRewrite?.(request);
 	};
+}
+
+function assertOpenClawTcpHostsOverrideDoesNotBypassObservabilityMediation(options: {
+	readonly tcpHostsOverride: Readonly<Record<string, string>> | undefined;
+	readonly zone: GatewayZone;
+}): void {
+	if (options.zone.gateway.type !== 'openclaw' || options.tcpHostsOverride === undefined) {
+		return;
+	}
+	for (const tcpHostKey of Object.keys(options.tcpHostsOverride)) {
+		if (
+			tcpHostKey === observabilityCollectorHost ||
+			tcpHostKey.startsWith(`${observabilityCollectorHost}:`)
+		) {
+			throw new Error(
+				`OpenClaw tcpHostsOverride cannot map observability collector host '${observabilityCollectorHost}'; use mediated OTLP HTTP observability instead.`,
+			);
+		}
+	}
 }
 
 export function validateGatewayControlCallerContextRegistration(options: {
@@ -1109,6 +1129,10 @@ export async function startGatewayZone(
 		...vmSpec.environment,
 		...options.environmentOverride,
 	};
+	assertOpenClawTcpHostsOverrideDoesNotBypassObservabilityMediation({
+		tcpHostsOverride: options.tcpHostsOverride,
+		zone,
+	});
 	const tcpHosts = {
 		...vmSpec.tcpHosts,
 		...options.tcpHostsOverride,

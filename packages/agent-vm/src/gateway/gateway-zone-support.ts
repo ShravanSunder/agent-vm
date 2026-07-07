@@ -120,7 +120,7 @@ export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): Gat
 	return zone;
 }
 
-const observabilityCollectorHost = 'otel-collector.observability.vm.host';
+export const observabilityCollectorHost = 'otel-collector.observability.vm.host';
 const otlpGrpcPort = 4317;
 const otlpHttpPort = 4318;
 

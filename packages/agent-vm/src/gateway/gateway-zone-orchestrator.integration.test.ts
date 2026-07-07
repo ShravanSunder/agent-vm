@@ -1321,6 +1321,45 @@ describe('startGatewayZone', () => {
 		expect(await (rewrittenRequest as Request).text()).toBe('trace-payload');
 	});
 
+	it('rejects OpenClaw collector tcpHosts overrides that bypass mediated observability', async () => {
+		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
+			controllerStartPolicy: 'off',
+			zoneEnabled: true,
+		});
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
+			throw new Error('createManagedVm should not be called');
+		});
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'resolved-discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+					}),
+					systemConfig,
+					tcpHostsOverride: {
+						'otel-collector.observability.vm.host:4318': '127.0.0.1:4318',
+					},
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow(
+			"OpenClaw tcpHostsOverride cannot map observability collector host 'otel-collector.observability.vm.host'",
+		);
+		expect(createManagedVm).not.toHaveBeenCalled();
+	});
+
 	it('preflights lifecycle host state without OpenClaw observability before protected restart image work', async () => {
 		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
 			controllerStartPolicy: 'require-ready',

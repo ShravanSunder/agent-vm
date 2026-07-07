@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/openclaw-mcp-portal-plugin",
-	"version": "0.0.108",
+	"version": "0.0.110",
 	"private": true,
 	"description": "Deprecated private MCP Portal OpenClaw plugin package retained for historical source only.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
