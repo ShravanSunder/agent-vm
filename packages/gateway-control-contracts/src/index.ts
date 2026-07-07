@@ -316,7 +316,7 @@ export const GatewayControlRuntimeStatusPayloadSchema = z
 	})
 	.strict();
 
-export const GatewayControlToolPortalControllerHostActionPayloadSchema = z
+export const GatewayControlZoneGitPushControllerHostActionPayloadSchema = z
 	.object({
 		actionId: z.literal('zone_git_push'),
 		callerContext: GatewayControlCallerContextRefSchema,
@@ -324,6 +324,22 @@ export const GatewayControlToolPortalControllerHostActionPayloadSchema = z
 		expectedHead: z.string().min(1),
 	})
 	.strict();
+
+export const GatewayControlControllerHostProbePayloadSchema = z
+	.object({
+		actionId: z.literal('controller_host_probe'),
+		callerContext: GatewayControlCallerContextRefSchema,
+		correlation: GatewayControlToolCallCorrelationSchema,
+	})
+	.strict();
+
+export const GatewayControlToolPortalControllerHostActionPayloadSchema = z.discriminatedUnion(
+	'actionId',
+	[
+		GatewayControlZoneGitPushControllerHostActionPayloadSchema,
+		GatewayControlControllerHostProbePayloadSchema,
+	],
+);
 
 export const GatewayControlZoneGitCommitSummarySchema = z
 	.object({
@@ -341,12 +357,34 @@ export const GatewayControlZoneGitPushResultSchema = z
 	})
 	.strict();
 
-export const GatewayControlToolPortalControllerHostActionResultSchema = z
+export const GatewayControlControllerHostProbeResultSchema = z
+	.object({
+		entryNames: z.array(z.string().min(1)).max(64),
+		probeKind: z.literal('controller_cache_dir_listing'),
+	})
+	.strict();
+
+export const GatewayControlZoneGitPushControllerHostActionResultSchema = z
 	.object({
 		actionId: z.literal('zone_git_push'),
 		result: GatewayControlZoneGitPushResultSchema,
 	})
 	.strict();
+
+export const GatewayControlControllerHostProbeActionResultSchema = z
+	.object({
+		actionId: z.literal('controller_host_probe'),
+		result: GatewayControlControllerHostProbeResultSchema,
+	})
+	.strict();
+
+export const GatewayControlToolPortalControllerHostActionResultSchema = z.discriminatedUnion(
+	'actionId',
+	[
+		GatewayControlZoneGitPushControllerHostActionResultSchema,
+		GatewayControlControllerHostProbeActionResultSchema,
+	],
+);
 
 export const GatewayControlActiveOperationIdSchema = z.string().uuid();
 
@@ -868,6 +906,9 @@ export type GatewayControlHealthEventPayload = z.infer<
 >;
 export type GatewayControlRuntimeStatusPayload = z.infer<
 	typeof GatewayControlRuntimeStatusPayloadSchema
+>;
+export type GatewayControlControllerHostProbeResult = z.infer<
+	typeof GatewayControlControllerHostProbeResultSchema
 >;
 export type GatewayControlToolPortalControllerHostActionPayload = z.infer<
 	typeof GatewayControlToolPortalControllerHostActionPayloadSchema

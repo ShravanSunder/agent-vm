@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
@@ -92,6 +93,8 @@ import { createZoneRuntimeRegistry } from './zone-runtimes/zone-runtime-registry
 import type { ControllerZoneConfig } from './zone-runtimes/zone-runtime-types.js';
 
 export { classifyGatewayRecoveryRestartError } from './health/gateway-vm-recovery-runner.js';
+
+const controllerHostProbeMarkerFileName = 'agent-vm-host-probe.txt';
 
 function writeControllerRuntimeLog(message: string): void {
 	process.stderr.write(`[agent-vm] ${message}\n`);
@@ -515,6 +518,23 @@ export async function startControllerRuntime(
 					expectedHead: input.expectedHead,
 				}),
 		);
+	const runControllerHostProbe = async (): Promise<{
+		readonly entryNames: string[];
+		readonly probeKind: 'controller_cache_dir_listing';
+	}> => {
+		const probeDirectory = path.join(options.systemConfig.cacheDir, 'controller-host-probe');
+		await mkdir(probeDirectory, { recursive: true, mode: 0o700 });
+		await writeFile(
+			path.join(probeDirectory, controllerHostProbeMarkerFileName),
+			'controller host probe\n',
+			{ encoding: 'utf8', mode: 0o600 },
+		);
+		const entryNames = (await readdir(probeDirectory)).toSorted();
+		return {
+			entryNames,
+			probeKind: 'controller_cache_dir_listing',
+		};
+	};
 	const gatewayControlControllerHostActions: GatewayControlControllerHostActionOperations = {
 		authorizeControllerHostAction: async ({ callerContext, payload, session }) =>
 			await authorizeGatewayControlControllerHostAction({
@@ -537,6 +557,7 @@ export async function startControllerRuntime(
 				remoteHead: result.remoteHead,
 			};
 		},
+		runControllerHostProbe: async () => await runControllerHostProbe(),
 	};
 	const idleReaper = createIdleReaper({
 		getLeases: () =>

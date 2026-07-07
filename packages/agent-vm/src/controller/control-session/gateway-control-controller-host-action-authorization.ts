@@ -16,6 +16,8 @@ import type {
 
 const controllerHostActionNamespace = 'controller_host_action';
 const zoneGitPushToolName = 'zone_git_push';
+const controllerHostProbeToolName = 'controller_host_probe';
+const controllerHostProbeEnvGate = 'AGENT_VM_E2E_CONTROLLER_HOST_PROBE';
 
 export interface GatewayControlControllerHostActionAuthorizationRequest {
 	readonly callerContext: GatewayControlTrustedCallerContext;
@@ -52,13 +54,20 @@ function rejectAuthorization(
 	};
 }
 
+function isSupportedControllerHostActionName(
+	value: string | undefined,
+): value is typeof zoneGitPushToolName | typeof controllerHostProbeToolName {
+	return value === zoneGitPushToolName || value === controllerHostProbeToolName;
+}
+
 export async function authorizeGatewayControlControllerHostAction(
 	request: GatewayControlControllerHostActionAuthorizationRequest,
 ): Promise<GatewayControlControllerHostActionAuthorizationResult> {
 	const capability = request.payload.correlation?.capability;
 	if (
 		capability?.namespace !== controllerHostActionNamespace ||
-		capability.name !== zoneGitPushToolName
+		!isSupportedControllerHostActionName(capability.name) ||
+		capability.name !== request.payload.actionId
 	) {
 		return rejectAuthorization(
 			'controller_host_action_capability_mismatch',
@@ -81,10 +90,19 @@ export async function authorizeGatewayControlControllerHostAction(
 			'controller host action is not configured for this zone',
 		);
 	}
-	if (!isOpenClawZoneGitConfigured(zone)) {
+	if (request.payload.actionId === zoneGitPushToolName && !isOpenClawZoneGitConfigured(zone)) {
 		return rejectAuthorization(
 			'controller_host_action_not_configured',
 			'controller host action is not configured for this zone',
+		);
+	}
+	if (
+		request.payload.actionId === controllerHostProbeToolName &&
+		process.env[controllerHostProbeEnvGate] !== '1'
+	) {
+		return rejectAuthorization(
+			'controller_host_action_not_configured',
+			'controller host probe is not enabled',
 		);
 	}
 

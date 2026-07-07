@@ -56,6 +56,10 @@ export type McpPortalEffectiveConfigWriteResult = Omit<
 >;
 
 const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
+const managedOpenClawControllerHostActionTools = new Set([
+	'controller_host_probe',
+	'zone_git_push',
+]);
 
 interface EffectiveConfigManifest {
 	readonly mcpConfigFile: string;
@@ -257,24 +261,26 @@ function assertManagedOpenClawControllerHostActionPolicy(props: {
 	}
 	if (props.namespacePolicy.tools.allow === '*') {
 		throw new Error(
-			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action tools must explicitly allow zone_git_push.`,
+			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action tools must explicitly allow reviewed controller host actions.`,
 		);
 	}
 	if (props.namespacePolicy.calls.withoutApproval.allow === '*') {
 		throw new Error(
-			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action calls must explicitly allow zone_git_push.`,
+			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action calls must explicitly allow reviewed controller host actions.`,
 		);
 	}
 	const allowedTools = new Set(props.namespacePolicy.tools.allow);
 	const allowedCalls = new Set(props.namespacePolicy.calls.withoutApproval.allow);
-	if (
-		allowedTools.size !== 1 ||
-		!allowedTools.has('zone_git_push') ||
-		allowedCalls.size !== 1 ||
-		!allowedCalls.has('zone_git_push')
-	) {
+	for (const toolName of [...allowedTools, ...allowedCalls]) {
+		if (!managedOpenClawControllerHostActionTools.has(toolName)) {
+			throw new Error(
+				`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action supports only reviewed controller host actions in this cutover.`,
+			);
+		}
+	}
+	if (!allowedTools.has('zone_git_push') || !allowedCalls.has('zone_git_push')) {
 		throw new Error(
-			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action supports only zone_git_push in this cutover.`,
+			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action must include zone_git_push in this cutover.`,
 		);
 	}
 }

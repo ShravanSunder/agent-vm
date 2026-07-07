@@ -444,7 +444,7 @@ describe('MCP Portal effective config materialization', () => {
 		expect(effectivePortalConfig.mcpProxy).toBeUndefined();
 	});
 
-	it('maps explicit zone Git controller host action capability only for the authored profile', async () => {
+	it('maps explicit reviewed controller host action capabilities only for the authored profile', async () => {
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
 				includeZoneGitControllerHostAction: true,
@@ -460,9 +460,11 @@ describe('MCP Portal effective config materialization', () => {
 								controller_host_action: {
 									calls: {
 										requiresApproval: { allow: [] },
-										withoutApproval: { allow: ['zone_git_push'] },
+										withoutApproval: {
+											allow: ['zone_git_push', 'controller_host_probe'],
+										},
 									},
-									tools: { allow: ['zone_git_push'] },
+									tools: { allow: ['zone_git_push', 'controller_host_probe'] },
 								},
 							},
 						},
@@ -479,9 +481,9 @@ describe('MCP Portal effective config materialization', () => {
 			backend: { kind: 'controller_host_action' },
 			calls: {
 				requiresApproval: { allow: [], deny: [] },
-				withoutApproval: { allow: ['zone_git_push'], deny: [] },
+				withoutApproval: { allow: ['zone_git_push', 'controller_host_probe'], deny: [] },
 			},
-			tools: { allow: ['zone_git_push'], deny: [] },
+			tools: { allow: ['zone_git_push', 'controller_host_probe'], deny: [] },
 		});
 		expect(
 			plan.effectiveToolPortalConfig.profiles.readonly?.capabilities.controller_host_action,
@@ -573,7 +575,39 @@ describe('MCP Portal effective config materialization', () => {
 					},
 				}),
 			),
-		).rejects.toThrow(/controller_host_action tools must explicitly allow zone_git_push/u);
+		).rejects.toThrow(
+			/controller_host_action tools must explicitly allow reviewed controller host actions/u,
+		);
+	});
+
+	it('rejects unknown controller host action tools for managed OpenClaw', async () => {
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					includeZoneGitControllerHostAction: true,
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					portalConfig: {
+						agents: { shravan: { profile: 'default' } },
+						profiles: {
+							default: {
+								namespaces: {
+									controller_host_action: {
+										calls: {
+											requiresApproval: { allow: [] },
+											withoutApproval: { allow: ['zone_git_push', 'host_shell_exec'] },
+										},
+										tools: { allow: ['zone_git_push', 'host_shell_exec'] },
+									},
+								},
+							},
+						},
+						schemaVersion: 1,
+					},
+				}),
+			),
+		).rejects.toThrow(
+			/controller_host_action supports only reviewed controller host actions in this cutover/u,
+		);
 	});
 
 	it('resolves 1Password provider secrets once and writes environment-only effective configs', async () => {

@@ -76,9 +76,9 @@ async function writeZoneGitToolPortalConfigs(options: {
 							controller_host_action: {
 								calls: {
 									requiresApproval: { allow: [] },
-									withoutApproval: { allow: ['zone_git_push'] },
+									withoutApproval: { allow: ['zone_git_push', 'controller_host_probe'] },
 								},
-								tools: { allow: ['zone_git_push'] },
+								tools: { allow: ['zone_git_push', 'controller_host_probe'] },
 							},
 						},
 					},
@@ -239,6 +239,7 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git legacy surface', () => {
 
 		harness = await startE2eControllerRuntime({
 			secrets: {
+				AGENT_VM_E2E_CONTROLLER_HOST_PROBE: '1',
 				AGENT_VM_TEST_ZONE_GIT_TOKEN: 'local-remote-token-not-for-tool-vm',
 				GITHUB_TOKEN: 'local-remote-token-not-for-tool-vm',
 				MCP_PORTAL_SERVER_SECRET: 'zone-git-smoke-portal-secret',
@@ -278,7 +279,38 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git legacy surface', () => {
 			status: 'ok',
 			value: {
 				namespaces: ['controller_host_action'],
-				tools: [{ name: 'zone_git_push' }],
+				tools: expect.arrayContaining([
+					expect.objectContaining({ name: 'zone_git_push' }),
+					expect.objectContaining({ name: 'controller_host_probe' }),
+				]),
+			},
+		});
+
+		const hostProbeResult = parseNativePortalToolResult(
+			await gatewayClient.invokeTool({
+				agentId,
+				args: {
+					calls: [
+						{
+							arguments: {},
+							id: 'probe-controller-host',
+							name: 'controller_host_probe',
+							namespace: 'controller_host_action',
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+		);
+		expect(expectSingleItemStatusOk(hostProbeResult)).toMatchObject({
+			id: 'probe-controller-host',
+			status: 'ok',
+			value: {
+				actionId: 'controller_host_probe',
+				result: {
+					entryNames: ['agent-vm-host-probe.txt'],
+					probeKind: 'controller_cache_dir_listing',
+				},
 			},
 		});
 

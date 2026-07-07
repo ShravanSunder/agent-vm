@@ -313,8 +313,8 @@ describe('gateway control contract', () => {
 		}
 	});
 
-	it('keeps controller_host_action payload narrow to the zone_git_push intent', () => {
-		const validPayload = {
+	it('keeps controller_host_action payload narrow to reviewed host-action intents', () => {
+		const validZoneGitPayload = {
 			actionId: 'zone_git_push',
 			callerContext: {
 				callerContextId: '44444444-4444-4444-8444-444444444444',
@@ -328,19 +328,39 @@ describe('gateway control contract', () => {
 			},
 			expectedHead: 'abc123',
 		};
+		const validHostProbePayload = {
+			actionId: 'controller_host_probe',
+			callerContext: {
+				callerContextId: '44444444-4444-4444-8444-444444444444',
+			},
+			correlation: {
+				capability: {
+					name: 'controller_host_probe',
+					namespace: 'controller_host_action',
+				},
+				toolCallId: 'tool-call-123',
+			},
+		};
 
-		expect(GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validPayload)).toEqual(
-			validPayload,
-		);
+		expect(
+			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validZoneGitPayload),
+		).toEqual(validZoneGitPayload);
+		expect(
+			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validHostProbePayload),
+		).toEqual(validHostProbePayload);
 
 		for (const invalidPayload of [
-			{ ...validPayload, argv: ['git', 'push'] },
-			{ ...validPayload, cwd: '/work' },
-			{ ...validPayload, env: { GITHUB_TOKEN: 'secret' } },
-			{ ...validPayload, executablePath: '/usr/bin/git' },
-			{ ...validPayload, hostWorkMountDir: '/Users/example/repo' },
-			{ ...validPayload, correlation: undefined },
-			{ ...validPayload, toolPortalAgentId: 'main' },
+			{ ...validZoneGitPayload, argv: ['git', 'push'] },
+			{ ...validZoneGitPayload, cwd: '/work' },
+			{ ...validZoneGitPayload, env: { GITHUB_TOKEN: 'secret' } },
+			{ ...validZoneGitPayload, executablePath: '/usr/bin/git' },
+			{ ...validZoneGitPayload, hostWorkMountDir: '/Users/example/repo' },
+			{ ...validZoneGitPayload, correlation: undefined },
+			{ ...validZoneGitPayload, toolPortalAgentId: 'main' },
+			{ ...validHostProbePayload, command: 'ls' },
+			{ ...validHostProbePayload, expectedHead: 'abc123' },
+			{ ...validHostProbePayload, path: '/Users/example' },
+			{ ...validHostProbePayload, actionId: 'host_shell_exec' },
 		]) {
 			expect(
 				GatewayControlToolPortalControllerHostActionPayloadSchema.safeParse(invalidPayload).success,

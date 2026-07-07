@@ -13,12 +13,20 @@ import type {
 import { authorizeGatewayControlControllerHostAction } from './gateway-control-controller-host-action-authorization.js';
 
 let testRoot: string;
+let previousControllerHostProbeGate: string | undefined;
 
 beforeEach(async () => {
 	testRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-controller-host-action-auth-'));
+	previousControllerHostProbeGate = process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE;
+	delete process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE;
 });
 
 afterEach(async () => {
+	if (previousControllerHostProbeGate === undefined) {
+		delete process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE;
+	} else {
+		process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE = previousControllerHostProbeGate;
+	}
 	await rm(testRoot, { force: true, recursive: true });
 });
 
@@ -54,12 +62,14 @@ const noSecretResolutionDuringTest = {
 async function writeToolPortalAuthoredConfig(
 	props: {
 		readonly agentId?: string;
+		readonly controllerHostActionTools?: readonly ('controller_host_probe' | 'zone_git_push')[];
 		readonly controllerHostActionPolicy?: boolean;
 		readonly profileId?: string;
 	} = {},
 ): Promise<string> {
 	const configDir = path.join(testRoot, 'gateway-config');
 	const agentId = props.agentId ?? 'main';
+	const controllerHostActionTools = props.controllerHostActionTools ?? ['zone_git_push'];
 	const controllerHostActionPolicy = props.controllerHostActionPolicy ?? true;
 	const profileId = props.profileId ?? 'default';
 	const namespaces = controllerHostActionPolicy
@@ -67,9 +77,9 @@ async function writeToolPortalAuthoredConfig(
 				controller_host_action: {
 					calls: {
 						requiresApproval: { allow: [] },
-						withoutApproval: { allow: ['zone_git_push'] },
+						withoutApproval: { allow: controllerHostActionTools },
 					},
-					tools: { allow: ['zone_git_push'] },
+					tools: { allow: controllerHostActionTools },
 				},
 			}
 		: {};
@@ -257,6 +267,37 @@ function createZoneGitPushPayload(
 	};
 }
 
+function createControllerHostProbePayload(
+	overrides: {
+		readonly capabilityName?: string;
+		readonly capabilityNamespace?: string;
+	} = {},
+): {
+	readonly actionId: 'controller_host_probe';
+	readonly callerContext: {
+		readonly callerContextId: string;
+	};
+	readonly correlation: {
+		readonly capability: {
+			readonly name: string;
+			readonly namespace: string;
+		};
+	};
+} {
+	return {
+		actionId: 'controller_host_probe' as const,
+		callerContext: {
+			callerContextId: trustedCallerContext.callerContextId,
+		},
+		correlation: {
+			capability: {
+				name: overrides.capabilityName ?? 'controller_host_probe',
+				namespace: overrides.capabilityNamespace ?? 'controller_host_action',
+			},
+		},
+	};
+}
+
 describe('authorizeGatewayControlControllerHostAction', () => {
 	it('authorizes zone_git_push from the controller-derived Tool Portal projection', async () => {
 		const systemConfig = await createSystemConfigFixture();
@@ -270,6 +311,67 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 				systemConfig,
 			}),
 		).resolves.toEqual({ authorized: true });
+	});
+
+	it('authorizes controller_host_probe from explicit policy when the e2e probe gate is enabled', async () => {
+		process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE = '1';
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				controllerHostActionTools: ['zone_git_push', 'controller_host_probe'],
+			}),
+			zoneGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig);
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createControllerHostProbePayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({ authorized: true });
+	});
+
+	it('rejects controller_host_probe when the e2e probe gate is disabled', async () => {
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				controllerHostActionTools: ['zone_git_push', 'controller_host_probe'],
+			}),
+			zoneGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig);
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createControllerHostProbePayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_host_action_not_configured',
+			safeMessage: 'controller host probe is not enabled',
+		});
+	});
+
+	it('rejects controller_host_probe when capability name does not match the payload action', async () => {
+		process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE = '1';
+		const systemConfig = await createSystemConfigFixture();
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createControllerHostProbePayload({ capabilityName: 'zone_git_push' }),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_host_action_capability_mismatch',
+			safeMessage: 'controller host action capability is not authorized',
+		});
 	});
 
 	it('authorizes from the controller-owned effective Tool Portal snapshot instead of mutable authored files', async () => {

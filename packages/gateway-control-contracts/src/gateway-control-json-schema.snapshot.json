@@ -969,81 +969,158 @@
 								"const": "tool_portal_controller_host_action"
 							},
 							"payload": {
-								"type": "object",
-								"properties": {
-									"actionId": {
-										"type": "string",
-										"const": "zone_git_push"
-									},
-									"callerContext": {
+								"oneOf": [
+									{
 										"type": "object",
 										"properties": {
-											"callerContextId": {
+											"actionId": {
 												"type": "string",
-												"format": "uuid",
-												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-											}
-										},
-										"required": ["callerContextId"],
-										"additionalProperties": false
-									},
-									"correlation": {
-										"type": "object",
-										"properties": {
-											"causationId": {
-												"type": "string",
-												"format": "uuid",
-												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+												"const": "zone_git_push"
 											},
-											"correlationId": {
-												"type": "string",
-												"minLength": 1
-											},
-											"requestId": {
-												"type": "string",
-												"minLength": 1
-											},
-											"runId": {
-												"type": "string",
-												"minLength": 1
-											},
-											"sessionKeyDigest": {
-												"type": "string",
-												"minLength": 32
-											},
-											"toolCallId": {
-												"type": "string",
-												"minLength": 1
-											},
-											"traceId": {
-												"type": "string",
-												"pattern": "^[0-9a-f]{32}$"
-											},
-											"capability": {
+											"callerContext": {
 												"type": "object",
 												"properties": {
-													"name": {
+													"callerContextId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													}
+												},
+												"required": ["callerContextId"],
+												"additionalProperties": false
+											},
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
 														"type": "string",
 														"minLength": 1
 													},
-													"namespace": {
+													"requestId": {
 														"type": "string",
 														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													},
+													"capability": {
+														"type": "object",
+														"properties": {
+															"name": {
+																"type": "string",
+																"minLength": 1
+															},
+															"namespace": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["name", "namespace"],
+														"additionalProperties": false
 													}
 												},
-												"required": ["name", "namespace"],
+												"additionalProperties": false
+											},
+											"expectedHead": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": ["actionId", "callerContext", "correlation", "expectedHead"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"actionId": {
+												"type": "string",
+												"const": "controller_host_probe"
+											},
+											"callerContext": {
+												"type": "object",
+												"properties": {
+													"callerContextId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													}
+												},
+												"required": ["callerContextId"],
+												"additionalProperties": false
+											},
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													},
+													"capability": {
+														"type": "object",
+														"properties": {
+															"name": {
+																"type": "string",
+																"minLength": 1
+															},
+															"namespace": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["name", "namespace"],
+														"additionalProperties": false
+													}
+												},
 												"additionalProperties": false
 											}
 										},
+										"required": ["actionId", "callerContext", "correlation"],
 										"additionalProperties": false
-									},
-									"expectedHead": {
-										"type": "string",
-										"minLength": 1
 									}
-								},
-								"required": ["actionId", "callerContext", "correlation", "expectedHead"],
-								"additionalProperties": false
+								]
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -2707,51 +2784,85 @@
 												"not": {}
 											},
 											"controllerHostAction": {
-												"type": "object",
-												"properties": {
-													"actionId": {
-														"type": "string",
-														"const": "zone_git_push"
-													},
-													"result": {
+												"oneOf": [
+													{
 														"type": "object",
 														"properties": {
-															"branch": {
+															"actionId": {
 																"type": "string",
-																"minLength": 1
+																"const": "zone_git_push"
 															},
-															"localHead": {
-																"type": "string",
-																"minLength": 1
-															},
-															"pushedCommits": {
-																"type": "array",
-																"items": {
-																	"type": "object",
-																	"properties": {
-																		"sha": {
-																			"type": "string",
-																			"minLength": 1
-																		},
-																		"subject": {
-																			"type": "string"
+															"result": {
+																"type": "object",
+																"properties": {
+																	"branch": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"localHead": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"pushedCommits": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"sha": {
+																					"type": "string",
+																					"minLength": 1
+																				},
+																				"subject": {
+																					"type": "string"
+																				}
+																			},
+																			"required": ["sha", "subject"],
+																			"additionalProperties": false
 																		}
 																	},
-																	"required": ["sha", "subject"],
-																	"additionalProperties": false
-																}
-															},
-															"remoteHead": {
-																"type": "string",
-																"minLength": 1
+																	"remoteHead": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": ["branch", "localHead", "pushedCommits", "remoteHead"],
+																"additionalProperties": false
 															}
 														},
-														"required": ["branch", "localHead", "pushedCommits", "remoteHead"],
+														"required": ["actionId", "result"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "controller_host_probe"
+															},
+															"result": {
+																"type": "object",
+																"properties": {
+																	"entryNames": {
+																		"maxItems": 64,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"probeKind": {
+																		"type": "string",
+																		"const": "controller_cache_dir_listing"
+																	}
+																},
+																"required": ["entryNames", "probeKind"],
+																"additionalProperties": false
+															}
+														},
+														"required": ["actionId", "result"],
 														"additionalProperties": false
 													}
-												},
-												"required": ["actionId", "result"],
-												"additionalProperties": false
+												]
 											},
 											"error": {
 												"not": {}

@@ -28,9 +28,9 @@ const projection = {
 		controller_host_action: {
 			calls: {
 				requiresApproval: { allow: [], deny: [] },
-				withoutApproval: { allow: ['zone_git_push'], deny: [] },
+				withoutApproval: { allow: ['zone_git_push', 'controller_host_probe'], deny: [] },
 			},
-			tools: { allow: ['zone_git_push'], deny: [] },
+			tools: { allow: ['zone_git_push', 'controller_host_probe'], deny: [] },
 		},
 	},
 	profile: 'default',
@@ -180,7 +180,10 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					status: 'ok',
 					value: {
 						namespaces: ['controller_host_action'],
-						tools: [{ name: 'zone_git_push' }],
+						tools: expect.arrayContaining([
+							expect.objectContaining({ name: 'zone_git_push' }),
+							expect.objectContaining({ name: 'controller_host_probe' }),
+						]),
 					},
 				},
 			],
@@ -202,6 +205,104 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 		expect(JSON.stringify(observedMessages)).not.toContain('PACK');
 		expect(JSON.stringify(observedMessages)).not.toContain('git-upload-pack');
 		expect(JSON.stringify(observedMessages)).not.toContain('git-receive-pack');
+		expect(callerContextStore.resolveCallerContextIdForAgent(callerContextScope)).toBeUndefined();
+	});
+
+	it('calls a fixed controller host probe through gateway control without a shell command', async () => {
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const callerContextStore = createGatewayControlCallerContextStore();
+		callerContextStore.rememberCallerContextForAgent({
+			callerContextId: '44444444-4444-4444-8444-444444444444',
+			...callerContextScope,
+		});
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedMessages.push(payload);
+			expect(payload).toEqual({
+				kind: 'command',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					actionId: 'controller_host_probe',
+					callerContext: {
+						callerContextId: '44444444-4444-4444-8444-444444444444',
+					},
+					correlation: {
+						capability: {
+							name: 'controller_host_probe',
+							namespace: 'controller_host_action',
+						},
+					},
+				},
+			});
+			return {
+				kind: 'command_result',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					controllerHostAction: {
+						actionId: 'controller_host_probe',
+						result: {
+							entryNames: ['agent-vm-host-probe.txt'],
+							probeKind: 'controller_cache_dir_listing',
+						},
+					},
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		});
+		const backend = createGatewayControlControllerHostActionBackend({
+			callerContextStore,
+			callerContextScope,
+			controlService,
+			createId: (() => {
+				const ids = [
+					'11111111-1111-4111-8111-111111111111',
+					'22222222-2222-4222-8222-222222222222',
+					'33333333-3333-4333-8333-333333333333',
+				];
+				let index = 0;
+				return () => {
+					const id = ids[index];
+					if (id === undefined) {
+						throw new Error('test id exhausted');
+					}
+					index += 1;
+					return id;
+				};
+			})(),
+			identity,
+			now: () => 1_000,
+			projection,
+		});
+
+		const callResult = await backend.call({
+			calls: [
+				{
+					arguments: {},
+					id: 'probe-host',
+					namespace: 'controller_host_action',
+					name: 'controller_host_probe',
+				},
+			],
+		});
+
+		expect(PortalCallResultSchema.parse(callResult)).toMatchObject({
+			items: [
+				{
+					id: 'probe-host',
+					status: 'ok',
+					value: {
+						actionId: 'controller_host_probe',
+						result: {
+							entryNames: ['agent-vm-host-probe.txt'],
+							probeKind: 'controller_cache_dir_listing',
+						},
+					},
+				},
+			],
+			ok: true,
+		});
+		expect(JSON.stringify(observedMessages)).not.toContain('ls');
+		expect(JSON.stringify(observedMessages)).not.toContain('cwd');
 		expect(callerContextStore.resolveCallerContextIdForAgent(callerContextScope)).toBeUndefined();
 	});
 

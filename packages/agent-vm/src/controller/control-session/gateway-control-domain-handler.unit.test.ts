@@ -180,10 +180,16 @@ function createEnvelope(
 
 function createAuthorizedControllerHostActions(
 	pushZoneGit: GatewayControlControllerHostActionOperations['pushZoneGit'],
+	overrides: Partial<GatewayControlControllerHostActionOperations> = {},
 ): GatewayControlControllerHostActionOperations {
 	return {
 		authorizeControllerHostAction: vi.fn(async () => ({ authorized: true }) as const),
 		pushZoneGit,
+		runControllerHostProbe: vi.fn(async () => ({
+			entryNames: ['agent-vm-host-probe.txt'],
+			probeKind: 'controller_cache_dir_listing' as const,
+		})),
+		...overrides,
 	};
 }
 
@@ -974,6 +980,88 @@ describe('gateway control domain handler', () => {
 		expect(callerContexts.resolve('44444444-4444-4444-8444-444444444444')).toBeUndefined();
 	});
 
+	it('routes controller_host_probe through the fixed host probe handler without a shell command', async () => {
+		const pushZoneGit = vi.fn(async () => ({
+			branch: 'main',
+			localHead: 'abc123',
+			pushedCommits: [],
+			remoteHead: 'abc123',
+		}));
+		const runControllerHostProbe = vi.fn(async () => ({
+			entryNames: ['agent-vm-host-probe.txt'],
+			probeKind: 'controller_cache_dir_listing' as const,
+		}));
+		const callerContexts = createRegisteredCallerContexts({
+			purpose: 'tool_portal_controller_host_action',
+		});
+		const dispatcher = createControlSessionDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				callerContexts,
+				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit, {
+					runControllerHostProbe,
+				}),
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('tool_portal_controller_host_action', {
+				deliveryPolicy: 'single_use_critical',
+			}),
+			payload: {
+				kind: 'command',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					actionId: 'controller_host_probe',
+					...callerContextPayload,
+					correlation: {
+						capability: {
+							name: 'controller_host_probe',
+							namespace: 'controller_host_action',
+						},
+					},
+				},
+			},
+		});
+
+		expect(pushZoneGit).not.toHaveBeenCalled();
+		expect(runControllerHostProbe).toHaveBeenCalledWith({
+			callerContext: expect.objectContaining({
+				agentId: 'main',
+				callerContextId: '44444444-4444-4444-8444-444444444444',
+			}),
+			payload: {
+				actionId: 'controller_host_probe',
+				...callerContextPayload,
+				correlation: {
+					capability: {
+						name: 'controller_host_probe',
+						namespace: 'controller_host_action',
+					},
+				},
+			},
+			session: acceptedSession,
+		});
+		expect(response).toEqual({
+			kind: 'command_result',
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				controllerHostAction: {
+					actionId: 'controller_host_probe',
+					result: {
+						entryNames: ['agent-vm-host-probe.txt'],
+						probeKind: 'controller_cache_dir_listing',
+					},
+				},
+				responseToMessageId: '66666666-6666-4666-8666-666666666666',
+				result: 'ok',
+			},
+		});
+		expect(callerContexts.resolve('44444444-4444-4444-8444-444444444444')).toBeUndefined();
+	});
+
 	it('rejects tool_portal_controller_host_action when callerContextId was registered for a lease', async () => {
 		const pushZoneGit = vi.fn(async () => ({
 			branch: 'main',
@@ -1154,6 +1242,10 @@ describe('gateway control domain handler', () => {
 				controllerHostActions: {
 					authorizeControllerHostAction,
 					pushZoneGit,
+					runControllerHostProbe: vi.fn(async () => ({
+						entryNames: ['agent-vm-host-probe.txt'],
+						probeKind: 'controller_cache_dir_listing' as const,
+					})),
 				},
 				session: acceptedSession,
 			}),

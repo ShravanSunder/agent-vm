@@ -45,13 +45,25 @@ import type {
 } from './gateway-control-caller-context-store.js';
 import type { GatewayControlIdentity, GatewayControlService } from './gateway-control-service.js';
 
-const controllerHostActionToolName = 'zone_git_push';
+const controllerHostActionToolNames = ['zone_git_push', 'controller_host_probe'] as const;
 
 const ZoneGitPushCallArgumentsSchema = z
 	.object({
 		expectedHead: z.string().min(1),
 	})
 	.strict();
+
+const ControllerHostProbeCallArgumentsSchema = z.object({}).strict();
+
+type ControllerHostActionToolName = (typeof controllerHostActionToolNames)[number];
+type ControllerHostActionPayloadWithoutContext =
+	| {
+			readonly actionId: 'controller_host_probe';
+	  }
+	| {
+			readonly actionId: 'zone_git_push';
+			readonly expectedHead: string;
+	  };
 
 export interface GatewayControlControllerHostActionBackendOptions {
 	readonly callerContextStore: GatewayControlCallerContextStore;
@@ -65,7 +77,7 @@ export interface GatewayControlControllerHostActionBackendOptions {
 
 interface ControllerHostActionCapability {
 	readonly namespace: string;
-	readonly name: typeof controllerHostActionToolName;
+	readonly name: ControllerHostActionToolName;
 }
 
 type PortalCallOkItem = Extract<PortalCallResult['items'][number], { readonly status: 'ok' }>;
@@ -81,6 +93,13 @@ interface GatewayControlCommandRetryIdentity {
 	readonly messageId: string;
 }
 
+class ControllerHostActionValidationError extends Error {
+	public constructor(message: string) {
+		super(message);
+		this.name = 'ControllerHostActionValidationError';
+	}
+}
+
 function selectorIncludesTool(selector: ToolPortalToolSelector, name: string): boolean {
 	if (selector.deny.includes(name)) {
 		return false;
@@ -88,17 +107,21 @@ function selectorIncludesTool(selector: ToolPortalToolSelector, name: string): b
 	return selector.allow === '*' || selector.allow.includes(name);
 }
 
+function isControllerHostActionToolName(value: string): value is ControllerHostActionToolName {
+	return controllerHostActionToolNames.some((toolName) => toolName === value);
+}
+
 function controllerHostActionCapabilities(
 	projection: ToolPortalControllerHostActionProjection,
 ): readonly ControllerHostActionCapability[] {
-	return Object.entries(projection.namespaces)
-		.filter(([, namespaceProjection]) =>
-			selectorIncludesTool(namespaceProjection.tools, controllerHostActionToolName),
-		)
-		.map(([namespace]) => ({
-			namespace,
-			name: controllerHostActionToolName,
-		}));
+	return Object.entries(projection.namespaces).flatMap(([namespace, namespaceProjection]) =>
+		controllerHostActionToolNames
+			.filter((toolName) => selectorIncludesTool(namespaceProjection.tools, toolName))
+			.map((toolName) => ({
+				namespace,
+				name: toolName,
+			})),
+	);
 }
 
 function canCallCapability(
@@ -108,7 +131,7 @@ function canCallCapability(
 	const namespaceProjection = projection.namespaces[capability.namespace];
 	if (
 		namespaceProjection === undefined ||
-		capability.name !== controllerHostActionToolName ||
+		!isControllerHostActionToolName(capability.name) ||
 		!selectorIncludesTool(namespaceProjection.tools, capability.name)
 	) {
 		return 'capability_denied';
@@ -125,21 +148,19 @@ function canCallCapability(
 function capabilitySummary(
 	capability: ControllerHostActionCapability,
 ): PortalListOkItem['value']['tools'][number] {
+	const metadata = controllerHostActionMetadata(capability.name);
 	return {
-		description: 'Ask the controller to push the OpenClaw zone Git branch.',
+		description: metadata.description,
 		input: {
 			optional: [],
-			propertyCount: 1,
-			required: ['expectedHead'],
+			propertyCount: metadata.requiredInputFields.length,
+			required: metadata.requiredInputFields,
 			type: 'object',
 		},
 		namespace: capability.namespace,
-		safety: { destructiveHint: true },
-		schemaHint: {
-			message: 'Provide expectedHead for the current zone Git branch before calling.',
-			next: 'call_ready',
-		},
-		title: 'Push zone Git',
+		safety: { destructiveHint: capability.name === 'zone_git_push' },
+		schemaHint: metadata.schemaHint,
+		title: metadata.title,
 		name: capability.name,
 		toolRef: `${capability.namespace}.${capability.name}`,
 	};
@@ -148,30 +169,69 @@ function capabilitySummary(
 function capabilityDescriptor(
 	capability: ControllerHostActionCapability,
 ): PortalDescribeOkItem['value']['tools'][number] {
+	const metadata = controllerHostActionMetadata(capability.name);
 	return {
 		annotations: {
 			authority: 'controller_host_action',
-			actionId: 'zone_git_push',
+			actionId: capability.name,
 		},
-		inputSchema: zoneGitPushInputSchema(),
+		inputSchema: metadata.inputSchema(),
 		namespace: capability.namespace,
 		outputSchema: {
 			additionalProperties: false,
 			properties: {
-				actionId: { const: 'zone_git_push', type: 'string' },
+				actionId: { const: capability.name, type: 'string' },
 				result: { type: 'object' },
 			},
 			required: ['actionId', 'result'],
 			type: 'object',
 		},
 		related: [],
-		schemaHint: {
-			message: 'The controller performs the push and returns a sanitized result.',
-			next: 'call_ready',
-		},
+		schemaHint: metadata.schemaHint,
 		name: capability.name,
 		toolRef: `${capability.namespace}.${capability.name}`,
 	};
+}
+
+interface ControllerHostActionMetadata {
+	readonly description: string;
+	readonly inputSchema: () => Record<string, JsonValue>;
+	readonly requiredInputFields: string[];
+	readonly schemaHint: {
+		readonly message: string;
+		readonly next: 'call_ready';
+	};
+	readonly title: string;
+}
+
+function controllerHostActionMetadata(
+	actionName: ControllerHostActionToolName,
+): ControllerHostActionMetadata {
+	switch (actionName) {
+		case 'zone_git_push':
+			return {
+				description: 'Ask the controller to push the OpenClaw zone Git branch.',
+				inputSchema: zoneGitPushInputSchema,
+				requiredInputFields: ['expectedHead'],
+				schemaHint: {
+					message: 'Provide expectedHead for the current zone Git branch before calling.',
+					next: 'call_ready',
+				},
+				title: 'Push zone Git',
+			};
+		case 'controller_host_probe':
+			return {
+				description: 'Ask the controller to return a fixed host-side probe result.',
+				inputSchema: controllerHostProbeInputSchema,
+				requiredInputFields: [],
+				schemaHint: {
+					message: 'Call with an empty object; no host command, path, or cwd is accepted.',
+					next: 'call_ready',
+				},
+				title: 'Probe controller host',
+			};
+	}
+	return assertUnreachableControllerHostAction(actionName);
 }
 
 function zoneGitPushInputSchema(): Record<string, JsonValue> {
@@ -187,6 +247,19 @@ function zoneGitPushInputSchema(): Record<string, JsonValue> {
 		required: ['expectedHead'],
 		type: 'object',
 	};
+}
+
+function controllerHostProbeInputSchema(): Record<string, JsonValue> {
+	return {
+		additionalProperties: false,
+		properties: {},
+		required: [],
+		type: 'object',
+	};
+}
+
+function assertUnreachableControllerHostAction(actionName: never): never {
+	throw new Error(`unsupported controller host action: ${String(actionName)}`);
 }
 
 function requestedCapabilities(
@@ -219,7 +292,8 @@ function matchesSearchQuery(
 	if (query === undefined || query.trim().length === 0) {
 		return true;
 	}
-	const haystack = `${capability.namespace} ${capability.name} zone git push controller host action`;
+	const metadata = controllerHostActionMetadata(capability.name);
+	const haystack = `${capability.namespace} ${capability.name} ${metadata.title} ${metadata.description} controller host action`;
 	return haystack.toLowerCase().includes(query.toLowerCase());
 }
 
@@ -261,6 +335,10 @@ function buildZoneGitPushIdempotencyKey(parts: {
 	return ['zone_git_push', parts.namespace, parts.expectedHead].join('\u0000');
 }
 
+function buildControllerHostProbeIdempotencyKey(parts: { readonly namespace: string }): string {
+	return ['controller_host_probe', parts.namespace].join('\u0000');
+}
+
 function requireAgentAuthorityKey(options: {
 	readonly agentId: string;
 	readonly keys: Readonly<Record<string, string>>;
@@ -280,15 +358,16 @@ export function createGatewayControlControllerHostActionBackend(
 	const projection = ToolPortalControllerHostActionProjectionSchema.parse(options.projection);
 	const createId = options.createId ?? randomUUID;
 	const now = options.now ?? (() => Date.now());
-	const pendingZoneGitPushIdentityByIdempotencyKey = new Map<
+	const pendingControllerHostActionIdentityByIdempotencyKey = new Map<
 		string,
 		GatewayControlCommandRetryIdentity
 	>();
 
-	const pendingZoneGitPushIdentityFor = (
+	const pendingControllerHostActionIdentityFor = (
 		idempotencyKey: string,
 	): GatewayControlCommandRetryIdentity => {
-		const existingIdentity = pendingZoneGitPushIdentityByIdempotencyKey.get(idempotencyKey);
+		const existingIdentity =
+			pendingControllerHostActionIdentityByIdempotencyKey.get(idempotencyKey);
 		if (existingIdentity !== undefined) {
 			return existingIdentity;
 		}
@@ -297,12 +376,12 @@ export function createGatewayControlControllerHostActionBackend(
 			idempotencyKey: [idempotencyKey, createId()].join('\u0000'),
 			messageId: createId(),
 		} satisfies GatewayControlCommandRetryIdentity;
-		pendingZoneGitPushIdentityByIdempotencyKey.set(idempotencyKey, identity);
+		pendingControllerHostActionIdentityByIdempotencyKey.set(idempotencyKey, identity);
 		return identity;
 	};
 
-	const forgetPendingZoneGitPushIdentity = (idempotencyKey: string): void => {
-		pendingZoneGitPushIdentityByIdempotencyKey.delete(idempotencyKey);
+	const forgetPendingControllerHostActionIdentity = (idempotencyKey: string): void => {
+		pendingControllerHostActionIdentityByIdempotencyKey.delete(idempotencyKey);
 	};
 
 	const registerControllerHostActionCallerContext = async (): Promise<string> => {
@@ -399,11 +478,12 @@ export function createGatewayControlControllerHostActionBackend(
 		return callerContextId;
 	};
 
-	const sendZoneGitPush = async (params: {
-		readonly expectedHead: string;
+	const sendControllerHostAction = async (params: {
+		readonly idempotencyKey: string;
 		readonly namespace: string;
+		readonly payload: ControllerHostActionPayloadWithoutContext;
 	}): Promise<PortalCallOkItem['value']> => {
-		const emitZoneGitPush = async (
+		const emitControllerHostAction = async (
 			callerContextId: string,
 			commandIdentity: GatewayControlCommandRetryIdentity,
 		): Promise<{
@@ -411,17 +491,16 @@ export function createGatewayControlControllerHostActionBackend(
 			readonly messageId: string;
 		}> => {
 			const payload = GatewayControlToolPortalControllerHostActionPayloadSchema.parse({
-				actionId: 'zone_git_push',
+				...params.payload,
 				callerContext: {
 					callerContextId,
 				},
 				correlation: {
 					capability: {
-						name: controllerHostActionToolName,
+						name: params.payload.actionId,
 						namespace: params.namespace,
 					},
 				},
-				expectedHead: params.expectedHead,
 			});
 			const message = GatewayControlRpcMessageSchema.parse({
 				kind: 'command',
@@ -460,19 +539,24 @@ export function createGatewayControlControllerHostActionBackend(
 			};
 		};
 
-		const zoneGitPushIdempotencyKey = buildZoneGitPushIdempotencyKey(params);
-		let commandIdentity = pendingZoneGitPushIdentityFor(zoneGitPushIdempotencyKey);
+		let commandIdentity = pendingControllerHostActionIdentityFor(params.idempotencyKey);
 		let callerContextId = await registerControllerHostActionCallerContext();
 		try {
-			let { messageId, result: response } = await emitZoneGitPush(callerContextId, commandIdentity);
+			let { messageId, result: response } = await emitControllerHostAction(
+				callerContextId,
+				commandIdentity,
+			);
 			if (isControllerHostActionCallerContextError(response.payload.error?.errorClass)) {
-				forgetPendingZoneGitPushIdentity(zoneGitPushIdempotencyKey);
+				forgetPendingControllerHostActionIdentity(params.idempotencyKey);
 				options.callerContextStore.forgetCallerContextForAgent({
 					...options.callerContextScope,
 				});
-				commandIdentity = pendingZoneGitPushIdentityFor(zoneGitPushIdempotencyKey);
+				commandIdentity = pendingControllerHostActionIdentityFor(params.idempotencyKey);
 				callerContextId = await registerControllerHostActionCallerContext();
-				({ messageId, result: response } = await emitZoneGitPush(callerContextId, commandIdentity));
+				({ messageId, result: response } = await emitControllerHostAction(
+					callerContextId,
+					commandIdentity,
+				));
 			}
 			if (
 				response.operation !== 'tool_portal_controller_host_action' ||
@@ -480,7 +564,7 @@ export function createGatewayControlControllerHostActionBackend(
 				response.payload.result !== 'ok' ||
 				response.payload.controllerHostAction === undefined
 			) {
-				forgetPendingZoneGitPushIdentity(zoneGitPushIdempotencyKey);
+				forgetPendingControllerHostActionIdentity(params.idempotencyKey);
 				if (isControllerHostActionCallerContextError(response.payload.error?.errorClass)) {
 					options.callerContextStore.forgetCallerContextForAgent({
 						...options.callerContextScope,
@@ -490,13 +574,57 @@ export function createGatewayControlControllerHostActionBackend(
 					response.payload.error?.safeMessage ?? 'controller host action did not succeed',
 				);
 			}
-			forgetPendingZoneGitPushIdentity(zoneGitPushIdempotencyKey);
+			forgetPendingControllerHostActionIdentity(params.idempotencyKey);
 			return response.payload.controllerHostAction;
 		} finally {
 			options.callerContextStore.forgetCallerContextForAgent({
 				...options.callerContextScope,
 			});
 		}
+	};
+
+	const callControllerHostAction = async (call: {
+		readonly arguments: unknown;
+		readonly namespace: string;
+		readonly name: ControllerHostActionToolName;
+	}): Promise<PortalCallOkItem['value']> => {
+		switch (call.name) {
+			case 'zone_git_push': {
+				const argumentsResult = ZoneGitPushCallArgumentsSchema.safeParse(call.arguments);
+				if (!argumentsResult.success) {
+					throw new ControllerHostActionValidationError('zone_git_push requires expectedHead.');
+				}
+				return await sendControllerHostAction({
+					idempotencyKey: buildZoneGitPushIdempotencyKey({
+						expectedHead: argumentsResult.data.expectedHead,
+						namespace: call.namespace,
+					}),
+					namespace: call.namespace,
+					payload: {
+						actionId: 'zone_git_push',
+						expectedHead: argumentsResult.data.expectedHead,
+					},
+				});
+			}
+			case 'controller_host_probe': {
+				const argumentsResult = ControllerHostProbeCallArgumentsSchema.safeParse(call.arguments);
+				if (!argumentsResult.success) {
+					throw new ControllerHostActionValidationError(
+						'controller_host_probe requires an empty object.',
+					);
+				}
+				return await sendControllerHostAction({
+					idempotencyKey: buildControllerHostProbeIdempotencyKey({
+						namespace: call.namespace,
+					}),
+					namespace: call.namespace,
+					payload: {
+						actionId: 'controller_host_probe',
+					},
+				});
+			}
+		}
+		return assertUnreachableControllerHostAction(call.name);
 	};
 
 	return {
@@ -522,28 +650,31 @@ export function createGatewayControlControllerHostActionBackend(
 							message: `Capability ${call.namespace}.${call.name} is not allowed.`,
 						});
 					}
-					const argumentsResult = ZoneGitPushCallArgumentsSchema.safeParse(call.arguments);
-					if (!argumentsResult.success) {
+					if (!isControllerHostActionToolName(call.name)) {
 						return errorItem({
 							code: 'validation_failed',
 							id: call.id,
-							message: 'zone_git_push requires expectedHead.',
+							message: 'Unsupported controller host action.',
 						});
 					}
 					try {
 						return {
 							id: call.id,
 							status: 'ok' as const,
-							value: await sendZoneGitPush({
-								expectedHead: argumentsResult.data.expectedHead,
+							value: await callControllerHostAction({
+								arguments: call.arguments,
 								namespace: call.namespace,
+								name: call.name,
 							}),
 						};
-					} catch {
+					} catch (error) {
 						return errorItem({
-							code: 'execution_failed',
+							code:
+								error instanceof ControllerHostActionValidationError
+									? 'validation_failed'
+									: 'execution_failed',
 							id: call.id,
-							message: 'Controller host action failed.',
+							message: error instanceof Error ? error.message : 'Controller host action failed.',
 						});
 					}
 				}),
@@ -600,7 +731,9 @@ export function createGatewayControlControllerHostActionBackend(
 									description: summary.description,
 									input: summary.input,
 									inputSchema:
-										itemRequest.schemaDetail === 'none' ? undefined : zoneGitPushInputSchema(),
+										itemRequest.schemaDetail === 'none'
+											? undefined
+											: controllerHostActionMetadata(capability.name).inputSchema(),
 									namespace: summary.namespace,
 									safety: summary.safety,
 									schemaHint: summary.schemaHint,

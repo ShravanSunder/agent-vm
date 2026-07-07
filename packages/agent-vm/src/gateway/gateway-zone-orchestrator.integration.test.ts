@@ -3476,6 +3476,10 @@ describe('startGatewayZone', () => {
 				gatewayControlControllerHostActions: {
 					authorizeControllerHostAction: vi.fn(async () => ({ authorized: true }) as const),
 					pushZoneGit,
+					runControllerHostProbe: vi.fn(async () => ({
+						entryNames: ['agent-vm-host-probe.txt'],
+						probeKind: 'controller_cache_dir_listing' as const,
+					})),
 				},
 				gatewayControlLeaseRpc,
 				runTask: async (title, fn) => {

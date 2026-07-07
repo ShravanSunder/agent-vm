@@ -11,6 +11,7 @@ import {
 	type GatewayControlHealthEventPayload,
 	type GatewayControlProviderRuntimeHealth,
 	type GatewayControlRuntimeStatusPayload,
+	type GatewayControlControllerHostProbeResult,
 	type GatewayControlToolPortalControllerHostActionPayload,
 	type GatewayControlToolPortalControllerHostActionResult,
 	type GatewayControlRpcMessage,
@@ -87,9 +88,20 @@ export interface GatewayControlControllerHostActionOperations {
 	>;
 	pushZoneGit(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlToolPortalControllerHostActionPayload;
+		readonly payload: Extract<
+			GatewayControlToolPortalControllerHostActionPayload,
+			{ readonly actionId: 'zone_git_push' }
+		>;
 		readonly session: GatewayControlAcceptedSessionRef;
 	}): Promise<GatewayControlZoneGitPushResult>;
+	runControllerHostProbe(options: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly payload: Extract<
+			GatewayControlToolPortalControllerHostActionPayload,
+			{ readonly actionId: 'controller_host_probe' }
+		>;
+		readonly session: GatewayControlAcceptedSessionRef;
+	}): Promise<GatewayControlControllerHostProbeResult>;
 }
 
 export interface GatewayControlDomainHandlerOptions {
@@ -480,19 +492,39 @@ async function executeToolPortalControllerHostAction(options: {
 				result: 'rejected',
 			});
 		}
-		const result = await options.actions.pushZoneGit({
-			callerContext,
-			payload: options.payload,
-			session: options.session,
-		});
-		return commandResultPayload({
-			controllerHostAction: {
-				actionId: 'zone_git_push',
-				result,
-			},
-			responseToMessageId: options.responseToMessageId,
-			result: 'ok',
-		});
+		switch (options.payload.actionId) {
+			case 'zone_git_push': {
+				const result = await options.actions.pushZoneGit({
+					callerContext,
+					payload: options.payload,
+					session: options.session,
+				});
+				return commandResultPayload({
+					controllerHostAction: {
+						actionId: 'zone_git_push',
+						result,
+					},
+					responseToMessageId: options.responseToMessageId,
+					result: 'ok',
+				});
+			}
+			case 'controller_host_probe': {
+				const result = await options.actions.runControllerHostProbe({
+					callerContext,
+					payload: options.payload,
+					session: options.session,
+				});
+				return commandResultPayload({
+					controllerHostAction: {
+						actionId: 'controller_host_probe',
+						result,
+					},
+					responseToMessageId: options.responseToMessageId,
+					result: 'ok',
+				});
+			}
+		}
+		return assertUnreachableControllerHostAction(options.payload);
 	} catch {
 		return commandResultPayload({
 			error: {
@@ -506,6 +538,10 @@ async function executeToolPortalControllerHostAction(options: {
 	} finally {
 		options.callerContexts.release(callerContext.callerContextId);
 	}
+}
+
+function assertUnreachableControllerHostAction(payload: never): never {
+	throw new Error(`unsupported controller host action: ${JSON.stringify(payload)}`);
 }
 
 function leaseResultPayload(options: {
