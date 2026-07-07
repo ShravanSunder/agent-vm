@@ -25,8 +25,9 @@ Checkpoint:
 - JSON Schema export is generated from Zod schemas.
 - Every `ControlMessageKindSchema` value resolves to an owning payload/handler
   (AF-3): resync is via `control:hello` (no `resync_request`/`resync_response`
-  kind); snapshot/heartbeat/observation each mapped per the PROTO kind
-  disposition.
+  kind); `snapshot` is not a shared transport kind because domain snapshots ride
+  as `event` messages with latest_wins delivery; heartbeat/observation each
+  mapped per the PROTO kind disposition.
 - Delivery class is bound to `(operation, payload)` in contract, so the
   receiver derives it and never trusts the sender's envelope `deliveryPolicy`
   (AF-2).

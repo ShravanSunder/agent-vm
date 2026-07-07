@@ -295,7 +295,6 @@ export const ControlMessageKindSchema = z.enum([
   "command",
   "command_result",
   "event",
-  "snapshot",
   "heartbeat",
   "observation",
 ]);
@@ -341,11 +340,10 @@ command / command_result
   RPC lifecycle (all domains). Carried on control:message.
 
 event
-  Domain events (state transitions, lifecycle notices).
-
-snapshot
-  latest_wins state snapshots: health, runtime-status, capacity, and
-  control-session liveness summary. Sender is not the authority.
+  Domain events (state transitions, lifecycle notices). This includes
+  latest_wins state snapshots such as health, runtime-status, capacity, and
+  control-session liveness summary. `snapshot` is a delivery disposition, not a
+  shared transport kind.
 
 heartbeat
   Unsolicited app-liveness beat. First-class priority-lane message

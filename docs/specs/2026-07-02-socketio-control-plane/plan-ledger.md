@@ -89,9 +89,9 @@ Four grounded lanes + parent verification vs spec text, live code, Gondolin chec
   (`15-sg-ssh-egress-git-policy.md`)
   owns gondolin-adapter egress + 2-lifecycle wiring; GIT-1 re-owned SWc→SG.
 - AF-2 (PROTO edit): deliveryPolicy was trusted-sender-set; added receiver-derives-and-fails-closed rule + DP-TRUST row.
-- AF-3 (PROTO edit): removed vestigial resync_request/resync_response kinds (hello supersedes); pinned snapshot/
-  heartbeat/observation disposition; added KIND-EXACT row. NOTE: grep confirmed heartbeat/snapshot are load-bearing
-  (backpressure priority lanes / delivery table) — kept, NOT removed.
+- AF-3 (PROTO edit): removed vestigial resync_request/resync_response kinds (hello supersedes); removed dead shared
+  `snapshot` kind because snapshots ride as domain `event` messages with latest_wins delivery; pinned heartbeat/
+  observation disposition; added KIND-EXACT row.
 - PC-1 allowedHosts=audience.ts:29-31 (not openclaw-lifecycle.ts:1011). PC-2 worker request-policy not a barrel +
   orphan cleanup added to SWc/S5a. PC-3 identityPem on 3 lease routes. PC-4 :81-83 fail-closed is target-state.
   PC-5 no send-buffer constructor option (clear sendBuffer on reconnect). PC-6 gateway-zone-orchestrator=src/gateway/.

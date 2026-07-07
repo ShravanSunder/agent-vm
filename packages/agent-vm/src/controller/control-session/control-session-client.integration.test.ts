@@ -137,14 +137,14 @@ const heartbeatEnvelope = {
 	sequence: 2,
 } satisfies ControlEnvelope;
 
-const snapshotEnvelope = {
+const latestWinsEventEnvelope = {
 	...validEnvelope,
 	commandId: undefined,
 	deliveryPolicy: 'latest_wins',
 	idempotencyKey: undefined,
-	kind: 'snapshot',
+	kind: 'event',
 	messageId: '77777777-7777-4777-8777-777777777777',
-	operation: undefined,
+	operation: 'runtime_status',
 	sequence: 3,
 } satisfies ControlEnvelope;
 
@@ -2650,7 +2650,7 @@ describe('control session client', () => {
 			serveClient: false,
 			transports: ['websocket'],
 		});
-		const observedSnapshots: unknown[] = [];
+		const observedLatestWinsEvents: unknown[] = [];
 		let resolveHeartbeatObserved: (() => void) | undefined;
 		const heartbeatObserved = new Promise<void>((resolve) => {
 			resolveHeartbeatObserved = resolve;
@@ -2667,8 +2667,8 @@ describe('control session client', () => {
 			socket.on(
 				CONTROL_SESSION_EVENT_NAMES.message,
 				(envelope: ControlEnvelope, payload: unknown, ack) => {
-					if (envelope.kind === 'snapshot') {
-						observedSnapshots.push(payload);
+					if (envelope.kind === 'event') {
+						observedLatestWinsEvents.push(payload);
 						return;
 					}
 					if (envelope.kind === 'heartbeat') {
@@ -2693,10 +2693,10 @@ describe('control session client', () => {
 			},
 			policyByKind: {
 				heartbeat: 'critical_idempotent',
-				snapshot: 'latest_wins',
 			},
 			policyByOperation: {
 				lease_create: 'single_use_critical',
+				runtime_status: 'latest_wins',
 			},
 			timeoutMs: 5_000,
 		});
@@ -2708,11 +2708,11 @@ describe('control session client', () => {
 				Array.from({ length: floodCount }, (_unused, snapshotIndex) =>
 					client.emitApplicationMessage(
 						{
-							...snapshotEnvelope,
+							...latestWinsEventEnvelope,
 							messageId: `10000000-0000-4000-8000-${String(snapshotIndex + 1).padStart(12, '0')}`,
 							sequence: snapshotIndex + 1,
 						},
-						{ kind: 'snapshot' },
+						{ kind: 'event', operation: 'runtime_status' },
 						{ snapshotIndex },
 					),
 				),
@@ -2731,7 +2731,7 @@ describe('control session client', () => {
 			).resolves.toEqual({ received: true });
 			await heartbeatObserved;
 
-			expect(observedSnapshots).toEqual([{ snapshotIndex: floodCount - 1 }]);
+			expect(observedLatestWinsEvents).toEqual([{ snapshotIndex: floodCount - 1 }]);
 		} finally {
 			client.close();
 			await closeSocketIoServer(socketServer);

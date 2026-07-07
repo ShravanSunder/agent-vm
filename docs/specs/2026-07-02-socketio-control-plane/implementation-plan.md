@@ -612,7 +612,8 @@ here for the DAG only (full detail is in the canonical file):
   an envelope deliveryPolicy that contradicts the derived class (parallels SCHEMA-3 kind/operation equality). unit
   (S1 operation→class binding) + integration (S3 dispatch enforcement). Owner: S1 + S3.
 - KIND-EXACT (AF-3, NEW): every ControlMessageKindSchema value resolves to an owning payload/handler branch; a
-  declared-but-unmapped kind fails. resync_request/resync_response removed (hello supersedes); snapshot/heartbeat/
+  declared-but-unmapped kind fails. resync_request/resync_response removed (hello supersedes); `snapshot` removed
+  from the shared kind enum because snapshots ride as domain `event` messages with latest_wins delivery; heartbeat/
   observation each mapped per PROTO kind-disposition. unit. Owner: S1.
 - I6/I10 task-HTTP regression: SEMANTIC assertions (Imp10) — submit accepted w/ taskId, state observable +
   transitions/terminal, close cancels/terminalizes — NOT bare 2xx. Owner: SWc / controller-integration.

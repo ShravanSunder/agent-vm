@@ -94,7 +94,7 @@
 			},
 			"kind": {
 				"type": "string",
-				"enum": ["command", "command_result", "event", "snapshot", "heartbeat", "observation"]
+				"enum": ["command", "command_result", "event", "heartbeat", "observation"]
 			},
 			"messageId": {
 				"type": "string",

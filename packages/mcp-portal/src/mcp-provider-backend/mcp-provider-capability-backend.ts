@@ -707,7 +707,11 @@ function safeDiagnosticCode(code: string): SafeDiagnostic['code'] {
 	) {
 		return 'capability_denied';
 	}
-	if (code === 'invalid_portal_input' || code === 'validation_failed') {
+	if (
+		code === 'invalid_portal_input' ||
+		code === 'input_validation' ||
+		code === 'validation_failed'
+	) {
 		return 'validation_failed';
 	}
 	if (code === 'timeout') {

@@ -124,9 +124,11 @@ Spec hardening (PROTO edited):
 - AF-2: envelope `deliveryPolicy` was a trusted sender-set field with no
   recompute rule. Added: receiver derives class from `(operation, payload)` and
   fails closed on contradiction (new DP-TRUST proof row).
-- AF-3: 5 of 9 message kinds were unmapped; `resync_request`/`resync_response`
-  contradicted hello-based resync. Removed those two; pinned snapshot/heartbeat/
-  observation dispositions; added KIND-EXACT proof row.
+- AF-3: message kinds must resolve to real domain ownership. `resync_request`/
+  `resync_response` contradicted hello-based resync; `snapshot` was a dead shared
+  kind because snapshots ride as domain `event` messages with latest_wins delivery.
+  Removed those kinds, pinned heartbeat/observation dispositions, and added the
+  KIND-EXACT proof row.
 
 Plan-accuracy corrections (anchors verified):
 - PC-1: allowedHosts injection is `gateway-interface/src/audience.ts:29-31`, not

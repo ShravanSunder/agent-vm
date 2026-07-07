@@ -175,6 +175,7 @@ describe('control protocol contracts', () => {
 		expect(ControlMessageKindSchema.options).not.toContain('command_ack');
 		expect(ControlMessageKindSchema.options).not.toContain('resync_request');
 		expect(ControlMessageKindSchema.options).not.toContain('resync_response');
+		expect(ControlMessageKindSchema.options).not.toContain('snapshot');
 	});
 
 	it('keeps close reasons aligned with the accepted protocol vocabulary', () => {
@@ -303,8 +304,8 @@ describe('control protocol contracts', () => {
 					commandId: undefined,
 					deliveryPolicy: 'latest_wins',
 					idempotencyKey: undefined,
-					kind: 'snapshot',
-					operation: undefined,
+					kind: 'event',
+					operation: 'runtime_status',
 					sequence: 3,
 				},
 				lastSeenSequence: 1,

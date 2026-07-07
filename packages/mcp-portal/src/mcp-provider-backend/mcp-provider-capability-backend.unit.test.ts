@@ -318,6 +318,37 @@ describe('MCP provider capability backend', () => {
 		expect(serializedResult).not.toContain('/usr/local/bin/provider');
 	});
 
+	it('maps upstream input validation failures to schema errors on the capability surface', async () => {
+		const backend = createBackendFixture();
+
+		const result = await backend.call({
+			calls: [
+				{
+					arguments: { number: 'not-a-number' },
+					id: 'read-issue',
+					namespace: 'github',
+					name: 'get_issue',
+				},
+			],
+		});
+
+		expect(PortalCallResultSchema.parse(result)).toMatchObject({
+			items: [
+				{
+					error: {
+						code: 'validation_failed',
+						message: 'Capability input did not match the expected schema.',
+					},
+					id: 'read-issue',
+					status: 'error',
+				},
+			],
+			ok: false,
+		});
+		expect(JSON.stringify(result)).toContain('validation_failed');
+		expect(JSON.stringify(result)).not.toContain('Capability execution failed');
+	});
+
 	it('requires approval for projected write calls and rejects model-supplied tokens', async () => {
 		const backend = createBackendFixture();
 

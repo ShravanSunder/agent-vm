@@ -34,7 +34,6 @@ export const ControlMessageKindSchema = z.enum([
 	'command',
 	'command_result',
 	'event',
-	'snapshot',
 	'heartbeat',
 	'observation',
 ]);
@@ -282,7 +281,6 @@ export const controlMessageKindDisposition = {
 	event: 'domain_event',
 	heartbeat: 'priority_liveness',
 	observation: 'append_only_observation',
-	snapshot: 'latest_wins_state',
 } as const satisfies Record<ControlMessageKind, string>;
 
 export type ControlDomain = z.infer<typeof ControlDomainSchema>;
