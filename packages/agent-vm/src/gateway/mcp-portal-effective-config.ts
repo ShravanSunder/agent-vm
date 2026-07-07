@@ -254,11 +254,6 @@ function assertManagedOpenClawControllerHostActionPolicy(props: {
 	readonly namespacePolicy: McpPortalConfig['profiles'][string]['namespaces'][string];
 	readonly profileId: string;
 }): void {
-	if (!props.includeZoneGitControllerHostAction) {
-		throw new Error(
-			`mcp-portal: profile "${props.profileId}" uses reserved Tool Portal namespace controller_host_action while zoneGit is disabled.`,
-		);
-	}
 	if (props.namespacePolicy.tools.allow === '*') {
 		throw new Error(
 			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action tools must explicitly allow reviewed controller host actions.`,
@@ -277,11 +272,16 @@ function assertManagedOpenClawControllerHostActionPolicy(props: {
 				`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action supports only reviewed controller host actions in this cutover.`,
 			);
 		}
-	}
-	if (!allowedTools.has('zone_git_push') || !allowedCalls.has('zone_git_push')) {
-		throw new Error(
-			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action must include zone_git_push in this cutover.`,
-		);
+		if (!allowedTools.has(toolName) || !allowedCalls.has(toolName)) {
+			throw new Error(
+				`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action must include each reviewed controller host action in both tools and calls.withoutApproval.`,
+			);
+		}
+		if (toolName === 'zone_git_push' && !props.includeZoneGitControllerHostAction) {
+			throw new Error(
+				`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action cannot allow zone_git_push while zoneGit is disabled.`,
+			);
+		}
 	}
 }
 

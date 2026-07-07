@@ -490,6 +490,71 @@ describe('MCP Portal effective config materialization', () => {
 		).toBeUndefined();
 	});
 
+	it('maps controller host probe without requiring zone Git materialization', async () => {
+		const plan = await planMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				includeZoneGitControllerHostAction: false,
+				mcpConfig: { providers: {}, schemaVersion: 1 },
+				portalConfig: {
+					agents: { shravan: { profile: 'default' } },
+					profiles: {
+						default: {
+							namespaces: {
+								controller_host_action: {
+									calls: {
+										requiresApproval: { allow: [] },
+										withoutApproval: { allow: ['controller_host_probe'] },
+									},
+									tools: { allow: ['controller_host_probe'] },
+								},
+							},
+						},
+					},
+					schemaVersion: 1,
+				},
+			}),
+		);
+
+		expect(
+			plan.effectiveToolPortalConfig.profiles.default?.capabilities.controller_host_action,
+		).toEqual({
+			backend: { kind: 'controller_host_action' },
+			calls: {
+				requiresApproval: { allow: [], deny: [] },
+				withoutApproval: { allow: ['controller_host_probe'], deny: [] },
+			},
+			tools: { allow: ['controller_host_probe'], deny: [] },
+		});
+	});
+
+	it('rejects zone git controller host action materialization when zone Git is disabled', async () => {
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					includeZoneGitControllerHostAction: false,
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					portalConfig: {
+						agents: { shravan: { profile: 'default' } },
+						profiles: {
+							default: {
+								namespaces: {
+									controller_host_action: {
+										calls: {
+											requiresApproval: { allow: [] },
+											withoutApproval: { allow: ['zone_git_push'] },
+										},
+										tools: { allow: ['zone_git_push'] },
+									},
+								},
+							},
+						},
+						schemaVersion: 1,
+					},
+				}),
+			),
+		).rejects.toThrow(/zone_git_push while zoneGit is disabled/u);
+	});
+
 	it('rejects managed OpenClaw MCP capabilities that require approval', async () => {
 		const mcpConfig = { providers: {}, schemaVersion: 1 };
 

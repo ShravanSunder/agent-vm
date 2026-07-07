@@ -349,7 +349,10 @@ async function writeMcpPortalConfigFiles(rootPath: string, profileName: string):
 	});
 }
 
-async function writeMcpPortalConfigWithControllerHostAction(rootPath: string): Promise<void> {
+async function writeMcpPortalConfigWithControllerHostAction(
+	rootPath: string,
+	actionTools: readonly ('controller_host_probe' | 'zone_git_push')[] = ['zone_git_push'],
+): Promise<void> {
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
 		schemaVersion: 1,
 		providers: {},
@@ -363,9 +366,9 @@ async function writeMcpPortalConfigWithControllerHostAction(rootPath: string): P
 					controller_host_action: {
 						calls: {
 							requiresApproval: { allow: [] },
-							withoutApproval: { allow: ['zone_git_push'] },
+							withoutApproval: { allow: actionTools },
 						},
-						tools: { allow: ['zone_git_push'] },
+						tools: { allow: actionTools },
 					},
 				},
 			},
@@ -1658,6 +1661,55 @@ describe('runConfigValidation', () => {
 		expect(result.checks.map((check) => check.hint).join('\n')).not.toMatch(
 			/controller_host_action while zoneGit is disabled/u,
 		);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('allows controller host probe Tool Portal materialization without zoneGit', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithControllerHostAction(temporaryDirectoryPath, [
+			'controller_host_probe',
+		]);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
+		).toMatchObject({
+			ok: true,
+		});
+		expect(result.checks.map((check) => check.hint).join('\n')).not.toMatch(
+			/zone_git_push while zoneGit is disabled/u,
+		);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('rejects zone git controller host action Tool Portal materialization without zoneGit', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithControllerHostAction(temporaryDirectoryPath, ['zone_git_push']);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
+		).toMatchObject({
+			hint: expect.stringContaining('zone_git_push while zoneGit is disabled'),
+			ok: false,
+		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
