@@ -1447,6 +1447,128 @@ describe('worker control service', () => {
 		]);
 	});
 
+	it('emits controller-originated worker command_result replies in inbound sequence order', async () => {
+		let releaseFirstHandler: (() => void) | undefined;
+		const firstHandlerReleased = new Promise<void>((resolve) => {
+			releaseFirstHandler = resolve;
+		});
+		let handleCount = 0;
+		let resolveSecondHandlerStarted: (() => void) | undefined;
+		const secondHandlerStarted = new Promise<void>((resolve) => {
+			resolveSecondHandlerStarted = resolve;
+		});
+		const fixture = createFixture(() => 1_000, {
+			applicationMessageHandler: {
+				handle: async ({ envelope }) => {
+					handleCount += 1;
+					if (handleCount === 1) {
+						await firstHandlerReleased;
+					} else {
+						resolveSecondHandlerStarted?.();
+					}
+					return {
+						kind: 'command_result',
+						operation: 'git_push',
+						payload: workerGitPushOkResponsePayloadFor(envelope.messageId),
+					};
+				},
+				messageIdentity: ({ payload }) => {
+					const message = payload as { readonly kind: 'command'; readonly operation: string };
+					return { kind: message.kind, operation: message.operation };
+				},
+			},
+		});
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: WORKER_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		const observedEnvelopes: ControlEnvelope[] = [];
+		const observedCommandResults: unknown[] = [];
+		let resolveBothCommandResultsObserved: (() => void) | undefined;
+		const bothCommandResultsObserved = new Promise<void>((resolve) => {
+			resolveBothCommandResultsObserved = resolve;
+		});
+		client.on(
+			'control:message',
+			(envelope: unknown, payload: unknown, acknowledge: (response: unknown) => void) => {
+				const controlEnvelope = envelope as ControlEnvelope;
+				if (controlEnvelope.kind === 'command_result') {
+					observedEnvelopes.push(controlEnvelope);
+					observedCommandResults.push(payload);
+					if (observedCommandResults.length === 2) {
+						resolveBothCommandResultsObserved?.();
+					}
+				}
+				acknowledge({ received: true });
+			},
+		);
+		await waitForSocketConnect(client);
+
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			bootId: identity.bootId,
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'worker_control',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.getAcceptedSession();
+		const firstEnvelope = workerGitPushEnvelopeFor(acceptedSession, 1);
+		const secondEnvelope = {
+			...workerGitPushEnvelopeFor(acceptedSession, 2),
+			commandId: '55555555-5555-4555-8555-555555555555',
+			idempotencyKey: 'worker-git-push-command-key-2',
+			messageId: '33333333-3333-4333-8333-333333333333',
+		} satisfies ControlEnvelope;
+		const workerMessage = {
+			kind: 'command',
+			operation: 'git_push',
+			payload: {
+				branchName: 'agent/task-1',
+				command: {
+					commandId: firstEnvelope.commandId,
+					idempotencyKey: firstEnvelope.idempotencyKey,
+				},
+				repoUrl: 'https://github.com/example/repo.git',
+				task: {
+					taskId: 'task-1',
+				},
+			},
+		};
+
+		await client.timeout(1_000).emitWithAck('control:message', firstEnvelope, workerMessage);
+		await client.timeout(1_000).emitWithAck('control:message', secondEnvelope, workerMessage);
+		await secondHandlerStarted;
+		expect(observedCommandResults).toEqual([]);
+		if (releaseFirstHandler === undefined) {
+			throw new Error('Expected first handler release hook to be registered.');
+		}
+		releaseFirstHandler();
+		await bothCommandResultsObserved;
+
+		expect(observedEnvelopes.map((envelope) => envelope.sequence)).toEqual([1, 2]);
+		expect(observedCommandResults).toEqual([
+			{
+				kind: 'command_result',
+				operation: 'git_push',
+				payload: workerGitPushOkResponsePayloadFor(firstEnvelope.messageId),
+			},
+			{
+				kind: 'command_result',
+				operation: 'git_push',
+				payload: workerGitPushOkResponsePayloadFor(secondEnvelope.messageId),
+			},
+		]);
+		expect(client.connected).toBe(true);
+	});
+
 	it('returns a failed command_result when the worker handler throws after ack', async () => {
 		const fixture = createFixture(() => 1_000, {
 			applicationMessageHandler: {

@@ -503,6 +503,7 @@ export function createWorkerControlService(
 	let nextPeerSequenceValue = 1;
 	let fullResyncPending = false;
 	let latestWinsFlushScheduled = false;
+	let outboundResponseQueue: Promise<void> = Promise.resolve();
 	const acceptedSessionWaiters: ((session: WorkerControlAcceptedSession | undefined) => void)[] =
 		[];
 
@@ -810,9 +811,10 @@ export function createWorkerControlService(
 					if (options.applicationMessageHandler === undefined) {
 						throw new Error('no worker control application message handler configured');
 					}
+					const applicationMessageHandler = options.applicationMessageHandler;
 					assertControlEnvelopeMatchesDomainMessage(
 						envelope,
-						options.applicationMessageHandler.messageIdentity({
+						applicationMessageHandler.messageIdentity({
 							envelope,
 							payload: workerPayload,
 						}),
@@ -822,41 +824,46 @@ export function createWorkerControlService(
 						policyByOperation: workerControlDeliveryPolicyByOperation,
 					});
 					acknowledge?.(buildControlMessageReceipt());
-					let responsePayload: unknown;
-					try {
-						responsePayload = await options.applicationMessageHandler.handle({
-							envelope,
-							payload: workerPayload,
-						});
-					} catch (error) {
-						if (
-							envelope.kind !== 'command' ||
-							options.applicationMessageHandler.buildHandlerFailureResult === undefined
-						) {
-							throw error;
+					const responsePayloadPromise = (async (): Promise<unknown> => {
+						try {
+							return await applicationMessageHandler.handle({
+								envelope,
+								payload: workerPayload,
+							});
+						} catch (error) {
+							if (
+								envelope.kind !== 'command' ||
+								applicationMessageHandler.buildHandlerFailureResult === undefined
+							) {
+								throw error;
+							}
+							return await applicationMessageHandler.buildHandlerFailureResult(
+								{ envelope, payload: workerPayload },
+								error,
+							);
 						}
-						responsePayload = await options.applicationMessageHandler.buildHandlerFailureResult(
-							{ envelope, payload: workerPayload },
-							error,
-						);
-					}
-					if (responsePayload !== undefined) {
-						const parsedResponsePayload = WorkerControlRpcMessageSchema.parse(responsePayload);
-						const responseSequence = reservePeerSequence();
-						const responseEnvelope = buildWorkerControlResponseEnvelope({
-							requestEnvelope: envelope,
-							sequence: responseSequence,
-						});
-						void (async () => {
-							const receiptPayload = await socket
-								.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
-								.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
-							assertControlMessageReceiptAccepted(receiptPayload);
-							recordLastSeenPeerSequence(responseSequence);
-						})().catch((error: unknown) => {
+					})();
+					outboundResponseQueue = outboundResponseQueue
+						.catch(() => undefined)
+						.then(async () => {
+							const responsePayload = await responsePayloadPromise;
+							if (responsePayload !== undefined) {
+								const parsedResponsePayload = WorkerControlRpcMessageSchema.parse(responsePayload);
+								const responseSequence = reservePeerSequence();
+								const responseEnvelope = buildWorkerControlResponseEnvelope({
+									requestEnvelope: envelope,
+									sequence: responseSequence,
+								});
+								const receiptPayload = await socket
+									.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
+									.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
+								assertControlMessageReceiptAccepted(receiptPayload);
+								recordLastSeenPeerSequence(responseSequence);
+							}
+						})
+						.catch((error: unknown) => {
 							closeWorkerControlSessionForReservedResponseFailure(socket, error);
 						});
-					}
 				} catch (error: unknown) {
 					acknowledge?.(
 						buildControlMessageExceptionRejectionReceipt({

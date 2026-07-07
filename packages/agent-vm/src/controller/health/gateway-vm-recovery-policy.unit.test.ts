@@ -232,6 +232,46 @@ describe('createGatewayVmRecoveryTracker', () => {
 		});
 	});
 
+	it('requires control-session and gateway-service corroboration in the same freshness window', () => {
+		const tracker = createGatewayVmRecoveryTracker({ policy });
+
+		primeControlSessionRecoveryDue(tracker, { observedAtMs: 1_000 });
+		for (let index = 1; index <= policy.consecutiveFailureThreshold; index += 1) {
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 1_000 + policy.restartTimeoutMs + index,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+
+		expect(
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 1_000 + policy.restartTimeoutMs + policy.consecutiveFailureThreshold + 1,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 11,
+			kind: 'none',
+			reason: 'needs-corroboration',
+		});
+
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 1_000 + policy.restartTimeoutMs + policy.consecutiveFailureThreshold + 2,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 11,
+			kind: 'restart',
+			reason: 'gateway-control-session-unhealthy',
+			zoneId: 'sunfam',
+		});
+	});
+
 	it('does not treat a within-grace control-session disconnect as recovery evidence', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 
@@ -399,6 +439,19 @@ describe('createGatewayVmRecoveryTracker', () => {
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
+		).toEqual({
+			consecutiveFailures: 11,
+			kind: 'none',
+			reason: 'needs-corroboration',
+		});
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 100_000 + policy.cooldownMs + 2,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
 		).toMatchObject({ kind: 'restart', zoneId: 'sunfam' });
 	});
 
@@ -424,9 +477,22 @@ describe('createGatewayVmRecoveryTracker', () => {
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
+		).toEqual({
+			consecutiveFailures: 11,
+			kind: 'none',
+			reason: 'needs-corroboration',
+		});
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 100_000 + policy.cooldownMs + 2,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
 		).toMatchObject({ kind: 'restart', zoneId: 'sunfam' });
 		tracker.markRecoveryStarted({
-			observedAtMs: 100_000 + policy.cooldownMs + 1,
+			observedAtMs: 100_000 + policy.cooldownMs + 2,
 			zoneId: 'sunfam',
 		});
 		tracker.markRecoveryFinished({
@@ -442,6 +508,20 @@ describe('createGatewayVmRecoveryTracker', () => {
 				zoneId: 'sunfam',
 			}),
 		).toEqual({
+			consecutiveFailures: 12,
+			kind: 'none',
+			reason: 'needs-corroboration',
+		});
+
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 100_000 + policy.cooldownMs * 2 + 3,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
 			consecutiveFailedRecoveries: 2,
 			consecutiveFailures: 12,
 			kind: 'suspended',
@@ -449,10 +529,17 @@ describe('createGatewayVmRecoveryTracker', () => {
 			zoneId: 'sunfam',
 		});
 
+		tracker.recordGatewayServiceProbe({
+			observedAtMs: 110_000 + policy.cooldownMs + policy.failedRecoveryResetMs + 2,
+			result: 'failed',
+			zoneId: 'sunfam',
+		});
 		expect(
-			tracker.recordGatewayServiceProbe({
-				observedAtMs: 110_000 + policy.cooldownMs + policy.failedRecoveryResetMs + 2,
-				result: 'failed',
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 110_000 + policy.cooldownMs + policy.failedRecoveryResetMs + 3,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
 				zoneId: 'sunfam',
 			}),
 		).toMatchObject({ kind: 'restart', zoneId: 'sunfam' });

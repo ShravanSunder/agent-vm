@@ -575,5 +575,11 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			argumentsValue: unavailableArguments,
 			name: 'read_thing',
 		});
+		expect(
+			upstreamServer?.requests.some(
+				(request) =>
+					request.path === '/missing-mcp' && request.jsonRpcMethods.includes('tools/call'),
+			),
+		).toBe(false);
 	});
 });

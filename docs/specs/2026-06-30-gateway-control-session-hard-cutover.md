@@ -1565,7 +1565,7 @@ Worker control rides inside the shared wire shape:
 Socket.IO event: control:message
   envelope: ControlEnvelopeSchema {
     domain: "worker_control",
-    kind: "command" | "command_result" | "event" | "snapshot" | ...
+    kind: "command" | "command_result" | "event" | "heartbeat"
   }
   payload: WorkerControlRpcMessageSchema
 ```

@@ -293,7 +293,10 @@ export function computeControlSessionManualReconnectDelayMs(options: {
 	const randomValue = options.random?.() ?? Math.random();
 	const normalizedRandomValue = Math.min(1, Math.max(0, randomValue));
 	const jitter = Math.floor(normalizedRandomValue * (jitterWindow * 2 + 1)) - jitterWindow;
-	return Math.max(0, exponentialDelay + jitter);
+	return Math.max(
+		0,
+		Math.min(CONTROL_SESSION_TIMING_MS.manualReconnectMaxDelay, exponentialDelay + jitter),
+	);
 }
 
 function buildControlSessionResponseEnvelope(options: {

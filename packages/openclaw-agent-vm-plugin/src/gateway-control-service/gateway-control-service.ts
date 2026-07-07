@@ -458,6 +458,7 @@ export function createGatewayControlService(
 	let nextPeerSequenceValue = 1;
 	let fullResyncPending = false;
 	let latestWinsFlushScheduled = false;
+	let outboundResponseQueue: Promise<void> = Promise.resolve();
 	const acceptedSessionWaiters: ((session: GatewayControlAcceptedSession | undefined) => void)[] =
 		[];
 
@@ -775,50 +776,56 @@ export function createGatewayControlService(
 					if (options.applicationMessageHandler === undefined) {
 						throw new Error('no gateway control application message handler configured');
 					}
+					const applicationMessageHandler = options.applicationMessageHandler;
 					assertControlEnvelopeMatchesDomainMessage(
 						envelope,
-						options.applicationMessageHandler.messageIdentity({
+						applicationMessageHandler.messageIdentity({
 							envelope,
 							payload: gatewayPayload,
 						}),
 					);
 					assertGatewayControlEnvelopeDeliveryPolicy(envelope);
 					acknowledge?.(buildControlMessageReceipt());
-					let responsePayload: unknown;
-					try {
-						responsePayload = await options.applicationMessageHandler.handle({
-							envelope,
-							payload: gatewayPayload,
-						});
-					} catch (error) {
-						if (
-							envelope.kind !== 'command' ||
-							options.applicationMessageHandler.buildHandlerFailureResult === undefined
-						) {
-							throw error;
+					const responsePayloadPromise = (async (): Promise<unknown> => {
+						try {
+							return await applicationMessageHandler.handle({
+								envelope,
+								payload: gatewayPayload,
+							});
+						} catch (error) {
+							if (
+								envelope.kind !== 'command' ||
+								applicationMessageHandler.buildHandlerFailureResult === undefined
+							) {
+								throw error;
+							}
+							return await applicationMessageHandler.buildHandlerFailureResult(
+								{ envelope, payload: gatewayPayload },
+								error,
+							);
 						}
-						responsePayload = await options.applicationMessageHandler.buildHandlerFailureResult(
-							{ envelope, payload: gatewayPayload },
-							error,
-						);
-					}
-					if (responsePayload !== undefined) {
-						const parsedResponsePayload = GatewayControlRpcMessageSchema.parse(responsePayload);
-						const responseSequence = reservePeerSequence();
-						const responseEnvelope = buildGatewayControlResponseEnvelope({
-							requestEnvelope: envelope,
-							sequence: responseSequence,
-						});
-						void (async () => {
-							const receiptPayload = await socket
-								.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
-								.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
-							assertControlMessageReceiptAccepted(receiptPayload);
-							recordLastSeenPeerSequence(responseSequence);
-						})().catch((error: unknown) => {
+					})();
+					outboundResponseQueue = outboundResponseQueue
+						.catch(() => undefined)
+						.then(async () => {
+							const responsePayload = await responsePayloadPromise;
+							if (responsePayload !== undefined) {
+								const parsedResponsePayload = GatewayControlRpcMessageSchema.parse(responsePayload);
+								const responseSequence = reservePeerSequence();
+								const responseEnvelope = buildGatewayControlResponseEnvelope({
+									requestEnvelope: envelope,
+									sequence: responseSequence,
+								});
+								const receiptPayload = await socket
+									.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
+									.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
+								assertControlMessageReceiptAccepted(receiptPayload);
+								recordLastSeenPeerSequence(responseSequence);
+							}
+						})
+						.catch((error: unknown) => {
 							closeGatewayControlSessionForReservedResponseFailure(socket, error);
 						});
-					}
 				} catch (error: unknown) {
 					acknowledge?.(
 						buildControlMessageExceptionRejectionReceipt({

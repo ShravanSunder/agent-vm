@@ -52,6 +52,8 @@ describe('gateway control event publisher', () => {
 
 		await publisher.publishHealthEvent({
 			agentId: 'main',
+			causationId: '22222222-2222-4222-8222-222222222222',
+			correlationId: '33333333-3333-4333-8333-333333333333',
 			elapsedMs: 15,
 			requestId: 'request-1',
 			kind: 'tool-vm-ssh',
@@ -84,6 +86,8 @@ describe('gateway control event publisher', () => {
 				payload: expect.objectContaining({
 					agentId: 'main',
 					correlation: {
+						causationId: '22222222-2222-4222-8222-222222222222',
+						correlationId: '33333333-3333-4333-8333-333333333333',
 						requestId: 'request-1',
 						runId: 'run-1',
 						sessionKeyDigest: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',

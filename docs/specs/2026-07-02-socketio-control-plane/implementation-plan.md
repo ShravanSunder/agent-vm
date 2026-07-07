@@ -142,6 +142,7 @@ same source the runtime uses. Values below satisfy PROTO's timing-order invarian
 | manual reconnect backoff | initial 250 ms, max 5_000 ms, jitter 20% | controller-owned manual reconnect must not run as a fixed 1s loop; retries use bounded exponential backoff with jitter so multi-zone reconnects do not thundering-herd after a shared network blip |
 | priority ack stale threshold | 3 consecutive failures | a single heartbeat/operation_cancel ack miss is operator evidence, not terminal session death; terminal stale requires N consecutive priority ack failures and resets on a successful priority ack or fresh accepted hello. A priority command whose transport receipt is accepted but whose semantic `command_result` times out is a command failure, not a transport-ack failure. A priority message whose receipt is rejected/timed out before the peer accepts it may reuse that unreceipted sequence on retry if and only if no later hard sequence has been reserved or receipted; later movement keeps strict sequence-gap detection intact. |
 | full-resync challenger overlap | incumbent remains accepted until replacement fresh hello is accepted | A challenger that receives `resync_required` is pending only; it must not mask, disconnect, or suppress controller-originated traffic on the incumbent accepted session. The old session becomes stale only after the replacement is accepted. |
+| service-side command_result ordering | serialized by inbound control sequence | Gateway and worker control services may start application handlers concurrently, but command_result emission must stay in the original inbound control-message order. A faster second handler must not publish its response before an earlier command_result slot. |
 | recovery budget (max failed recoveries, cooldown, reset) | unchanged | reuse existing recoveryBudgets |
 | per-source observation budget | mirror threshold (NEW) | forged-observation cap; NEW value, tune in impl |
 
@@ -379,8 +380,9 @@ S6a — eventKind remap (mechanical, low-risk):
 
 S6b — recovery corroboration + per-source budget (LOAD-BEARING incident-amplifier fix; security O.2/O.3):
 - Write surface: gateway-vm-recovery-policy.ts (control-session-unhealthy trigger; require controller-probe
-  corroboration AND-gate; per-source observation budget); controller-health-event-routes.ts:88 (delete/auth-gate the
-  unauthenticated publish route — coordinated with S4b table).
+  corroboration AND-gate; per-source observation budget; require control-session and controller-probe evidence to be
+  fresh in the same recovery window); controller-health-event-routes.ts:88 (delete/auth-gate the unauthenticated
+  publish route — coordinated with S4b table).
 - Budget KEY must be controller-owned identity (Imp7): {domain, zoneId, gatewayVmId, bootId, generationId} derived
   from the accepted control session, NOT self-reported payload fields — else a compromised gateway spoofs the source
   key to dodge the budget. The budget only meaningfully caps a source when the key is un-spoofable.
@@ -395,7 +397,8 @@ S6b — recovery corroboration + per-source budget (LOAD-BEARING incident-amplif
   NEW bootId; the lingering old-boot/old-epoch session is fenced.
 - Checkpoint: recovery requires probe corroboration AND the death-grace elapsed with no reconnect; forged failing
   observations under one controller-owned source key cannot exceed per-source budget nor drive recovery without
-  corroboration; an in-process reconnect within grace cancels any pending recovery. Runtime-status evidence used to
+  corroboration; old control-session recovery-due evidence cannot persist indefinitely and combine with much later
+  probe failures; an in-process reconnect within grace cancels any pending recovery. Runtime-status evidence used to
   authorize Tool VM lease creation is bound to the accepted session that delivered it (`bootId`, `controllerEpoch`,
   `peerId`, `sessionId`, and `connectionId`); a prior boot/session snapshot is stale for lease authority even inside
   the wall-clock freshness window.
@@ -733,7 +736,8 @@ External proof runbook:
    a configurable per-namespace timeout that defaults to 12 seconds, settle all
    namespace results, use discovered tools from successful namespaces, and mark
    timed-out or failed namespaces disabled/unavailable with a safe reason in the
-   validation/catalog evidence.
+   validation/catalog evidence. Remote-provider diagnostic URLs must strip
+   userinfo, query strings, and fragments before CLI/log/report surfaces.
 5. In `../shravan-claw-beta`, run `mise exec -- pnpm build`.
 6. Start the beta controller with `mise exec -- pnpm start`.
 7. Exercise the real Discord channel path configured by beta's OpenClaw config. The current beta target is the

@@ -7,7 +7,7 @@ import {
 	type CallToolResult,
 	type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 
 export const fakeUpstreamNamespace = 'upstream-mock';
 
@@ -16,9 +16,16 @@ export interface FakeUpstreamToolCallRecord {
 	readonly name: string;
 }
 
+export interface FakeUpstreamHttpRequestRecord {
+	readonly jsonRpcMethods: readonly string[];
+	readonly method: string;
+	readonly path: string;
+}
+
 export interface StartedFakeUpstreamMcpServer {
 	readonly calls: readonly FakeUpstreamToolCallRecord[];
 	readonly close: () => Promise<void>;
+	readonly requests: readonly FakeUpstreamHttpRequestRecord[];
 	readonly port: number;
 	readonly url: string;
 }
@@ -34,6 +41,24 @@ interface StartedHonoServer {
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function readJsonRpcMethodsFromRequest(context: Context): Promise<readonly string[]> {
+	if (context.req.method !== 'POST') {
+		return [];
+	}
+	try {
+		const body = await context.req.raw.clone().json();
+		const messages = Array.isArray(body) ? body : [body];
+		return messages.flatMap((message) => {
+			if (!isObjectRecord(message) || typeof message['method'] !== 'string') {
+				return [];
+			}
+			return [message['method']];
+		});
+	} catch {
+		return [];
+	}
 }
 
 async function closeServer(server: ServerType): Promise<void> {
@@ -99,9 +124,19 @@ export async function startFakeUpstreamMcpServer(
 	options: FakeUpstreamMcpServerOptions = {},
 ): Promise<StartedFakeUpstreamMcpServer> {
 	const calls: FakeUpstreamToolCallRecord[] = [];
+	const requests: FakeUpstreamHttpRequestRecord[] = [];
 	const tools = createFakeUpstreamTools();
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 	const app = new Hono();
+
+	app.use('*', async (context, next) => {
+		requests.push({
+			jsonRpcMethods: await readJsonRpcMethodsFromRequest(context),
+			method: context.req.method,
+			path: context.req.path,
+		});
+		await next();
+	});
 
 	app.all('/mcp', async (context) => {
 		const transport = new WebStandardStreamableHTTPServerTransport();
@@ -149,6 +184,7 @@ export async function startFakeUpstreamMcpServer(
 			await closeServer(startedServer.server);
 		},
 		port: startedServer.port,
+		requests,
 		url: `http://127.0.0.1:${String(startedServer.port)}/mcp`,
 	};
 }

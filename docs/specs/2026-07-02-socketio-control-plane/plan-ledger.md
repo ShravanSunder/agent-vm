@@ -210,6 +210,15 @@ priority sequence reservation only while no later hard sequence has moved. This
 preserves retryability for heartbeat and reserved `operation_cancel` priority
 frames without weakening strict receiver sequence-gap detection.
 
+Additional review hardening (2026-07-07): gateway and worker control services
+now serialize service-originated `command_result` frames by inbound control
+message order even when application handlers resolve out of order. Recovery
+corroboration evidence must be fresh in the same recovery window, so old
+control-session recovery-due state cannot combine with much later controller
+probe failures. Remote MCP provider diagnostics sanitize URL userinfo, query
+strings, and fragments before CLI/log/report surfaces. Proof rows BP-6,
+RECOVERY-2, and MCP-DIAG-1 cover these contracts.
+
 ## Route
 Independent plan review DONE and folded. Architecture re-review pass 2 DONE and folded. Focused SMA plan review DONE
 and folded. Implementation-execute-plan may start with SMA. Remaining before the broader control-plane cutover can

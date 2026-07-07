@@ -262,7 +262,8 @@ control:hello
 
 control:message
   Carries one `ControlEnvelopeSchema` plus a domain-specific payload. This is
-  the normal command/command_result/event/snapshot path.
+  the normal command/command_result/event/heartbeat path. State snapshots ride
+  as domain `event` messages with derived latest_wins delivery.
 
 control:close
   Carries a typed close reason before intentional disconnect when possible.

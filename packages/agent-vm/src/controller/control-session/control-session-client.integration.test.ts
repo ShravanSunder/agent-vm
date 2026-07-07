@@ -1566,6 +1566,12 @@ describe('control session client', () => {
 				random: () => 1,
 			}),
 		).toBeGreaterThan(CONTROL_SESSION_TIMING_MS.manualReconnectInitialDelay);
+		expect(
+			computeControlSessionManualReconnectDelayMs({
+				attempt: 99,
+				random: () => 1,
+			}),
+		).toBeLessThanOrEqual(CONTROL_SESSION_TIMING_MS.manualReconnectMaxDelay);
 	});
 
 	it('sends hello again before application messages after reconnect', async () => {
