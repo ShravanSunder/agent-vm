@@ -315,9 +315,10 @@ export async function connectWorkerControlSession(
 					},
 				}),
 		commandResultTimeoutMsByOperation: workerControlCommandExecutionTimeoutMsByOperation,
+		commandAckTimeoutMs: CONTROL_SESSION_TIMING_MS.commandAckTimeout,
+		connectTimeoutMs: CONTROL_SESSION_TIMING_MS.connectTimeout,
 		policyByOperation: workerControlDeliveryPolicyByOperation,
 		refreshExtraHeaders: buildHeaders,
-		timeoutMs: CONTROL_SESSION_TIMING_MS.connectTimeout,
 	});
 	await client.ready;
 	return client;

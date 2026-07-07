@@ -550,7 +550,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 500,
+			commandAckTimeoutMs: 500,
+			connectTimeoutMs: 500,
 		});
 
 		try {
@@ -628,7 +629,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 50,
+			commandAckTimeoutMs: 50,
+			connectTimeoutMs: 50,
 		});
 
 		try {
@@ -653,6 +655,67 @@ describe('control session client', () => {
 			}
 			releaseCommandResult();
 			await expect(commandResultPromise).resolves.toEqual(commandResultMessage);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('uses separate connect and command acknowledgement timeout budgets', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		let observedMessageCount = 0;
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: validEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: validEnvelope.sessionId,
+				});
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.message, () => {
+				observedMessageCount += 1;
+			});
+		});
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			commandAckTimeoutMs: 20,
+			connectTimeoutMs: 500,
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+		});
+
+		try {
+			await expect(client.ready).resolves.toMatchObject({
+				outcome: 'accepted',
+			});
+			await expect(
+				client.emitApplicationMessage(
+					validEnvelope,
+					{ kind: 'command', operation: 'lease_create' },
+					{ leaseId: 'lease-a' },
+				),
+			).rejects.toThrow(/operation has timed out/u);
+			expect(observedMessageCount).toBe(1);
 		} finally {
 			client.close();
 			await closeSocketIoServer(socketServer);
@@ -713,7 +776,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 50,
+			commandAckTimeoutMs: 50,
+			connectTimeoutMs: 50,
 		});
 
 		try {
@@ -1048,7 +1112,8 @@ describe('control session client', () => {
 				peerId: 'gateway-zone-a',
 			},
 			policyByOperation: gatewayControlDeliveryPolicyByOperation,
-			timeoutMs: 500,
+			commandAckTimeoutMs: 500,
+			connectTimeoutMs: 500,
 		});
 
 		try {
@@ -1129,7 +1194,8 @@ describe('control session client', () => {
 				peerId: 'gateway-zone-a',
 			},
 			policyByOperation: gatewayControlDeliveryPolicyByOperation,
-			timeoutMs: 500,
+			commandAckTimeoutMs: 500,
+			connectTimeoutMs: 500,
 		});
 
 		try {
@@ -1255,7 +1321,8 @@ describe('control session client', () => {
 				peerId: 'gateway-zone-a',
 			},
 			policyByOperation: gatewayControlDeliveryPolicyByOperation,
-			timeoutMs: 500,
+			commandAckTimeoutMs: 500,
+			connectTimeoutMs: 500,
 		});
 
 		try {
@@ -1365,7 +1432,8 @@ describe('control session client', () => {
 				peerId: 'gateway-zone-a',
 			},
 			policyByOperation: gatewayControlDeliveryPolicyByOperation,
-			timeoutMs: 100,
+			commandAckTimeoutMs: 100,
+			connectTimeoutMs: 100,
 		});
 
 		try {
@@ -1578,7 +1646,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 500,
+			commandAckTimeoutMs: 500,
+			connectTimeoutMs: 500,
 		});
 
 		try {
@@ -1689,7 +1758,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 50,
+			commandAckTimeoutMs: 50,
+			connectTimeoutMs: 50,
 		});
 
 		try {
@@ -1816,7 +1886,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 500,
+			commandAckTimeoutMs: 500,
+			connectTimeoutMs: 500,
 		});
 
 		try {
@@ -1935,7 +2006,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 50,
+			commandAckTimeoutMs: 50,
+			connectTimeoutMs: 50,
 		});
 
 		try {
@@ -2018,7 +2090,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 50,
+			commandAckTimeoutMs: 50,
+			connectTimeoutMs: 50,
 		});
 
 		try {
@@ -2101,7 +2174,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 5_000,
+			commandAckTimeoutMs: 5_000,
+			connectTimeoutMs: 5_000,
 		});
 
 		try {
@@ -2219,7 +2293,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 5_000,
+			commandAckTimeoutMs: 5_000,
+			connectTimeoutMs: 5_000,
 		});
 
 		try {
@@ -2355,7 +2430,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 5_000,
+			commandAckTimeoutMs: 5_000,
+			connectTimeoutMs: 5_000,
 		});
 
 		try {
@@ -2480,7 +2556,8 @@ describe('control session client', () => {
 				lease_create: 'single_use_critical',
 				operation_cancel: 'acked_idempotent',
 			},
-			timeoutMs: 5_000,
+			commandAckTimeoutMs: 5_000,
+			connectTimeoutMs: 5_000,
 		});
 
 		try {
@@ -2532,6 +2609,287 @@ describe('control session client', () => {
 
 			expect(observedCommandCount).toBe(CONTROL_QUEUE_LIMITS.queueMessageCap);
 			expect(pendingCommandCompletions).toHaveLength(CONTROL_QUEUE_LIMITS.queueMessageCap);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('reuses an unreceipted priority sequence instead of forcing a local gap', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		let observedHeartbeatCount = 0;
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(_envelope: ControlEnvelope, _payload, ack) => {
+					observedHeartbeatCount += 1;
+					if (observedHeartbeatCount > 1) {
+						ack({ received: true });
+					}
+				},
+			);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			commandAckTimeoutMs: 20,
+			connectTimeoutMs: 500,
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByKind: {
+				heartbeat: 'critical_idempotent',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+		});
+
+		try {
+			await client.ready;
+			const firstHeartbeatEnvelope = {
+				...heartbeatEnvelope,
+				messageId: '10000000-0000-4000-8000-000000000001',
+				sequence: 1,
+			} satisfies ControlEnvelope;
+			await expect(
+				client.emitApplicationMessage(
+					firstHeartbeatEnvelope,
+					{ kind: 'heartbeat' },
+					{ observedAtMs: 1 },
+				),
+			).rejects.toThrow(/operation has timed out/u);
+			await expect(
+				client.emitApplicationMessage(
+					{
+						...firstHeartbeatEnvelope,
+						messageId: '10000000-0000-4000-8000-000000000002',
+					},
+					{ kind: 'heartbeat' },
+					{ observedAtMs: 2 },
+				),
+			).resolves.toEqual({ received: true });
+			expect(observedHeartbeatCount).toBe(2);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('does not count priority command result timeouts as transport acknowledgement failures', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		let observedCancelCount = 0;
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (_payload: ControlHello, ack) => {
+				ack({
+					connectionId: '55555555-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(envelope: ControlEnvelope, _payload: unknown, ack) => {
+					if (envelope.operation === 'operation_cancel') {
+						observedCancelCount += 1;
+						ack({ received: true });
+					}
+				},
+			);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			commandAckTimeoutMs: 500,
+			connectTimeoutMs: 500,
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+				operation_cancel: 'acked_idempotent',
+			},
+		});
+
+		try {
+			await client.ready;
+			await Array.from(
+				{ length: CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold },
+				(_unused, cancelIndex) => cancelIndex,
+			).reduce<Promise<void>>(async (previousCancel, cancelIndex) => {
+				await previousCancel;
+				const cancelSequence = cancelIndex + 1;
+				await expect(
+					client.emitApplicationMessage(
+						{
+							...validEnvelope,
+							commandId: `11111111-2222-4333-8444-${String(cancelSequence).padStart(12, '0')}`,
+							deliveryPolicy: 'acked_idempotent',
+							idempotencyKey: `cancel-command-key-${String(cancelSequence)}`,
+							messageId: `10000000-0000-4000-8000-${String(cancelSequence).padStart(12, '0')}`,
+							operation: 'operation_cancel',
+							sequence: cancelSequence,
+						},
+						{ kind: 'command', operation: 'operation_cancel' },
+						{
+							activeOperationId: 'lease-create-a',
+							initiatedBy: 'controller',
+							reason: 'operator_cancelled',
+						},
+						{ commandResultTimeoutMs: 20 },
+					),
+				).rejects.toThrow(/control command result timed out/u);
+				expect(client.getDiagnostics().ready).toBe(true);
+			}, Promise.resolve());
+			expect(observedCancelCount).toBe(CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('resets consecutive priority acknowledgement failures after a fresh accepted hello', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const observedCloseReasons: unknown[] = [];
+		const observedHelloPayloads: ControlHello[] = [];
+		let clientSocket: ReturnType<typeof createSocketIoClient> | undefined;
+		socketServer.on('connection', (socket) => {
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (payload: ControlHello, ack) => {
+				observedHelloPayloads.push(payload);
+				ack({
+					connectionId:
+						observedHelloPayloads.length === 1
+							? '55555555-5555-4555-8555-555555555555'
+							: '66666666-5555-4555-8555-555555555555',
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+				});
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.close, (payload: unknown, ack) => {
+				observedCloseReasons.push(payload);
+				ack({ received: true });
+			});
+			socket.on(CONTROL_SESSION_EVENT_NAMES.message, () => undefined);
+		});
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			createSocket: (socketOptions) => {
+				const socket = createSocketIoClient(
+					`http://${socketOptions.endpoint.host}:${String(socketOptions.endpoint.port)}`,
+					{
+						addTrailingSlash: false,
+						path: socketOptions.endpoint.path,
+						reconnectionDelay: 10,
+						reconnectionDelayMax: 10,
+						timeout: socketOptions.timeoutMs,
+						transports: ['websocket'],
+					},
+				);
+				clientSocket = socket;
+				return socket;
+			},
+			commandAckTimeoutMs: 20,
+			connectTimeoutMs: 500,
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByKind: {
+				heartbeat: 'critical_idempotent',
+			},
+			policyByOperation: {
+				lease_create: 'single_use_critical',
+			},
+		});
+
+		try {
+			await client.ready;
+			await Array.from(
+				{ length: CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold - 1 },
+				(_unused, heartbeatIndex) => heartbeatIndex,
+			).reduce<Promise<void>>(async (previousHeartbeat, heartbeatIndex) => {
+				await previousHeartbeat;
+				const heartbeatSequence = heartbeatIndex + 1;
+				await expect(
+					client.emitApplicationMessage(
+						{
+							...heartbeatEnvelope,
+							messageId: `10000000-0000-4000-8000-${String(heartbeatSequence).padStart(12, '0')}`,
+							sequence: 1,
+						},
+						{ kind: 'heartbeat' },
+						{ observedAtMs: heartbeatSequence },
+					),
+				).rejects.toThrow(/operation has timed out/u);
+				expect(client.getDiagnostics().ready).toBe(true);
+			}, Promise.resolve());
+
+			clientSocket?.io.engine?.close();
+			await waitForClientHelloCount({ client, minimumHelloCount: 2, timeoutMs: 1_000 });
+			await expect(
+				client.emitApplicationMessage(
+					{
+						...heartbeatEnvelope,
+						connectionId: '66666666-5555-4555-8555-555555555555',
+						messageId: '10000000-0000-4000-8000-999999999999',
+						sequence: 1,
+					},
+					{ kind: 'heartbeat' },
+					{ observedAtMs: 999 },
+				),
+			).rejects.toThrow(/operation has timed out/u);
+			expect(client.getDiagnostics().ready).toBe(true);
+			expect(observedCloseReasons).toEqual([]);
+			expect(observedHelloPayloads).toHaveLength(2);
 		} finally {
 			client.close();
 			await closeSocketIoServer(socketServer);
@@ -2594,7 +2952,8 @@ describe('control session client', () => {
 			policyByOperation: {
 				lease_create: 'single_use_critical',
 			},
-			timeoutMs: 20,
+			commandAckTimeoutMs: 20,
+			connectTimeoutMs: 20,
 		});
 
 		try {
@@ -2610,7 +2969,7 @@ describe('control session client', () => {
 						{
 							...heartbeatEnvelope,
 							messageId: `10000000-0000-4000-8000-${String(heartbeatSequence).padStart(12, '0')}`,
-							sequence: heartbeatSequence,
+							sequence: 1,
 						},
 						{ kind: 'heartbeat' },
 						{ observedAtMs: heartbeatSequence },
@@ -2698,7 +3057,8 @@ describe('control session client', () => {
 				lease_create: 'single_use_critical',
 				runtime_status: 'latest_wins',
 			},
-			timeoutMs: 5_000,
+			commandAckTimeoutMs: 5_000,
+			connectTimeoutMs: 5_000,
 		});
 
 		try {

@@ -373,10 +373,11 @@ export async function connectGatewayControlSession(
 					},
 				}),
 		commandResultTimeoutMsByOperation: gatewayControlCommandExecutionTimeoutMsByOperation,
+		commandAckTimeoutMs: CONTROL_SESSION_TIMING_MS.commandAckTimeout,
+		connectTimeoutMs: CONTROL_SESSION_TIMING_MS.connectTimeout,
 		policyByKind: gatewayControlDeliveryPolicyByKind,
 		policyByOperation: gatewayControlDeliveryPolicyByOperation,
 		refreshExtraHeaders: buildHeaders,
-		timeoutMs: CONTROL_SESSION_TIMING_MS.connectTimeout,
 	});
 	await client.ready;
 	return client;

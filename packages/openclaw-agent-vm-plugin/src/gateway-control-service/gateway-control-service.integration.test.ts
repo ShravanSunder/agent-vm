@@ -769,6 +769,86 @@ describe('gateway control service', () => {
 		expect(fixture.service.nextPeerSequence()).toBe(2);
 	});
 
+	it('releases an unreceipted priority peer sequence for retry', async () => {
+		const fixture = createFixture();
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		let observedHeartbeatCount = 0;
+		client.on('control:message', (_envelope: unknown, _payload: unknown, acknowledge) => {
+			observedHeartbeatCount += 1;
+			acknowledge(
+				observedHeartbeatCount === 1
+					? {
+							errorClass: 'test_receipt_rejected',
+							received: false,
+							safeMessage: 'test priority receipt rejected',
+						}
+					: { received: true },
+			);
+		});
+		await waitForSocketConnect(client);
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			bootId: identity.bootId,
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.getAcceptedSession();
+		const heartbeatEnvelope = {
+			bootId: identity.bootId,
+			connectionId: acceptedSession.connectionId,
+			controllerEpoch: identity.controllerEpoch,
+			createdAtMs: 1,
+			deliveryPolicy: 'critical_idempotent',
+			domain: 'gateway_control',
+			kind: 'heartbeat',
+			messageId: '10000000-0000-4000-8000-000000000001',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+			sequence: fixture.service.nextPeerSequence(),
+			sessionId: acceptedSession.sessionId,
+			zoneId: identity.zoneId,
+		} satisfies ControlEnvelope;
+
+		await expect(
+			fixture.service.emitApplicationMessage(
+				heartbeatEnvelope,
+				{ kind: 'heartbeat' },
+				{
+					kind: 'heartbeat',
+					payload: { observedAtMs: 1 },
+				},
+			),
+		).rejects.toThrow(/test priority receipt rejected/u);
+		expect(fixture.service.nextPeerSequence()).toBe(1);
+		await expect(
+			fixture.service.emitApplicationMessage(
+				{
+					...heartbeatEnvelope,
+					messageId: '10000000-0000-4000-8000-000000000002',
+					sequence: fixture.service.nextPeerSequence(),
+				},
+				{ kind: 'heartbeat' },
+				{
+					kind: 'heartbeat',
+					payload: { observedAtMs: 2 },
+				},
+			),
+		).resolves.toEqual({ received: true });
+		expect(observedHeartbeatCount).toBe(2);
+	});
+
 	it('keeps the socket open for a fresh hello after resync_required', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);

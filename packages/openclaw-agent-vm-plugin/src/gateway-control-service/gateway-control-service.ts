@@ -383,6 +383,10 @@ function buildGatewayControlResponseEnvelope(options: {
 	});
 }
 
+function isPriorityGatewayControlMessage(envelope: ControlEnvelope): boolean {
+	return envelope.kind === 'heartbeat' || envelope.operation === 'operation_cancel';
+}
+
 function waitForGatewayControlCommandResult(options: {
 	readonly messageId: string;
 	readonly pendingCommandResults: Map<string, PendingGatewayControlCommandResult>;
@@ -478,6 +482,16 @@ export function createGatewayControlService(
 	function recordLastSeenPeerSequence(sequence: number): void {
 		lastSeenPeerSequence = Math.max(lastSeenPeerSequence, sequence);
 		nextPeerSequenceValue = Math.max(nextPeerSequenceValue, lastSeenPeerSequence + 1);
+	}
+
+	function releaseUnreceiptedPriorityPeerSequence(sequence: number): void {
+		if (lastSeenPeerSequence >= sequence) {
+			return;
+		}
+		if (nextPeerSequenceValue !== sequence + 1) {
+			return;
+		}
+		nextPeerSequenceValue = sequence;
 	}
 
 	function evaluateReservedOutboundPeerSequence(
@@ -910,15 +924,25 @@ export function createGatewayControlService(
 					})
 				: undefined;
 		commandResultPromise?.catch(() => undefined);
-		const receiptPayload = await socket
-			.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
-			.emitWithAck('control:message', envelope, gatewayPayload);
-		assertControlMessageReceiptAccepted(receiptPayload);
-		recordLastSeenPeerSequence(sequenceDecision.nextLastSeenSequence);
+		try {
+			const receiptPayload = await socket
+				.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
+				.emitWithAck('control:message', envelope, gatewayPayload);
+			assertControlMessageReceiptAccepted(receiptPayload);
+			recordLastSeenPeerSequence(sequenceDecision.nextLastSeenSequence);
+			if (commandResultPromise === undefined) {
+				return receiptPayload;
+			}
+		} catch (error) {
+			if (isPriorityGatewayControlMessage(envelope)) {
+				releaseUnreceiptedPriorityPeerSequence(sequenceDecision.nextLastSeenSequence);
+			}
+			throw error;
+		}
 		if (commandResultPromise !== undefined) {
 			return await commandResultPromise;
 		}
-		return receiptPayload;
+		return undefined;
 	}
 
 	function scheduleLatestWinsFlush(): void {

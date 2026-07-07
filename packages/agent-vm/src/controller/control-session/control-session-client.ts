@@ -68,7 +68,8 @@ export interface ControlSessionClientOptions {
 	readonly policyByOperation: Readonly<Record<string, ControlDeliveryPolicy>>;
 	readonly refreshExtraHeaders?: (() => Promise<Readonly<Record<string, string>>>) | undefined;
 	readonly reconnectJitterRandom?: () => number;
-	readonly timeoutMs?: number;
+	readonly commandAckTimeoutMs?: number;
+	readonly connectTimeoutMs?: number;
 }
 
 export interface CreateControlSessionSocketOptions {
@@ -353,13 +354,15 @@ function waitForControlSessionCommandResult(options: {
 export function createControlSessionClient(
 	options: ControlSessionClientOptions,
 ): ControlSessionClient {
-	const timeoutMs = options.timeoutMs ?? CONTROL_SESSION_TIMING_MS.commandAckTimeout;
+	const commandAckTimeoutMs =
+		options.commandAckTimeoutMs ?? CONTROL_SESSION_TIMING_MS.commandAckTimeout;
+	const connectTimeoutMs = options.connectTimeoutMs ?? CONTROL_SESSION_TIMING_MS.connectTimeout;
 	const manualReconnect = options.refreshExtraHeaders !== undefined;
 	const socket = (options.createSocket ?? createSocketIoControlSessionSocket)({
 		endpoint: options.endpoint,
 		...(options.extraHeaders === undefined ? {} : { extraHeaders: options.extraHeaders }),
 		manualReconnect,
-		timeoutMs,
+		timeoutMs: connectTimeoutMs,
 	});
 	const pendingQueue: PendingControlSessionQueue = {
 		byteCount: 0,
@@ -410,6 +413,7 @@ export function createControlSessionClient(
 		lastSeenControllerSequence = 0;
 		lastSeenPeerSequence = 0;
 		nextControllerSequenceValue = 1;
+		priorityAckFailureCount = 0;
 		clearControlSessionSendBuffer(socket);
 	}
 
@@ -417,7 +421,7 @@ export function createControlSessionClient(
 		readonly allowResyncRetry: boolean;
 	}): Promise<ControlHelloResponse> {
 		const helloPromise = socket
-			.timeout(timeoutMs)
+			.timeout(connectTimeoutMs)
 			.emitWithAck(CONTROL_SESSION_EVENT_NAMES.hello, buildNextHello())
 			.then((responsePayload: unknown) => {
 				const parsedResponse = ControlHelloResponseSchema.parse(responsePayload);
@@ -453,6 +457,7 @@ export function createControlSessionClient(
 				lastAcceptedConnectionId = parsedResponse.connectionId;
 				lastAcceptedSessionId = parsedResponse.sessionId;
 				manualReconnectAttempt = 0;
+				priorityAckFailureCount = 0;
 				nextControllerSequenceValue = lastSeenControllerSequence + 1;
 				return parsedResponse;
 			});
@@ -484,6 +489,21 @@ export function createControlSessionClient(
 		return sequenceDecision;
 	}
 
+	function releaseUnreceiptedPrioritySequenceReservation(
+		sequenceDecision: ControlSequenceContinuityDecision,
+	): void {
+		if (sequenceDecision.action !== 'accept') {
+			return;
+		}
+		if (lastSeenControllerSequence >= sequenceDecision.nextLastSeenSequence) {
+			return;
+		}
+		if (nextControllerSequenceValue !== sequenceDecision.nextLastSeenSequence + 1) {
+			return;
+		}
+		nextControllerSequenceValue = sequenceDecision.nextLastSeenSequence;
+	}
+
 	function waitForManualReconnectAttempt(): Promise<'connected' | 'failed'> {
 		return new Promise((resolve) => {
 			let settled = false;
@@ -509,7 +529,7 @@ export function createControlSessionClient(
 			};
 			const timer = setTimeout(() => {
 				settle('failed');
-			}, timeoutMs);
+			}, connectTimeoutMs);
 			socket.once('connect', handleConnect);
 			socket.once('connect_error', handleFailed);
 			socket.once('disconnect', handleFailed);
@@ -678,7 +698,7 @@ export function createControlSessionClient(
 									throw new Error(outboundSequenceDecision.safeMessage);
 								}
 								const receiptPayload: unknown = await socket
-									.timeout(timeoutMs)
+									.timeout(commandAckTimeoutMs)
 									.emitWithAck(
 										CONTROL_SESSION_EVENT_NAMES.message,
 										responseEnvelope,
@@ -730,7 +750,7 @@ export function createControlSessionClient(
 		}
 		clearControlSessionSendBuffer(socket);
 		if (socket.connected) {
-			const closeTimeoutMs = Math.min(timeoutMs, 100);
+			const closeTimeoutMs = Math.min(commandAckTimeoutMs, 100);
 			const closeTimer = setTimeout(() => {
 				socket.close();
 			}, closeTimeoutMs);
@@ -776,7 +796,7 @@ export function createControlSessionClient(
 				return operationTimeoutMs;
 			}
 		}
-		return timeoutMs;
+		return commandAckTimeoutMs;
 	}
 
 	function scheduleLatestWinsFlush(): void {
@@ -893,18 +913,19 @@ export function createControlSessionClient(
 					throw error;
 				}
 			}
+			const commandResultPromise =
+				envelope.kind === 'command'
+					? waitForControlSessionCommandResult({
+							messageId: envelope.messageId,
+							pendingCommandResults,
+							timeoutMs: commandResultTimeoutMsFor(envelope, emitOptions),
+						})
+					: undefined;
+			commandResultPromise?.catch(() => undefined);
+			let receiptPayload: unknown;
 			try {
-				const commandResultPromise =
-					envelope.kind === 'command'
-						? waitForControlSessionCommandResult({
-								messageId: envelope.messageId,
-								pendingCommandResults,
-								timeoutMs: commandResultTimeoutMsFor(envelope, emitOptions),
-							})
-						: undefined;
-				commandResultPromise?.catch(() => undefined);
-				const receiptPayload: unknown = await socket
-					.timeout(timeoutMs)
+				receiptPayload = await socket
+					.timeout(commandAckTimeoutMs)
 					.emitWithAck(CONTROL_SESSION_EVENT_NAMES.message, envelope, payload);
 				assertControlMessageReceiptAccepted(receiptPayload);
 				if (isPriorityControlSessionMessage(envelope)) {
@@ -914,12 +935,9 @@ export function createControlSessionClient(
 					lastSeenControllerSequence,
 					sequenceDecision.nextLastSeenSequence,
 				);
-				if (commandResultPromise !== undefined) {
-					return await commandResultPromise;
-				}
-				return receiptPayload;
 			} catch (error) {
 				if (isPriorityControlSessionMessage(envelope)) {
+					releaseUnreceiptedPrioritySequenceReservation(sequenceDecision);
 					priorityAckFailureCount += 1;
 					if (priorityAckFailureCount >= CONTROL_SESSION_TIMING_MS.priorityAckFailureThreshold) {
 						markControlSessionStale({
@@ -935,6 +953,10 @@ export function createControlSessionClient(
 					releasePendingControlSessionMessage(pendingQueue, messageByteLength);
 				}
 			}
+			if (commandResultPromise !== undefined) {
+				return await commandResultPromise;
+			}
+			return receiptPayload;
 		},
 	};
 }

@@ -202,6 +202,14 @@ extended with new slices:
 - true W3C `traceparent` propagation and OTel span joining are separate from
   current allowlisted `traceId` attributes.
 
+Follow-on stability tightening (2026-07-07): the control runtime now treats
+connect/hello timeout and command-ack timeout as separate contracts, resets the
+priority failure budget on fresh accepted hello, keeps semantic command-result
+timeouts out of the transport-ack failure budget, and releases an unreceipted
+priority sequence reservation only while no later hard sequence has moved. This
+preserves retryability for heartbeat and reserved `operation_cancel` priority
+frames without weakening strict receiver sequence-gap detection.
+
 ## Route
 Independent plan review DONE and folded. Architecture re-review pass 2 DONE and folded. Focused SMA plan review DONE
 and folded. Implementation-execute-plan may start with SMA. Remaining before the broader control-plane cutover can

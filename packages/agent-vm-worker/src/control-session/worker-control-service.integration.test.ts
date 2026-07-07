@@ -782,6 +782,105 @@ describe('worker control service', () => {
 		expect(fixture.service.nextPeerSequence()).toBe(2);
 	});
 
+	it('releases an unreceipted priority peer sequence for retry', async () => {
+		const fixture = createFixture();
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: WORKER_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		let observedCancelCount = 0;
+		client.on('control:message', (envelope: unknown, _payload: unknown, acknowledge) => {
+			observedCancelCount += 1;
+			if (observedCancelCount === 1) {
+				acknowledge({
+					errorClass: 'test_receipt_rejected',
+					received: false,
+					safeMessage: 'test priority receipt rejected',
+				});
+				return;
+			}
+			acknowledge({ received: true });
+			const controlEnvelope = envelope as ControlEnvelope;
+			client.emit(
+				'control:message',
+				workerCommandResultEnvelopeFor(controlEnvelope, 1),
+				{
+					kind: 'command_result',
+					operation: 'operation_cancel',
+					payload: {
+						activeOperationId: '77777777-7777-4777-8777-777777777777',
+						responseToMessageId: controlEnvelope.messageId,
+						result: 'ok',
+					},
+				},
+				() => undefined,
+			);
+		});
+		await waitForSocketConnect(client);
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			bootId: identity.bootId,
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'worker_control',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.getAcceptedSession();
+		const cancelEnvelope = {
+			...workerGitPushEnvelopeFor(acceptedSession, fixture.service.nextPeerSequence()),
+			commandId: '55555555-5555-4555-8555-555555555555',
+			deliveryPolicy: 'acked_idempotent',
+			idempotencyKey: 'operation-cancel-key',
+			messageId: '10000000-0000-4000-8000-000000000001',
+			operation: 'operation_cancel',
+		} satisfies ControlEnvelope;
+		const cancelMessage = {
+			kind: 'command',
+			operation: 'operation_cancel',
+			payload: {
+				activeOperationId: '77777777-7777-4777-8777-777777777777',
+				initiatedBy: 'controller',
+				reason: 'operator_cancelled',
+			},
+		};
+
+		await expect(
+			fixture.service.emitApplicationMessage(
+				cancelEnvelope,
+				{ kind: 'command', operation: 'operation_cancel' },
+				cancelMessage,
+			),
+		).rejects.toThrow(/test priority receipt rejected/u);
+		expect(fixture.service.nextPeerSequence()).toBe(1);
+		await expect(
+			fixture.service.emitApplicationMessage(
+				{
+					...cancelEnvelope,
+					messageId: '10000000-0000-4000-8000-000000000002',
+					sequence: fixture.service.nextPeerSequence(),
+				},
+				{ kind: 'command', operation: 'operation_cancel' },
+				cancelMessage,
+			),
+		).resolves.toEqual({
+			kind: 'command_result',
+			operation: 'operation_cancel',
+			payload: {
+				activeOperationId: '77777777-7777-4777-8777-777777777777',
+				responseToMessageId: '10000000-0000-4000-8000-000000000002',
+				result: 'ok',
+			},
+		});
+		expect(observedCancelCount).toBe(2);
+	});
+
 	it('keeps the socket open for a fresh hello after resync_required', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
