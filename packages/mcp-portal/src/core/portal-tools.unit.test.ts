@@ -86,6 +86,30 @@ const degradedSession = {
 	},
 } satisfies PortalSession;
 
+const transportFailureSession = {
+	...session,
+	catalog: {
+		...session.catalog,
+		discoveryFailures: [
+			{
+				causeMessage: 'spawn failed',
+				elapsedMs: 12,
+				kind: 'upstream_mcp_failed',
+				message: 'local-tools: connect failed: spawn failed',
+				namespace: 'local-tools',
+				operation: 'initialize',
+				phase: 'connect',
+				transport: {
+					argCount: 2,
+					command: '/secret/bin/mcp-provider',
+					cwd: '/secret/workdir',
+					kind: 'stdio',
+				},
+			},
+		],
+	},
+} satisfies PortalSession;
+
 function allowDecision(calls: readonly { readonly id: string }[]): {
 	readonly decisionsByCallId: Readonly<Record<string, { readonly kind: 'allow' }>>;
 } {
@@ -181,6 +205,30 @@ describe('portal tool handlers', () => {
 		).resolves.toMatchObject({ diagnostics: expectedDiagnostics, ok: true });
 	});
 
+	it('redacts transport details from list discovery diagnostics', async () => {
+		const handlers = createPortalToolHandlers({
+			callUpstreamTool: vi.fn(),
+			getSession: vi.fn(async () => transportFailureSession),
+		});
+
+		const listResult = await handlers.list({
+			identity: transportFailureSession.identity,
+			input: { requests: [{ id: 'linear-tools', limit: 10 }] },
+		});
+
+		expect(listResult.diagnostics).toMatchObject([
+			{
+				kind: 'upstream_mcp_failed',
+				namespace: 'local-tools',
+				transport: { kind: 'stdio' },
+			},
+		]);
+		const serializedResult = JSON.stringify(listResult);
+		expect(serializedResult).not.toContain('/secret/bin/mcp-provider');
+		expect(serializedResult).not.toContain('/secret/workdir');
+		expect(serializedResult).not.toContain('argCount');
+	});
+
 	it('fails closed with a disabled namespace error when a degraded namespace is called', async () => {
 		const callUpstreamTool = vi.fn(async () => ({ content: [] }));
 		const handlers = createPortalToolHandlers({
@@ -253,12 +301,12 @@ describe('portal tool handlers', () => {
 			getSession: vi.fn(async () => structuredDegradedSession),
 		});
 
-		await expect(
-			handlers.list({
-				identity: session.identity,
-				input: { requests: [{ id: 'list-tools' }] },
-			}),
-		).resolves.toMatchObject({
+		const listResult = await handlers.list({
+			identity: session.identity,
+			input: { requests: [{ id: 'list-tools' }] },
+		});
+
+		expect(listResult).toMatchObject({
 			diagnostics: [
 				{
 					causeMessage: 'Authentication failed',
@@ -266,11 +314,12 @@ describe('portal tool handlers', () => {
 					kind: 'upstream_mcp_failed',
 					namespace: 'tavily',
 					phase: 'connect',
-					transport: { kind: 'streamable-http', url: 'https://mcp.tavily.com/mcp/' },
+					transport: { kind: 'streamable-http' },
 				},
 			],
 			ok: true,
 		});
+		expect(JSON.stringify(listResult)).not.toContain('https://mcp.tavily.com/mcp/');
 	});
 
 	it('rejects model-supplied identity fields and duplicate ids at the envelope level', async () => {
@@ -762,27 +811,27 @@ describe('portal tool handlers', () => {
 			getSession: vi.fn(async () => session),
 		});
 
-		await expect(
-			handlers.call({
-				identity: session.identity,
-				input: {
-					calls: [
-						{
-							arguments: { title: 'Fix deploy' },
-							id: 'failed-create',
-							namespace: 'linear',
-							toolName: 'create_issue',
-						},
-						{
-							arguments: {},
-							id: 'defaulted-create',
-							namespace: 'linear',
-							toolName: 'create_issue_with_default',
-						},
-					],
-				},
-			}),
-		).resolves.toMatchObject({
+		const callResult = await handlers.call({
+			identity: session.identity,
+			input: {
+				calls: [
+					{
+						arguments: { title: 'Fix deploy' },
+						id: 'failed-create',
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+					{
+						arguments: {},
+						id: 'defaulted-create',
+						namespace: 'linear',
+						toolName: 'create_issue_with_default',
+					},
+				],
+			},
+		});
+
+		expect(callResult).toMatchObject({
 			ok: false,
 			results: {
 				'defaulted-create': {
@@ -806,7 +855,6 @@ describe('portal tool handlers', () => {
 							toolName: 'create_issue',
 							transport: {
 								kind: 'streamable-http',
-								url: 'https://linear.example.test/mcp',
 							},
 						},
 					},
@@ -820,6 +868,7 @@ describe('portal tool handlers', () => {
 				},
 			},
 		});
+		expect(JSON.stringify(callResult)).not.toContain('https://linear.example.test/mcp');
 		expect(callUpstreamTool).toHaveBeenCalledTimes(2);
 	});
 

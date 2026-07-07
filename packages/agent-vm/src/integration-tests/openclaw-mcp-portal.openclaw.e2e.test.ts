@@ -425,6 +425,10 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 
 		const writeArguments = { title: 'Write from full OpenClaw smoke' };
+		const toolCallRequestCountBeforeDeniedWrite =
+			upstreamServer?.requests.filter(
+				(request) => request.path === '/mcp' && request.jsonRpcMethods.includes('tools/call'),
+			).length ?? 0;
 		const deniedWriteResult = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
 				agentId: mainAgentId,
@@ -457,6 +461,11 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			argumentsValue: writeArguments,
 			name: 'write_thing',
 		});
+		expect(
+			upstreamServer?.requests.filter(
+				(request) => request.path === '/mcp' && request.jsonRpcMethods.includes('tools/call'),
+			).length,
+		).toBe(toolCallRequestCountBeforeDeniedWrite);
 
 		const betaListResult = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
@@ -474,6 +483,10 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 
 		const betaReadDeniedArguments = { title: 'Beta read should stay denied' };
+		const toolCallRequestCountBeforeDeniedBetaRead =
+			upstreamServer?.requests.filter(
+				(request) => request.path === '/mcp' && request.jsonRpcMethods.includes('tools/call'),
+			).length ?? 0;
 		const betaReadDeniedResult = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
 				agentId: betaAgentId,
@@ -506,6 +519,11 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			argumentsValue: betaReadDeniedArguments,
 			name: 'read_thing',
 		});
+		expect(
+			upstreamServer?.requests.filter(
+				(request) => request.path === '/mcp' && request.jsonRpcMethods.includes('tools/call'),
+			).length,
+		).toBe(toolCallRequestCountBeforeDeniedBetaRead);
 
 		const betaWriteArguments = { title: 'Write from beta agent' };
 		const betaWriteResult = parseNativePortalToolResult(

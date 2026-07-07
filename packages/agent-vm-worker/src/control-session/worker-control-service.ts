@@ -635,7 +635,18 @@ export function createWorkerControlService(
 		refreshWorkerFullResyncPending();
 	}
 
-	function resetWorkerControlStateAfterAcceptedFullResync(): void {
+	function resetWorkerControlStateAfterAcceptedFullResync(
+		winningSocket: Socket<
+			WorkerControlControllerToWorkerEvents,
+			WorkerControlWorkerToControllerEvents
+		>,
+	): void {
+		for (const pendingSocket of pendingFullResyncSockets) {
+			if (pendingSocket !== winningSocket) {
+				pendingSocket.disconnect(true);
+			}
+		}
+		pendingFullResyncSockets.clear();
 		fullResyncPending = false;
 		latestWinsQueue.clear();
 		lastSeenControllerSequence = 0;
@@ -767,7 +778,7 @@ export function createWorkerControlService(
 				}
 				const acceptedAfterFullResync = pendingFullResyncSockets.delete(socket);
 				if (acceptedAfterFullResync) {
-					resetWorkerControlStateAfterAcceptedFullResync();
+					resetWorkerControlStateAfterAcceptedFullResync(socket);
 				}
 				if (acceptedSocket !== undefined && acceptedSocket !== socket) {
 					acceptedSocket.disconnect(true);

@@ -38,6 +38,10 @@ export interface PortalBatchError {
 	readonly message: string;
 }
 
+export interface PortalSafeTransportDiagnostic {
+	readonly kind: string;
+}
+
 export interface PortalBatchDiagnostic {
 	readonly causeMessage?: string;
 	readonly elapsedMs?: number;
@@ -50,6 +54,20 @@ export interface PortalBatchDiagnostic {
 	readonly timeoutMs?: number;
 	readonly toolName?: string;
 	readonly transport?: unknown;
+}
+
+interface PortalSafeUpstreamMcpFailureDetails {
+	readonly attemptTransport?: string;
+	readonly causeMessage: string;
+	readonly elapsedMs: number;
+	readonly hint?: string;
+	readonly kind: 'upstream_mcp_failed';
+	readonly namespace: string;
+	readonly operation: string;
+	readonly phase: string;
+	readonly timeoutMs?: number;
+	readonly toolName?: string;
+	readonly transport: PortalSafeTransportDiagnostic;
 }
 
 export interface PortalBatchResult {
@@ -261,6 +279,43 @@ function messageFromError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function safeTransportDiagnosticFromUnknown(
+	transport: unknown,
+): PortalSafeTransportDiagnostic | undefined {
+	if (typeof transport !== 'object' || transport === null || Array.isArray(transport)) {
+		return undefined;
+	}
+	if (!('kind' in transport)) {
+		return undefined;
+	}
+	const kind = transport.kind;
+	return typeof kind === 'string' ? { kind } : undefined;
+}
+
+function safeUpstreamMcpFailureDetailsFromUnknown(
+	error: unknown,
+): PortalSafeUpstreamMcpFailureDetails | null {
+	const upstream = upstreamMcpFailureDetailsFromUnknown(error);
+	if (upstream === null) {
+		return null;
+	}
+	return {
+		...(upstream.attemptTransport === undefined
+			? {}
+			: { attemptTransport: upstream.attemptTransport }),
+		causeMessage: upstream.causeMessage,
+		elapsedMs: upstream.elapsedMs,
+		...(upstream.hint === undefined ? {} : { hint: upstream.hint }),
+		kind: upstream.kind,
+		namespace: upstream.namespace,
+		operation: upstream.operation,
+		phase: upstream.phase,
+		...(upstream.timeoutMs === undefined ? {} : { timeoutMs: upstream.timeoutMs }),
+		...(upstream.toolName === undefined ? {} : { toolName: upstream.toolName }),
+		transport: { kind: upstream.transport.kind },
+	};
+}
+
 function approvalEvaluationForAllCalls(
 	calls: readonly PortalApprovalCall[],
 	decision: PortalApprovalCallDecision,
@@ -302,11 +357,25 @@ function itemOutput(props: {
 }
 
 function discoveryDiagnostics(session: PortalSession): readonly PortalBatchDiagnostic[] {
-	return session.catalog.discoveryFailures.map((failure) => ({
-		...failure,
-		kind:
-			failure.kind === 'upstream_mcp_failed' ? 'upstream_mcp_failed' : 'upstream_discovery_failed',
-	}));
+	return session.catalog.discoveryFailures.map((failure) => {
+		const safeTransport = safeTransportDiagnosticFromUnknown(failure.transport);
+		return {
+			...(failure.causeMessage === undefined ? {} : { causeMessage: failure.causeMessage }),
+			...(failure.elapsedMs === undefined ? {} : { elapsedMs: failure.elapsedMs }),
+			...(failure.hint === undefined ? {} : { hint: failure.hint }),
+			kind:
+				failure.kind === 'upstream_mcp_failed'
+					? 'upstream_mcp_failed'
+					: 'upstream_discovery_failed',
+			message: failure.message,
+			namespace: failure.namespace,
+			...(failure.operation === undefined ? {} : { operation: failure.operation }),
+			...(failure.phase === undefined ? {} : { phase: failure.phase }),
+			...(failure.timeoutMs === undefined ? {} : { timeoutMs: failure.timeoutMs }),
+			...(failure.toolName === undefined ? {} : { toolName: failure.toolName }),
+			...(safeTransport === undefined ? {} : { transport: safeTransport }),
+		};
+	});
 }
 
 function portalBatchResult(
@@ -692,7 +761,7 @@ async function executePreparedPortalCall(
 			},
 		});
 	} catch (error) {
-		const upstream = upstreamMcpFailureDetailsFromUnknown(error);
+		const upstream = safeUpstreamMcpFailureDetailsFromUnknown(error);
 		return itemError({
 			error: {
 				kind: 'upstream_call_failed',

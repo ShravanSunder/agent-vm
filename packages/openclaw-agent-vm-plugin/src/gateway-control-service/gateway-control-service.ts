@@ -599,7 +599,18 @@ export function createGatewayControlService(
 		refreshGatewayFullResyncPending();
 	}
 
-	function resetGatewayControlStateAfterAcceptedFullResync(): void {
+	function resetGatewayControlStateAfterAcceptedFullResync(
+		winningSocket: Socket<
+			GatewayControlControllerToGatewayEvents,
+			GatewayControlGatewayToControllerEvents
+		>,
+	): void {
+		for (const pendingSocket of pendingFullResyncSockets) {
+			if (pendingSocket !== winningSocket) {
+				pendingSocket.disconnect(true);
+			}
+		}
+		pendingFullResyncSockets.clear();
 		fullResyncPending = false;
 		latestWinsQueue.clear();
 		lastSeenControllerSequence = 0;
@@ -733,7 +744,7 @@ export function createGatewayControlService(
 			}
 			const acceptedAfterFullResync = pendingFullResyncSockets.delete(socket);
 			if (acceptedAfterFullResync) {
-				resetGatewayControlStateAfterAcceptedFullResync();
+				resetGatewayControlStateAfterAcceptedFullResync(socket);
 			}
 			if (acceptedSocket !== undefined && acceptedSocket !== socket) {
 				acceptedSocket.disconnect(true);

@@ -219,6 +219,22 @@ probe failures. Remote MCP provider diagnostics sanitize URL userinfo, query
 strings, and fragments before CLI/log/report surfaces. Proof rows BP-6,
 RECOVERY-2, and MCP-DIAG-1 cover these contracts.
 
+Follow-up implementation review hardening (2026-07-07): when a full-resync
+replacement is accepted, gateway and worker control services invalidate all
+other pending full-resync challengers so an older pending socket cannot later
+bare-hello and steal the accepted session. Controller-side peer-originated
+command responses are also tied to the accepted response-queue generation,
+connection id, and session id at the moment the peer command is accepted; a
+delayed old-session handler result is dropped after reconnect instead of being
+emitted on the fresh session. The proof matrix was corrected where review found
+overclaims: CORR-1 is an exact allowlist/unit/source-flow proof unless a runtime
+trace carrier changes, and RESIDUE-6 is unit route-table proof plus named partial
+integration, not blanket integration coverage for every deleted route family.
+Generated manuals now state that managed observability build prep requires an
+opted-in selected OpenClaw zone and that MCP live validation starts referenced
+providers/namespaces. Agent-visible MCP Portal diagnostics now redact transport
+URL/command/cwd details to transport kind.
+
 Follow-up reviewer corrections (2026-07-07): BP-6 is narrowed to command-result
 reply slots only. No-reply runtime-status events bypass the reply queue, and
 session reset/full resync invalidates old response slots. RECOVERY-2 freshness is

@@ -408,8 +408,10 @@ S6b — recovery corroboration + per-source budget (LOAD-BEARING incident-amplif
   integration. WORKER-domain corroboration path BLOCKED on Q2 (probe source).
 
 S6c — correlation/trace to operator evidence:
-- Write surface: correlation allowlist + agent-vm-health reducer propagation (traceId/runId/sessionKeyDigest/toolCallId).
-- Proof: CORR-1. Layer: integration + unit (allowlist real-filter).
+- Write surface: correlation allowlist + agent-vm-health reducer propagation (causationId/correlationId/requestId/
+  traceId/runId/sessionKeyDigest/toolCallId).
+- Proof: CORR-1. Layer: unit for the allowlist/filter plus targeted source-flow assertions; add integration only if a
+  future trace-context slice introduces a runtime carrier beyond these fields.
 - Dependency (all S6*): S3. Split trigger: applied (S6a/S6b/S6c).
 - Current cutover scope is allowlisted correlation attributes through control
   events and operator evidence. True W3C `traceparent` propagation and OTel

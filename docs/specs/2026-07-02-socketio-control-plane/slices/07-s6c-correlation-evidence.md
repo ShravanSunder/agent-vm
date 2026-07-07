@@ -17,8 +17,9 @@ Dependencies:
 - S3.
 
 Checkpoint:
-- `traceId`, `runId`, `sessionKeyDigest`, `toolCallId`, and request/message
-  ids survive to operator evidence.
+- `causationId`, `correlationId`, `requestId`, `traceId`, `runId`,
+  `sessionKeyDigest`, `toolCallId`, and request/message ids survive to operator
+  evidence when supplied by the owning call surface.
 - Raw `sessionKey` and non-allowlisted fields are rejected or stripped.
 - This slice proves allowlisted correlation attributes. It does not claim W3C
   `traceparent` propagation or OTel parent/child span joining. If the control
@@ -32,7 +33,8 @@ Proof rows:
 
 Commands:
 - `pnpm test:unit`
-- `pnpm test:integration`
+- Targeted integration only when a runtime path, not only an allowlist/filter,
+  is edited.
 
 Split trigger:
 - Split telemetry export proof if it requires separate harnessing.

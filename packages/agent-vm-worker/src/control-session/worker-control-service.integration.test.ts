@@ -594,6 +594,108 @@ describe('worker control service', () => {
 		expect(firstClient.connected).toBe(false);
 	});
 
+	it('invalidates older full-resync challengers after one replacement is accepted', async () => {
+		const fixture = createFixture();
+		const port = await listenWithService(fixture.service);
+		const firstCredential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const firstClient = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(firstCredential),
+			forceNew: true,
+			path: WORKER_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(firstClient);
+		await waitForSocketConnect(firstClient);
+		const firstHelloResponse = ControlHelloResponseSchema.parse(
+			await firstClient.timeout(1_000).emitWithAck('control:hello', {
+				bootId: identity.bootId,
+				controllerEpoch: identity.controllerEpoch,
+				domain: 'worker_control',
+				peerId: identity.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+			} satisfies ControlHello),
+		);
+		expect(firstHelloResponse.outcome).toBe('accepted');
+
+		const secondCredential = await fetchIssuedCredential(
+			port,
+			fixture.readyHeadersFor({ requestId: '88888888-8888-4888-8888-888888888888' }),
+		);
+		const thirdCredential = await fetchIssuedCredential(
+			port,
+			fixture.readyHeadersFor({ requestId: '77777777-7777-4777-8777-777777777777' }),
+		);
+		const secondClient = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(secondCredential),
+			forceNew: true,
+			path: WORKER_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		const thirdClient = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(thirdCredential),
+			forceNew: true,
+			path: WORKER_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(secondClient, thirdClient);
+		await waitForSocketConnect(secondClient);
+		await waitForSocketConnect(thirdClient);
+
+		const challengerResponses = await Promise.all(
+			[secondClient, thirdClient].map(async (challenger) =>
+				ControlHelloResponseSchema.parse(
+					await challenger.timeout(1_000).emitWithAck('control:hello', {
+						bootId: identity.bootId,
+						controllerEpoch: identity.controllerEpoch,
+						domain: 'worker_control',
+						peerId: identity.peerId,
+						protocolVersion: CONTROL_PROTOCOL_VERSION,
+					} satisfies ControlHello),
+				),
+			),
+		);
+		for (const response of challengerResponses) {
+			expect(response.outcome).toBe('resync_required');
+		}
+
+		const secondFreshHelloResponse = ControlHelloResponseSchema.parse(
+			await secondClient.timeout(1_000).emitWithAck('control:hello', {
+				bootId: identity.bootId,
+				controllerEpoch: identity.controllerEpoch,
+				domain: 'worker_control',
+				peerId: identity.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+			} satisfies ControlHello),
+		);
+
+		expect(secondFreshHelloResponse.outcome).toBe('accepted');
+		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
+			sessionId: secondFreshHelloResponse.sessionId,
+		});
+		await waitForSocketDisconnect(thirdClient);
+		await expect(
+			thirdClient.timeout(1_000).emitWithAck('control:hello', {
+				bootId: identity.bootId,
+				controllerEpoch: identity.controllerEpoch,
+				domain: 'worker_control',
+				peerId: identity.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+			} satisfies ControlHello),
+		).rejects.toThrow(/disconnected|timed out/u);
+		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
+			sessionId: secondFreshHelloResponse.sessionId,
+		});
+	});
+
 	it('keeps the incumbent usable after an abandoned full-resync challenger disconnects', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);

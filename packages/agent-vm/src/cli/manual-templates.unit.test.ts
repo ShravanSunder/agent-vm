@@ -122,6 +122,9 @@ describe('manual templates', () => {
 		expect(observabilityManual).toContain('host.observability.stack.mode=managed');
 		expect(observabilityManual).toContain('host.observability.stack.mode=external');
 		expect(observabilityManual).toContain(
+			'at least one selected managed OpenClaw zone has zones[].observability enabled',
+		);
+		expect(observabilityManual).toContain(
 			'host.observability.stack.scrubbing.responsibility=external-collector',
 		);
 		expect(observabilityManual).toContain('Controller startup does not start Docker Compose');
@@ -318,6 +321,12 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Prefer http-mediation for MCP provider API keys, including stdio providers',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Live validate starts referenced MCP providers/namespaces',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'configured but not referenced by an active MCP Portal profile',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Store MCP provider secrets as raw values',

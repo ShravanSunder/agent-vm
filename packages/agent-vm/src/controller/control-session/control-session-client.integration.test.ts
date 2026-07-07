@@ -107,6 +107,29 @@ async function waitForClientHelloCount(options: {
 	await waitUntilHelloCount();
 }
 
+async function waitForClientAcceptedSession(options: {
+	readonly client: ControlSessionClient;
+	readonly sessionId: string;
+	readonly timeoutMs: number;
+}): Promise<void> {
+	const deadlineMs = Date.now() + options.timeoutMs;
+	const waitUntilAcceptedSession = (): Promise<void> => {
+		const diagnostics = options.client.getDiagnostics();
+		if (diagnostics.ready && diagnostics.lastHelloResponse?.sessionId === options.sessionId) {
+			return Promise.resolve();
+		}
+		if (Date.now() >= deadlineMs) {
+			return Promise.reject(
+				new Error(
+					`Timed out waiting for accepted control-session ${options.sessionId}; diagnostics: ${JSON.stringify(diagnostics)}`,
+				),
+			);
+		}
+		return waitForProtocolRetryInterval(25).then(waitUntilAcceptedSession);
+	};
+	await waitUntilAcceptedSession();
+}
+
 const validEnvelope = {
 	bootId: 'gateway-boot-a',
 	commandId: '44444444-4444-4444-8444-444444444444',
@@ -1129,6 +1152,184 @@ describe('control session client', () => {
 				buildLeaseCreateOkCommandResultMessage(peerEnvelope.messageId),
 			]);
 			expect(dispatchedPayloads).toEqual([peerMessage]);
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('drops delayed peer-originated responses after reconnect accepts a fresh session', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const dispatcher = createControlSessionDispatcher();
+		const observedHelloPayloads: ControlHello[] = [];
+		const observedCommandResults: unknown[] = [];
+		const firstPeerEnvelope = {
+			...validEnvelope,
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			deliveryPolicy: 'critical_idempotent',
+			messageId: 'abababab-abab-4bab-8bab-abababababab',
+			sequence: 1,
+			sessionId: '33333333-3333-4333-8333-333333333333',
+		} satisfies ControlEnvelope;
+		const secondPeerEnvelope = {
+			...validEnvelope,
+			commandId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+			connectionId: '66666666-5555-4555-8555-555555555555',
+			deliveryPolicy: 'critical_idempotent',
+			idempotencyKey: 'command-key-b',
+			messageId: 'bcbcbcbc-bcbc-4bcb-8bcb-bcbcbcbcbcbc',
+			sequence: 2,
+			sessionId: '77777777-7777-4777-8777-777777777777',
+		} satisfies ControlEnvelope;
+		const peerMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: {
+					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+				},
+				gatewayWorkspaceDir: '/workspace/from-gateway',
+			},
+		});
+		let releaseFirstDispatch: (() => void) | undefined;
+		const firstDispatchMayComplete = new Promise<void>((resolve) => {
+			releaseFirstDispatch = resolve;
+		});
+		let currentServerSocket: SocketIoServerSocket | undefined;
+		let clientSocket: ReturnType<typeof createSocketIoClient> | undefined;
+		let resolveSecondHello: (() => void) | undefined;
+		let resolveSecondCommandResult: (() => void) | undefined;
+		const secondHelloObserved = waitForProtocolEvent<void>((resolve) => {
+			resolveSecondHello = resolve;
+		});
+		const secondCommandResultObserved = waitForProtocolEvent<void>((resolve) => {
+			resolveSecondCommandResult = resolve;
+		});
+
+		dispatcher.register('gateway_control', {
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			messageIdentity: ({ payload }) => {
+				const parsedMessage = GatewayControlRpcMessageSchema.parse(payload);
+				return {
+					kind: parsedMessage.kind,
+					...(parsedMessage.operation === undefined ? {} : { operation: parsedMessage.operation }),
+				};
+			},
+			handle: async ({ envelope }) => {
+				if (envelope.messageId === firstPeerEnvelope.messageId) {
+					await firstDispatchMayComplete;
+				}
+				return buildLeaseCreateOkCommandResultMessage(envelope.messageId);
+			},
+		});
+
+		socketServer.on('connection', (socket) => {
+			currentServerSocket = socket;
+			socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (payload: ControlHello, ack) => {
+				observedHelloPayloads.push(payload);
+				ack({
+					connectionId:
+						observedHelloPayloads.length === 1
+							? firstPeerEnvelope.connectionId
+							: secondPeerEnvelope.connectionId,
+					controllerEpoch: 'epoch-a',
+					outcome: 'accepted',
+					sessionId:
+						observedHelloPayloads.length === 1
+							? firstPeerEnvelope.sessionId
+							: secondPeerEnvelope.sessionId,
+				});
+				if (observedHelloPayloads.length === 2) {
+					resolveSecondHello?.();
+				}
+			});
+			socket.on(
+				CONTROL_SESSION_EVENT_NAMES.message,
+				(_envelope: unknown, payload: unknown, acknowledge: (response: unknown) => void) => {
+					observedCommandResults.push(payload);
+					resolveSecondCommandResult?.();
+					acknowledge({ received: true });
+				},
+			);
+		});
+
+		const emitPeerMessage = async (
+			envelope: ControlEnvelope,
+			payload: GatewayControlRpcMessage,
+		): Promise<unknown> => {
+			if (currentServerSocket === undefined) {
+				throw new Error('peer socket was not connected');
+			}
+			const receiptPayload: unknown = await currentServerSocket
+				.timeout(500)
+				.emitWithAck(CONTROL_SESSION_EVENT_NAMES.message, envelope, payload);
+			return receiptPayload;
+		};
+
+		const port = await listen(httpServer);
+		const client = createControlSessionClient({
+			createSocket: (socketOptions) => {
+				const socket = createSocketIoClient(
+					`http://${socketOptions.endpoint.host}:${String(socketOptions.endpoint.port)}`,
+					{
+						addTrailingSlash: false,
+						path: socketOptions.endpoint.path,
+						reconnectionDelay: 10,
+						reconnectionDelayMax: 10,
+						timeout: socketOptions.timeoutMs,
+						transports: ['websocket'],
+					},
+				);
+				clientSocket = socket;
+				return socket;
+			},
+			dispatcher,
+			endpoint: {
+				host: '127.0.0.1',
+				path: controlPath,
+				port,
+			},
+			identity: {
+				bootId: 'gateway-boot-a',
+				controllerEpoch: 'epoch-a',
+				domain: 'gateway_control',
+				peerId: 'gateway-zone-a',
+			},
+			policyByOperation: gatewayControlDeliveryPolicyByOperation,
+			commandAckTimeoutMs: 500,
+			connectTimeoutMs: 500,
+		});
+
+		try {
+			await client.ready;
+			await expect(emitPeerMessage(firstPeerEnvelope, peerMessage)).resolves.toEqual({
+				received: true,
+			});
+			clientSocket?.io.engine?.close();
+			await expect(secondHelloObserved).resolves.toBeUndefined();
+			await waitForClientAcceptedSession({
+				client,
+				sessionId: secondPeerEnvelope.sessionId,
+				timeoutMs: 1_000,
+			});
+
+			releaseFirstDispatch?.();
+			await waitForProtocolRetryInterval(75);
+			expect(observedCommandResults).toEqual([]);
+
+			await expect(emitPeerMessage(secondPeerEnvelope, peerMessage)).resolves.toEqual({
+				received: true,
+			});
+			await secondCommandResultObserved;
+			expect(observedCommandResults).toEqual([
+				buildLeaseCreateOkCommandResultMessage(secondPeerEnvelope.messageId),
+			]);
 		} finally {
 			client.close();
 			await closeSocketIoServer(socketServer);

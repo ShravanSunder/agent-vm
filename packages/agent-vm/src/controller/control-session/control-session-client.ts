@@ -391,6 +391,7 @@ export function createControlSessionClient(
 	let manualReconnectInFlight = false;
 	let manualReconnectAttempt = 0;
 	let outboundResponseQueue: Promise<void> = Promise.resolve();
+	let outboundResponseQueueGeneration = 0;
 	let priorityAckFailureCount = 0;
 
 	function buildNextHello(): ControlHello {
@@ -417,6 +418,8 @@ export function createControlSessionClient(
 		lastSeenPeerSequence = 0;
 		nextControllerSequenceValue = 1;
 		priorityAckFailureCount = 0;
+		outboundResponseQueueGeneration += 1;
+		outboundResponseQueue = Promise.resolve();
 		clearControlSessionSendBuffer(socket);
 	}
 
@@ -459,6 +462,8 @@ export function createControlSessionClient(
 				currentConnectionAccepted = true;
 				lastAcceptedConnectionId = parsedResponse.connectionId;
 				lastAcceptedSessionId = parsedResponse.sessionId;
+				outboundResponseQueueGeneration += 1;
+				outboundResponseQueue = Promise.resolve();
 				manualReconnectAttempt = 0;
 				priorityAckFailureCount = 0;
 				nextControllerSequenceValue = lastSeenControllerSequence + 1;
@@ -635,6 +640,8 @@ export function createControlSessionClient(
 	});
 	socket.on('disconnect', () => {
 		currentConnectionAccepted = false;
+		outboundResponseQueueGeneration += 1;
+		outboundResponseQueue = Promise.resolve();
 		if (initialHelloCompleted) {
 			queueManualReconnect();
 		}
@@ -685,11 +692,23 @@ export function createControlSessionClient(
 					}
 					options.dispatcher.validate({ envelope, payload });
 					acknowledge?.(buildControlMessageReceipt());
+					const responseQueueGeneration = outboundResponseQueueGeneration;
+					const responseConnectionId = envelope.connectionId;
+					const responseSessionId = envelope.sessionId;
 					const responsePayload = await options.dispatcher.dispatch({ envelope, payload });
 					if (responsePayload !== undefined) {
 						outboundResponseQueue = outboundResponseQueue
 							.catch(() => undefined)
 							.then(async () => {
+								if (
+									responseQueueGeneration !== outboundResponseQueueGeneration ||
+									responseConnectionId !== lastAcceptedConnectionId ||
+									responseSessionId !== lastAcceptedSessionId ||
+									!currentConnectionAccepted ||
+									!socket.connected
+								) {
+									return;
+								}
 								const responseSequence = nextControllerSequenceValue;
 								const responseEnvelope = buildControlSessionResponseEnvelope({
 									requestEnvelope: envelope,
@@ -714,6 +733,13 @@ export function createControlSessionClient(
 								);
 							})
 							.catch((error: unknown) => {
+								if (
+									responseQueueGeneration !== outboundResponseQueueGeneration ||
+									responseConnectionId !== lastAcceptedConnectionId ||
+									responseSessionId !== lastAcceptedSessionId
+								) {
+									return;
+								}
 								markControlSessionStale({
 									reason: 'sequence_gap',
 									safeMessage:
@@ -746,6 +772,8 @@ export function createControlSessionClient(
 		}
 		staleState = state;
 		latestWinsQueue.clear();
+		outboundResponseQueueGeneration += 1;
+		outboundResponseQueue = Promise.resolve();
 		for (const [messageId, pendingResult] of pendingCommandResults) {
 			clearTimeout(pendingResult.timeout);
 			pendingCommandResults.delete(messageId);
