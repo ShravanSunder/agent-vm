@@ -172,7 +172,15 @@ function readHeaderValue(
 	if (typeof value === 'string') {
 		return value;
 	}
-	return Array.isArray(value) ? value[0] : undefined;
+	if (!isReadonlyStringArray(value)) {
+		return undefined;
+	}
+	const firstValue: string | undefined = value[0];
+	return typeof firstValue === 'string' ? firstValue : undefined;
+}
+
+function isReadonlyStringArray(value: unknown): value is readonly string[] {
+	return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
 async function runToolVmWriteReadE2eProbe(options: {

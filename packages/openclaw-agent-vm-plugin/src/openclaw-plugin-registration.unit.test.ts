@@ -180,7 +180,9 @@ function createToolVmWriteReadProbeHeaders(bodyText: string): Readonly<Record<st
 	};
 }
 
-function createMockToolVmWriteReadBackend(): OpenClawSandboxBackendHandle {
+function createMockToolVmWriteReadBackend(options?: {
+	readonly runShellCommand?: OpenClawSandboxBackendHandle['runShellCommand'];
+}): OpenClawSandboxBackendHandle {
 	return {
 		buildExecSpec: vi.fn(async () => ({
 			argv: ['sh', '-lc', 'true'],
@@ -188,11 +190,13 @@ function createMockToolVmWriteReadBackend(): OpenClawSandboxBackendHandle {
 			stdinMode: 'pipe-closed' as const,
 		})),
 		id: 'mock-tool-vm-backend',
-		runShellCommand: vi.fn(async () => ({
-			code: 0,
-			stderr: Buffer.from(''),
-			stdout: Buffer.from('probe-marker'),
-		})),
+		runShellCommand:
+			options?.runShellCommand ??
+			vi.fn(async () => ({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('probe-marker'),
+			})),
 		runtimeId: 'mock-runtime',
 		runtimeLabel: 'mock-runtime',
 		workdir: '/workspace',
@@ -553,7 +557,12 @@ describe('createGondolinPlugin', () => {
 
 	it('runs the private e2e Tool VM write/read route with a signed same-agent proof', async () => {
 		const registerHttpRoute = vi.fn();
-		const backend = createMockToolVmWriteReadBackend();
+		const runShellCommand = vi.fn(async () => ({
+			code: 0,
+			stderr: Buffer.from(''),
+			stdout: Buffer.from('probe-marker'),
+		}));
+		const backend = createMockToolVmWriteReadBackend({ runShellCommand });
 		const backendFactory = vi.fn(async () => backend);
 		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
 		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
@@ -587,7 +596,7 @@ describe('createGondolinPlugin', () => {
 				sessionKey: 'agent:beta:tool-vm-write-read:test-session',
 			}),
 		);
-		expect(backend.runShellCommand).toHaveBeenCalledWith(
+		expect(runShellCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
 				script: expect.stringContaining("proof_file='.agent-vm/proof.txt'"),
 			}),
