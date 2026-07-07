@@ -182,6 +182,26 @@ typed `missing` policy. Controller push fails closed before Git I/O when a task
 repo lacks matching trusted policy. This preserves the host-token confused-deputy
 boundary for worker `git_push`.
 
+## Implementation review correction (2026-07-07) — stability and traceability scope
+
+Source revalidation found the old F1 wording too coarse. The remaining defect
+was not only physical socket eviction; a `resync_required` challenger could
+temporarily mask incumbent accepted-session availability. The accepted control
+contract is now: pending full-resync challengers do not disconnect, mask, or
+suppress controller-originated traffic on the incumbent. The incumbent becomes
+stale only after the replacement fresh hello is accepted.
+
+Stability follow-ups are explicitly out of silent-done scope unless the plan is
+extended with new slices:
+- real gateway/worker `operation_cancel` needs active-operation identity,
+  idempotent terminal races, and an actual abort path;
+- worker liveness/progress needs a periodic worker-owned progress signal if the
+  controller must distinguish quiet work from wedged work;
+- worker observation correlation needs a real worker-owned correlation source
+  before it becomes operator-visible beyond task event evidence;
+- true W3C `traceparent` propagation and OTel span joining are separate from
+  current allowlisted `traceId` attributes.
+
 ## Route
 Independent plan review DONE and folded. Architecture re-review pass 2 DONE and folded. Focused SMA plan review DONE
 and folded. Implementation-execute-plan may start with SMA. Remaining before the broader control-plane cutover can

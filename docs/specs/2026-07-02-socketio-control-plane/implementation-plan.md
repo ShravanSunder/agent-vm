@@ -141,6 +141,7 @@ same source the runtime uses. Values below satisfy PROTO's timing-order invarian
 | control-session-death / recovery grace | large multiple of heartbeat cadence — PLANNING DEFAULT (tune under load, NOT guessed here) | DAYS-LONG model: SEPARATE from the 120s active-use TTL. This is how long a control session may be disconnected/reconnecting before the owning controller process gives up and RECREATES the VM. Transport death (~20s Engine.IO) triggers cheap RECONNECT; recovery (expensive VM recreate) fires ONLY after this grace elapses with no reconnect. Must be resilient enough that a network blip or peer/socket flap does NOT trigger recreation while the controller process still owns the VM/ingress handle. Controller process restart/redeploy is not covered by this reconnect promise in this cutover; it is a recreate boundary unless a future Gondolin VM-adoption API is specified and proven. Applies to BOTH gateway and worker (workers get the same large grace) |
 | manual reconnect backoff | initial 250 ms, max 5_000 ms, jitter 20% | controller-owned manual reconnect must not run as a fixed 1s loop; retries use bounded exponential backoff with jitter so multi-zone reconnects do not thundering-herd after a shared network blip |
 | priority ack stale threshold | 3 consecutive failures | a single heartbeat/operation_cancel ack miss is operator evidence, not terminal session death; terminal stale requires N consecutive priority ack failures and resets on a successful priority ack |
+| full-resync challenger overlap | incumbent remains accepted until replacement fresh hello is accepted | A challenger that receives `resync_required` is pending only; it must not mask, disconnect, or suppress controller-originated traffic on the incumbent accepted session. The old session becomes stale only after the replacement is accepted. |
 | recovery budget (max failed recoveries, cooldown, reset) | unchanged | reuse existing recoveryBudgets |
 | per-source observation budget | mirror threshold (NEW) | forged-observation cap; NEW value, tune in impl |
 
@@ -254,6 +255,7 @@ tune under load.
   does not recover the `VM` lifecycle/ingress object. A restarted controller must recreate the affected managed VM
   for this cutover; only in-process transport/socket flaps use the cheap reconnect/resync path.
 - Checkpoint: controller establishes a session to a fake VM Socket.IO server; reconnect/resync + fencing hold;
+  a `resync_required` challenger does not mask the incumbent accepted session;
   AND the per-domain RPC dispatch seam is an EXTENSION POINT (register handlers per domain) so S4/SW add
   handlers additively rather than editing a shared central router (I2 — removes a hidden shared-mutable surface).
 - Proof: DELIVERY-3/4/5(b), FENCE-1(integration), BP-1/2/3, FLAP-1(a) deterministic, BP-3 reconnect-buffer config
@@ -406,6 +408,11 @@ S6c — correlation/trace to operator evidence:
 - Write surface: correlation allowlist + agent-vm-health reducer propagation (traceId/runId/sessionKeyDigest/toolCallId).
 - Proof: CORR-1. Layer: integration + unit (allowlist real-filter).
 - Dependency (all S6*): S3. Split trigger: applied (S6a/S6b/S6c).
+- Current cutover scope is allowlisted correlation attributes through control
+  events and operator evidence. True W3C `traceparent` propagation and OTel
+  parent/child span joining are not silently implied by `traceId`; if required,
+  add a separate trace-context slice that owns the envelope carrier, lease/tool
+  call boundary, OTel driver context extraction, and linked-trace proof.
 
 ### S7 — tool-portal-backend-taxonomy (after S1; parallel; overlaps S5 for zone_git_push)
 - Source: CUT Backend Taxonomy, residue table.
@@ -436,6 +443,11 @@ S6c — correlation/trace to operator evidence:
   task event log, it must be added to task evidence/task snapshots with a real
   worker-owned correlation source; do not invent one from the ready-handshake
   requestId or route it through `AgentVmHealthEvent` without a spec revision.
+  Real `operation_cancel` remains a later design/implementation slice unless
+  this plan is explicitly extended to define active operation identity,
+  idempotent terminal races, and an abort path through coordinator/executor
+  boundaries. The hard rejection in this cutover is intentional proof that the
+  contract is not pretending to cancel work it cannot stop.
 - NOTE: worker control service is plain Node/Hono on the standard Node `upgrade` event — NOT gated by GATE-0's
   pinned-OpenClaw-API STOP. Still needs its own HANDSHAKE proof (e2e-worker).
 

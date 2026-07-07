@@ -820,13 +820,13 @@ export function createGatewayControlService(
 
 	async function waitForAcceptedSession(): Promise<GatewayControlAcceptedSession | undefined> {
 		pruneDisconnectedFullResyncSockets();
-		if (fullResyncPending) {
-			return undefined;
-		}
 		const session = acceptedSession;
 		const socket = acceptedSocket;
 		if (session !== undefined && socket !== undefined && socket.connected) {
 			return session;
+		}
+		if (fullResyncPending) {
+			return undefined;
 		}
 		return await new Promise<GatewayControlAcceptedSession | undefined>((resolve) => {
 			const timeout = setTimeout(() => {

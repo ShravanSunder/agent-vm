@@ -858,13 +858,13 @@ export function createWorkerControlService(
 
 	async function waitForAcceptedSession(): Promise<WorkerControlAcceptedSession | undefined> {
 		pruneDisconnectedFullResyncSockets();
-		if (fullResyncPending) {
-			return undefined;
-		}
 		const session = acceptedSession;
 		const socket = acceptedSocket;
 		if (session !== undefined && socket !== undefined && socket.connected) {
 			return session;
+		}
+		if (fullResyncPending) {
+			return undefined;
 		}
 		return await new Promise<WorkerControlAcceptedSession | undefined>((resolve) => {
 			const timeout = setTimeout(() => {

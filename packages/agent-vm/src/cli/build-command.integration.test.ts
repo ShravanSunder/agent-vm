@@ -953,6 +953,80 @@ describe('runBuildCommand', () => {
 		);
 	});
 
+	it('adds diagnostics OTEL OpenClaw package when an OpenClaw zone enables observability', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
+		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
+		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
+		fs.writeFileSync(gatewayConfigPath, JSON.stringify({ channels: {} }), 'utf8');
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:observability' } }),
+			'utf8',
+		);
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const baseConfig = createObservabilitySystemConfig({ zoneEnabled: true });
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...baseConfig,
+					cacheDir: temporaryDirectory,
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								config: gatewayConfigPath,
+							},
+						},
+					],
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								source: {
+									kind: 'managedBase',
+									base: 'openclaw-gateway',
+								},
+							},
+						},
+						toolVms: {},
+					},
+				},
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options);
+				},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'observability-fp',
+					imagePath: '/cache/observability',
+				}),
+				prepareObservabilityStack: async () => ({
+					collectorConfigPath: '/runtime/observability/otel-collector-config.yaml',
+					composePath: '/runtime/observability/docker-compose.observability.yml',
+					status: 'ready',
+				}),
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
+				runTask: async (_title, fn) => fn(),
+			},
+		);
+
+		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
+		expect(generatedDockerfile).toContain('"@openclaw/diagnostics-otel": "2026.6.8"');
+		expect(generatedDockerfile).toContain(
+			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/diagnostics-otel "$global_package_root/@openclaw/diagnostics-otel"',
+		);
+	});
+
 	it('does not add disabled OpenClaw channel packages', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');

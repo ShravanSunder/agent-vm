@@ -287,6 +287,52 @@ async function addZoneGitToOpenClawFixture(rootPath: string): Promise<void> {
 	});
 }
 
+async function addObservabilityToOpenClawFixture(rootPath: string): Promise<void> {
+	const systemConfigPath = path.join(rootPath, 'config', 'system.json');
+	await updateJsonFile(systemConfigPath, (systemConfig) => {
+		const hostValue = systemConfig.host;
+		if (typeof hostValue !== 'object' || hostValue === null || Array.isArray(hostValue)) {
+			throw new Error('Expected host object.');
+		}
+		const hostRecord = hostValue as Record<string, unknown>;
+		hostRecord.observability = {
+			enabled: true,
+			stack: {
+				mode: 'managed',
+				scrubbing: { responsibility: 'agent-vm-managed-collector' },
+			},
+			mode: 'collector',
+			dataDir: path.join(rootPath, 'observability-data'),
+			runner: 'docker-compose',
+			prepareOnBuild: true,
+			retention: {
+				metrics: { period: '30d' },
+				logs: { period: '14d' },
+				traces: { period: '7d' },
+			},
+		};
+
+		const zones = systemConfig.zones;
+		if (!Array.isArray(zones)) {
+			throw new Error('Expected zones array.');
+		}
+		const firstZone = zones[0];
+		if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
+			throw new Error('Expected first zone object.');
+		}
+		const zoneRecord = firstZone as Record<string, unknown>;
+		zoneRecord.observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+				logs: true,
+				metrics: true,
+				traces: true,
+			},
+		};
+	});
+}
+
 async function writeMcpPortalConfigFiles(rootPath: string, profileName: string): Promise<void> {
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
 		schemaVersion: 1,
@@ -524,6 +570,26 @@ describe('runConfigValidation', () => {
 				};
 			},
 		);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.checks).toContainEqual({
+			name: 'openclaw-config-shravan',
+			ok: true,
+			hint: path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+		});
+		expect(result.ok).toBe(true);
+		await rm(temporaryDirectoryPath, { recursive: true, force: true });
+	});
+
+	it('accepts OpenClaw zone observability through mediated OTLP HTTP during control-plane cutover', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addObservabilityToOpenClawFixture(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
 		const result = await runConfigValidation({

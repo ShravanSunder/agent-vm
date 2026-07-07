@@ -20,6 +20,11 @@ Checkpoint:
 - `traceId`, `runId`, `sessionKeyDigest`, `toolCallId`, and request/message
   ids survive to operator evidence.
 - Raw `sessionKey` and non-allowlisted fields are rejected or stripped.
+- This slice proves allowlisted correlation attributes. It does not claim W3C
+  `traceparent` propagation or OTel parent/child span joining. If the control
+  plane needs true distributed traces, add a separate trace-context slice that
+  owns the envelope carrier, Tool VM/worker propagation boundaries, OTel context
+  extraction, and linked-trace proof.
 
 Proof rows:
 - CORR-1
@@ -31,3 +36,5 @@ Commands:
 
 Split trigger:
 - Split telemetry export proof if it requires separate harnessing.
+- Split true trace context propagation from correlation attributes; do not
+  smuggle it into this slice as a `traceId` field rename.
