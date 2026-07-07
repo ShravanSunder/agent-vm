@@ -303,7 +303,7 @@ function safeUpstreamMcpFailureDetailsFromUnknown(
 		...(upstream.attemptTransport === undefined
 			? {}
 			: { attemptTransport: upstream.attemptTransport }),
-		causeMessage: upstream.causeMessage,
+		causeMessage: safeUpstreamMcpCauseMessage(),
 		elapsedMs: upstream.elapsedMs,
 		...(upstream.hint === undefined ? {} : { hint: upstream.hint }),
 		kind: upstream.kind,
@@ -314,6 +314,22 @@ function safeUpstreamMcpFailureDetailsFromUnknown(
 		...(upstream.toolName === undefined ? {} : { toolName: upstream.toolName }),
 		transport: { kind: upstream.transport.kind },
 	};
+}
+
+function safeUpstreamMcpFailureMessage(upstream: PortalSafeUpstreamMcpFailureDetails): string {
+	const toolSuffix = upstream.toolName === undefined ? '' : ` ${upstream.toolName}`;
+	return `${upstream.namespace}: ${upstream.phase}${toolSuffix} failed`;
+}
+
+function safeUpstreamMcpCauseMessage(): string {
+	return 'Upstream MCP provider failed.';
+}
+
+function safeDiscoveryDiagnosticMessage(failure: PortalDiscoveryFailure): string {
+	if (failure.kind !== 'upstream_mcp_failed') {
+		return 'MCP provider discovery failed.';
+	}
+	return `${failure.namespace}: ${failure.phase ?? 'discovery'} failed`;
 }
 
 function approvalEvaluationForAllCalls(
@@ -359,15 +375,15 @@ function itemOutput(props: {
 function discoveryDiagnostics(session: PortalSession): readonly PortalBatchDiagnostic[] {
 	return session.catalog.discoveryFailures.map((failure) => {
 		const safeTransport = safeTransportDiagnosticFromUnknown(failure.transport);
+		const isUpstreamMcpFailure = failure.kind === 'upstream_mcp_failed';
 		return {
-			...(failure.causeMessage === undefined ? {} : { causeMessage: failure.causeMessage }),
+			...(failure.causeMessage === undefined || !isUpstreamMcpFailure
+				? {}
+				: { causeMessage: safeUpstreamMcpCauseMessage() }),
 			...(failure.elapsedMs === undefined ? {} : { elapsedMs: failure.elapsedMs }),
 			...(failure.hint === undefined ? {} : { hint: failure.hint }),
-			kind:
-				failure.kind === 'upstream_mcp_failed'
-					? 'upstream_mcp_failed'
-					: 'upstream_discovery_failed',
-			message: failure.message,
+			kind: isUpstreamMcpFailure ? 'upstream_mcp_failed' : 'upstream_discovery_failed',
+			message: safeDiscoveryDiagnosticMessage(failure),
 			namespace: failure.namespace,
 			...(failure.operation === undefined ? {} : { operation: failure.operation }),
 			...(failure.phase === undefined ? {} : { phase: failure.phase }),
@@ -765,7 +781,8 @@ async function executePreparedPortalCall(
 		return itemError({
 			error: {
 				kind: 'upstream_call_failed',
-				message: messageFromError(error),
+				message:
+					upstream === null ? messageFromError(error) : safeUpstreamMcpFailureMessage(upstream),
 				namespace: call.tool.namespace,
 				toolName: call.tool.toolName,
 				...(upstream === null ? {} : { upstream }),

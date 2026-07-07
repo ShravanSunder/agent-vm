@@ -92,10 +92,10 @@ const transportFailureSession = {
 		...session.catalog,
 		discoveryFailures: [
 			{
-				causeMessage: 'spawn failed',
+				causeMessage: 'spawn /secret/bin/mcp-provider ENOENT',
 				elapsedMs: 12,
 				kind: 'upstream_mcp_failed',
-				message: 'local-tools: connect failed: spawn failed',
+				message: 'local-tools: connect failed: spawn /secret/bin/mcp-provider ENOENT',
 				namespace: 'local-tools',
 				operation: 'initialize',
 				phase: 'connect',
@@ -158,7 +158,7 @@ describe('portal tool handlers', () => {
 		const expectedDiagnostics = [
 			{
 				kind: 'upstream_discovery_failed',
-				message: 'readwise unavailable',
+				message: 'MCP provider discovery failed.',
 				namespace: 'readwise',
 			},
 		];
@@ -218,7 +218,9 @@ describe('portal tool handlers', () => {
 
 		expect(listResult.diagnostics).toMatchObject([
 			{
+				causeMessage: 'Upstream MCP provider failed.',
 				kind: 'upstream_mcp_failed',
+				message: 'local-tools: connect failed',
 				namespace: 'local-tools',
 				transport: { kind: 'stdio' },
 			},
@@ -226,6 +228,7 @@ describe('portal tool handlers', () => {
 		const serializedResult = JSON.stringify(listResult);
 		expect(serializedResult).not.toContain('/secret/bin/mcp-provider');
 		expect(serializedResult).not.toContain('/secret/workdir');
+		expect(serializedResult).not.toContain('ENOENT');
 		expect(serializedResult).not.toContain('argCount');
 	});
 
@@ -255,7 +258,7 @@ describe('portal tool handlers', () => {
 			diagnostics: [
 				{
 					kind: 'upstream_discovery_failed',
-					message: 'readwise unavailable',
+					message: 'MCP provider discovery failed.',
 					namespace: 'readwise',
 				},
 			],
@@ -282,11 +285,12 @@ describe('portal tool handlers', () => {
 				...session.catalog,
 				discoveryFailures: [
 					{
-						causeMessage: 'Authentication failed',
+						causeMessage: 'Authentication failed for https://mcp.tavily.com/mcp/?token=secret',
 						elapsedMs: 44,
 						hint: 'remote MCP connection failed; verify URL, auth header, network egress, and transport kind.',
 						kind: 'upstream_mcp_failed',
-						message: 'tavily: connect failed: Authentication failed',
+						message:
+							'tavily: connect failed: Authentication failed for https://mcp.tavily.com/mcp/?token=secret',
 						namespace: 'tavily',
 						operation: 'MCP streamable-http connect for namespace "tavily"',
 						phase: 'connect',
@@ -309,9 +313,10 @@ describe('portal tool handlers', () => {
 		expect(listResult).toMatchObject({
 			diagnostics: [
 				{
-					causeMessage: 'Authentication failed',
+					causeMessage: 'Upstream MCP provider failed.',
 					hint: expect.stringContaining('verify URL'),
 					kind: 'upstream_mcp_failed',
+					message: 'tavily: connect failed',
 					namespace: 'tavily',
 					phase: 'connect',
 					transport: { kind: 'streamable-http' },
@@ -320,6 +325,7 @@ describe('portal tool handlers', () => {
 			ok: true,
 		});
 		expect(JSON.stringify(listResult)).not.toContain('https://mcp.tavily.com/mcp/');
+		expect(JSON.stringify(listResult)).not.toContain('token=secret');
 	});
 
 	it('rejects model-supplied identity fields and duplicate ids at the envelope level', async () => {
@@ -789,7 +795,7 @@ describe('portal tool handlers', () => {
 		const callUpstreamTool = vi.fn(async (call: { readonly toolName: string }) => {
 			if (call.toolName === 'create_issue') {
 				throw new UpstreamMcpError({
-					causeMessage: '502 Bad Gateway',
+					causeMessage: '502 Bad Gateway from https://linear.example.test/mcp?token=secret',
 					elapsedMs: 47,
 					hint: 'MCP provider accepted discovery but the tool call failed; inspect the tool arguments and upstream provider response.',
 					kind: 'upstream_mcp_failed',
@@ -844,11 +850,11 @@ describe('portal tool handlers', () => {
 				'failed-create': {
 					error: {
 						kind: 'upstream_call_failed',
-						message: 'linear: call_tool create_issue failed: 502 Bad Gateway',
+						message: 'linear: call_tool create_issue failed',
 						namespace: 'linear',
 						toolName: 'create_issue',
 						upstream: {
-							causeMessage: '502 Bad Gateway',
+							causeMessage: 'Upstream MCP provider failed.',
 							kind: 'upstream_mcp_failed',
 							namespace: 'linear',
 							phase: 'call_tool',
@@ -869,6 +875,7 @@ describe('portal tool handlers', () => {
 			},
 		});
 		expect(JSON.stringify(callResult)).not.toContain('https://linear.example.test/mcp');
+		expect(JSON.stringify(callResult)).not.toContain('token=secret');
 		expect(callUpstreamTool).toHaveBeenCalledTimes(2);
 	});
 
