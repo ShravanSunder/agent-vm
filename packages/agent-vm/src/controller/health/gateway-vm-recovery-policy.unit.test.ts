@@ -272,6 +272,42 @@ describe('createGatewayVmRecoveryTracker', () => {
 		});
 	});
 
+	it('does not treat older out-of-order control-session evidence as fresh corroboration', () => {
+		const tracker = createGatewayVmRecoveryTracker({ policy });
+
+		for (let index = 1; index <= policy.consecutiveFailureThreshold; index += 1) {
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: 100_000 + index,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+
+		for (let index = 1; index < policy.consecutiveFailureThreshold; index += 1) {
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 90_000 + index,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			});
+		}
+
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 90_000 + policy.consecutiveFailureThreshold,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
+		).toEqual({
+			consecutiveFailures: 10,
+			kind: 'none',
+			reason: 'needs-corroboration',
+		});
+	});
+
 	it('does not treat a within-grace control-session disconnect as recovery evidence', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 

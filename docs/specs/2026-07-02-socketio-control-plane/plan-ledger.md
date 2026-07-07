@@ -219,6 +219,12 @@ probe failures. Remote MCP provider diagnostics sanitize URL userinfo, query
 strings, and fragments before CLI/log/report surfaces. Proof rows BP-6,
 RECOVERY-2, and MCP-DIAG-1 cover these contracts.
 
+Follow-up reviewer corrections (2026-07-07): BP-6 is narrowed to command-result
+reply slots only. No-reply runtime-status events bypass the reply queue, and
+session reset/full resync invalidates old response slots. RECOVERY-2 freshness is
+monotonic as well as bounded, so older out-of-order observations cannot
+corroborate newer probe failures.
+
 ## Route
 Independent plan review DONE and folded. Architecture re-review pass 2 DONE and folded. Focused SMA plan review DONE
 and folded. Implementation-execute-plan may start with SMA. Remaining before the broader control-plane cutover can

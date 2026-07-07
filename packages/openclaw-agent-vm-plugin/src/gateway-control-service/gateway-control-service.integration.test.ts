@@ -1512,6 +1512,107 @@ describe('gateway control service', () => {
 		expect(client.connected).toBe(true);
 	});
 
+	it('does not let no-reply gateway events block later command_result replies', async () => {
+		let releaseEventHandler: (() => void) | undefined;
+		const eventHandlerReleased = new Promise<void>((resolve) => {
+			releaseEventHandler = resolve;
+		});
+		const fixture = createFixture(() => 1_000, {
+			applicationMessageHandler: {
+				handle: async ({ envelope }) => {
+					if (envelope.kind === 'event') {
+						await eventHandlerReleased;
+						return undefined;
+					}
+					return {
+						kind: 'command_result',
+						operation: 'lease_create',
+						payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
+					};
+				},
+				messageIdentity: ({ payload }) => {
+					const message = payload as {
+						readonly kind: DomainControlMessageIdentity['kind'];
+						readonly operation: string;
+					};
+					return { kind: message.kind, operation: message.operation };
+				},
+			},
+		});
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		const observedCommandResults: unknown[] = [];
+		let resolveCommandResultObserved: (() => void) | undefined;
+		const commandResultObserved = new Promise<void>((resolve) => {
+			resolveCommandResultObserved = resolve;
+		});
+		client.on(
+			'control:message',
+			(envelope: unknown, payload: unknown, acknowledge: (response: unknown) => void) => {
+				if ((envelope as ControlEnvelope).kind === 'command_result') {
+					observedCommandResults.push(payload);
+					resolveCommandResultObserved?.();
+				}
+				acknowledge({ received: true });
+			},
+		);
+		await waitForSocketConnect(client);
+
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			bootId: identity.bootId,
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.getAcceptedSession();
+		const eventEnvelope = gatewayRuntimeStatusEnvelopeFor(
+			acceptedSession,
+			1,
+			'10000000-0000-4000-8000-000000000001',
+		);
+		const commandEnvelope = gatewayLeaseCreateEnvelopeFor(acceptedSession, 1);
+
+		await client.timeout(1_000).emitWithAck('control:message', eventEnvelope, {
+			kind: 'event',
+			operation: 'runtime_status',
+			payload: {
+				findings: [{ id: 'event-a', ok: true }],
+				observedAtMs: 1,
+				statusKind: 'openclaw-runtime',
+			},
+		});
+		await client.timeout(1_000).emitWithAck('control:message', commandEnvelope, {
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: {
+					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+				},
+			},
+		});
+
+		await commandResultObserved;
+		expect(observedCommandResults).toEqual([
+			{
+				kind: 'command_result',
+				operation: 'lease_create',
+				payload: gatewayLeaseOkResponsePayloadFor(commandEnvelope.messageId),
+			},
+		]);
+		releaseEventHandler?.();
+	});
+
 	it('returns a failed command_result when the gateway handler throws after ack', async () => {
 		const fixture = createFixture(() => 1_000, {
 			applicationMessageHandler: {

@@ -241,6 +241,7 @@ function observationIsFreshInWindow(props: {
 }): boolean {
 	return (
 		props.previousObservedAtMs !== undefined &&
+		props.observedAtMs >= props.previousObservedAtMs &&
 		props.observedAtMs - props.previousObservedAtMs <= props.windowMs
 	);
 }

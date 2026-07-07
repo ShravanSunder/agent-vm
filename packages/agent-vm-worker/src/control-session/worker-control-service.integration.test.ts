@@ -13,6 +13,7 @@ import {
 	type ControlHandshakeProof,
 	type ControlHello,
 	type ControlReadyRequestProof,
+	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
 import { WorkerControlRpcMessageSchema } from '@agent-vm/worker-control-contracts';
 import { io as createSocketIoClient, type Socket } from 'socket.io-client';
@@ -1567,6 +1568,113 @@ describe('worker control service', () => {
 			},
 		]);
 		expect(client.connected).toBe(true);
+	});
+
+	it('does not let no-reply worker events block later command_result replies', async () => {
+		let releaseEventHandler: (() => void) | undefined;
+		const eventHandlerReleased = new Promise<void>((resolve) => {
+			releaseEventHandler = resolve;
+		});
+		const fixture = createFixture(() => 1_000, {
+			applicationMessageHandler: {
+				handle: async ({ envelope }) => {
+					if (envelope.kind === 'event') {
+						await eventHandlerReleased;
+						return undefined;
+					}
+					return {
+						kind: 'command_result',
+						operation: 'git_push',
+						payload: workerGitPushOkResponsePayloadFor(envelope.messageId),
+					};
+				},
+				messageIdentity: ({ payload }) => {
+					const message = payload as {
+						readonly kind: DomainControlMessageIdentity['kind'];
+						readonly operation: string;
+					};
+					return { kind: message.kind, operation: message.operation };
+				},
+			},
+		});
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: WORKER_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		const observedCommandResults: unknown[] = [];
+		let resolveCommandResultObserved: (() => void) | undefined;
+		const commandResultObserved = new Promise<void>((resolve) => {
+			resolveCommandResultObserved = resolve;
+		});
+		client.on(
+			'control:message',
+			(envelope: unknown, payload: unknown, acknowledge: (response: unknown) => void) => {
+				if ((envelope as ControlEnvelope).kind === 'command_result') {
+					observedCommandResults.push(payload);
+					resolveCommandResultObserved?.();
+				}
+				acknowledge({ received: true });
+			},
+		);
+		await waitForSocketConnect(client);
+
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			bootId: identity.bootId,
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'worker_control',
+			peerId: identity.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.getAcceptedSession();
+		const eventEnvelope = workerRuntimeStatusEnvelopeFor(
+			acceptedSession,
+			1,
+			'10000000-0000-4000-8000-000000000001',
+		);
+		const commandEnvelope = workerGitPushEnvelopeFor(acceptedSession, 1);
+
+		await client.timeout(1_000).emitWithAck('control:message', eventEnvelope, {
+			kind: 'event',
+			operation: 'worker_runtime_status',
+			payload: {
+				findings: [{ id: 'event-a', ok: true }],
+				observedAtMs: 1,
+				statusKind: 'task_status',
+			},
+		});
+		await client.timeout(1_000).emitWithAck('control:message', commandEnvelope, {
+			kind: 'command',
+			operation: 'git_push',
+			payload: {
+				branchName: 'agent/task-1',
+				command: {
+					commandId: commandEnvelope.commandId,
+					idempotencyKey: commandEnvelope.idempotencyKey,
+				},
+				repoUrl: 'https://github.com/example/repo.git',
+				task: {
+					taskId: 'task-1',
+				},
+			},
+		});
+
+		await commandResultObserved;
+		expect(observedCommandResults).toEqual([
+			{
+				kind: 'command_result',
+				operation: 'git_push',
+				payload: workerGitPushOkResponsePayloadFor(commandEnvelope.messageId),
+			},
+		]);
+		releaseEventHandler?.();
 	});
 
 	it('returns a failed command_result when the worker handler throws after ack', async () => {

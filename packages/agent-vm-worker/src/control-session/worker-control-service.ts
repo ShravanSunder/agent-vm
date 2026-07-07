@@ -504,6 +504,7 @@ export function createWorkerControlService(
 	let fullResyncPending = false;
 	let latestWinsFlushScheduled = false;
 	let outboundResponseQueue: Promise<void> = Promise.resolve();
+	let outboundResponseQueueGeneration = 0;
 	const acceptedSessionWaiters: ((session: WorkerControlAcceptedSession | undefined) => void)[] =
 		[];
 
@@ -596,6 +597,8 @@ export function createWorkerControlService(
 			acceptedSession = undefined;
 			fullResyncPending = false;
 			latestWinsQueue.clear();
+			outboundResponseQueueGeneration += 1;
+			outboundResponseQueue = Promise.resolve();
 			resolveAcceptedSessionWaiters(undefined);
 		}
 		rejectPendingWorkerControlCommandResults(new Error(`sequence_gap: ${safeMessage}`));
@@ -638,6 +641,8 @@ export function createWorkerControlService(
 		lastSeenControllerSequence = 0;
 		lastSeenPeerSequence = 0;
 		nextPeerSequenceValue = 1;
+		outboundResponseQueueGeneration += 1;
+		outboundResponseQueue = Promise.resolve();
 		rejectPendingWorkerControlCommandResults(
 			new Error('resync_required: worker control session requires full hello resync'),
 		);
@@ -713,6 +718,8 @@ export function createWorkerControlService(
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
 				latestWinsQueue.clear();
+				outboundResponseQueueGeneration += 1;
+				outboundResponseQueue = Promise.resolve();
 				resolveAcceptedSessionWaiters(undefined);
 				rejectPendingWorkerControlCommandResults(
 					new Error('control_session_disconnect: worker control session disconnected'),
@@ -843,25 +850,43 @@ export function createWorkerControlService(
 							);
 						}
 					})();
+					if (envelope.kind !== 'command') {
+						void responsePayloadPromise.catch((error: unknown) => {
+							closeWorkerControlSessionForReservedResponseFailure(socket, error);
+						});
+						return;
+					}
+					const responseQueueGeneration = outboundResponseQueueGeneration;
 					outboundResponseQueue = outboundResponseQueue
 						.catch(() => undefined)
 						.then(async () => {
 							const responsePayload = await responsePayloadPromise;
-							if (responsePayload !== undefined) {
-								const parsedResponsePayload = WorkerControlRpcMessageSchema.parse(responsePayload);
-								const responseSequence = reservePeerSequence();
-								const responseEnvelope = buildWorkerControlResponseEnvelope({
-									requestEnvelope: envelope,
-									sequence: responseSequence,
-								});
-								const receiptPayload = await socket
-									.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
-									.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
-								assertControlMessageReceiptAccepted(receiptPayload);
-								recordLastSeenPeerSequence(responseSequence);
+							if (
+								responsePayload === undefined ||
+								responseQueueGeneration !== outboundResponseQueueGeneration ||
+								socket !== acceptedSocket
+							) {
+								return;
 							}
+							const parsedResponsePayload = WorkerControlRpcMessageSchema.parse(responsePayload);
+							const responseSequence = reservePeerSequence();
+							const responseEnvelope = buildWorkerControlResponseEnvelope({
+								requestEnvelope: envelope,
+								sequence: responseSequence,
+							});
+							const receiptPayload = await socket
+								.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
+								.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
+							assertControlMessageReceiptAccepted(receiptPayload);
+							recordLastSeenPeerSequence(responseSequence);
 						})
 						.catch((error: unknown) => {
+							if (
+								responseQueueGeneration !== outboundResponseQueueGeneration ||
+								socket !== acceptedSocket
+							) {
+								return;
+							}
 							closeWorkerControlSessionForReservedResponseFailure(socket, error);
 						});
 				} catch (error: unknown) {

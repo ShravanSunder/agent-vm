@@ -459,6 +459,7 @@ export function createGatewayControlService(
 	let fullResyncPending = false;
 	let latestWinsFlushScheduled = false;
 	let outboundResponseQueue: Promise<void> = Promise.resolve();
+	let outboundResponseQueueGeneration = 0;
 	const acceptedSessionWaiters: ((session: GatewayControlAcceptedSession | undefined) => void)[] =
 		[];
 
@@ -554,6 +555,8 @@ export function createGatewayControlService(
 			acceptedSession = undefined;
 			fullResyncPending = false;
 			latestWinsQueue.clear();
+			outboundResponseQueueGeneration += 1;
+			outboundResponseQueue = Promise.resolve();
 			resolveAcceptedSessionWaiters(undefined);
 		}
 		rejectPendingGatewayControlCommandResults(new Error(`sequence_gap: ${safeMessage}`));
@@ -602,6 +605,8 @@ export function createGatewayControlService(
 		lastSeenControllerSequence = 0;
 		lastSeenPeerSequence = 0;
 		nextPeerSequenceValue = 1;
+		outboundResponseQueueGeneration += 1;
+		outboundResponseQueue = Promise.resolve();
 		rejectPendingGatewayControlCommandResults(
 			new Error('resync_required: gateway control session requires full hello resync'),
 		);
@@ -681,6 +686,8 @@ export function createGatewayControlService(
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
 				latestWinsQueue.clear();
+				outboundResponseQueueGeneration += 1;
+				outboundResponseQueue = Promise.resolve();
 				resolveAcceptedSessionWaiters(undefined);
 				rejectPendingGatewayControlCommandResults(
 					new Error('control_session_disconnect: gateway control session disconnected'),
@@ -805,25 +812,43 @@ export function createGatewayControlService(
 							);
 						}
 					})();
+					if (envelope.kind !== 'command') {
+						void responsePayloadPromise.catch((error: unknown) => {
+							closeGatewayControlSessionForReservedResponseFailure(socket, error);
+						});
+						return;
+					}
+					const responseQueueGeneration = outboundResponseQueueGeneration;
 					outboundResponseQueue = outboundResponseQueue
 						.catch(() => undefined)
 						.then(async () => {
 							const responsePayload = await responsePayloadPromise;
-							if (responsePayload !== undefined) {
-								const parsedResponsePayload = GatewayControlRpcMessageSchema.parse(responsePayload);
-								const responseSequence = reservePeerSequence();
-								const responseEnvelope = buildGatewayControlResponseEnvelope({
-									requestEnvelope: envelope,
-									sequence: responseSequence,
-								});
-								const receiptPayload = await socket
-									.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
-									.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
-								assertControlMessageReceiptAccepted(receiptPayload);
-								recordLastSeenPeerSequence(responseSequence);
+							if (
+								responsePayload === undefined ||
+								responseQueueGeneration !== outboundResponseQueueGeneration ||
+								socket !== acceptedSocket
+							) {
+								return;
 							}
+							const parsedResponsePayload = GatewayControlRpcMessageSchema.parse(responsePayload);
+							const responseSequence = reservePeerSequence();
+							const responseEnvelope = buildGatewayControlResponseEnvelope({
+								requestEnvelope: envelope,
+								sequence: responseSequence,
+							});
+							const receiptPayload = await socket
+								.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
+								.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
+							assertControlMessageReceiptAccepted(receiptPayload);
+							recordLastSeenPeerSequence(responseSequence);
 						})
 						.catch((error: unknown) => {
+							if (
+								responseQueueGeneration !== outboundResponseQueueGeneration ||
+								socket !== acceptedSocket
+							) {
+								return;
+							}
 							closeGatewayControlSessionForReservedResponseFailure(socket, error);
 						});
 				} catch (error: unknown) {
