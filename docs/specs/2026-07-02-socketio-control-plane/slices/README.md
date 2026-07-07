@@ -36,7 +36,8 @@ Slice order:
    `07b-s6b-recovery-corroboration.md`
 7. Last/removal: `12-s5a-raw-control-removal.md`,
    `13-s5b-mcp-portal-identity-removal.md`,
-   `14-s5c-collector-fail-closed.md`
+   `14-s5c-collector-fail-closed.md` (collector mediated-OTLP replacement;
+   filename retained from the earlier fail-closed disposition)
 8. Proof hardening: `16-tool-vm-and-mcp-full-path-proof.md`.
    This slice may run after S2/S3/S4a/S7 have enough implementation to expose
    Tool Portal MCP calls and Tool VM lease/use through gateway control RPC. It

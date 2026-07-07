@@ -126,11 +126,12 @@ When enabled, `stack.mode` decides stack ownership:
   telemetry scrubbing with
   `stack.scrubbing.responsibility: "external-collector"`.
 
-Per-zone OpenClaw observability is disabled during the Socket.IO control-plane
-hard cutover because the old collector path depended on raw Gondolin `tcpHosts`.
-`host.observability` may still configure the host collector stack, but
-`zones[].observability.enabled=true` is rejected until a non-raw-tcp OpenClaw
-telemetry path is accepted.
+Per-zone OpenClaw observability is supported during the Socket.IO control-plane
+hard cutover through Gondolin HTTP mediation. The old collector path depended on
+raw Gondolin `tcpHosts` and must not be restored. Enabled OpenClaw zones send
+OTLP HTTP/protobuf to a synthetic collector host that the controller rewrites to
+the configured loopback collector port. Tool VM SSH remains the only raw TCP
+exception in the managed gateway VM spec.
 
 The controller does not start Docker Compose during controller startup. Docker
 startup belongs to `agent-vm build` when `prepareOnBuild` is true. A one-off
@@ -882,13 +883,11 @@ Unmapped agents use the zone fallback `defaultToolVmProfile`.
 
 ## zones[].observability
 
-`zones[].observability` is reserved for per-zone telemetry opt-in, but enabled
-zone observability is disabled during the Socket.IO control-plane hard cutover.
-The previous OpenClaw collector path depended on synthetic raw Gondolin
-`tcpHosts`, so `enabled: true` is rejected until a replacement telemetry path is
-accepted.
+`zones[].observability` opts an OpenClaw zone into OpenTelemetry export through
+the host collector. During the Socket.IO control-plane hard cutover, OpenClaw
+diagnostics use mediated OTLP HTTP instead of raw collector `tcpHosts`.
 
-Rejected shape:
+Accepted shape:
 
 ```jsonc
 {
@@ -915,7 +914,7 @@ Rejected shape:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | required | `true` is currently rejected for all zones during the control-plane hard cutover. |
+| `enabled` | required | `true` enables mediated OpenClaw OTLP HTTP export. Requires `host.observability.enabled=true`. |
 | `openclaw.serviceName` | required | OpenTelemetry service name for OpenClaw signals. |
 | `openclaw.logs` | `true` | Enables OpenClaw log export to the host collector. |
 | `openclaw.metrics` | `true` | Enables OpenClaw metric export to the host collector. |
@@ -925,11 +924,11 @@ Rejected shape:
 | `openclaw.captureContent.enabled` | `false` | Must remain false. Content capture is not supported. |
 | `openclaw.diagnosticsFlags` | `[]` | Narrow OpenClaw debug categories to enable. Broad or content-capturing flags are rejected. |
 
-The old collector implementation is intentionally not available for managed
-OpenClaw zones in this cutover. Do not inject `OPENCLAW_DIAGNOSTICS` through
-`gateway.rawEnvSecrets` to recreate it. Authored OpenClaw
-`logging.redactSensitive` must stay enabled; disabling forms such as `false`,
-`off`, `disabled`, and `0` are rejected.
+The old raw collector `tcpHosts` implementation is intentionally not available
+for managed OpenClaw zones in this cutover. Do not inject
+`OPENCLAW_DIAGNOSTICS` through `gateway.rawEnvSecrets` to recreate it. Authored
+OpenClaw `logging.redactSensitive` must stay enabled; disabling forms such as
+`false`, `off`, `disabled`, and `0` are rejected.
 
 `gateway.authProfilesByAgent` writes OpenClaw auth profiles to
 `<stateDir>/agents/<agentId>/agent/auth-profiles.json` before the gateway VM
@@ -1263,7 +1262,6 @@ The schema rejects:
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
 - OpenClaw zones declaring `runtimeAuthHints`.
-- Enabled zone observability during the Socket.IO control-plane hard cutover.
 - OpenClaw zone observability without `host.observability.enabled=true`.
 - Worker zone observability.
 - OpenClaw observability with broad/content-capturing diagnostics flags or raw

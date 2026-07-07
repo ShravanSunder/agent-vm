@@ -42,7 +42,10 @@ import {
 	startGatewayZone,
 	validateGatewayControlCallerContextRegistration,
 } from './gateway-zone-orchestrator.js';
-import type { GatewayControlSessionConnector } from './gateway-zone-support.js';
+import type {
+	GatewayControlSessionConnector,
+	GatewayManagedVmFactoryOptions,
+} from './gateway-zone-support.js';
 
 interface DeferredPromise<TResult> {
 	readonly promise: Promise<TResult>;
@@ -1259,37 +1262,63 @@ describe('startGatewayZone', () => {
 		expect(createManagedVm).toHaveBeenCalled();
 	});
 
-	it('rejects degraded OpenClaw zone observability during hard cutover', async () => {
-		const systemConfig = await createSystemConfig();
+	it('routes OpenClaw zone observability through mediated HTTP without collector tcpHosts', async () => {
+		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
+			controllerStartPolicy: 'off',
+			zoneEnabled: true,
+		});
+		const createManagedVm = vi.fn(
+			async (_options: GatewayManagedVmFactoryOptions): Promise<ManagedVm> => {
+				throw new Error('stop after vm options');
+			},
+		);
 
-		expect(() =>
-			createObservabilitySystemConfig(systemConfig, {
-				controllerStartPolicy: 'degraded',
-				zoneEnabled: true,
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'resolved-discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+					}),
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow('stop after vm options');
+
+		const vmOptions = createManagedVm.mock.calls[0]?.[0];
+		if (vmOptions === undefined) {
+			throw new Error('Expected gateway VM creation call.');
+		}
+		expect(vmOptions.allowedHosts).toContain('otel-collector.observability.vm.host');
+		expect(vmOptions.tcpHosts).toEqual({
+			'tool-0.vm.host:22': '127.0.0.1:19000',
+			'tool-1.vm.host:22': '127.0.0.1:19001',
+			'tool-2.vm.host:22': '127.0.0.1:19002',
+			'tool-3.vm.host:22': '127.0.0.1:19003',
+			'tool-4.vm.host:22': '127.0.0.1:19004',
+		});
+		expect(vmOptions.onRequest).toEqual(expect.any(Function));
+		const rewrittenRequest = await vmOptions.onRequest?.(
+			new Request('http://otel-collector.observability.vm.host:4318/v1/traces', {
+				body: 'trace-payload',
+				headers: { 'content-type': 'application/x-protobuf' },
+				method: 'POST',
 			}),
-		).toThrow(/observability is disabled during the Socket.IO control-plane hard cutover/u);
-	});
-
-	it('rejects OpenClaw zone observability even when readiness policy is off', async () => {
-		const systemConfig = await createSystemConfig();
-
-		expect(() =>
-			createObservabilitySystemConfig(systemConfig, {
-				controllerStartPolicy: 'off',
-				zoneEnabled: true,
-			}),
-		).toThrow(/observability is disabled during the Socket.IO control-plane hard cutover/u);
-	});
-
-	it('rejects OpenClaw zone observability before protected preflight skip can bypass it', async () => {
-		const systemConfig = await createSystemConfig();
-
-		expect(() =>
-			createObservabilitySystemConfig(systemConfig, {
-				controllerStartPolicy: 'require-ready',
-				zoneEnabled: true,
-			}),
-		).toThrow(/observability is disabled during the Socket.IO control-plane hard cutover/u);
+		);
+		expect(rewrittenRequest).toBeInstanceOf(Request);
+		expect((rewrittenRequest as Request).url).toBe('http://127.0.0.1:4318/v1/traces');
+		expect(await (rewrittenRequest as Request).text()).toBe('trace-payload');
 	});
 
 	it('preflights lifecycle host state without OpenClaw observability before protected restart image work', async () => {

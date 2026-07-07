@@ -951,13 +951,6 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'observability'],
 				});
 			}
-			if (zone.observability?.enabled === true) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Zone '${zone.id}' observability is disabled during the Socket.IO control-plane hard cutover until a non-raw-tcp OpenClaw telemetry path is accepted.`,
-					path: ['zones', zoneIndex, 'observability'],
-				});
-			}
 			if (zone.observability?.enabled === true && zone.gateway.type !== 'openclaw') {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,

@@ -52,8 +52,9 @@ scopes/proof/order). Named per skill's "smaller lane set" rule; fit lane was the
 - TUNE-DURING: OPEN-1 magnitudes, OPEN-3 observation-kind.
 
 ## Accepted dispositions
-- OPEN-2 collector-mode observability disposition: fail closed for this hard cutover. Managed OpenClaw collector-mode
-  raw tcpHosts are not shippable without a future spec exception and replacement transport.
+- OPEN-2 collector-mode observability disposition: superseded by 2026-07-06 user correction. Managed OpenClaw
+  collector-mode raw tcpHosts remain forbidden, but enabled zone observability must be preserved through a
+  non-raw replacement: Gondolin HTTP mediation to the loopback OTLP HTTP collector.
 
 ## Independent plan review folded (2026-07-02) — plan-review-report.md
 User ran a separate 4-lane plan review; parent VERIFIED every accepted finding against code before folding (not

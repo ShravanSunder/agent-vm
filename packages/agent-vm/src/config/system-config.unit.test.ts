@@ -3005,7 +3005,7 @@ describe('loadSystemConfig', () => {
 		expect('retention' in loadedConfig.host.observability).toBe(false);
 	});
 
-	test('rejects enabled zone observability during the control-plane hard cutover', async () => {
+	test('accepts enabled OpenClaw zone observability through mediated collector egress', async () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
@@ -3030,7 +3030,9 @@ describe('loadSystemConfig', () => {
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/control-plane hard cutover/u);
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(loadedConfig.zones[0]?.observability?.enabled).toBe(true);
 	});
 
 	test('rejects external host observability without an explicit scrubber contract', async () => {
@@ -3302,7 +3304,7 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OpenClaw/u);
 	});
 
-	test('rejects OpenClaw observability before custom image diagnostics checks matter', async () => {
+	test('rejects OpenClaw observability for custom images without managed diagnostics install', async () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
@@ -3349,7 +3351,9 @@ describe('loadSystemConfig', () => {
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/control-plane hard cutover/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/requires OpenClaw gateway image profile 'openclaw' to use managed base 'openclaw-gateway'/u,
+		);
 	});
 
 	test.each([

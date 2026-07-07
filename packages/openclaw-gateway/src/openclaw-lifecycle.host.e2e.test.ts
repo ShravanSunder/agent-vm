@@ -771,23 +771,27 @@ describe('openclawLifecycle', () => {
 			});
 		});
 
-		it('rejects collector-mode observability before creating raw collector tcp hosts', () => {
-			expect(() =>
-				openclawLifecycle.buildVmSpec({
-					controllerPort: 18800,
-					gatewayCacheDir: '/host/cache/gateways/shravan',
-					projectNamespace: 'claw-tests-a1b2c3d4',
-					resolvedSecrets,
-					runtimeDir: '/host/runtime',
-					tcpPool: {
-						basePort: 19000,
-						size: 2,
-					},
-					zone: createZone({
-						observability: createObservabilityConfig(),
-					}),
+		it('routes collector-mode observability through mediated HTTP instead of raw collector tcp hosts', () => {
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone({
+					observability: createObservabilityConfig(),
 				}),
-			).toThrow(/collector-mode observability.*raw tcpHosts/u);
+			});
+
+			expect(vmSpec.allowedHosts).toContain('otel-collector.observability.vm.host');
+			expect(vmSpec.tcpHosts).toEqual({
+				'tool-0.vm.host:22': '127.0.0.1:19000',
+				'tool-1.vm.host:22': '127.0.0.1:19001',
+			});
 		});
 
 		it('carries websocket upgrade URL policy into the gateway VM spec', () => {

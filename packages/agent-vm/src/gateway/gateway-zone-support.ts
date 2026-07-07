@@ -86,6 +86,7 @@ export interface GatewayManagedVmFactoryOptions {
 	readonly env?: Record<string, string>;
 	readonly imagePath: string;
 	readonly memory: string;
+	readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
 	readonly runtimeRootfsSize?: string;
 	readonly secrets: Record<

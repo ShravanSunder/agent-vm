@@ -236,7 +236,7 @@ Multi-zone controller work makes one controller process manage multiple typed zo
 			content: generatedPage(
 				'Host Observability',
 				`
-Host observability is deployment-configured. Enable host.observability in ${options.systemConfigPath}. Per-zone OpenClaw observability is disabled during the Socket.IO control-plane hard cutover because the old collector route depended on raw Gondolin tcpHosts.
+Host observability is deployment-configured. Enable host.observability in ${options.systemConfigPath}. Per-zone OpenClaw observability stays available during the Socket.IO control-plane hard cutover through Gondolin HTTP mediation. The old collector route depended on raw Gondolin tcpHosts and must not be restored.
 
 Use host.observability.stack.mode=managed when this deployment should own the local Victoria + OpenTelemetry Collector stack. In managed mode, host.observability.stack.scrubbing.responsibility defaults to agent-vm-managed-collector. Agent-vm build prepares the host stack when host.observability.prepareOnBuild is true. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under runtimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
 
@@ -248,7 +248,7 @@ For managed mode, use a durable host.observability.dataDir outside cacheDir, run
 
 Published ports bind to loopback only. Do not publish collector or Victoria ports on broad host interfaces unless a separate, authenticated access layer owns that exposure.
 
-Do not enable zones[].observability for managed OpenClaw zones in this cutover. Validation rejects it until a non-raw-tcp telemetry path is accepted.
+Enable zones[].observability only for managed OpenClaw zones that should export diagnostics to the host collector. The gateway sends OTLP HTTP/protobuf to a synthetic collector host that agent-vm rewrites to the configured loopback collector. Tool VM SSH is the only managed gateway raw TCP exception.
 
 Do not inject OPENCLAW_DIAGNOSTICS through rawEnvSecrets to recreate the old collector route. Authored OpenClaw logging.redactSensitive must stay enabled.
 

@@ -85,6 +85,69 @@ const defaultGatewayReadinessMaxAttempts = Math.ceil(
 	defaultGatewayReadinessTimeoutMs / defaultGatewayReadinessRetryDelayMs,
 );
 
+interface RequestInitWithDuplex extends RequestInit {
+	readonly duplex?: 'half';
+}
+
+function requestHasBody(request: Request): boolean {
+	return request.method !== 'GET' && request.method !== 'HEAD' && request.body !== null;
+}
+
+function cloneRequestToUrl(request: Request, url: URL): Request {
+	const init: RequestInitWithDuplex = {
+		headers: request.headers,
+		method: request.method,
+		...(requestHasBody(request) ? { body: request.body, duplex: 'half' } : {}),
+	};
+	return new Request(url, init);
+}
+
+function normalizeUrlHostname(hostname: string): string {
+	return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+}
+
+function createOpenClawObservabilityCollectorRequestRewrite(
+	zone: GatewayZoneConfig,
+): ((request: Request) => Promise<Request | void>) | undefined {
+	const observability = zone.observability;
+	if (observability?.mode !== 'collector') {
+		return undefined;
+	}
+	const { collector } = observability;
+	return async (request: Request): Promise<Request | void> => {
+		const url = new URL(request.url);
+		const requestPort = url.port.length === 0 ? '80' : url.port;
+		if (url.hostname !== collector.host || requestPort !== String(collector.httpPort)) {
+			return undefined;
+		}
+
+		url.protocol = 'http:';
+		url.hostname = normalizeUrlHostname(collector.targetHost);
+		url.port = String(collector.targetHttpPort);
+		return cloneRequestToUrl(request, url);
+	};
+}
+
+function createGatewayVmRequestHook(options: {
+	readonly vmSpec: {
+		readonly websocketUpgrades?: GatewayZoneConfig['websocketUpgrades'];
+	};
+	readonly zone: GatewayZoneConfig;
+}): (request: Request) => Promise<Request | Response | void> {
+	const websocketGuard = createWebSocketUpgradeRequestGuard({
+		rules: options.vmSpec.websocketUpgrades ?? [],
+		runtimeAudience: 'gateway',
+	});
+	const observabilityRewrite = createOpenClawObservabilityCollectorRequestRewrite(options.zone);
+	return async (request: Request): Promise<Request | Response | void> => {
+		const websocketDecision = await websocketGuard(request);
+		if (websocketDecision !== undefined) {
+			return websocketDecision;
+		}
+		return observabilityRewrite?.(request);
+	};
+}
+
 export function validateGatewayControlCallerContextRegistration(options: {
 	readonly agentAuthorityKeys: Readonly<Record<string, string>>;
 	readonly callerContextProofKey: string;
@@ -1073,10 +1136,7 @@ export async function startGatewayZone(
 				memory: zone.gateway.memory,
 				rootfsMode: vmSpec.rootfsMode,
 				...(vmSpec.runtimeRootfsSize ? { runtimeRootfsSize: vmSpec.runtimeRootfsSize } : {}),
-				onRequest: createWebSocketUpgradeRequestGuard({
-					rules: vmSpec.websocketUpgrades ?? [],
-					runtimeAudience: 'gateway',
-				}),
+				onRequest: createGatewayVmRequestHook({ vmSpec, zone: lifecycleZone }),
 				secrets: vmSpec.mediatedSecrets,
 				sessionLabel: vmSpec.sessionLabel,
 				...(vmSpec.sshEgress ? { sshEgress: vmSpec.sshEgress } : {}),

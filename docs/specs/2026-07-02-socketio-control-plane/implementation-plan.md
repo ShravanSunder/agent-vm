@@ -37,7 +37,10 @@ and managed OpenClaw runtime.
 - No move of Worker task submit/state/close off ingress HTTP (only git tools + observations move).
 - No SSH data-plane change; Tool VM SSH stays raw TCP tool-<slot>:22.
 - No credentialed-runner execution; no generic guest/host RPC.
-- Collector-mode observability replacement is OUT until the open product ruling lands (isolated slice).
+- Collector-mode observability replacement is IN for this cutover. The old raw
+  collector `tcpHosts` path is forbidden, but enabled OpenClaw zone
+  observability must continue through Gondolin HTTP mediation to the configured
+  loopback collector. Tool VM SSH remains the only raw TCP exception.
 - LONG-RUNNING / DAYS-LONG TASKS (user-confirmed model, non-goals for THIS cutover):
   - No worker/gateway-internal task-state durability. State persistence is EXTERNAL (a future session DB) and file
     durability is Gondolin drives; both are out of scope here. Recovery = RECREATE the VM (fresh boot, no RAM
@@ -323,7 +326,7 @@ GET /leases                                    controller-http-routes.ts:612    
 ### S5 — managed-openclaw-hard-cutover (REMOVAL, LAST; heavy overlap)
 - Source: CUT Hard Cutover Invariants, residue rules, Current-State inventory.
 - Behavior: remove all raw controller.vm.host paths, old MCP Portal identity, fail-closed for websocketBypass;
-  delivered tcpHosts only tool-<slot>:22. (Collector fail-closed is PRE-SPLIT to S5c — B3.)
+  delivered tcpHosts only tool-<slot>:22. Collector observability must use mediated OTLP HTTP, not raw tcpHosts.
 - Write surface (S5a raw-TCP + monitors): EDIT openclaw-lifecycle.ts buildGatewayTcpHosts (:75 constructs
   `${controllerVmHost}:18800`; :81-83 is a plain websocketBypass→tcpHosts mapping loop TODAY — there is NO
   fail-closed check there yet, so S5a ADDS/PROVES the fail-closed behavior, it does not "find" it). ANCHOR
@@ -351,11 +354,11 @@ GET /leases                                    controller-http-routes.ts:612    
   image without mcp-portal (I8 — e2e-host-docker, or drop the "image
   builds" claim if not provable at this layer). Rollback: VERSION PIN.
 - Dependency: S2, S4a, S4b, S6, S7, SW (all live callers moved first). Split: S5a (raw-TCP+monitors) |
-  S5b (mcp-portal identity+image) | S5c (collector fail-closed — OPEN-2 disposition accepted).
-- FINAL-SHIPMENT STOP (Imp1 + CUT Stop Condition:2375): S5a/S5b may complete as PREPARATORY work, but the cutover
-  CANNOT SHIP / be released while collector-mode observability can still create managed gateway raw tcpHosts. The
-  accepted OPEN-2 disposition is fail-closed: no managed OpenClaw collector raw tcpHosts without a future spec
-  exception and replacement transport.
+  S5b (mcp-portal identity+image) | S5c (collector mediated-OTLP replacement).
+- FINAL-SHIPMENT STOP (Imp1 + CUT Stop Condition:2375): the cutover CANNOT SHIP / be released while
+  collector-mode observability either recreates managed gateway raw tcpHosts or is disabled without a replacement.
+  The accepted OPEN-2 disposition is superseded by user requirement: enabled OpenClaw zone observability must build
+  and route OTLP HTTP to the host collector through Gondolin HTTP mediation. `tcpHosts` remains only Tool VM SSH.
 
 ### S6 — operator-health-observability (after S3; SPLIT S6a/S6b/S6c — I3)
 - Source: CUT Health And Operator Contract, recovery-trigger mapping, correlation allowlist.
@@ -529,7 +532,7 @@ S6b recovery corroboration + budget (after S6a; worker path BLOCKED on Q2)
 integration gate: parent reviews diffs; resolve HOT-file merges; verify no dual path
   |
 S5 managed-openclaw-hard-cutover  (LAST): S5a raw-TCP+monitors | S5b mcp-portal identity+image |
-                                   S5c collector fail-closed
+                                   S5c collector mediated-OTLP replacement
   |
 targeted validation gate: pnpm test:unit + test:integration + test:portal-architecture + test:portal-exports + test:taxonomy
   |

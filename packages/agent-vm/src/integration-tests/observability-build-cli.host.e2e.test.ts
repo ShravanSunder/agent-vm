@@ -393,7 +393,7 @@ describe('smoke: agent-vm build observability CLI', () => {
 		}
 	});
 
-	it('rejects legacy per-zone OpenClaw observability before build work starts', async () => {
+	it('prepares host observability when an OpenClaw zone opts in', async () => {
 		const healthServers = await createHealthServers(4);
 		const [collectorHealth, metrics, logs, traces] = healthServers;
 		if (!collectorHealth || !metrics || !logs || !traces) {
@@ -408,10 +408,34 @@ describe('smoke: agent-vm build observability CLI', () => {
 				zoneObservability: true,
 			});
 
-			await expect(runBuiltAgentVmBuild(deployment)).rejects.toThrow(
-				/Zone 'sunfam' observability is disabled during the Socket.IO control-plane hard cutover/u,
+			const output = await runBuiltAgentVmBuild(deployment);
+
+			expect(output).toContain('Observability stack');
+			expect(output).toContain('Host observability stack ready');
+			const dockerCalls = await readOptionalText(deployment.dockerCallLogPath);
+			expect(dockerCalls).toContain('compose --project-name agent-vm-observability-cli-smoke');
+			expect(dockerCalls).toContain('up -d --wait');
+			const observabilityRuntimeDir = path.join(
+				deployment.runtimeDir,
+				'observability',
+				'observability-cli-smoke',
 			);
-			expect(await readOptionalText(deployment.dockerCallLogPath)).toBe('');
+			const composeYaml = await readOptionalText(
+				path.join(observabilityRuntimeDir, 'docker-compose.observability.yml'),
+			);
+			const collectorYaml = await readOptionalText(
+				path.join(observabilityRuntimeDir, 'otel-collector-config.yaml'),
+			);
+			const renderedArtifacts = `${output}\n${dockerCalls}\n${composeYaml}\n${collectorYaml}`;
+			for (const canary of [
+				canarySecretValue,
+				canaryAuthorizationHeader,
+				canaryPromptText,
+				canaryToolPayload,
+				canaryCredentialedUrl,
+			]) {
+				expect(renderedArtifacts).not.toContain(canary);
+			}
 		} finally {
 			await closeHealthServers(healthServers);
 		}

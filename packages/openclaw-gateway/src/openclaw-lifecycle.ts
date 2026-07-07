@@ -94,26 +94,28 @@ function setTcpHost(tcpHosts: Record<string, string>, key: string, target: strin
 	tcpHosts[key] = target;
 }
 
-function buildGatewayTcpHosts(
-	zone: GatewayZoneConfig,
-	tcpPool: { readonly basePort: number; readonly size: number },
-): Record<string, string> {
+function buildGatewayTcpHosts(tcpPool: {
+	readonly basePort: number;
+	readonly size: number;
+}): Record<string, string> {
 	const tcpHosts: Record<string, string> = {};
 
 	for (let slot = 0; slot < tcpPool.size; slot += 1) {
 		setTcpHost(tcpHosts, `tool-${slot}.vm.host:22`, `127.0.0.1:${tcpPool.basePort + slot}`);
 	}
 
-	if (zone.observability?.mode === 'collector') {
-		throw new Error(
-			[
-				'OpenClaw collector-mode observability is disabled for managed gateway VMs.',
-				'The Socket.IO control-plane hard cutover forbids collector raw tcpHosts without an accepted replacement or exception.',
-			].join(' '),
-		);
-	}
-
 	return tcpHosts;
+}
+
+function mergeGatewayAllowedHosts(
+	egressHosts: GatewayZoneConfig['egressHosts'],
+	observability: GatewayZoneConfig['observability'],
+): readonly string[] {
+	const allowedHosts = [...gatewayVmAllowedHosts(egressHosts)];
+	if (observability?.mode === 'collector' && !allowedHosts.includes(observability.collector.host)) {
+		allowedHosts.push(observability.collector.host);
+	}
+	return allowedHosts;
 }
 
 function createManagedGitReadOnlySshEgressOptions(options: {
@@ -1388,7 +1390,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 		});
 
 		return {
-			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
+			allowedHosts: mergeGatewayAllowedHosts(zone.egressHosts, zone.observability),
 			environment: {
 				HOME: '/home/openclaw',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
@@ -1421,7 +1423,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				: {}),
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
 			...(sshEgress === undefined ? {} : { sshEgress }),
-			tcpHosts: buildGatewayTcpHosts(zone, tcpPool),
+			tcpHosts: buildGatewayTcpHosts(tcpPool),
 			websocketUpgrades: zone.websocketUpgrades ?? [],
 			vfsMounts: {
 				'/home/openclaw/.openclaw/config': {
