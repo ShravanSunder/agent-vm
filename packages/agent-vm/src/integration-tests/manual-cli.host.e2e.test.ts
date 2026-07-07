@@ -45,6 +45,16 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(runtimePaths).toContain('lease workdir returned by the controller');
 		expect(runtimePaths).toContain('that workdir is /workspace');
 		expect(runtimePaths).toContain('/work is Tool VM-local rootfs/COW');
+		const observabilityManual = await readText(targetDir, 'docs/manual/observability.md');
+		expect(observabilityManual).toContain(
+			'Per-zone OpenClaw observability stays available during the Socket.IO control-plane hard cutover through Gondolin HTTP mediation.',
+		);
+		expect(observabilityManual).toContain(
+			'Tool VM SSH is the only managed gateway raw TCP exception.',
+		);
+		expect(observabilityManual).not.toContain(
+			'observability is disabled during the Socket.IO control-plane hard cutover',
+		);
 		expect(await readText(targetDir, 'docs/manual/layout.md')).toContain('config/system.jsonc');
 		expect(await readText(targetDir, 'AGENTS.md')).toContain('shravan');
 		expect(await readText(targetDir, 'AGENTS.md')).toContain('config/system.jsonc');
