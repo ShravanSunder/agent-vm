@@ -726,6 +726,52 @@ describe('git-push-operations', () => {
 		});
 	});
 
+	it('soft-fails if controller is asked to push a protected worker repo branch', async () => {
+		const activeTask = buildActiveTask();
+		const result = await pushBranchesForTask({
+			activeTask: {
+				...activeTask,
+				repos: activeTask.repos.map((repo) => ({
+					...repo,
+					protectedBranches: ['agent/release'],
+				})),
+			},
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/release' }],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/release',
+			success: false,
+			error: expect.stringContaining('protected branch "agent/release"'),
+		});
+		expect(execaMock).not.toHaveBeenCalled();
+	});
+
+	it('soft-fails if controller is asked to push a protected worker repo branch pattern', async () => {
+		const activeTask = buildActiveTask();
+		const result = await pushBranchesForTask({
+			activeTask: {
+				...activeTask,
+				repos: activeTask.repos.map((repo) => ({
+					...repo,
+					protectedBranchPatterns: ['agent/release/*'],
+				})),
+			},
+			branches: [
+				{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/release/2026' },
+			],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/release/2026',
+			success: false,
+			error: expect.stringContaining('protected branch pattern "agent/release/*"'),
+		});
+		expect(execaMock).not.toHaveBeenCalled();
+	});
+
 	it('pushes branches for different repos concurrently', async () => {
 		const events: string[] = [];
 		let releaseWidgetsPush: (() => void) | undefined;

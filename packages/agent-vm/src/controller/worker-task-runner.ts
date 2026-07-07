@@ -363,6 +363,8 @@ export interface PreStartResult {
 		readonly repoId: string;
 		readonly repoUrl: string;
 		readonly baseBranch: string;
+		readonly protectedBranches: readonly string[];
+		readonly protectedBranchPatterns: readonly string[];
 		readonly gitDirPath: string;
 		readonly hostGitDir: string;
 		readonly hostMetadataPath: string;
@@ -504,6 +506,8 @@ export async function preStartGateway(
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
+					protectedBranches: repo.protectedBranches ?? [],
+					protectedBranchPatterns: repo.protectedBranchPatterns ?? [],
 					gitDirPath: repo.gitDirPath,
 					hostGitDir: repo.hostGitDir,
 					hostMetadataPath: repo.hostMetadataPath,
@@ -530,6 +534,8 @@ export async function preStartGateway(
 			readonly repoId: string;
 			readonly repoUrl: string;
 			readonly baseBranch: string;
+			readonly protectedBranches: readonly string[];
+			readonly protectedBranchPatterns: readonly string[];
 			readonly gitDirPath: string;
 			readonly hostGitDir: string;
 			readonly hostMetadataPath: string;
@@ -916,6 +922,8 @@ export async function prepareWorkerTask(
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
+				protectedBranches: repo.protectedBranches,
+				protectedBranchPatterns: repo.protectedBranchPatterns,
 				hostGitDir: createHostGitDir(repo.hostGitDir),
 				vmWorkPath: createVmWorkPath(repo.workPath),
 			})),

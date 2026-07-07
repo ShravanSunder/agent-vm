@@ -82,6 +82,30 @@ function sanitizeBranchName(name: string): string {
 	return name.replace(/[^a-zA-Z0-9\-_./]/gu, '-');
 }
 
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function gitBranchPatternMatches(pattern: string, branch: string): boolean {
+	const regex = new RegExp(`^${pattern.split('*').map(escapeRegExp).join('.*')}$`, 'u');
+	return regex.test(branch);
+}
+
+function protectedBranchPolicyDescription(options: {
+	readonly branchName: string;
+	readonly repo: ActiveWorkerTask['repos'][number];
+}): string | undefined {
+	if (new Set(options.repo.protectedBranches ?? []).has(options.branchName)) {
+		return `protected branch "${options.branchName}"`;
+	}
+	const protectedBranchPattern = options.repo.protectedBranchPatterns?.find((pattern) =>
+		gitBranchPatternMatches(pattern, options.branchName),
+	);
+	return protectedBranchPattern === undefined
+		? undefined
+		: `protected branch pattern "${protectedBranchPattern}"`;
+}
+
 function errorMessage(error: unknown): string {
 	return scrubGithubTokenFromOutput(error instanceof Error ? error.message : String(error));
 }
@@ -544,6 +568,18 @@ async function pushOneBranchForTask(options: {
 				branch: branchName,
 				success: false,
 				error: `Refusing to push: you are on the default branch "${options.repo.baseBranch}". Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
+			};
+		}
+		const protectedBranchDescription = protectedBranchPolicyDescription({
+			branchName,
+			repo: options.repo,
+		});
+		if (protectedBranchDescription !== undefined) {
+			return {
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+				success: false,
+				error: `Refusing to push: "${branchName}" is a ${protectedBranchDescription}. Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
 			};
 		}
 		await recordPushEvent({

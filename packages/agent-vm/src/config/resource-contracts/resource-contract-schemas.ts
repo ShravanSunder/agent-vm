@@ -159,6 +159,8 @@ export const repoTargetSchema = z
 	.object({
 		repoUrl: z.string().min(1).max(500).url(),
 		baseBranch: z.string().min(1).max(200).default('main'),
+		protectedBranches: z.array(z.string().min(1).max(200)).optional(),
+		protectedBranchPatterns: z.array(z.string().min(1).max(200)).optional(),
 	})
 	.strict();
 

@@ -25,6 +25,8 @@ export function createVmWorkPath(value: string): VmWorkPath {
 export interface ActiveWorkerTaskRepo {
 	readonly repoUrl: string;
 	readonly baseBranch: string;
+	readonly protectedBranches?: readonly string[];
+	readonly protectedBranchPatterns?: readonly string[];
 	readonly hostGitDir: HostGitDir;
 	readonly vmWorkPath: VmWorkPath;
 }
