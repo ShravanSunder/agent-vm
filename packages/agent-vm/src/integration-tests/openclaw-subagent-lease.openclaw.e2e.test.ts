@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { type AgentVmHealthEvent, type ZoneHealthSnapshot } from '@agent-vm/gateway-interface';
+import { type AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { type ManagedVm } from '@agent-vm/gondolin-adapter';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { ControlSessionClient } from '../controller/control-session/control-session-client.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import { stableTelemetryHash } from '../observability/health-event-telemetry.js';
 import {
 	canRunGondolinE2e,
 	currentE2eArchitecture,
@@ -74,6 +75,46 @@ interface ObservedLeaseCreateRequest {
 	readonly agentWorkspaceDir: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
+}
+
+type LeaseRenewHealthEvent = Extract<AgentVmHealthEvent, { readonly kind: 'lease-renew' }>;
+type LeaseHeartbeatHealthEvent = Extract<AgentVmHealthEvent, { readonly kind: 'lease-heartbeat' }>;
+type ToolVmSshHealthEvent = Extract<AgentVmHealthEvent, { readonly kind: 'tool-vm-ssh' }>;
+
+type PublicLeaseRenewHealthEvent = Omit<LeaseRenewHealthEvent, 'leaseId'> & {
+	readonly leaseIdHash: string;
+};
+
+type PublicLeaseHeartbeatHealthEvent = Omit<LeaseHeartbeatHealthEvent, 'leaseId' | 'useId'> & {
+	readonly leaseIdHash: string;
+	readonly useIdHash: string;
+};
+
+type PublicToolVmSshHealthEvent = Omit<
+	ToolVmSshHealthEvent,
+	'activeUseId' | 'leaseId' | 'oldLeaseId' | 'replacementLeaseId' | 'transitionId'
+> & {
+	readonly activeUseIdHash?: string | undefined;
+	readonly leaseIdHash: string;
+	readonly oldLeaseIdHash?: string | undefined;
+	readonly replacementLeaseIdHash?: string | undefined;
+	readonly transitionIdHash?: string | undefined;
+};
+
+type PublicAgentVmHealthEvent =
+	| Exclude<
+			AgentVmHealthEvent,
+			LeaseRenewHealthEvent | LeaseHeartbeatHealthEvent | ToolVmSshHealthEvent
+	  >
+	| PublicLeaseRenewHealthEvent
+	| PublicLeaseHeartbeatHealthEvent
+	| PublicToolVmSshHealthEvent;
+
+interface PublicZoneHealthSnapshot {
+	readonly issues?: readonly unknown[] | undefined;
+	readonly kind: 'failed' | 'ok' | 'stale' | 'unknown';
+	readonly latestEvents?: readonly PublicAgentVmHealthEvent[] | undefined;
+	readonly zoneId?: string | undefined;
 }
 
 interface OpenClawToolVmWriteReadProbeResult {
@@ -305,27 +346,29 @@ async function callToolVmWriteReadProbeRoute(options: {
 	return responseBody;
 }
 
-function latestHealthEvents(snapshot: ZoneHealthSnapshot): readonly AgentVmHealthEvent[] {
-	return 'latestEvents' in snapshot ? snapshot.latestEvents : [];
+function latestHealthEvents(
+	snapshot: PublicZoneHealthSnapshot,
+): readonly PublicAgentVmHealthEvent[] {
+	return snapshot.latestEvents ?? [];
 }
 
-async function readHealthSnapshot(controllerUrl: string): Promise<ZoneHealthSnapshot> {
+async function readHealthSnapshot(controllerUrl: string): Promise<PublicZoneHealthSnapshot> {
 	const response = await fetch(
 		`${controllerUrl}/zones/${encodeURIComponent(zoneId)}/health-snapshot`,
 	);
 	if (!response.ok) {
 		throw new Error(`Health snapshot returned HTTP ${String(response.status)}.`);
 	}
-	return (await response.json()) as ZoneHealthSnapshot;
+	return (await response.json()) as PublicZoneHealthSnapshot;
 }
 
 async function waitForToolVmLifecycleEvent(options: {
 	readonly controllerUrl: string;
-	readonly matches: (event: AgentVmHealthEvent) => boolean;
+	readonly matches: (event: PublicAgentVmHealthEvent) => boolean;
 	readonly timeoutMs: number;
-}): Promise<AgentVmHealthEvent> {
+}): Promise<PublicAgentVmHealthEvent> {
 	const deadlineMs = Date.now() + options.timeoutMs;
-	let lastSnapshot: ZoneHealthSnapshot | undefined;
+	let lastSnapshot: PublicZoneHealthSnapshot | undefined;
 	while (Date.now() < deadlineMs) {
 		lastSnapshot = await readHealthSnapshot(options.controllerUrl);
 		const event = latestHealthEvents(lastSnapshot).find(options.matches);
@@ -1257,21 +1300,21 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 				event.agentId === betaAgentId &&
 				event.lifecycleEventRole === 'controller_final' &&
 				event.lifecycleTransition === 'stale_to_reacquired' &&
-				event.oldLeaseId === result.oldRuntimeId &&
-				event.replacementLeaseId === result.newRuntimeId &&
+				event.oldLeaseIdHash === stableTelemetryHash(result.oldRuntimeId) &&
+				event.replacementLeaseIdHash === stableTelemetryHash(result.newRuntimeId) &&
 				event.operation === 'finalize',
 			timeoutMs: 60_000,
 		});
 		expect(lifecycleEvent).toMatchObject({
 			agentId: betaAgentId,
 			kind: 'tool-vm-ssh',
-			leaseId: result.newRuntimeId,
+			leaseIdHash: stableTelemetryHash(result.newRuntimeId),
 			lifecycleEventRole: 'controller_final',
 			lifecycleTransition: 'stale_to_reacquired',
-			oldLeaseId: result.oldRuntimeId,
-			replacementLeaseId: result.newRuntimeId,
+			oldLeaseIdHash: stableTelemetryHash(result.oldRuntimeId),
+			replacementLeaseIdHash: stableTelemetryHash(result.newRuntimeId),
 			result: 'ok',
-			transitionId: `lease_reacquire:${result.oldRuntimeId}`,
+			transitionIdHash: stableTelemetryHash(`lease_reacquire:${result.oldRuntimeId}`),
 			zoneId,
 		});
 
