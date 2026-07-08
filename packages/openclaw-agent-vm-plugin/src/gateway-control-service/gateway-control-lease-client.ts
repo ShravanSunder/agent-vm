@@ -481,11 +481,14 @@ export function createGatewayControlLeaseClient(
 		return { cacheKey, callerContextId, fromCache: false };
 	};
 
+	const resolveCallerContextForLease = (leaseId: string): LeaseCallerContextRef | undefined =>
+		callerContextByLeaseId.get(leaseId);
+
 	const requireCallerContextForLease = (
 		leaseId: string,
 		context: string,
 	): LeaseCallerContextRef => {
-		const callerContext = callerContextByLeaseId.get(leaseId);
+		const callerContext = resolveCallerContextForLease(leaseId);
 		if (callerContext === undefined) {
 			throw createGatewayControlError({
 				context,
@@ -585,6 +588,9 @@ export function createGatewayControlLeaseClient(
 
 	return {
 		endActiveUse: async (leaseId, useId, request) => {
+			if (resolveCallerContextForLease(leaseId) === undefined) {
+				return;
+			}
 			const response = await sendLeaseCommandWithCallerContextRefresh({
 				buildPayload: (callerContext) => ({
 					...callerContext,
@@ -675,10 +681,10 @@ export function createGatewayControlLeaseClient(
 			return requirePrivateToolVmLease(leaseSnapshot, 'Gateway control lease_reacquire');
 		},
 		releaseLease: async (leaseId) => {
-			const leaseCallerContext = requireCallerContextForLease(
-				leaseId,
-				'Gateway control lease_release',
-			);
+			const leaseCallerContext = resolveCallerContextForLease(leaseId);
+			if (leaseCallerContext === undefined) {
+				return;
+			}
 			await sendLeaseCommandWithCallerContextRefresh({
 				buildPayload: (callerContext) => ({
 					...callerContext,
