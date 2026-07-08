@@ -1540,7 +1540,7 @@
 								"const": "health_event"
 							},
 							"payload": {
-								"oneOf": [
+								"anyOf": [
 									{
 										"type": "object",
 										"properties": {
@@ -1927,13 +1927,13 @@
 												"type": "string",
 												"minLength": 1
 											},
-											"leaseId": {
-												"type": "string",
-												"minLength": 1
-											},
 											"eventKind": {
 												"type": "string",
 												"const": "tool-vm-ssh"
+											},
+											"leaseId": {
+												"type": "string",
+												"minLength": 1
 											},
 											"operation": {
 												"type": "string",
@@ -1945,9 +1945,151 @@
 											"result",
 											"agentId",
 											"elapsedMs",
-											"leaseId",
 											"eventKind",
+											"leaseId",
 											"operation"
+										],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													}
+												},
+												"additionalProperties": false
+											},
+											"observedAtMs": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"result": {
+												"type": "string",
+												"enum": ["ok", "failed", "timeout", "degraded"]
+											},
+											"agentId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"elapsedMs": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"errorCode": {
+												"type": "string",
+												"minLength": 1
+											},
+											"eventKind": {
+												"type": "string",
+												"const": "tool-vm-ssh"
+											},
+											"leaseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"operation": {
+												"type": "string",
+												"enum": ["command", "file-bridge", "finalize", "probe"]
+											},
+											"activeUseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"callerContextState": {
+												"type": "string",
+												"enum": ["ok", "absent", "stale", "session_mismatch", "not_applicable"]
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"caller_context_absent",
+													"caller_context_session_mismatch",
+													"caller_context_stale",
+													"lease_absent",
+													"lease_authority_absent",
+													"lease_force_released",
+													"lease_generation_stale",
+													"lease_reacquire_required",
+													"lease_releasing",
+													"lease_retired",
+													"lease_use_tombstoned",
+													"ownership_denied",
+													"runtime_not_ready"
+												]
+											},
+											"lifecycleEventRole": {
+												"type": "string",
+												"const": "plugin_observation"
+											},
+											"lifecycleTransition": {
+												"type": "string",
+												"enum": [
+													"current_to_stale",
+													"current_to_retired",
+													"deprecated_to_reacquired",
+													"deprecated_to_retired",
+													"stale_to_reacquired",
+													"stale_to_retired",
+													"retired_rejected"
+												]
+											},
+											"oldLeaseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"replacementLeaseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"transitionId": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": [
+											"observedAtMs",
+											"result",
+											"agentId",
+											"elapsedMs",
+											"eventKind",
+											"leaseId",
+											"operation",
+											"lifecycleEventRole",
+											"lifecycleTransition",
+											"oldLeaseId",
+											"transitionId"
 										],
 										"additionalProperties": false
 									}

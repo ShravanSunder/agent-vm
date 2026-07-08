@@ -38,6 +38,93 @@ export interface AgentVmHealthEventBase {
 
 export type ToolVmSshHealthOperation = 'command' | 'file-bridge' | 'finalize' | 'probe';
 
+export const toolVmLeaseLifecycleEventRoles = ['plugin_observation', 'controller_final'] as const;
+
+export type ToolVmLeaseLifecycleEventRole = (typeof toolVmLeaseLifecycleEventRoles)[number];
+
+export const toolVmLeaseLifecycleTransitions = [
+	'current_to_stale',
+	'current_to_retired',
+	'deprecated_to_reacquired',
+	'deprecated_to_retired',
+	'stale_to_reacquired',
+	'stale_to_retired',
+	'retired_rejected',
+] as const;
+
+export type ToolVmLeaseLifecycleTransition = (typeof toolVmLeaseLifecycleTransitions)[number];
+
+const toolVmLeaseReacquiredLifecycleTransitions = [
+	'deprecated_to_reacquired',
+	'stale_to_reacquired',
+] as const satisfies readonly ToolVmLeaseLifecycleTransition[];
+
+type ToolVmLeaseReacquiredLifecycleTransition =
+	(typeof toolVmLeaseReacquiredLifecycleTransitions)[number];
+
+type ToolVmLeaseNonReacquiredLifecycleTransition = Exclude<
+	ToolVmLeaseLifecycleTransition,
+	ToolVmLeaseReacquiredLifecycleTransition
+>;
+
+export const toolVmLeaseCallerContextStates = [
+	'ok',
+	'absent',
+	'stale',
+	'session_mismatch',
+	'not_applicable',
+] as const;
+
+export type ToolVmLeaseCallerContextState = (typeof toolVmLeaseCallerContextStates)[number];
+
+export const toolVmLeaseRejectionReasons = [
+	'caller_context_absent',
+	'caller_context_session_mismatch',
+	'caller_context_stale',
+	'lease_absent',
+	'lease_authority_absent',
+	'lease_force_released',
+	'lease_generation_stale',
+	'lease_reacquire_required',
+	'lease_releasing',
+	'lease_retired',
+	'lease_use_tombstoned',
+	'ownership_denied',
+	'runtime_not_ready',
+] as const;
+
+export type ToolVmLeaseRejectionReason = (typeof toolVmLeaseRejectionReasons)[number];
+
+interface ToolVmLeaseLifecycleEvidenceBase {
+	readonly activeUseId?: string | undefined;
+	readonly callerContextState?: ToolVmLeaseCallerContextState | undefined;
+	readonly leaseRejectionReason?: ToolVmLeaseRejectionReason | undefined;
+	readonly lifecycleEventRole: ToolVmLeaseLifecycleEventRole;
+	readonly oldLeaseId: string;
+	readonly transitionId: string;
+}
+
+type ToolVmLeaseLifecycleEvidence =
+	| (ToolVmLeaseLifecycleEvidenceBase & {
+			readonly lifecycleTransition: ToolVmLeaseReacquiredLifecycleTransition;
+			readonly replacementLeaseId: string;
+	  })
+	| (ToolVmLeaseLifecycleEvidenceBase & {
+			readonly lifecycleTransition: ToolVmLeaseNonReacquiredLifecycleTransition;
+			readonly replacementLeaseId?: undefined;
+	  });
+
+interface ToolVmLeaseLifecycleAbsentEvidence {
+	readonly activeUseId?: undefined;
+	readonly callerContextState?: undefined;
+	readonly leaseRejectionReason?: undefined;
+	readonly lifecycleEventRole?: undefined;
+	readonly lifecycleTransition?: undefined;
+	readonly oldLeaseId?: undefined;
+	readonly replacementLeaseId?: undefined;
+	readonly transitionId?: undefined;
+}
+
 export const agentChannelProviderHealthKinds = [
 	'healthy',
 	'transitioning',
@@ -135,7 +222,7 @@ export type AgentVmHealthEvent =
 			readonly kind: 'tool-vm-ssh';
 			readonly leaseId: string;
 			readonly operation: ToolVmSshHealthOperation;
-	  })
+	  } & (ToolVmLeaseLifecycleAbsentEvidence | ToolVmLeaseLifecycleEvidence))
 	| (AgentVmHealthEventBase & {
 			readonly gatewayService: GatewayType;
 			readonly kind: 'gateway-plugin-health';
@@ -320,6 +407,23 @@ function optionalString(value: unknown): boolean {
 	return value === undefined || typeof value === 'string';
 }
 
+function optionalNonEmptyString(value: unknown): boolean {
+	return value === undefined || (typeof value === 'string' && value.length > 0);
+}
+
+function optionalOneOf<TValues extends readonly string[]>(
+	values: TValues,
+	value: unknown,
+): value is TValues[number] | undefined {
+	return value === undefined || isOneOf(values, value);
+}
+
+function isToolVmLeaseReacquiredTransition(
+	value: unknown,
+): value is ToolVmLeaseReacquiredLifecycleTransition {
+	return isOneOf(toolVmLeaseReacquiredLifecycleTransitions, value);
+}
+
 function optionalStatusCode(value: unknown): boolean {
 	return value === undefined || Number.isInteger(value);
 }
@@ -397,6 +501,44 @@ function isAgentChannelProviderHealthResultConsistent(
 	return assertNeverAgentChannelProviderHealth(health);
 }
 
+function hasValidToolVmLeaseLifecycleFields(value: Record<string, unknown>): boolean {
+	const hasLifecycleField =
+		value.activeUseId !== undefined ||
+		value.callerContextState !== undefined ||
+		value.leaseRejectionReason !== undefined ||
+		value.lifecycleEventRole !== undefined ||
+		value.lifecycleTransition !== undefined ||
+		value.oldLeaseId !== undefined ||
+		value.replacementLeaseId !== undefined ||
+		value.transitionId !== undefined;
+	if (!hasLifecycleField) {
+		return true;
+	}
+	if (
+		!(
+			optionalNonEmptyString(value.activeUseId) &&
+			optionalOneOf(toolVmLeaseCallerContextStates, value.callerContextState) &&
+			optionalOneOf(toolVmLeaseRejectionReasons, value.leaseRejectionReason) &&
+			isOneOf(toolVmLeaseLifecycleEventRoles, value.lifecycleEventRole) &&
+			isOneOf(toolVmLeaseLifecycleTransitions, value.lifecycleTransition) &&
+			typeof value.oldLeaseId === 'string' &&
+			value.oldLeaseId.length > 0 &&
+			typeof value.transitionId === 'string' &&
+			value.transitionId.length > 0
+		)
+	) {
+		return false;
+	}
+	if (isToolVmLeaseReacquiredTransition(value.lifecycleTransition)) {
+		return typeof value.replacementLeaseId === 'string' && value.replacementLeaseId.length > 0;
+	}
+	return (
+		value.replacementLeaseId === undefined &&
+		optionalOneOf(toolVmLeaseLifecycleEventRoles, value.lifecycleEventRole) &&
+		optionalOneOf(toolVmLeaseLifecycleTransitions, value.lifecycleTransition)
+	);
+}
+
 export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEvent {
 	if (!isRecord(value) || !hasBaseEventFields(value)) {
 		return false;
@@ -450,7 +592,8 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 				isNonNegativeFiniteNumber(value.elapsedMs) &&
 				optionalString(value.errorCode) &&
 				typeof value.leaseId === 'string' &&
-				isOneOf(['command', 'file-bridge', 'finalize', 'probe'] as const, value.operation)
+				isOneOf(['command', 'file-bridge', 'finalize', 'probe'] as const, value.operation) &&
+				hasValidToolVmLeaseLifecycleFields(value)
 			);
 		case 'gateway-plugin-health':
 			return (
@@ -588,6 +731,9 @@ export function healthEventBucketKey(event: AgentVmHealthEvent): string {
 		case 'lease-renew':
 			return `${event.zoneId}:${event.kind}:${event.leaseId}`;
 		case 'tool-vm-ssh':
+			if (event.transitionId !== undefined) {
+				return `${event.zoneId}:${event.kind}:lifecycle:${event.transitionId}`;
+			}
 			return `${event.zoneId}:${event.kind}:${event.leaseId}:${event.operation}`;
 		case 'gateway-plugin-health':
 			return `${event.zoneId}:${event.kind}:${event.gatewayService}`;

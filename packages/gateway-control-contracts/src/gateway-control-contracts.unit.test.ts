@@ -524,6 +524,111 @@ describe('gateway control contract', () => {
 		).toBe(false);
 
 		expect(
+			GatewayControlRpcMessageSchema.safeParse({
+				kind: 'event',
+				operation: 'health_event',
+				payload: {
+					activeUseId: '66666666-6666-4666-8666-666666666666',
+					agentId: 'main',
+					callerContextState: 'stale',
+					elapsedMs: 25,
+					errorCode: 'ssh-command-failed',
+					eventKind: 'tool-vm-ssh',
+					leaseId: '01890f00-0000-7000-8000-000000000001',
+					leaseRejectionReason: 'caller_context_stale',
+					lifecycleEventRole: 'plugin_observation',
+					lifecycleTransition: 'current_to_stale',
+					observedAtMs: 1,
+					oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+					operation: 'file-bridge',
+					result: 'failed',
+					transitionId: '77777777-7777-4777-8777-777777777777',
+				},
+			}).success,
+		).toBe(true);
+
+		expect(
+			GatewayControlRpcMessageSchema.safeParse({
+				kind: 'event',
+				operation: 'health_event',
+				payload: {
+					activeUseId: '66666666-6666-4666-8666-666666666666',
+					agentId: 'main',
+					callerContextState: 'stale',
+					elapsedMs: 25,
+					errorCode: 'ssh-command-failed',
+					eventKind: 'tool-vm-ssh',
+					leaseId: '01890f00-0000-7000-8000-000000000001',
+					leaseRejectionReason: 'caller_context_stale',
+					lifecycleEventRole: 'controller_final',
+					lifecycleTransition: 'stale_to_reacquired',
+					observedAtMs: 1,
+					oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+					operation: 'file-bridge',
+					replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+					result: 'ok',
+					transitionId: '77777777-7777-4777-8777-777777777777',
+				},
+			}).success,
+		).toBe(false);
+
+		expect(
+			GatewayControlHealthEventPayloadSchema.safeParse({
+				activeUseId: '66666666-6666-4666-8666-666666666666',
+				agentId: 'main',
+				callerContextState: 'stale',
+				elapsedMs: 25,
+				eventKind: 'tool-vm-ssh',
+				leaseId: '01890f00-0000-7000-8000-000000000001',
+				leaseRejectionReason: 'caller_context_stale',
+				lifecycleEventRole: 'plugin_observation',
+				observedAtMs: 1,
+				oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+				operation: 'file-bridge',
+				result: 'failed',
+				transitionId: '77777777-7777-4777-8777-777777777777',
+			}).success,
+		).toBe(false);
+
+		expect(
+			GatewayControlHealthEventPayloadSchema.safeParse({
+				activeUseId: '66666666-6666-4666-8666-666666666666',
+				agentId: 'main',
+				callerContextState: 'ok',
+				elapsedMs: 25,
+				eventKind: 'tool-vm-ssh',
+				leaseId: '01890f00-0000-7000-8000-000000000002',
+				lifecycleEventRole: 'plugin_observation',
+				lifecycleTransition: 'stale_to_reacquired',
+				observedAtMs: 1,
+				oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+				operation: 'file-bridge',
+				result: 'ok',
+				transitionId: '77777777-7777-4777-8777-777777777777',
+			}).success,
+		).toBe(false);
+
+		expect(
+			GatewayControlHealthEventPayloadSchema.safeParse({
+				activeUseId: '66666666-6666-4666-8666-666666666666',
+				agentId: 'main',
+				callerContextState: 'stale',
+				elapsedMs: 25,
+				eventKind: 'tool-vm-ssh',
+				leaseId: '01890f00-0000-7000-8000-000000000001',
+				leaseRejectionReason: 'caller_context_stale',
+				lifecycleEventRole: 'operator_guess',
+				lifecycleTransition: 'stale_to_reacquired',
+				observedAtMs: 1,
+				oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+				operation: 'file-bridge',
+				replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+				result: 'ok',
+				transitionId: '77777777-7777-4777-8777-777777777777',
+			}).success,
+		).toBe(false);
+
+		expect(
 			GatewayControlHealthEventPayloadSchema.safeParse({
 				eventKind: 'controller-request',
 				attempt: 1,

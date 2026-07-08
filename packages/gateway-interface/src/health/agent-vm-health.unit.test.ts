@@ -96,6 +96,103 @@ describe('agent-vm health events', () => {
 		);
 	});
 
+	it('validates Tool VM lease lifecycle fields when they are present', () => {
+		const event = {
+			activeUseId: '66666666-6666-4666-8666-666666666666',
+			agentId: 'main',
+			callerContextState: 'stale',
+			elapsedMs: 25,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			leaseRejectionReason: 'caller_context_stale',
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 1_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+			result: 'ok',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: 'beta',
+		};
+
+		expect(isAgentVmHealthEvent(event)).toBe(true);
+		expect(isAgentVmHealthEvent({ ...event, lifecycleEventRole: 'operator_guess' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, lifecycleTransition: 'same_id_stale_current' })).toBe(
+			false,
+		);
+		expect(isAgentVmHealthEvent({ ...event, callerContextState: 'maybe' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, leaseRejectionReason: 'raw-controller-error' })).toBe(
+			false,
+		);
+		expect(isAgentVmHealthEvent({ ...event, activeUseId: '' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, transitionId: '' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, transitionId: undefined })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, lifecycleTransition: undefined })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, replacementLeaseId: undefined })).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				...event,
+				lifecycleEventRole: undefined,
+			}),
+		).toBe(false);
+	});
+
+	it('dedupes Tool VM lifecycle observations by transition id with controller final authority', () => {
+		const pluginObservation = {
+			agentId: 'main',
+			callerContextState: 'stale',
+			elapsedMs: 25,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			leaseRejectionReason: 'caller_context_stale',
+			lifecycleEventRole: 'plugin_observation',
+			lifecycleTransition: 'current_to_stale',
+			observedAtMs: 1_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			result: 'failed',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+		const controllerFinal = {
+			agentId: 'main',
+			callerContextState: 'ok',
+			elapsedMs: 10,
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000002',
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 2_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+			result: 'ok',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		expect(healthEventBucketKey(pluginObservation)).toBe(
+			'beta:tool-vm-ssh:lifecycle:77777777-7777-4777-8777-777777777777',
+		);
+		expect(healthEventBucketKey(controllerFinal)).toBe(
+			'beta:tool-vm-ssh:lifecycle:77777777-7777-4777-8777-777777777777',
+		);
+		expect(
+			deriveZoneHealthSnapshot([pluginObservation, controllerFinal], {
+				nowMs: 2_500,
+				staleAfterMs: 30_000,
+				zoneId: 'beta',
+			}),
+		).toEqual({
+			kind: 'ok',
+			latestEvents: [controllerFinal],
+			zoneId: 'beta',
+		});
+	});
+
 	it('rejects channel-provider health details outside the operational whitelist', () => {
 		const event = {
 			channelProviderId: 'primary-channel',

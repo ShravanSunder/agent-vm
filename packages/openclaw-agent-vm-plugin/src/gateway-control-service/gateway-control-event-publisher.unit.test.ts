@@ -104,6 +104,92 @@ describe('gateway control event publisher', () => {
 		);
 	});
 
+	it('publishes Tool VM lifecycle health evidence over gateway_control', async () => {
+		const controlService = createControlServiceStub();
+		const publisher = createGatewayControlEventPublisher({
+			controlService,
+			createId: () => '11111111-1111-4111-8111-111111111111',
+			identity,
+			now: () => 1_000,
+		});
+
+		await publisher.publishHealthEvent({
+			activeUseId: '66666666-6666-4666-8666-666666666666',
+			agentId: 'main',
+			callerContextState: 'stale',
+			elapsedMs: 15,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			leaseRejectionReason: 'caller_context_stale',
+			lifecycleEventRole: 'plugin_observation',
+			lifecycleTransition: 'current_to_stale',
+			observedAtMs: 1_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			result: 'failed',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: identity.zoneId,
+		});
+
+		expect(controlService.emitApplicationMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				deliveryPolicy: 'append_only_observation',
+				domain: 'gateway_control',
+				kind: 'event',
+				operation: 'health_event',
+			}),
+			{
+				kind: 'event',
+				operation: 'health_event',
+			},
+			{
+				kind: 'event',
+				operation: 'health_event',
+				payload: expect.objectContaining({
+					activeUseId: '66666666-6666-4666-8666-666666666666',
+					callerContextState: 'stale',
+					eventKind: 'tool-vm-ssh',
+					leaseRejectionReason: 'caller_context_stale',
+					lifecycleEventRole: 'plugin_observation',
+					lifecycleTransition: 'current_to_stale',
+					oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+					transitionId: '77777777-7777-4777-8777-777777777777',
+				}),
+			},
+		);
+	});
+
+	it('rejects controller-final Tool VM lifecycle evidence from the plugin publisher', async () => {
+		const controlService = createControlServiceStub();
+		const publisher = createGatewayControlEventPublisher({
+			controlService,
+			createId: () => '11111111-1111-4111-8111-111111111111',
+			identity,
+			now: () => 1_000,
+		});
+
+		await expect(
+			publisher.publishHealthEvent({
+				agentId: 'main',
+				callerContextState: 'ok',
+				elapsedMs: 15,
+				kind: 'tool-vm-ssh',
+				leaseId: '01890f00-0000-7000-8000-000000000002',
+				lifecycleEventRole: 'controller_final',
+				lifecycleTransition: 'stale_to_reacquired',
+				observedAtMs: 1_000,
+				oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+				operation: 'file-bridge',
+				replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+				result: 'ok',
+				transitionId: '77777777-7777-4777-8777-777777777777',
+				zoneId: identity.zoneId,
+			}),
+		).rejects.toThrow('controller_final');
+		expect(controlService.emitApplicationMessage).not.toHaveBeenCalled();
+	});
+
 	it('publishes runtime status over gateway_control without controller HTTP', async () => {
 		const controlService = createControlServiceStub();
 		const publisher = createGatewayControlEventPublisher({

@@ -92,19 +92,29 @@ function healthEventCorrelation(event: AgentVmHealthEvent): Record<string, strin
 function healthEventPayload(event: AgentVmHealthEvent): unknown {
 	const correlation = healthEventCorrelation(event);
 	return {
+		...('activeUseId' in event ? { activeUseId: event.activeUseId } : {}),
 		...('agentId' in event ? { agentId: event.agentId } : {}),
 		...('attempt' in event ? { attempt: event.attempt } : {}),
+		...('callerContextState' in event ? { callerContextState: event.callerContextState } : {}),
 		...('channelProviderId' in event ? { channelProviderId: event.channelProviderId } : {}),
 		...(correlation === undefined ? {} : { correlation }),
 		...('elapsedMs' in event ? { elapsedMs: event.elapsedMs } : {}),
 		...('errorCode' in event ? { errorCode: event.errorCode } : {}),
 		eventKind: event.kind,
 		...('leaseId' in event ? { leaseId: event.leaseId } : {}),
+		...('leaseRejectionReason' in event
+			? { leaseRejectionReason: event.leaseRejectionReason }
+			: {}),
+		...('lifecycleEventRole' in event ? { lifecycleEventRole: event.lifecycleEventRole } : {}),
+		...('lifecycleTransition' in event ? { lifecycleTransition: event.lifecycleTransition } : {}),
 		...('maxAttempts' in event ? { maxAttempts: event.maxAttempts } : {}),
+		...('oldLeaseId' in event ? { oldLeaseId: event.oldLeaseId } : {}),
 		...('operation' in event ? { operation: event.operation } : {}),
 		observedAtMs: event.observedAtMs,
 		...('health' in event ? { providerRuntimeHealth: event.health.replaceAll('-', '_') } : {}),
+		...('replacementLeaseId' in event ? { replacementLeaseId: event.replacementLeaseId } : {}),
 		result: gatewayControlResultForHealthEvent(event.result),
+		...('transitionId' in event ? { transitionId: event.transitionId } : {}),
 		...('details' in event && event.details !== undefined
 			? {
 					safeDetails: stringRecordFromDetails(event.details),
@@ -125,6 +135,16 @@ function healthEventPayload(event: AgentVmHealthEvent): unknown {
 			: {}),
 		...('useId' in event ? { useId: event.useId } : {}),
 	};
+}
+
+function assertPluginPublishableHealthEvent(event: AgentVmHealthEvent): void {
+	if (
+		event.kind === 'tool-vm-ssh' &&
+		'lifecycleEventRole' in event &&
+		event.lifecycleEventRole === 'controller_final'
+	) {
+		throw new Error('gateway plugin cannot publish controller_final lifecycle health events');
+	}
 }
 
 function runtimeStatusPayload(report: OpenClawRuntimeStatusReport, observedAtMs: number): unknown {
@@ -220,6 +240,7 @@ export function createGatewayControlEventPublisher(
 			await options.controlService.emitApplicationMessage(envelope, domainMessage, message);
 		},
 		publishHealthEvent: async (event) => {
+			assertPluginPublishableHealthEvent(event);
 			await emitEvent('health_event', healthEventPayload(event));
 		},
 		publishOpenClawRuntimeStatus: async (report) => {

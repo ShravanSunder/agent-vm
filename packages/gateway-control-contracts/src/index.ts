@@ -261,6 +261,42 @@ export const GatewayControlProviderRuntimeHealthSchema = z.enum([
 	'unhealthy_unrecoverable',
 ]);
 
+export const GatewayControlLeaseRejectionReasonSchema = z.enum([
+	'caller_context_absent',
+	'caller_context_session_mismatch',
+	'caller_context_stale',
+	'lease_absent',
+	'lease_authority_absent',
+	'lease_force_released',
+	'lease_generation_stale',
+	'lease_reacquire_required',
+	'lease_releasing',
+	'lease_retired',
+	'lease_use_tombstoned',
+	'ownership_denied',
+	'runtime_not_ready',
+]);
+
+export const GatewayControlToolVmLeaseLifecycleEventRoleSchema = z.literal('plugin_observation');
+
+export const GatewayControlToolVmLeaseLifecycleTransitionSchema = z.enum([
+	'current_to_stale',
+	'current_to_retired',
+	'deprecated_to_reacquired',
+	'deprecated_to_retired',
+	'stale_to_reacquired',
+	'stale_to_retired',
+	'retired_rejected',
+]);
+
+export const GatewayControlToolVmLeaseCallerContextStateSchema = z.enum([
+	'ok',
+	'absent',
+	'stale',
+	'session_mismatch',
+	'not_applicable',
+]);
+
 export const GatewayControlControllerRequestHealthOperationSchema = z.enum([
 	'zone-git-push',
 	'lease-create',
@@ -285,6 +321,11 @@ export const GatewayControlToolVmSshHealthOperationSchema = z.enum([
 	'probe',
 ]);
 
+const GatewayControlToolVmLeaseReacquiredLifecycleTransitionSchema = z.enum([
+	'deprecated_to_reacquired',
+	'stale_to_reacquired',
+]);
+
 const GatewayControlHealthEventBaseSchema = z
 	.object({
 		correlation: ControlCorrelationSchema.optional(),
@@ -293,7 +334,49 @@ const GatewayControlHealthEventBaseSchema = z
 	})
 	.strict();
 
-export const GatewayControlHealthEventPayloadSchema = z.discriminatedUnion('eventKind', [
+const GatewayControlToolVmSshHealthEventBaseSchema = GatewayControlHealthEventBaseSchema.extend({
+	agentId: z.string().min(1),
+	elapsedMs: z.number().int().nonnegative(),
+	errorCode: z.string().min(1).optional(),
+	eventKind: z.literal('tool-vm-ssh'),
+	leaseId: z.string().min(1),
+	operation: GatewayControlToolVmSshHealthOperationSchema,
+}).strict();
+
+const GatewayControlToolVmSshLifecycleHealthEventSchema =
+	GatewayControlToolVmSshHealthEventBaseSchema.extend({
+		activeUseId: z.string().min(1).optional(),
+		callerContextState: GatewayControlToolVmLeaseCallerContextStateSchema.optional(),
+		leaseRejectionReason: GatewayControlLeaseRejectionReasonSchema.optional(),
+		lifecycleEventRole: GatewayControlToolVmLeaseLifecycleEventRoleSchema,
+		lifecycleTransition: GatewayControlToolVmLeaseLifecycleTransitionSchema,
+		oldLeaseId: z.string().min(1),
+		replacementLeaseId: z.string().min(1).optional(),
+		transitionId: z.string().min(1),
+	})
+		.strict()
+		.superRefine((event, context) => {
+			const isReacquiredTransition =
+				GatewayControlToolVmLeaseReacquiredLifecycleTransitionSchema.safeParse(
+					event.lifecycleTransition,
+				).success;
+			if (isReacquiredTransition && event.replacementLeaseId === undefined) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: 'replacementLeaseId is required for reacquired lifecycle transitions',
+					path: ['replacementLeaseId'],
+				});
+			}
+			if (!isReacquiredTransition && event.replacementLeaseId !== undefined) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: 'replacementLeaseId is only valid for reacquired lifecycle transitions',
+					path: ['replacementLeaseId'],
+				});
+			}
+		});
+
+export const GatewayControlHealthEventPayloadSchema = z.union([
 	GatewayControlHealthEventBaseSchema.extend({
 		channelProviderId: z.string().min(1),
 		eventKind: z.literal('agent-channel-provider-health'),
@@ -322,14 +405,8 @@ export const GatewayControlHealthEventPayloadSchema = z.discriminatedUnion('even
 	GatewayControlHealthEventBaseSchema.extend({
 		eventKind: z.literal('gateway-plugin-health'),
 	}).strict(),
-	GatewayControlHealthEventBaseSchema.extend({
-		agentId: z.string().min(1),
-		elapsedMs: z.number().int().nonnegative(),
-		errorCode: z.string().min(1).optional(),
-		leaseId: z.string().min(1),
-		eventKind: z.literal('tool-vm-ssh'),
-		operation: GatewayControlToolVmSshHealthOperationSchema,
-	}).strict(),
+	GatewayControlToolVmSshHealthEventBaseSchema,
+	GatewayControlToolVmSshLifecycleHealthEventSchema,
 ]);
 
 export const GatewayControlRuntimeFindingSchema = z
@@ -504,22 +581,6 @@ export const GatewayControlLeaseUseSnapshotSchema = z
 		useId: z.string().uuid(),
 	})
 	.strict();
-
-export const GatewayControlLeaseRejectionReasonSchema = z.enum([
-	'caller_context_absent',
-	'caller_context_session_mismatch',
-	'caller_context_stale',
-	'lease_absent',
-	'lease_authority_absent',
-	'lease_force_released',
-	'lease_generation_stale',
-	'lease_reacquire_required',
-	'lease_releasing',
-	'lease_retired',
-	'lease_use_tombstoned',
-	'ownership_denied',
-	'runtime_not_ready',
-]);
 
 export const GatewayControlRpcDomainCorrelationSchema = ControlCorrelationSchema;
 

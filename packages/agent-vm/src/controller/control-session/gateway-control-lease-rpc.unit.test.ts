@@ -1,3 +1,4 @@
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -420,10 +421,93 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 	});
 
 	it('reacquires a replacement lease after the old lease was released', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(2_000);
+		try {
+			const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+			const recordedHealthEvents: AgentVmHealthEvent[] = [];
+			const leaseRpc = createGatewayControlLeaseRpcOperations({
+				leaseManager,
+				readIdentityPem: async () => 'identity-pem',
+				recordHealthEvent: (event) => {
+					recordedHealthEvents.push(event);
+				},
+				resolveLeaseCreateOptions: async () => ({
+					agentId: callerContext.agentId,
+					agentWorkspaceDir: callerContext.agentWorkspaceDir,
+					guestWorkdir: '/workspace',
+					hostWorkMountDir: '/host/validated-work',
+					profile: {
+						cpus: 2,
+						imageProfile: 'tool-default',
+						memory: '2G',
+					},
+					profileId: 'standard',
+					zoneId: callerContext.zoneId,
+				}),
+			});
+			const oldLease = await leaseRpc.createLease({
+				callerContext,
+				payload: callerContextPayload,
+			});
+			await leaseRpc.releaseLease(
+				withCallerContextPayload({
+					...callerContextPayload,
+					leaseId: oldLease.leaseId,
+				}),
+			);
+
+			const replacementLease = await leaseRpc.reacquireLease({
+				callerContext: refreshedCallerContext,
+				payload: {
+					callerContext: {
+						callerContextId: refreshedCallerContext.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'lease-manager',
+						observedAtMs: 1_100,
+						reason: 'released',
+					},
+				},
+			});
+
+			expect(replacementLease).toEqual(
+				expect.objectContaining({
+					leaseId: 'lease-new',
+					state: 'idle',
+				}),
+			);
+			expect(replacementLease).not.toEqual(expect.objectContaining({ leaseId: oldLease.leaseId }));
+			expect(recordedHealthEvents).toEqual([
+				expect.objectContaining({
+					lifecycleEventRole: 'controller_final',
+					observedAtMs: 2_000,
+					oldLeaseId: oldLease.leaseId,
+					replacementLeaseId: 'lease-new',
+				}),
+			]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('records controller-final reacquire success only after replacement SSH serialization succeeds', async () => {
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+		const recordedHealthEvents: AgentVmHealthEvent[] = [];
+		let identityReadCount = 0;
 		const leaseRpc = createGatewayControlLeaseRpcOperations({
 			leaseManager,
-			readIdentityPem: async () => 'identity-pem',
+			readIdentityPem: async () => {
+				identityReadCount += 1;
+				if (identityReadCount > 1) {
+					throw new Error('identity read failed');
+				}
+				return 'identity-pem';
+			},
+			recordHealthEvent: (event) => {
+				recordedHealthEvents.push(event);
+			},
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
@@ -449,28 +533,23 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			}),
 		);
 
-		const replacementLease = await leaseRpc.reacquireLease({
-			callerContext: refreshedCallerContext,
-			payload: {
-				callerContext: {
-					callerContextId: refreshedCallerContext.callerContextId,
+		await expect(
+			leaseRpc.reacquireLease({
+				callerContext: refreshedCallerContext,
+				payload: {
+					callerContext: {
+						callerContextId: refreshedCallerContext.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'lease-manager',
+						observedAtMs: 1_100,
+						reason: 'released',
+					},
 				},
-				oldLeaseId: oldLease.leaseId,
-				staleEvidence: {
-					kind: 'lease-manager',
-					observedAtMs: 1_100,
-					reason: 'released',
-				},
-			},
-		});
-
-		expect(replacementLease).toEqual(
-			expect.objectContaining({
-				leaseId: 'lease-new',
-				state: 'idle',
 			}),
-		);
-		expect(replacementLease).not.toEqual(expect.objectContaining({ leaseId: oldLease.leaseId }));
+		).rejects.toThrow('identity read failed');
+		expect(recordedHealthEvents).toEqual([]);
 	});
 
 	it('rejects reacquire when old lease authority is unavailable', async () => {

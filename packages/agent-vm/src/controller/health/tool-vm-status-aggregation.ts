@@ -173,6 +173,13 @@ export function classifyLifecycleAwareToolVmStatus(
 			planes.push(toolVmPlaneForResult(event.result));
 			continue;
 		}
+		if (event.lifecycleEventRole === 'controller_final') {
+			if (isStaleSuccessfulEvent(event, options)) {
+				continue;
+			}
+			planes.push(toolVmPlaneForResult(event.result));
+			continue;
+		}
 		if (event.operation !== 'probe') {
 			continue;
 		}

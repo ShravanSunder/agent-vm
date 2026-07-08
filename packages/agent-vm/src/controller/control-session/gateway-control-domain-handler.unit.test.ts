@@ -523,7 +523,8 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('routes lease_reacquire through lease RPC operations', async () => {
-		const leaseRpc = createLeaseRpcStub();
+		const reacquireLease = vi.fn(async () => leaseSnapshot);
+		const leaseRpc = createLeaseRpcStub({ reacquireLease });
 		const dispatcher = createControlSessionDispatcher();
 		dispatcher.register(
 			'gateway_control',
@@ -552,7 +553,7 @@ describe('gateway control domain handler', () => {
 			},
 		});
 
-		expect(leaseRpc.reacquireLease).toHaveBeenCalledWith({
+		expect(reacquireLease).toHaveBeenCalledWith({
 			callerContext: expect.objectContaining({
 				agentId: 'main',
 				callerContextId: '44444444-4444-4444-8444-444444444444',
@@ -879,6 +880,109 @@ describe('gateway control domain handler', () => {
 			traceId: '0123456789abcdef0123456789abcdef',
 			zoneId: acceptedSession.zoneId,
 		});
+	});
+
+	it('records Tool VM lifecycle health fields from the accepted control session', async () => {
+		const recordHealthEvent = vi.fn<(event: AgentVmHealthEvent) => void>();
+		const dispatcher = createControlSessionDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				callerContexts: createCallerContexts(),
+				recordHealthEvent,
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('health_event', {
+				deliveryPolicy: 'append_only_observation',
+				kind: 'event',
+			}),
+			payload: {
+				kind: 'event',
+				operation: 'health_event',
+				payload: {
+					activeUseId: '66666666-6666-4666-8666-666666666666',
+					agentId: 'main',
+					callerContextState: 'stale',
+					elapsedMs: 25,
+					errorCode: 'ssh-command-failed',
+					eventKind: 'tool-vm-ssh',
+					leaseId: '01890f00-0000-7000-8000-000000000001',
+					leaseRejectionReason: 'caller_context_stale',
+					lifecycleEventRole: 'plugin_observation',
+					lifecycleTransition: 'current_to_stale',
+					observedAtMs: 1_000,
+					oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+					operation: 'file-bridge',
+					result: 'failed',
+					transitionId: '77777777-7777-4777-8777-777777777777',
+				},
+			},
+		});
+
+		expect(response).toBeUndefined();
+		expect(recordHealthEvent).toHaveBeenCalledWith({
+			activeUseId: '66666666-6666-4666-8666-666666666666',
+			agentId: 'main',
+			callerContextState: 'stale',
+			elapsedMs: 25,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			leaseRejectionReason: 'caller_context_stale',
+			lifecycleEventRole: 'plugin_observation',
+			lifecycleTransition: 'current_to_stale',
+			observedAtMs: 1_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			result: 'failed',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: acceptedSession.zoneId,
+		});
+	});
+
+	it('rejects inbound controller-final Tool VM lifecycle health events', async () => {
+		const recordHealthEvent = vi.fn<(event: AgentVmHealthEvent) => void>();
+		const dispatcher = createControlSessionDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				callerContexts: createCallerContexts(),
+				recordHealthEvent,
+				session: acceptedSession,
+			}),
+		);
+
+		await expect(
+			dispatcher.dispatch({
+				envelope: createEnvelope('health_event', {
+					deliveryPolicy: 'append_only_observation',
+					kind: 'event',
+				}),
+				payload: {
+					kind: 'event',
+					operation: 'health_event',
+					payload: {
+						agentId: 'main',
+						callerContextState: 'ok',
+						elapsedMs: 25,
+						eventKind: 'tool-vm-ssh',
+						leaseId: '01890f00-0000-7000-8000-000000000002',
+						lifecycleEventRole: 'controller_final',
+						lifecycleTransition: 'stale_to_reacquired',
+						observedAtMs: 1_000,
+						oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+						operation: 'file-bridge',
+						replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+						result: 'ok',
+						transitionId: '77777777-7777-4777-8777-777777777777',
+					},
+				},
+			}),
+		).rejects.toThrow();
+		expect(recordHealthEvent).not.toHaveBeenCalled();
 	});
 
 	it('rejects malformed gateway health events before recording them', async () => {

@@ -170,6 +170,32 @@ function addKindSpecificAttributes(
 			attributes['agent_vm.agent.id_hash'] = stableTelemetryHash(event.agentId);
 			attributes['agent_vm.lease.id_hash'] = stableTelemetryHash(event.leaseId);
 			attributes['agent_vm.tool_vm.ssh.operation'] = event.operation;
+			if (event.activeUseId !== undefined) {
+				attributes['agent_vm.lease.active_use_id_hash'] = stableTelemetryHash(event.activeUseId);
+			}
+			if (event.callerContextState !== undefined) {
+				attributes['agent_vm.lease.caller_context_state'] = event.callerContextState;
+			}
+			if (event.leaseRejectionReason !== undefined) {
+				attributes['agent_vm.lease.rejection_reason'] = event.leaseRejectionReason;
+			}
+			if (event.lifecycleEventRole !== undefined) {
+				attributes['agent_vm.lease.lifecycle_event_role'] = event.lifecycleEventRole;
+			}
+			if (event.lifecycleTransition !== undefined) {
+				attributes['agent_vm.lease.lifecycle_transition'] = event.lifecycleTransition;
+			}
+			if (event.oldLeaseId !== undefined) {
+				attributes['agent_vm.lease.old_id_hash'] = stableTelemetryHash(event.oldLeaseId);
+			}
+			if (event.replacementLeaseId !== undefined) {
+				attributes['agent_vm.lease.replacement_id_hash'] = stableTelemetryHash(
+					event.replacementLeaseId,
+				);
+			}
+			if (event.transitionId !== undefined) {
+				attributes['agent_vm.lease.transition_id_hash'] = stableTelemetryHash(event.transitionId);
+			}
 			return;
 		default:
 			assertNever(event);

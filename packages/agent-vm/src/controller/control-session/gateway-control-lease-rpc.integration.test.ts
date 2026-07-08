@@ -13,6 +13,7 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -188,9 +189,13 @@ describe('gateway control lease RPC integration', () => {
 				return callerContextId;
 			},
 		});
-		const leaseRpc = createGatewayControlLeaseRpcOperations({
+		const recordedHealthEvents: AgentVmHealthEvent[] = [];
+		const leaseRpcOptions = {
 			leaseManager: createTestLeaseManager(),
 			readIdentityPem: async () => 'identity-pem',
+			recordHealthEvent: (event: AgentVmHealthEvent) => {
+				recordedHealthEvents.push(event);
+			},
 			resolveLeaseCreateOptions: async ({ callerContext }) => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
@@ -204,6 +209,9 @@ describe('gateway control lease RPC integration', () => {
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
 			}),
+		} satisfies Parameters<typeof createGatewayControlLeaseRpcOperations>[0];
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			...leaseRpcOptions,
 		});
 		const dispatcher = createControlSessionDispatcher();
 		dispatcher.register(
@@ -290,5 +298,19 @@ describe('gateway control lease RPC integration', () => {
 			},
 		});
 		expect(reacquireResponse?.payload.lease?.leaseId).not.toBe(oldLeaseId);
+		expect(recordedHealthEvents).toEqual([
+			expect.objectContaining({
+				agentId: 'main',
+				kind: 'tool-vm-ssh',
+				leaseId: 'lease-new',
+				lifecycleEventRole: 'controller_final',
+				lifecycleTransition: 'stale_to_reacquired',
+				oldLeaseId,
+				replacementLeaseId: 'lease-new',
+				result: 'ok',
+				transitionId: `lease_reacquire:${oldLeaseId}`,
+				zoneId: acceptedSession.zoneId,
+			}),
+		]);
 	});
 });

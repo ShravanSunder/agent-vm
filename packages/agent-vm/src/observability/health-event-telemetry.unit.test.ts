@@ -112,4 +112,57 @@ describe('mapHealthEventToTelemetry', () => {
 		expect(telemetry.metricSamples[0]?.attributes).not.toHaveProperty('agent_vm.trace.id');
 		expect(telemetry.metricSamples[0]?.attributes).not.toHaveProperty('agent_vm.correlation.id');
 	});
+
+	it('maps Tool VM lifecycle evidence without exporting raw lease or active-use ids', () => {
+		const event = {
+			activeUseId: 'active-use-secret-canary',
+			agentId: 'beta-agent-secret-canary',
+			callerContextState: 'stale',
+			correlationId: 'correlation-main',
+			elapsedMs: 25,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: 'current-lease-secret-canary',
+			leaseRejectionReason: 'caller_context_stale',
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 1_781_445_000_000,
+			oldLeaseId: 'old-lease-secret-canary',
+			operation: 'file-bridge',
+			replacementLeaseId: 'replacement-lease-secret-canary',
+			result: 'ok',
+			transitionId: 'transition-secret-canary',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		const telemetry = mapHealthEventToTelemetry(event);
+		const serialized = JSON.stringify(telemetry);
+
+		expect(telemetry.log.attributes).toMatchObject({
+			'agent_vm.correlation.id': 'correlation-main',
+			'agent_vm.health.kind': 'tool-vm-ssh',
+			'agent_vm.health.result': 'ok',
+			'agent_vm.lease.caller_context_state': 'stale',
+			'agent_vm.lease.rejection_reason': 'caller_context_stale',
+			'agent_vm.lease.lifecycle_event_role': 'controller_final',
+			'agent_vm.lease.lifecycle_transition': 'stale_to_reacquired',
+			'agent_vm.tool_vm.ssh.operation': 'file-bridge',
+			'error.type': 'ssh-command-failed',
+		});
+		expect(telemetry.log.attributes['agent_vm.lease.active_use_id_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(telemetry.log.attributes['agent_vm.lease.old_id_hash']).toMatch(/^[a-f0-9]{16}$/u);
+		expect(telemetry.log.attributes['agent_vm.lease.replacement_id_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(telemetry.log.attributes['agent_vm.lease.transition_id_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(serialized).not.toContain('active-use-secret-canary');
+		expect(serialized).not.toContain('old-lease-secret-canary');
+		expect(serialized).not.toContain('replacement-lease-secret-canary');
+		expect(serialized).not.toContain('current-lease-secret-canary');
+		expect(serialized).not.toContain('transition-secret-canary');
+	});
 });

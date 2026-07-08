@@ -1,5 +1,11 @@
-import type { GatewayControlLeaseSnapshot } from '@agent-vm/gateway-control-contracts';
-import { normalizeToolVmActiveUseCorrelation } from '@agent-vm/gateway-interface';
+import type {
+	GatewayControlLeaseReacquireIntentPayload,
+	GatewayControlLeaseSnapshot,
+} from '@agent-vm/gateway-control-contracts';
+import {
+	normalizeToolVmActiveUseCorrelation,
+	type AgentVmHealthEvent,
+} from '@agent-vm/gateway-interface';
 
 import {
 	type ControllerLeaseManager,
@@ -20,11 +26,14 @@ type LeaseCreateOptions = Parameters<ControllerLeaseManager['createLease']>[0];
 type GatewayControlLeaseCreatePayload = Parameters<
 	GatewayControlLeaseRpcOperations['createLease']
 >[0]['payload'];
+type ToolVmSshHealthEvent = Extract<AgentVmHealthEvent, { readonly kind: 'tool-vm-ssh' }>;
 
 export interface GatewayControlLeaseRpcControllerOptions {
 	readonly leaseManager: ControllerLeaseManager;
+	readonly now?: () => number;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly recordHealthEvent?: (event: AgentVmHealthEvent) => void;
 	readonly resolveLeaseCreateOptions: (options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseCreatePayload;
@@ -71,6 +80,57 @@ function leaseRpcRejection(
 		leaseRejectionReason,
 		result: 'rejected',
 	};
+}
+
+function toolVmSshOperationFromReacquirePayload(
+	payload: GatewayControlLeaseReacquireIntentPayload,
+): ToolVmSshHealthEvent['operation'] {
+	return payload.staleEvidence.kind === 'tool-vm-ssh' ? payload.staleEvidence.operation : 'probe';
+}
+
+function emitReacquireLifecycleEvent(options: {
+	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly elapsedMs: number;
+	readonly leaseRejectionReason?: GatewayControlLeaseRpcRejection['leaseRejectionReason'];
+	readonly observedAtMs: number;
+	readonly operation: ToolVmSshHealthEvent['operation'];
+	readonly oldLeaseId: string;
+	readonly recordHealthEvent: ((event: AgentVmHealthEvent) => void) | undefined;
+	readonly replacementLeaseId?: string;
+	readonly result: AgentVmHealthEvent['result'];
+}): void {
+	if (options.recordHealthEvent === undefined) {
+		return;
+	}
+	const eventBase = {
+		agentId: options.callerContext.agentId,
+		callerContextState: 'ok' as const,
+		elapsedMs: options.elapsedMs,
+		kind: 'tool-vm-ssh' as const,
+		leaseId: options.replacementLeaseId ?? options.oldLeaseId,
+		...(options.leaseRejectionReason === undefined
+			? {}
+			: { leaseRejectionReason: options.leaseRejectionReason }),
+		lifecycleEventRole: 'controller_final' as const,
+		observedAtMs: options.observedAtMs,
+		oldLeaseId: options.oldLeaseId,
+		operation: options.operation,
+		result: options.result,
+		transitionId: `lease_reacquire:${options.oldLeaseId}`,
+		zoneId: options.callerContext.zoneId,
+	};
+	if (options.replacementLeaseId === undefined) {
+		options.recordHealthEvent({
+			...eventBase,
+			lifecycleTransition: 'stale_to_retired',
+		});
+		return;
+	}
+	options.recordHealthEvent({
+		...eventBase,
+		lifecycleTransition: 'stale_to_reacquired',
+		replacementLeaseId: options.replacementLeaseId,
+	});
 }
 
 function serializeGatewayControlLeaseSnapshot(options: {
@@ -125,6 +185,7 @@ function serializeGatewayControlLeaseSnapshot(options: {
 export function createGatewayControlLeaseRpcOperations(
 	options: GatewayControlLeaseRpcControllerOptions,
 ): GatewayControlLeaseRpcOperations {
+	const now = options.now ?? (() => Date.now());
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
 	const leaseAuthorityStore = createToolVmLeaseAuthorityStore<LeaseCreateOptions>();
 
@@ -220,11 +281,32 @@ export function createGatewayControlLeaseRpcOperations(
 			});
 		},
 		reacquireLease: async ({ callerContext, payload }) => {
+			const operation = toolVmSshOperationFromReacquirePayload(payload);
 			const authority = leaseAuthorityStore.resolve(payload.oldLeaseId);
 			if (authority === undefined) {
+				emitReacquireLifecycleEvent({
+					callerContext,
+					elapsedMs: 0,
+					leaseRejectionReason: 'lease_authority_absent',
+					observedAtMs: Math.max(1, now()),
+					operation,
+					oldLeaseId: payload.oldLeaseId,
+					recordHealthEvent: options.recordHealthEvent,
+					result: 'failed',
+				});
 				return leaseRpcRejection('lease_authority_absent');
 			}
 			if (!callerContextMatchesLeaseOwner({ callerContext, owner: authority.owner })) {
+				emitReacquireLifecycleEvent({
+					callerContext,
+					elapsedMs: 0,
+					leaseRejectionReason: 'ownership_denied',
+					observedAtMs: Math.max(1, now()),
+					operation,
+					oldLeaseId: payload.oldLeaseId,
+					recordHealthEvent: options.recordHealthEvent,
+					result: 'failed',
+				});
 				return leaseRpcRejection('ownership_denied');
 			}
 			if (authority.replacementLeaseId !== undefined) {
@@ -243,6 +325,16 @@ export function createGatewayControlLeaseRpcOperations(
 			leaseAuthorityStore.markRetired(payload.oldLeaseId);
 			const replacementLease = await options.leaseManager.createLease(authority.compatibility);
 			if (replacementLease.id === payload.oldLeaseId) {
+				emitReacquireLifecycleEvent({
+					callerContext,
+					elapsedMs: 0,
+					leaseRejectionReason: 'lease_reacquire_required',
+					observedAtMs: Math.max(1, now()),
+					operation,
+					oldLeaseId: payload.oldLeaseId,
+					recordHealthEvent: options.recordHealthEvent,
+					result: 'failed',
+				});
 				return leaseRpcRejection('lease_reacquire_required');
 			}
 			leaseAuthorityStore.markReplaced(payload.oldLeaseId, replacementLease.id);
@@ -251,11 +343,22 @@ export function createGatewayControlLeaseRpcOperations(
 				leaseCreateOptions: authority.compatibility,
 				leaseId: replacementLease.id,
 			});
-			return await serializeGatewayControlLeaseSnapshot({
+			const replacementSnapshot = await serializeGatewayControlLeaseSnapshot({
 				includeSsh: 'private',
 				lease: replacementLease,
 				readIdentityPem,
 			});
+			emitReacquireLifecycleEvent({
+				callerContext,
+				elapsedMs: 0,
+				observedAtMs: Math.max(1, now()),
+				operation,
+				oldLeaseId: payload.oldLeaseId,
+				recordHealthEvent: options.recordHealthEvent,
+				replacementLeaseId: replacementLease.id,
+				result: 'ok',
+			});
+			return replacementSnapshot;
 		},
 		heartbeatLeaseUse: async ({ callerContext, payload }) => {
 			const { leaseId, useId } = payload;

@@ -329,8 +329,8 @@ function healthEventFromPayload(options: {
 				kind: 'gateway-plugin-health',
 				state: options.payload.result === 'ok' ? 'ready' : 'failed',
 			};
-		case 'tool-vm-ssh':
-			return {
+		case 'tool-vm-ssh': {
+			const toolVmHealthEventBase = {
 				...base,
 				agentId: requireString(options.payload.agentId, 'agentId'),
 				elapsedMs: requireNumber(options.payload.elapsedMs, 'elapsedMs'),
@@ -340,7 +340,44 @@ function healthEventFromPayload(options: {
 				kind: 'tool-vm-ssh',
 				leaseId: requireString(options.payload.leaseId, 'leaseId'),
 				operation: options.payload.operation,
+			} satisfies AgentVmHealthEvent;
+			if (!('lifecycleEventRole' in options.payload)) {
+				return toolVmHealthEventBase;
+			}
+			const lifecycleBase = {
+				...(options.payload.activeUseId === undefined
+					? {}
+					: { activeUseId: options.payload.activeUseId }),
+				...(options.payload.callerContextState === undefined
+					? {}
+					: { callerContextState: options.payload.callerContextState }),
+				...(options.payload.leaseRejectionReason === undefined
+					? {}
+					: { leaseRejectionReason: options.payload.leaseRejectionReason }),
+				lifecycleEventRole: options.payload.lifecycleEventRole,
+				oldLeaseId: options.payload.oldLeaseId,
+				transitionId: options.payload.transitionId,
 			};
+			if (
+				options.payload.lifecycleTransition === 'deprecated_to_reacquired' ||
+				options.payload.lifecycleTransition === 'stale_to_reacquired'
+			) {
+				return {
+					...toolVmHealthEventBase,
+					...lifecycleBase,
+					lifecycleTransition: options.payload.lifecycleTransition,
+					replacementLeaseId: requireString(
+						options.payload.replacementLeaseId,
+						'replacementLeaseId',
+					),
+				};
+			}
+			return {
+				...toolVmHealthEventBase,
+				...lifecycleBase,
+				lifecycleTransition: options.payload.lifecycleTransition,
+			};
+		}
 	}
 	return assertUnreachableHealthPayload(options.payload);
 }
