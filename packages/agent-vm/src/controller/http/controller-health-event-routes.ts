@@ -96,9 +96,16 @@ function redactHealthEventForPublicSnapshot(event: AgentVmHealthEvent): PublicAg
 					: { transitionIdHash: stableTelemetryHash(transitionId) }),
 			};
 		}
-		default:
+		case 'agent-channel-provider-health':
+		case 'controller-request':
+		case 'gateway-control-session':
+		case 'gateway-plugin-health':
+		case 'gateway-recovery':
+		case 'gateway-recovery-suspended':
+		case 'gateway-service-health':
 			return event;
 	}
+	return assertNeverAgentVmHealthEvent(event);
 }
 
 function redactZoneHealthIssueForPublicSnapshot(issue: ZoneHealthIssue): PublicZoneHealthIssue {
@@ -127,6 +134,15 @@ function redactZoneHealthSnapshotForPublicResponse(
 				latestEvents: snapshot.latestEvents.map(redactHealthEventForPublicSnapshot),
 			};
 	}
+	return assertNeverZoneHealthSnapshot(snapshot);
+}
+
+function assertNeverZoneHealthSnapshot(snapshot: never): never {
+	throw new Error(`Unexpected zone health snapshot variant: ${String(snapshot)}`);
+}
+
+function assertNeverAgentVmHealthEvent(event: never): never {
+	throw new Error(`Unexpected agent VM health event variant: ${String(event)}`);
 }
 
 export function registerControllerHealthEventRoutes(
