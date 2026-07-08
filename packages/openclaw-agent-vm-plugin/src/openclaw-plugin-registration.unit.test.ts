@@ -484,7 +484,7 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
-	it('does not register the private e2e Tool VM write/read route during full plugin registration', () => {
+	it('registers the private e2e Tool VM write/read route during full plugin registration when env opt-in is set', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerHttpRoute = vi.fn();
 		const registerTool = vi.fn();
@@ -502,7 +502,30 @@ describe('createGondolinPlugin', () => {
 				registrationMode: 'full',
 			});
 
-			expect(registerTool).not.toHaveBeenCalledWith(expect.any(Function), expect.any(Object));
+			expect(
+				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			).toBeDefined();
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('does not register the private e2e Tool VM write/read route without env opt-in', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerHttpRoute = vi.fn();
+		const registerTool = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute,
+				registerTool,
+				registrationMode: 'full',
+			});
+
 			expect(
 				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
 			).toBeUndefined();
@@ -511,7 +534,7 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
-	it('registers the private Tool VM write/read route only through the e2e plugin entrypoint', () => {
+	it('registers the private Tool VM write/read route through the e2e plugin entrypoint', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerHttpRoute = vi.fn();
 		const registerTool = vi.fn();

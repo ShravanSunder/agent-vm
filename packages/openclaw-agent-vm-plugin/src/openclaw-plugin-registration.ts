@@ -277,7 +277,7 @@ const plugin = {
 	description: 'Sandbox backend powered by Gondolin micro-VMs.',
 
 	register(api: Parameters<typeof registerGondolinPlugin>[0]): void {
-		registerGondolinPlugin(api);
+		registerGondolinPlugin(api, { enableToolVmWriteReadE2eRoute: true });
 	},
 };
 
