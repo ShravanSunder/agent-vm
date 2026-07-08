@@ -7,6 +7,7 @@ import {
 } from '../../testing/managed-vm-test-helpers.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
+import { OpenClawRuntimeStatusUnavailableError } from '../openclaw-runtime-status.js';
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
 import { createGatewayControlLeaseRpcOperations } from './gateway-control-lease-rpc.js';
 
@@ -39,6 +40,14 @@ const refreshedCallerContext = {
 	sessionId: '88888888-8888-4888-8888-888888888888',
 } satisfies GatewayControlTrustedCallerContext;
 
+const sameAgentDifferentSessionCallerContext = {
+	...callerContext,
+	callerContextId: '99999999-9999-4999-8999-999999999999',
+	connectionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+	sessionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+	sessionKeyDigest: '11111111111111112222222222222222',
+} satisfies GatewayControlTrustedCallerContext;
+
 const callerContextPayload = {
 	callerContext: {
 		callerContextId: callerContext.callerContextId,
@@ -60,12 +69,17 @@ function withCallerContextPayload<TPayload>(
 
 function createManagedVmStub(
 	options: {
+		readonly closeError?: Error;
 		readonly isLive?: () => boolean;
 	} = {},
 ): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
 		const vm = {
-			close: vi.fn(async () => {}),
+			close: vi.fn(async () => {
+				if (options.closeError !== undefined) {
+					throw options.closeError;
+				}
+			}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
 				host: '127.0.0.1',
@@ -90,6 +104,7 @@ function createManagedVmStub(
 
 function createTestLeaseManager(
 	options: {
+		readonly closeError?: Error;
 		readonly isLive?: () => boolean;
 		readonly leaseIds?: readonly string[];
 		readonly now?: () => number;
@@ -103,9 +118,10 @@ function createTestLeaseManager(
 			leaseIdIndex += 1;
 			return leaseId;
 		},
-		createManagedVm: createManagedVmStub(
-			options.isLive === undefined ? {} : { isLive: options.isLive },
-		),
+		createManagedVm: createManagedVmStub({
+			...(options.closeError === undefined ? {} : { closeError: options.closeError }),
+			...(options.isLive === undefined ? {} : { isLive: options.isLive }),
+		}),
 		deleteToolVmRuntimeRecord: vi.fn(async () => {}),
 		now: options.now ?? (() => 1_000),
 		projectNamespace: 'gateway-control-lease-rpc-tests',
@@ -633,6 +649,317 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			result: 'rejected',
 		});
 		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(3);
+	});
+
+	it('does not treat attachment drift as stable ownership drift after caller-context resolution', async () => {
+		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
+			agentId: context.agentId,
+			agentWorkspaceDir: context.agentWorkspaceDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: context.zoneId,
+		}));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions,
+		});
+		const oldLease = await leaseRpc.createLease({
+			callerContext,
+			payload: callerContextPayload,
+		});
+		await leaseRpc.releaseLease(
+			withCallerContextPayload({
+				...callerContextPayload,
+				leaseId: oldLease.leaseId,
+			}),
+		);
+		const trustedResolvedContextAfterAttachmentRefresh = {
+			...callerContext,
+			bootId: 'gateway-boot-b',
+			callerContextId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+			connectionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+			controllerEpoch: 'epoch-b',
+			peerId: 'gateway-zone-b',
+			sessionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+		} satisfies GatewayControlTrustedCallerContext;
+
+		await expect(
+			leaseRpc.reacquireLease({
+				callerContext: trustedResolvedContextAfterAttachmentRefresh,
+				payload: {
+					callerContext: {
+						callerContextId: trustedResolvedContextAfterAttachmentRefresh.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'caller-context',
+						observedAtMs: 1_100,
+						reason: 'session_mismatch',
+					},
+				},
+			}),
+		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+	});
+
+	it('rejects old-lease reacquire when replacement ownership moved to another same-agent session', async () => {
+		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
+			agentId: context.agentId,
+			agentWorkspaceDir: context.agentWorkspaceDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: context.zoneId,
+		}));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions,
+		});
+		const oldLease = await leaseRpc.createLease({
+			callerContext,
+			payload: callerContextPayload,
+		});
+		await leaseRpc.releaseLease(
+			withCallerContextPayload({
+				...callerContextPayload,
+				leaseId: oldLease.leaseId,
+			}),
+		);
+		const firstReplacement = await leaseRpc.reacquireLease({
+			callerContext: refreshedCallerContext,
+			payload: {
+				callerContext: {
+					callerContextId: refreshedCallerContext.callerContextId,
+				},
+				oldLeaseId: oldLease.leaseId,
+				staleEvidence: {
+					kind: 'lease-manager',
+					observedAtMs: 1_100,
+					reason: 'released',
+				},
+			},
+		});
+		expect(firstReplacement).toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+		const sameAgentDifferentSessionPayload = {
+			callerContext: {
+				callerContextId: sameAgentDifferentSessionCallerContext.callerContextId,
+			},
+		};
+		await expect(
+			leaseRpc.createLease({
+				callerContext: sameAgentDifferentSessionCallerContext,
+				payload: sameAgentDifferentSessionPayload,
+			}),
+		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+
+		await expect(
+			leaseRpc.reacquireLease({
+				callerContext: refreshedCallerContext,
+				payload: {
+					callerContext: {
+						callerContextId: refreshedCallerContext.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'lease-manager',
+						observedAtMs: 1_200,
+						reason: 'released',
+					},
+				},
+			}),
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
+	});
+
+	it('rejects reacquire when a concurrent same-agent session creates the replacement lease', async () => {
+		const baseLeaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-race'] });
+		let injectedSameAgentCreate = false;
+		const leaseRpcRef: {
+			current?: ReturnType<typeof createGatewayControlLeaseRpcOperations>;
+		} = {};
+		const leaseManager = {
+			...baseLeaseManager,
+			releaseLease: async (
+				leaseId: string,
+				options?: Parameters<typeof baseLeaseManager.releaseLease>[1],
+			): Promise<void> => {
+				await baseLeaseManager.releaseLease(leaseId, options);
+				if (!injectedSameAgentCreate && leaseId === 'lease-old') {
+					injectedSameAgentCreate = true;
+					const currentLeaseRpc = leaseRpcRef.current;
+					if (currentLeaseRpc === undefined) {
+						throw new Error('test lease RPC was not initialized');
+					}
+					await currentLeaseRpc.createLease({
+						callerContext: sameAgentDifferentSessionCallerContext,
+						payload: {
+							callerContext: {
+								callerContextId: sameAgentDifferentSessionCallerContext.callerContextId,
+							},
+						},
+					});
+				}
+			},
+		};
+		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
+			agentId: context.agentId,
+			agentWorkspaceDir: context.agentWorkspaceDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: context.zoneId,
+		}));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions,
+		});
+		leaseRpcRef.current = leaseRpc;
+		const oldLease = await leaseRpc.createLease({
+			callerContext,
+			payload: callerContextPayload,
+		});
+
+		await expect(
+			leaseRpc.reacquireLease({
+				callerContext: refreshedCallerContext,
+				payload: {
+					callerContext: {
+						callerContextId: refreshedCallerContext.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'tool-vm-ssh',
+						observedAtMs: 1_100,
+						operation: 'command',
+					},
+				},
+			}),
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
+		expect(injectedSameAgentCreate).toBe(true);
+	});
+
+	it('continues reacquire when force release already retired the old lease before teardown failed', async () => {
+		const leaseManager = createTestLeaseManager({
+			closeError: new Error('close failed after logical retirement'),
+			leaseIds: ['lease-old', 'lease-new'],
+		});
+		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
+			agentId: context.agentId,
+			agentWorkspaceDir: context.agentWorkspaceDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: context.zoneId,
+		}));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions,
+		});
+		const oldLease = await leaseRpc.createLease({
+			callerContext,
+			payload: callerContextPayload,
+		});
+
+		await expect(
+			leaseRpc.reacquireLease({
+				callerContext: refreshedCallerContext,
+				payload: {
+					callerContext: {
+						callerContextId: refreshedCallerContext.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'tool-vm-ssh',
+						observedAtMs: 1_100,
+						operation: 'command',
+					},
+				},
+			}),
+		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+	});
+
+	it('maps runtime-status unavailability during reacquire compatibility resolution to runtime_not_ready', async () => {
+		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+		let resolveCallCount = 0;
+		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => {
+			resolveCallCount += 1;
+			if (resolveCallCount > 1) {
+				throw new OpenClawRuntimeStatusUnavailableError(context.zoneId, 'runtime status missing');
+			}
+			return {
+				agentId: context.agentId,
+				agentWorkspaceDir: context.agentWorkspaceDir,
+				guestWorkdir: '/workspace',
+				hostWorkMountDir: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: context.zoneId,
+			};
+		});
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions,
+		});
+		const oldLease = await leaseRpc.createLease({
+			callerContext,
+			payload: callerContextPayload,
+		});
+
+		await expect(
+			leaseRpc.reacquireLease({
+				callerContext: refreshedCallerContext,
+				payload: {
+					callerContext: {
+						callerContextId: refreshedCallerContext.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'tool-vm-ssh',
+						observedAtMs: 1_100,
+						operation: 'command',
+					},
+				},
+			}),
+		).resolves.toEqual({
+			leaseRejectionReason: 'runtime_not_ready',
+			result: 'rejected',
+		});
 	});
 
 	it('expires old-lease authority after dead idle lease disappearance', async () => {

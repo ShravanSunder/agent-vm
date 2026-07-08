@@ -112,6 +112,26 @@ function isRefreshableLeaseError(error: unknown): boolean {
 	);
 }
 
+function reacquireRequestForStaleLease(params: {
+	readonly observedAtMs?: number;
+	readonly operation: ToolVmHandleBindingSshOperation;
+	readonly reason: ToolVmSshFailureKind;
+}): OpenClawGondolinLeaseReacquireRequest {
+	return {
+		observedAtMs: params.observedAtMs ?? Date.now(),
+		staleEvidence:
+			params.reason === 'active-use-refreshable-failure'
+				? {
+						kind: 'caller-context',
+						reason: 'stale',
+					}
+				: {
+						kind: 'tool-vm-ssh',
+						operation: params.operation,
+					},
+	};
+}
+
 function isCleanupNotFound(error: unknown): boolean {
 	return error instanceof ControllerLeaseRequestError && error.status === 404;
 }
@@ -402,7 +422,17 @@ export function createGondolinSandboxBackendFactory(
 					`lease renew failed for zone '${options.zoneId}' agent '${agentId}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
 				);
 				if (error instanceof ToolVmSshOperationStaleError) {
-					await markLeaseStale(cachedEntry.lease, error.reason, error);
+					const reacquireRequest = reacquireRequestForStaleLease({
+						operation: 'probe',
+						reason: error.reason,
+					});
+					await markLeaseStale(cachedEntry.lease, error.reason, error, reacquireRequest);
+					const replacementLease = await leaseClient.reacquireLease(
+						cachedEntry.lease.leaseId,
+						reacquireRequest,
+					);
+					lease = replacementLease;
+					agentLeaseCache.set(cacheKey, { ...requestedCacheEntry, lease });
 				} else if (shouldRefreshCachedLease(error)) {
 					agentLeaseCache.delete(cacheKey);
 				} else {

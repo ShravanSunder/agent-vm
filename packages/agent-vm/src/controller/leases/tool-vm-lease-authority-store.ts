@@ -5,13 +5,18 @@ export type ToolVmLeaseAuthorityState = 'current' | 'replaced' | 'retired';
 export interface ToolVmLeaseStableOwner {
 	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
-	readonly bootId: string;
-	readonly controllerEpoch: string;
-	readonly peerId: string;
 	readonly purpose: string;
 	readonly sessionKeyDigest: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
+}
+
+export interface ToolVmLeaseSessionAttachment {
+	readonly bootId: string;
+	readonly connectionId: string;
+	readonly controllerEpoch: string;
+	readonly peerId: string;
+	readonly sessionId: string;
 }
 
 export interface ToolVmLeaseAuthorityRecord<TCompatibility> {
@@ -20,6 +25,7 @@ export interface ToolVmLeaseAuthorityRecord<TCompatibility> {
 	readonly leaseId: string;
 	readonly owner: ToolVmLeaseStableOwner;
 	readonly replacementLeaseId?: string;
+	readonly sessionAttachment: ToolVmLeaseSessionAttachment;
 	readonly state: ToolVmLeaseAuthorityState;
 }
 
@@ -30,6 +36,7 @@ export interface ToolVmLeaseAuthorityStore<TCompatibility> {
 		readonly compatibility: TCompatibility;
 		readonly leaseId: string;
 		readonly owner: ToolVmLeaseStableOwner;
+		readonly sessionAttachment: ToolVmLeaseSessionAttachment;
 	}): void;
 	resolve(leaseId: string): ToolVmLeaseAuthorityRecord<TCompatibility> | undefined;
 }

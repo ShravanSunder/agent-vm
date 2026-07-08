@@ -705,9 +705,12 @@ describe('createGatewayControlLeaseClient', () => {
 			'lease_renew',
 		]);
 
-		await expect(leaseClient.renewLease('01890f00-0000-7000-8000-000000000001')).rejects.toThrow(
-			'has no registered caller context',
-		);
+		await expect(
+			leaseClient.renewLease('01890f00-0000-7000-8000-000000000001'),
+		).rejects.toMatchObject({
+			leaseRejectionReason: 'lease_authority_absent',
+			status: 410,
+		});
 		expect(observedMessages.map((message) => message.operation)).toEqual([
 			'caller_context_register',
 			'lease_create',

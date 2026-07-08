@@ -8,6 +8,7 @@ import type {
 } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import { ControllerLeaseRequestError } from '../lease-client-contract.js';
 import {
 	createGatewayControlLeaseClient,
 	type GatewayControlLeaseClientOptions,
@@ -577,7 +578,10 @@ describe('gateway control lease client recovery behavior', () => {
 				observedAtMs: 42,
 				staleEvidence: { kind: 'tool-vm-ssh', operation: 'finalize' },
 			}),
-		).rejects.toMatchObject({ status: 409 });
+		).rejects.toMatchObject({
+			leaseRejectionReason: 'lease_authority_absent',
+			status: 410,
+		});
 		expect(observedMessages.map((message) => message.operation)).toEqual([
 			'caller_context_register',
 			'lease_create',
@@ -833,6 +837,84 @@ describe('gateway control lease client recovery behavior', () => {
 		expect(leaseClient.getRetiredLeaseReacquireRequest?.(oldLeaseId)).toBeDefined();
 		nowMs = 2_050;
 		expect(leaseClient.getRetiredLeaseReacquireRequest?.(oldLeaseId)).toBeUndefined();
+		expect(observedMessages.map((message) => message.operation)).toEqual([
+			'caller_context_register',
+			'lease_create',
+			'lease_release',
+		]);
+	});
+
+	it('returns a typed lease-authority error after a retired reacquire hint expires', async () => {
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const oldLeaseId = '01890f00-0000-7000-8000-000000000001';
+		let nowMs = 1_000;
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedMessages.push(payload);
+			if (payload.operation === 'caller_context_register') {
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: {
+							callerContextId: '44444444-4444-4444-8444-444444444444',
+						},
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_create') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			expect(payload.operation).toBe('lease_release');
+			return {
+				kind: 'command_result',
+				operation: 'lease_release',
+				payload: {
+					lease: createLeaseSnapshot(oldLeaseId),
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		});
+		const leaseClient = createLeaseClient(controlService, {
+			now: () => nowMs,
+			retiredLeaseReacquireRequestTtlMs: 50,
+		});
+
+		await leaseClient.requestLease(leaseRequest);
+		nowMs = 2_000;
+		await leaseClient.releaseLease(oldLeaseId, {
+			force: true,
+			observedAtMs: 2_000,
+			staleEvidence: { kind: 'tool-vm-ssh', operation: 'command' },
+		});
+		nowMs = 2_050;
+
+		let caughtError: unknown;
+		try {
+			await leaseClient.startActiveUse(oldLeaseId, {
+				useId: '019f40ff-ffff-7fff-bfff-ffffffffffff',
+			});
+		} catch (error) {
+			caughtError = error;
+		}
+
+		expect(caughtError).toBeInstanceOf(ControllerLeaseRequestError);
+		if (!(caughtError instanceof ControllerLeaseRequestError)) {
+			throw new Error('expected ControllerLeaseRequestError');
+		}
+		expect(caughtError.status).toBe(410);
+		expect(caughtError.leaseRejectionReason).toBe('lease_authority_absent');
+		expect(caughtError.message).not.toContain('has no registered caller context');
 		expect(observedMessages.map((message) => message.operation)).toEqual([
 			'caller_context_register',
 			'lease_create',

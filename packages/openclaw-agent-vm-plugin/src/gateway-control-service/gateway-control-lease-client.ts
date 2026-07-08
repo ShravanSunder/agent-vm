@@ -536,8 +536,9 @@ export function createGatewayControlLeaseClient(
 		if (callerContext === undefined) {
 			throw createGatewayControlError({
 				context,
-				message: `gateway control lease '${leaseId}' has no registered caller context`,
-				status: 409,
+				leaseRejectionReason: 'lease_authority_absent',
+				message: `gateway control lease lifecycle authority is absent for lease '${leaseId}'`,
+				status: 410,
 			});
 		}
 		return callerContext;

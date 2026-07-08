@@ -14,8 +14,10 @@ import {
 import type { ObservedControllerLeaseCreateRequest } from '../leases/observed-lease-create-request.js';
 import {
 	createToolVmLeaseAuthorityStore,
+	type ToolVmLeaseSessionAttachment,
 	type ToolVmLeaseStableOwner,
 } from '../leases/tool-vm-lease-authority-store.js';
+import { OpenClawRuntimeStatusUnavailableError } from '../openclaw-runtime-status.js';
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
 import type {
 	GatewayControlLeaseRpcOperations,
@@ -46,13 +48,22 @@ function stableOwnerFromCallerContext(
 	return {
 		agentId: callerContext.agentId,
 		agentWorkspaceDir: callerContext.agentWorkspaceDir,
-		bootId: callerContext.bootId,
-		controllerEpoch: callerContext.controllerEpoch,
-		peerId: callerContext.peerId,
 		purpose: callerContext.purpose,
 		sessionKeyDigest: callerContext.sessionKeyDigest,
 		workMountDir: callerContext.workMountDir,
 		zoneId: callerContext.zoneId,
+	};
+}
+
+function sessionAttachmentFromCallerContext(
+	callerContext: GatewayControlTrustedCallerContext,
+): ToolVmLeaseSessionAttachment {
+	return {
+		bootId: callerContext.bootId,
+		connectionId: callerContext.connectionId,
+		controllerEpoch: callerContext.controllerEpoch,
+		peerId: callerContext.peerId,
+		sessionId: callerContext.sessionId,
 	};
 }
 
@@ -63,9 +74,6 @@ function callerContextMatchesLeaseOwner(comparison: {
 	return (
 		comparison.callerContext.agentId === comparison.owner.agentId &&
 		comparison.callerContext.agentWorkspaceDir === comparison.owner.agentWorkspaceDir &&
-		comparison.callerContext.bootId === comparison.owner.bootId &&
-		comparison.callerContext.controllerEpoch === comparison.owner.controllerEpoch &&
-		comparison.callerContext.peerId === comparison.owner.peerId &&
 		comparison.callerContext.purpose === comparison.owner.purpose &&
 		comparison.callerContext.sessionKeyDigest === comparison.owner.sessionKeyDigest &&
 		comparison.callerContext.workMountDir === comparison.owner.workMountDir &&
@@ -255,6 +263,7 @@ export function createGatewayControlLeaseRpcOperations(
 			compatibility: record.leaseCreateOptions,
 			leaseId: record.leaseId,
 			owner: stableOwnerFromCallerContext(record.callerContext),
+			sessionAttachment: sessionAttachmentFromCallerContext(record.callerContext),
 		});
 	}
 
@@ -295,6 +304,21 @@ export function createGatewayControlLeaseRpcOperations(
 				optionsToCompare.authorityCompatibility,
 				optionsToCompare.currentCompatibility,
 			).length === 0
+		);
+	}
+
+	function currentLeaseAuthorityMatchesCaller(optionsToCheck: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly leaseId: string;
+	}): boolean {
+		const currentAuthority = leaseAuthorityStore.resolve(optionsToCheck.leaseId);
+		return (
+			currentAuthority !== undefined &&
+			currentAuthority.state === 'current' &&
+			callerContextMatchesLeaseOwner({
+				callerContext: optionsToCheck.callerContext,
+				owner: currentAuthority.owner,
+			})
 		);
 	}
 
@@ -388,10 +412,28 @@ export function createGatewayControlLeaseRpcOperations(
 				});
 				return leaseRpcRejection('ownership_denied');
 			}
-			const currentCompatibility = await resolveCurrentReacquireCompatibility({
-				callerContext,
-				payload,
-			});
+			let currentCompatibility: LeaseCreateOptions;
+			try {
+				currentCompatibility = await resolveCurrentReacquireCompatibility({
+					callerContext,
+					payload,
+				});
+			} catch (error) {
+				if (!(error instanceof OpenClawRuntimeStatusUnavailableError)) {
+					throw error;
+				}
+				emitReacquireLifecycleEvent({
+					callerContext,
+					elapsedMs: 0,
+					leaseRejectionReason: 'runtime_not_ready',
+					observedAtMs: Math.max(1, now()),
+					operation,
+					oldLeaseId: payload.oldLeaseId,
+					recordHealthEvent: options.recordHealthEvent,
+					result: 'failed',
+				});
+				return leaseRpcRejection('runtime_not_ready');
+			}
 			if (
 				!isReacquireCompatibilityCurrent({
 					authorityCompatibility: authority.compatibility,
@@ -413,6 +455,24 @@ export function createGatewayControlLeaseRpcOperations(
 			if (authority.replacementLeaseId !== undefined) {
 				const replacementSnapshot = options.leaseManager.peekLease(authority.replacementLeaseId);
 				if (replacementSnapshot !== undefined) {
+					if (
+						!currentLeaseAuthorityMatchesCaller({
+							callerContext,
+							leaseId: authority.replacementLeaseId,
+						})
+					) {
+						emitReacquireLifecycleEvent({
+							callerContext,
+							elapsedMs: 0,
+							leaseRejectionReason: 'ownership_denied',
+							observedAtMs: Math.max(1, now()),
+							operation,
+							oldLeaseId: payload.oldLeaseId,
+							recordHealthEvent: options.recordHealthEvent,
+							result: 'failed',
+						});
+						return leaseRpcRejection('ownership_denied');
+					}
 					return await serializeGatewayControlLeaseSnapshot({
 						includeSsh: 'private',
 						lease: replacementSnapshot.lease,
@@ -421,7 +481,13 @@ export function createGatewayControlLeaseRpcOperations(
 				}
 			}
 			if (options.leaseManager.peekLease(payload.oldLeaseId) !== undefined) {
-				await options.leaseManager.releaseLease(payload.oldLeaseId, { force: true });
+				try {
+					await options.leaseManager.releaseLease(payload.oldLeaseId, { force: true });
+				} catch (error) {
+					if (options.leaseManager.peekLease(payload.oldLeaseId) !== undefined) {
+						throw error;
+					}
+				}
 			}
 			leaseAuthorityStore.markRetired(payload.oldLeaseId);
 			const replacementLease = await options.leaseManager.createLease(currentCompatibility);
@@ -437,6 +503,26 @@ export function createGatewayControlLeaseRpcOperations(
 					result: 'failed',
 				});
 				return leaseRpcRejection('lease_reacquire_required');
+			}
+			const existingReplacementAuthority = leaseAuthorityStore.resolve(replacementLease.id);
+			if (
+				existingReplacementAuthority !== undefined &&
+				!currentLeaseAuthorityMatchesCaller({
+					callerContext,
+					leaseId: replacementLease.id,
+				})
+			) {
+				emitReacquireLifecycleEvent({
+					callerContext,
+					elapsedMs: 0,
+					leaseRejectionReason: 'ownership_denied',
+					observedAtMs: Math.max(1, now()),
+					operation,
+					oldLeaseId: payload.oldLeaseId,
+					recordHealthEvent: options.recordHealthEvent,
+					result: 'failed',
+				});
+				return leaseRpcRejection('ownership_denied');
 			}
 			leaseAuthorityStore.markReplaced(payload.oldLeaseId, replacementLease.id);
 			recordLeaseOwner({

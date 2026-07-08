@@ -1,18 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import { createToolVmLeaseAuthorityStore } from './tool-vm-lease-authority-store.js';
+import {
+	createToolVmLeaseAuthorityStore,
+	type ToolVmLeaseSessionAttachment,
+	type ToolVmLeaseStableOwner,
+} from './tool-vm-lease-authority-store.js';
 
 const stableOwner = {
 	agentId: 'main',
 	agentWorkspaceDir: '/home/openclaw/workspace',
-	bootId: 'gateway-boot-a',
-	controllerEpoch: 'epoch-a',
-	peerId: 'gateway-zone-a',
 	purpose: 'tool_vm_lease',
 	sessionKeyDigest: '0123456789abcdef0123456789abcdef',
 	workMountDir: '/host/sandbox-work',
 	zoneId: 'zone-a',
-};
+} satisfies ToolVmLeaseStableOwner;
+
+const sessionAttachment = {
+	bootId: 'gateway-boot-a',
+	connectionId: 'socket-a',
+	controllerEpoch: 'epoch-a',
+	peerId: 'gateway-zone-a',
+	sessionId: 'session-a',
+} satisfies ToolVmLeaseSessionAttachment;
 
 describe('tool VM lease authority store', () => {
 	it('keeps retired old-lease authority only for the tombstone window', () => {
@@ -25,6 +34,7 @@ describe('tool VM lease authority store', () => {
 			compatibility: { profileId: 'standard' },
 			leaseId: 'lease-old',
 			owner: stableOwner,
+			sessionAttachment,
 		});
 
 		store.markRetired('lease-old');

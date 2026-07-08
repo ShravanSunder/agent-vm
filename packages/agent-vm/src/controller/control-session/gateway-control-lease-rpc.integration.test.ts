@@ -75,6 +75,23 @@ const callerContextRegisterPayload = {
 	}),
 } satisfies GatewayControlCallerContextRegisterPayload;
 
+function createCallerContextRegisterPayload(
+	overrides: Partial<
+		Omit<GatewayControlCallerContextRegisterPayload['adapterEvidence'], 'agentAuthority' | 'proof'>
+	> = {},
+): GatewayControlCallerContextRegisterPayload {
+	return {
+		adapterEvidence: signCallerContextEvidence({
+			agentId: 'main',
+			agentWorkspaceDir: '/home/openclaw/workspace',
+			sessionKey: 'agent:main:test-session',
+			workMountDir: '/host/sandbox-work',
+			zoneId: 'zone-a',
+			...overrides,
+		}),
+	};
+}
+
 function createEnvelope(operation: GatewayControlRpcOperation, sequence: number): ControlEnvelope {
 	return {
 		bootId: acceptedSession.bootId,
@@ -154,6 +171,86 @@ function createTestLeaseManager(): ReturnType<typeof createLeaseManager> {
 		},
 		writeToolVmRuntimeRecord: vi.fn(async () => {}),
 	});
+}
+
+function createIntegrationLeaseRpcOptions(
+	options: {
+		readonly leaseManager?: ReturnType<typeof createLeaseManager>;
+		readonly recordedHealthEvents?: AgentVmHealthEvent[];
+	} = {},
+): Parameters<typeof createGatewayControlLeaseRpcOperations>[0] {
+	return {
+		leaseManager: options.leaseManager ?? createTestLeaseManager(),
+		readIdentityPem: async () => 'identity-pem',
+		recordHealthEvent: (event: AgentVmHealthEvent) => {
+			options.recordedHealthEvents?.push(event);
+		},
+		resolveLeaseCreateOptions: async ({ callerContext }) => ({
+			agentId: callerContext.agentId,
+			agentWorkspaceDir: callerContext.agentWorkspaceDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: callerContext.zoneId,
+		}),
+	};
+}
+
+function createIntegrationDispatcher(options: {
+	readonly callerContextIds: readonly string[];
+	readonly leaseRpcOptions: Parameters<typeof createGatewayControlLeaseRpcOperations>[0];
+}): ReturnType<typeof createControlSessionDispatcher> {
+	let callerContextIdIndex = 0;
+	const callerContexts = createGatewayControlCallerContextRegistry({
+		agentAuthorityKeys,
+		callerContextProofKey,
+		createCallerContextId: () => {
+			const callerContextId = options.callerContextIds[callerContextIdIndex];
+			if (callerContextId === undefined) {
+				throw new Error('test caller context id exhausted');
+			}
+			callerContextIdIndex += 1;
+			return callerContextId;
+		},
+	});
+	const leaseRpc = createGatewayControlLeaseRpcOperations(options.leaseRpcOptions);
+	const dispatcher = createControlSessionDispatcher();
+	dispatcher.register(
+		'gateway_control',
+		createGatewayControlDomainHandler({
+			callerContexts,
+			leaseRpc,
+			session: acceptedSession,
+		}),
+	);
+	return dispatcher;
+}
+
+async function registerCallerContext(options: {
+	readonly dispatcher: ReturnType<typeof createControlSessionDispatcher>;
+	readonly payload?: GatewayControlCallerContextRegisterPayload;
+	readonly sequence: number;
+}): Promise<string> {
+	const response = await dispatchGatewayControl(
+		options.dispatcher,
+		'caller_context_register',
+		options.sequence,
+		{
+			kind: 'command',
+			operation: 'caller_context_register',
+			payload: options.payload ?? callerContextRegisterPayload,
+		},
+	);
+	const callerContextId = response?.payload.callerContext?.callerContextId;
+	if (callerContextId === undefined) {
+		throw new Error('expected caller context id');
+	}
+	return callerContextId;
 }
 
 async function dispatchGatewayControl(
@@ -312,5 +409,128 @@ describe('gateway control lease RPC integration', () => {
 				zoneId: acceptedSession.zoneId,
 			}),
 		]);
+	});
+
+	it('returns lease_authority_absent through the domain-handler seam when old authority is gone', async () => {
+		const dispatcher = createIntegrationDispatcher({
+			callerContextIds: ['44444444-4444-4444-8444-444444444444'],
+			leaseRpcOptions: createIntegrationLeaseRpcOptions(),
+		});
+		const callerContextId = await registerCallerContext({ dispatcher, sequence: 1 });
+
+		const reacquireResponse = await dispatchGatewayControl(dispatcher, 'lease_reacquire', 2, {
+			kind: 'command',
+			operation: 'lease_reacquire',
+			payload: {
+				callerContext: { callerContextId },
+				oldLeaseId: 'lease-missing',
+				staleEvidence: {
+					kind: 'caller-context',
+					observedAtMs: 1_100,
+					reason: 'lease_authority_absent',
+				},
+			},
+		});
+
+		expect(reacquireResponse).toEqual({
+			kind: 'command_result',
+			operation: 'lease_reacquire',
+			payload: {
+				leaseRejectionReason: 'lease_authority_absent',
+				responseToMessageId: '66666666-6666-4666-8666-000000000002',
+				result: 'rejected',
+			},
+		});
+	});
+
+	it('denies replayed old-lease reacquire after replacement ownership moves to another same-agent session', async () => {
+		const dispatcher = createIntegrationDispatcher({
+			callerContextIds: [
+				'44444444-4444-4444-8444-444444444444',
+				'99999999-9999-4999-8999-999999999999',
+				'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			],
+			leaseRpcOptions: createIntegrationLeaseRpcOptions(),
+		});
+		const firstCallerContextId = await registerCallerContext({ dispatcher, sequence: 1 });
+		const createResponse = await dispatchGatewayControl(dispatcher, 'lease_create', 2, {
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: { callerContextId: firstCallerContextId },
+			},
+		});
+		const oldLeaseId = createResponse?.payload.lease?.leaseId;
+		if (oldLeaseId === undefined) {
+			throw new Error('expected old lease id');
+		}
+		await dispatchGatewayControl(dispatcher, 'lease_release', 3, {
+			kind: 'command',
+			operation: 'lease_release',
+			payload: {
+				callerContext: { callerContextId: firstCallerContextId },
+				leaseId: oldLeaseId,
+			},
+		});
+		const refreshedCallerContextId = await registerCallerContext({ dispatcher, sequence: 4 });
+		const firstReacquireResponse = await dispatchGatewayControl(dispatcher, 'lease_reacquire', 5, {
+			kind: 'command',
+			operation: 'lease_reacquire',
+			payload: {
+				callerContext: { callerContextId: refreshedCallerContextId },
+				oldLeaseId,
+				staleEvidence: {
+					kind: 'lease-manager',
+					observedAtMs: 1_100,
+					reason: 'released',
+				},
+			},
+		});
+		expect(firstReacquireResponse?.payload.lease?.leaseId).toBe('lease-new');
+
+		const sameAgentDifferentSessionCallerContextId = await registerCallerContext({
+			dispatcher,
+			payload: createCallerContextRegisterPayload({
+				sessionKey: 'agent:main:other-session',
+			}),
+			sequence: 6,
+		});
+		const sameAgentCreateResponse = await dispatchGatewayControl(dispatcher, 'lease_create', 7, {
+			kind: 'command',
+			operation: 'lease_create',
+			payload: {
+				callerContext: { callerContextId: sameAgentDifferentSessionCallerContextId },
+			},
+		});
+		expect(sameAgentCreateResponse?.payload.lease?.leaseId).toBe('lease-new');
+
+		const replayedReacquireResponse = await dispatchGatewayControl(
+			dispatcher,
+			'lease_reacquire',
+			8,
+			{
+				kind: 'command',
+				operation: 'lease_reacquire',
+				payload: {
+					callerContext: { callerContextId: refreshedCallerContextId },
+					oldLeaseId,
+					staleEvidence: {
+						kind: 'lease-manager',
+						observedAtMs: 1_200,
+						reason: 'released',
+					},
+				},
+			},
+		);
+
+		expect(replayedReacquireResponse).toEqual({
+			kind: 'command_result',
+			operation: 'lease_reacquire',
+			payload: {
+				leaseRejectionReason: 'ownership_denied',
+				responseToMessageId: '66666666-6666-4666-8666-000000000008',
+				result: 'rejected',
+			},
+		});
 	});
 });
