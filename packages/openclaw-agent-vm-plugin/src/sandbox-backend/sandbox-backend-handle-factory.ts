@@ -368,6 +368,9 @@ export function createGondolinSandboxBackendFactory(
 			writeSandboxBackendLog(
 				`lease marked stale for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}' reason '${reason}': ${formatUnknownError(error)}`,
 			);
+			if (reacquireRequest !== undefined) {
+				leaseClient.retainRetiredLeaseReacquireRequest?.(lease.leaseId, reacquireRequest);
+			}
 			await leaseClient
 				.releaseLease(lease.leaseId, {
 					force: true,
@@ -554,10 +557,6 @@ function createSandboxBackendHandle(options: {
 		if (markResult.kind === 'superseded') {
 			return;
 		}
-		options.leaseClient.retainRetiredLeaseReacquireRequest?.(
-			params.lease.leaseId,
-			markResult.reacquireRequest,
-		);
 		await options.markCachedLeaseStale(
 			params.lease,
 			params.reason,

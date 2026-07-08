@@ -1295,6 +1295,120 @@ describe('createGondolinSandboxBackendFactory', () => {
 		]);
 	});
 
+	it('retains a cached-probe reacquire hint before cleanup and direct reacquire failures', async () => {
+		const oldLease = createLeaseResponse('cached-probe-retain-old');
+		const replacementLease = createLeaseResponse('cached-probe-retain-new');
+		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
+		let reacquireAttempt = 0;
+		const requestLease = vi.fn(async () => oldLease);
+		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+			useId: request.useId,
+		}));
+		const reacquireLease = vi.fn(async (oldLeaseId: string) => {
+			expect(oldLeaseId).toBe(oldLease.leaseId);
+			reacquireAttempt += 1;
+			if (reacquireAttempt === 1) {
+				throw new ControllerLeaseRequestError({
+					bodyText: JSON.stringify({ message: 'controller reacquire unavailable' }),
+					context: 'Gateway control lease_reacquire',
+					responseBody: { message: 'controller reacquire unavailable' },
+					status: 503,
+				});
+			}
+			return replacementLease;
+		});
+		const releaseLease = vi.fn(async () => {
+			throw new Error('controller release transport failed');
+		});
+		const retainRetiredLeaseReacquireRequest = vi.fn(
+			(_leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
+				retainedReacquireRequest = reacquireRequest;
+				return true;
+			},
+		);
+		const runRemoteShellScript = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('cached probe reset'))
+			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('ok') });
+		const leaseClient = {
+			endActiveUse: vi.fn(async () => {}),
+			getRetiredLeaseReacquireRequest: (leaseId: string) =>
+				leaseId === oldLease.leaseId ? retainedReacquireRequest : undefined,
+			heartbeatActiveUse: vi.fn(async () => ({
+				expiresAt: 2_000,
+				heartbeatAfterMs: 1_000,
+			})),
+			peekLease: async () => createLeasePeekResponse(oldLease.leaseId),
+			reacquireLease,
+			releaseLease,
+			renewLease: async () => oldLease,
+			requestLease,
+			retainRetiredLeaseReacquireRequest,
+			startActiveUse,
+		} satisfies LeaseClient;
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => leaseClient,
+				runRemoteShellScript,
+			},
+		);
+
+		const firstHandle = await factory(createFactoryParamsForAgent('main'));
+		await expect(factory(createFactoryParamsForAgent('main'))).rejects.toThrow(
+			'Gateway control lease_reacquire returned HTTP 503',
+		);
+		await expect(firstHandle.runShellCommand({ script: 'pwd' })).resolves.toEqual({
+			code: 0,
+			stderr: Buffer.alloc(0),
+			stdout: Buffer.from('ok'),
+		});
+
+		expect(retainRetiredLeaseReacquireRequest).toHaveBeenCalledWith(oldLease.leaseId, {
+			observedAtMs: expect.any(Number),
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				operation: 'probe',
+			},
+		});
+		const retainCallOrder = retainRetiredLeaseReacquireRequest.mock.invocationCallOrder[0];
+		const releaseCallOrder = releaseLease.mock.invocationCallOrder[0];
+		const firstReacquireCallOrder = reacquireLease.mock.invocationCallOrder[0];
+		if (
+			retainCallOrder === undefined ||
+			releaseCallOrder === undefined ||
+			firstReacquireCallOrder === undefined
+		) {
+			throw new Error('expected retain, release, and reacquire calls');
+		}
+		expect(retainCallOrder).toBeLessThan(releaseCallOrder);
+		expect(retainCallOrder).toBeLessThan(firstReacquireCallOrder);
+		expect(releaseLease).toHaveBeenCalledWith(
+			oldLease.leaseId,
+			expect.objectContaining({
+				force: true,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					operation: 'probe',
+				},
+			}),
+		);
+		expect(reacquireLease).toHaveBeenCalledTimes(2);
+		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
+			replacementLease.leaseId,
+		]);
+	});
+
 	it('refuses a cached agent lease when the agent workspace root changes', async () => {
 		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
 			createLeaseResponse('shravan-beta-100', {
