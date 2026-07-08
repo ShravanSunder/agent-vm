@@ -321,7 +321,7 @@ describe('createGatewayControlLeaseClient', () => {
 					kind: 'command_result',
 					operation: 'lease_create',
 					payload: {
-						leaseRejectionReason: 'absent',
+						leaseRejectionReason: 'caller_context_absent',
 						responseToMessageId: envelope.messageId,
 						result: 'rejected',
 					},
@@ -488,7 +488,7 @@ describe('createGatewayControlLeaseClient', () => {
 					kind: 'command_result',
 					operation: 'lease_renew',
 					payload: {
-						leaseRejectionReason: 'absent',
+						leaseRejectionReason: 'caller_context_absent',
 						responseToMessageId: envelope.messageId,
 						result: 'rejected',
 					},
@@ -641,7 +641,7 @@ describe('createGatewayControlLeaseClient', () => {
 				kind: 'command_result',
 				operation: 'lease_renew',
 				payload: {
-					leaseRejectionReason: 'absent',
+					leaseRejectionReason: 'caller_context_absent',
 					responseToMessageId: envelope.messageId,
 					result: 'rejected',
 				},

@@ -20,6 +20,7 @@ export const GatewayControlRpcOperationSchema = z.enum([
 	'lease_create',
 	'lease_get',
 	'lease_peek',
+	'lease_reacquire',
 	'lease_renew',
 	'lease_release',
 	'lease_use_start',
@@ -208,6 +209,41 @@ export const GatewayControlLeaseUseEndPayloadSchema = z
 		leaseId: z.string().min(1),
 		reason: z.enum(['completed', 'failed', 'cancelled', 'timed_out']),
 		useId: z.string().uuid(),
+	})
+	.strict();
+
+export const GatewayControlLeaseStaleEvidenceSchema = z.discriminatedUnion('kind', [
+	z
+		.object({
+			errorCode: z.string().min(1).optional(),
+			kind: z.literal('tool-vm-ssh'),
+			observedAtMs: z.number().int().positive(),
+			operation: z.enum(['command', 'file-bridge', 'finalize', 'probe']),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal('caller-context'),
+			observedAtMs: z.number().int().positive(),
+			reason: z.enum(['absent', 'stale', 'session_mismatch', 'lease_authority_absent']).optional(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal('lease-manager'),
+			observedAtMs: z.number().int().positive(),
+			reason: z.enum(['expired', 'released', 'force_released', 'generation_stale']).optional(),
+		})
+		.strict(),
+]);
+
+export const GatewayControlLeaseReacquireIntentPayloadSchema = z
+	.object({
+		callerContext: GatewayControlCallerContextRefSchema,
+		correlation: GatewayControlToolCallCorrelationSchema.optional(),
+		idleTtlHintMs: z.number().int().positive().optional(),
+		oldLeaseId: z.string().min(1),
+		staleEvidence: GatewayControlLeaseStaleEvidenceSchema,
 	})
 	.strict();
 
@@ -470,11 +506,18 @@ export const GatewayControlLeaseUseSnapshotSchema = z
 	.strict();
 
 export const GatewayControlLeaseRejectionReasonSchema = z.enum([
-	'absent',
-	'generation_stale',
-	'force_released',
-	'releasing',
-	'use_tombstoned',
+	'caller_context_absent',
+	'caller_context_session_mismatch',
+	'caller_context_stale',
+	'lease_absent',
+	'lease_authority_absent',
+	'lease_force_released',
+	'lease_generation_stale',
+	'lease_reacquire_required',
+	'lease_releasing',
+	'lease_retired',
+	'lease_use_tombstoned',
+	'ownership_denied',
 	'runtime_not_ready',
 ]);
 
@@ -651,7 +694,14 @@ const GatewayControlRpcCallerContextRegisterCommandResultMessageSchema =
 const GatewayControlRpcLeaseCommandResultMessageSchema =
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command_result'),
-		operation: z.enum(['lease_create', 'lease_get', 'lease_peek', 'lease_renew', 'lease_release']),
+		operation: z.enum([
+			'lease_create',
+			'lease_get',
+			'lease_peek',
+			'lease_reacquire',
+			'lease_renew',
+			'lease_release',
+		]),
 		payload: GatewayControlRpcLeaseResponsePayloadSchema,
 	}).strict();
 
@@ -726,6 +776,11 @@ export const GatewayControlRpcCommandMessageSchema = z.discriminatedUnion('opera
 		kind: z.literal('command'),
 		operation: z.literal('lease_peek'),
 		payload: GatewayControlLeaseIdPayloadSchema,
+	}).strict(),
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command'),
+		operation: z.literal('lease_reacquire'),
+		payload: GatewayControlLeaseReacquireIntentPayloadSchema,
 	}).strict(),
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command'),
@@ -805,6 +860,7 @@ export const gatewayControlDeliveryPolicyByOperation = {
 	lease_create: 'critical_idempotent',
 	lease_get: 'acked_idempotent',
 	lease_peek: 'acked_idempotent',
+	lease_reacquire: 'critical_idempotent',
 	lease_release: 'acked_idempotent',
 	lease_renew: 'single_use_critical',
 	lease_use_end: 'acked_idempotent',
@@ -855,6 +911,7 @@ export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 	lease_create: 180_000,
 	lease_get: 5_000,
 	lease_peek: 5_000,
+	lease_reacquire: 180_000,
 	lease_release: 5_000,
 	lease_renew: 10_000,
 	lease_use_end: 5_000,
@@ -886,6 +943,15 @@ export type GatewayControlLeaseCreateIntentPayload = z.infer<
 	typeof GatewayControlLeaseCreateIntentPayloadSchema
 >;
 export type GatewayControlLeaseIdPayload = z.infer<typeof GatewayControlLeaseIdPayloadSchema>;
+export type GatewayControlLeaseReacquireIntentPayload = z.infer<
+	typeof GatewayControlLeaseReacquireIntentPayloadSchema
+>;
+export type GatewayControlLeaseRejectionReason = z.infer<
+	typeof GatewayControlLeaseRejectionReasonSchema
+>;
+export type GatewayControlLeaseStaleEvidence = z.infer<
+	typeof GatewayControlLeaseStaleEvidenceSchema
+>;
 export type GatewayControlLeaseSnapshot = z.infer<typeof GatewayControlLeaseSnapshotSchema>;
 export type GatewayControlLeaseUseEndPayload = z.infer<
 	typeof GatewayControlLeaseUseEndPayloadSchema

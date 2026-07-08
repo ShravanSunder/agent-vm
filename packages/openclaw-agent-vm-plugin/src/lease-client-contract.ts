@@ -36,6 +36,27 @@ export interface OpenClawGondolinLeaseRequest {
 	readonly zoneId: string;
 }
 
+export type OpenClawGondolinLeaseStaleEvidence =
+	| {
+			readonly errorCode?: string;
+			readonly kind: 'tool-vm-ssh';
+			readonly operation: 'command' | 'file-bridge' | 'finalize' | 'probe';
+	  }
+	| {
+			readonly kind: 'caller-context';
+			readonly reason?: 'absent' | 'stale' | 'session_mismatch' | 'lease_authority_absent';
+	  }
+	| {
+			readonly kind: 'lease-manager';
+			readonly reason?: 'expired' | 'released' | 'force_released' | 'generation_stale';
+	  };
+
+export interface OpenClawGondolinLeaseReacquireRequest {
+	readonly idleTtlMs?: number;
+	readonly observedAtMs: number;
+	readonly staleEvidence: OpenClawGondolinLeaseStaleEvidence;
+}
+
 export interface LeaseClient {
 	// Cached handles use renewLease; read-only runtime probes use peekLease.
 	endActiveUse(leaseId: string, useId: string, request: EndToolVmActiveUseRequest): Promise<void>;
@@ -45,6 +66,10 @@ export interface LeaseClient {
 		request: HeartbeatToolVmActiveUseRequest,
 	): Promise<HeartbeatToolVmActiveUseResponse>;
 	peekLease(leaseId: string): Promise<ToolVmLeasePeek>;
+	reacquireLease(
+		oldLeaseId: string,
+		request: OpenClawGondolinLeaseReacquireRequest,
+	): Promise<ToolVmSshLease>;
 	releaseLease(leaseId: string, options?: { readonly force?: boolean }): Promise<void>;
 	renewLease(leaseId: string): Promise<ToolVmSshLease>;
 	requestLease(request: OpenClawGondolinLeaseRequest): Promise<ToolVmSshLease>;

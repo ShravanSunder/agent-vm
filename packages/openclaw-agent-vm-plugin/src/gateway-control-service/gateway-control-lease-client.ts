@@ -11,6 +11,7 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
+	type GatewayControlLeaseRejectionReason,
 	type GatewayControlLeaseSnapshot,
 	type GatewayControlLeaseUseSnapshot,
 	type GatewayControlRpcMessage,
@@ -26,6 +27,7 @@ import {
 	ControllerLeaseRequestError,
 	type JsonValue,
 	type LeaseClient,
+	type OpenClawGondolinLeaseReacquireRequest,
 	type OpenClawGondolinLeaseRequest,
 } from '../lease-client-contract.js';
 import {
@@ -99,18 +101,38 @@ function statusForCommandResult(result: GatewayControlCommandResultMessage['payl
 	if (result.leaseRejectionReason === 'runtime_not_ready') {
 		return 503;
 	}
-	if (result.leaseRejectionReason === 'absent') {
+	if (
+		result.leaseRejectionReason === 'caller_context_absent' ||
+		result.leaseRejectionReason === 'lease_absent' ||
+		result.leaseRejectionReason === 'lease_authority_absent'
+	) {
 		return 404;
 	}
 	if (
-		result.leaseRejectionReason === 'force_released' ||
-		result.leaseRejectionReason === 'generation_stale' ||
-		result.leaseRejectionReason === 'releasing' ||
-		result.leaseRejectionReason === 'use_tombstoned'
+		result.leaseRejectionReason === 'lease_force_released' ||
+		result.leaseRejectionReason === 'lease_generation_stale' ||
+		result.leaseRejectionReason === 'lease_releasing' ||
+		result.leaseRejectionReason === 'lease_retired' ||
+		result.leaseRejectionReason === 'lease_use_tombstoned'
 	) {
 		return 410;
 	}
 	return 400;
+}
+
+function shouldRefreshCallerContextForLeaseRejection(
+	rejectionReason: GatewayControlLeaseRejectionReason | undefined,
+): boolean {
+	return rejectionReason === 'caller_context_absent' || rejectionReason === 'caller_context_stale';
+}
+
+function staleEvidencePayloadForReacquireRequest(
+	request: OpenClawGondolinLeaseReacquireRequest,
+): OpenClawGondolinLeaseReacquireRequest['staleEvidence'] & { readonly observedAtMs: number } {
+	return {
+		...request.staleEvidence,
+		observedAtMs: request.observedAtMs,
+	};
 }
 
 function assertCommandResultOk(options: {
@@ -524,7 +546,7 @@ export function createGatewayControlLeaseClient(
 		);
 		if (
 			result.response.payload.result !== 'ok' &&
-			result.response.payload.leaseRejectionReason === 'absent'
+			shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
 		) {
 			forgetRegisteredCallerContext(leaseCallerContext.request, leaseCallerContext);
 			const refreshedCallerContext = await registerCallerContext(leaseCallerContext.request, {
@@ -547,7 +569,7 @@ export function createGatewayControlLeaseClient(
 			);
 			if (
 				result.response.payload.result !== 'ok' &&
-				result.response.payload.leaseRejectionReason === 'absent'
+				shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
 			) {
 				forgetCallerContextForLease(commandOptions.leaseId, leaseCallerContext);
 			}
@@ -620,6 +642,38 @@ export function createGatewayControlLeaseClient(
 				'Gateway control lease_peek',
 			);
 		},
+		reacquireLease: async (oldLeaseId, request) => {
+			const response = await sendLeaseCommandWithCallerContextRefresh({
+				buildPayload: (callerContext) => ({
+					...callerContext,
+					...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
+					oldLeaseId,
+					staleEvidence: staleEvidencePayloadForReacquireRequest(request),
+				}),
+				context: 'Gateway control lease_reacquire',
+				leaseId: oldLeaseId,
+				operation: 'lease_reacquire',
+			});
+			const leaseSnapshot = requireLeaseSnapshot({
+				context: 'Gateway control lease_reacquire',
+				operation: 'lease_reacquire',
+				response,
+			});
+			const leaseCallerContext = requireCallerContextForLease(
+				oldLeaseId,
+				'Gateway control lease_reacquire',
+			);
+			rememberCallerContextForLease({
+				leaseId: leaseSnapshot.leaseId,
+				registeredCallerContext: {
+					cacheKey: leaseCallerContext.cacheKey,
+					callerContextId: leaseCallerContext.callerContextId,
+					fromCache: true,
+				},
+				request: leaseCallerContext.request,
+			});
+			return requirePrivateToolVmLease(leaseSnapshot, 'Gateway control lease_reacquire');
+		},
 		releaseLease: async (leaseId) => {
 			const leaseCallerContext = requireCallerContextForLease(
 				leaseId,
@@ -670,7 +724,7 @@ export function createGatewayControlLeaseClient(
 			);
 			if (
 				result.response.payload.result !== 'ok' &&
-				result.response.payload.leaseRejectionReason === 'absent' &&
+				shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason) &&
 				registeredCallerContext.fromCache
 			) {
 				forgetRegisteredCallerContext(request, registeredCallerContext);
@@ -687,7 +741,7 @@ export function createGatewayControlLeaseClient(
 				);
 				if (
 					result.response.payload.result !== 'ok' &&
-					result.response.payload.leaseRejectionReason === 'absent'
+					shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
 				) {
 					forgetRegisteredCallerContext(request, registeredCallerContext);
 				}

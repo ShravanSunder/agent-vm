@@ -124,7 +124,7 @@ function createControllerLeaseError(status: number): ControllerLeaseRequestError
 
 function createActiveUseLeaseClientMethods(): Pick<
 	LeaseClient,
-	'startActiveUse' | 'heartbeatActiveUse' | 'endActiveUse'
+	'startActiveUse' | 'heartbeatActiveUse' | 'endActiveUse' | 'reacquireLease'
 > {
 	return {
 		endActiveUse: vi.fn(async () => {}),
@@ -132,6 +132,7 @@ function createActiveUseLeaseClientMethods(): Pick<
 			expiresAt: 2_000,
 			heartbeatAfterMs: 1_000,
 		})),
+		reacquireLease: vi.fn(async (oldLeaseId) => createLeaseResponse(`${oldLeaseId}-reacquired`)),
 		startActiveUse: vi.fn(async (_leaseId, request) => ({
 			useId: request.useId,
 			expiresAt: 2_000,

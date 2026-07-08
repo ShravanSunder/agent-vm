@@ -15,6 +15,7 @@ import {
 	GatewayControlControllerRequestHealthOperationSchema,
 	GatewayControlHealthEventPayloadSchema,
 	GatewayControlLeaseCreateIntentPayloadSchema,
+	GatewayControlLeaseRejectionReasonSchema,
 	GatewayControlLeaseSnapshotSchema,
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
@@ -70,6 +71,7 @@ describe('gateway control contract', () => {
 			'lease_create',
 			'lease_get',
 			'lease_peek',
+			'lease_reacquire',
 			'lease_release',
 			'lease_renew',
 			'lease_use_end',
@@ -313,6 +315,76 @@ describe('gateway control contract', () => {
 		}
 	});
 
+	it('accepts lease reacquire intent fields and rejects plugin-supplied authority', () => {
+		const validPayload = {
+			callerContext: {
+				callerContextId: '44444444-4444-4444-8444-444444444444',
+			},
+			correlation: {
+				capability: {
+					name: 'shell',
+					namespace: 'tool_vm',
+				},
+				toolCallId: 'tool-call-123',
+			},
+			idleTtlHintMs: 120_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			staleEvidence: {
+				errorCode: 'ssh-command-failed',
+				kind: 'tool-vm-ssh',
+				observedAtMs: 1_000,
+				operation: 'file-bridge',
+			},
+		};
+
+		expect(
+			GatewayControlRpcMessageSchema.parse({
+				kind: 'command',
+				operation: 'lease_reacquire',
+				payload: validPayload,
+			}).payload,
+		).toEqual(validPayload);
+
+		for (const invalidPayload of [
+			{ ...validPayload, agentId: 'main' },
+			{ ...validPayload, profileId: 'standard' },
+			{ ...validPayload, hostWorkMountDir: '/Users/example/repo' },
+			{ ...validPayload, workMountDir: '/work' },
+			{ ...validPayload, sshIdentityPem: '-----BEGIN OPENSSH PRIVATE KEY-----' },
+			{ ...validPayload, sessionKey: 'agent:main:test-session' },
+		]) {
+			expect(
+				GatewayControlRpcMessageSchema.safeParse({
+					kind: 'command',
+					operation: 'lease_reacquire',
+					payload: invalidPayload,
+				}).success,
+			).toBe(false);
+		}
+	});
+
+	it('roundtrips canonical lease lifecycle rejection reasons', () => {
+		expect([...GatewayControlLeaseRejectionReasonSchema.options].toSorted()).toEqual([
+			'caller_context_absent',
+			'caller_context_session_mismatch',
+			'caller_context_stale',
+			'lease_absent',
+			'lease_authority_absent',
+			'lease_force_released',
+			'lease_generation_stale',
+			'lease_reacquire_required',
+			'lease_releasing',
+			'lease_retired',
+			'lease_use_tombstoned',
+			'ownership_denied',
+			'runtime_not_ready',
+		]);
+
+		for (const rejectionReason of GatewayControlLeaseRejectionReasonSchema.options) {
+			expect(GatewayControlLeaseRejectionReasonSchema.parse(rejectionReason)).toBe(rejectionReason);
+		}
+	});
+
 	it('keeps controller_host_action payload narrow to reviewed host-action intents', () => {
 		const validZoneGitPayload = {
 			actionId: 'zone_git_push',
@@ -532,6 +604,30 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlRpcCommandResultMessageSchema.safeParse({
 				kind: 'command_result',
+				operation: 'lease_reacquire',
+				payload: {
+					lease: leaseResult,
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'ok',
+				},
+			}).success,
+		).toBe(true);
+
+		expect(
+			GatewayControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
+				operation: 'lease_reacquire',
+				payload: {
+					leaseRejectionReason: 'lease_authority_absent',
+					responseToMessageId: '22222222-2222-4222-8222-222222222222',
+					result: 'rejected',
+				},
+			}).success,
+		).toBe(true);
+
+		expect(
+			GatewayControlRpcCommandResultMessageSchema.safeParse({
+				kind: 'command_result',
 				operation: 'control_ping',
 				payload: {
 					lease: leaseResult,
@@ -604,7 +700,7 @@ describe('gateway control contract', () => {
 				operation: 'lease_create',
 				payload: {
 					lease: leaseResult,
-					leaseRejectionReason: 'absent',
+					leaseRejectionReason: 'lease_absent',
 					responseToMessageId: '22222222-2222-4222-8222-222222222222',
 					result: 'rejected',
 				},

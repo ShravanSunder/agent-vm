@@ -85,6 +85,7 @@ describe('gondolin controller integration', () => {
 				heartbeatAfterMs: 1_000,
 			})),
 			peekLease: vi.fn(async () => createLeasePeekResponse('subagent-lease')),
+			reacquireLease: vi.fn(async () => createLeaseResponse('subagent-lease-reacquired')),
 			releaseLease: vi.fn(async () => {}),
 			renewLease: vi.fn(async () => createLeaseResponse('subagent-lease')),
 			requestLease: vi.fn(async (request) => {
@@ -161,6 +162,7 @@ describe('gondolin controller integration', () => {
 						expiresAt: 3_000,
 						heartbeatAfterMs: 1_000,
 					})),
+					reacquireLease: vi.fn(async () => createLeaseResponse('lease-1-reacquired')),
 					renewLease: vi.fn(async () => createLeaseResponse('lease-1')),
 					peekLease: vi.fn(async () => createLeasePeekResponse('lease-1')),
 					releaseLease: vi.fn(async () => {}),
@@ -196,6 +198,7 @@ describe('gondolin controller integration', () => {
 						expiresAt: 3_000,
 						heartbeatAfterMs: 1_000,
 					})),
+					reacquireLease: vi.fn(async () => createLeaseResponse('lease-2-reacquired')),
 					renewLease: vi.fn(async () => createLeaseResponse('lease-1')),
 					peekLease: vi.fn(async () => createLeasePeekResponse('lease-1')),
 					releaseLease: vi.fn(async () => {}),
