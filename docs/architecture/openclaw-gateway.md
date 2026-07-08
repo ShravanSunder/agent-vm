@@ -237,6 +237,17 @@ cleanup callback, plugin heartbeats stop after a finite safety cap (12 hours by
 default); the controller then marks the use stale after the heartbeat window and
 the normal idle reaper can release the lease later.
 
+If a cached handle observes stale Tool VM SSH evidence such as a reset
+file-bridge, failed command, finalize timeout, or dead lease caller context, the
+old binding is retired before any later shell, file, exec, heartbeat, or
+finalize work can start. The plugin asks the controller for a replacement with
+private `gateway_control_rpc lease_reacquire`; the controller re-resolves the
+current caller context, old-lease authority, session fence, workspace,
+work-mount, profile, and agent ownership before returning new SSH material.
+The old lease id is correlation only, not authority. A successful reacquire
+returns a different replacement lease id, and a denied reacquire makes the
+handle terminal for new work instead of falling back to the old SSH path.
+
 The shared agent-vm lease type exposes only an SSH capability: lease id,
 workdir, TCP slot, and endpoint/key material. The OpenClaw filesystem bridge is
 adapter behavior inside `@agent-vm/openclaw-agent-vm-plugin`; it translates

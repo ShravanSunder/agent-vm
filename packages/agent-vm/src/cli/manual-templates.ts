@@ -146,6 +146,9 @@ TCP slots are capacity; they are not identity.
 Cached Tool VM handles use private gateway_control_rpc lease_renew for idle lease reuse, and active shell/file operations use private gateway_control_rpc lease_use_heartbeat records so long commands are not reaped mid-run.
 Health snapshots include lease-renew and lease-heartbeat observations. Both keep lease state alive when successful, but they prove different things: lease-renew proves an idle cached lease can be reused, while lease-heartbeat proves an active operation still has a live private control-session path.
 
+If a cached handle observes stale Tool VM SSH evidence, it must retire the old binding before the next operation. The plugin asks the controller for a replacement with private gateway_control_rpc lease_reacquire. The controller re-checks old-lease authority, current caller context, session fence, workspace, work mount, profile, and agent ownership before it returns new SSH material.
+The old lease id is correlation only, not authority. No later shell, file, exec, heartbeat, or finalize work may use the old lease id or old SSH identity after stale evidence. If the controller denies reacquire, the handle is terminal for new work.
+
 Example:
 - shravan agent uses agentId=shravan.
 - alevtina agent uses agentId=alevtina.
@@ -196,6 +199,7 @@ Health model:
 - lease-heartbeat means an active Tool VM operation can refresh its active use.
 - lease-renew means an idle cached Tool VM lease can be reused.
 - tool-vm-ssh means command, file-bridge, finalize, or probe SSH operations on the gateway-to-Tool-VM path.
+- tool-vm-ssh lifecycle events distinguish plugin observations from controller_final decisions. A controller_final stale_to_reacquired event proves the controller accepted one replacement transition for the old lease and records old/replacement lease correlation using redacted public ids.
 
 Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <runtimeDir>/controller-health/events.jsonl as diagnostic evidence; that log is not ownership authority and recovery still uses runtime records plus current process/port checks.
 

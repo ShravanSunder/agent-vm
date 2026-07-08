@@ -415,6 +415,9 @@ describe('manual templates', () => {
 		expect(toolVmLeaseManual).toContain('discarded before controller-owned lease resolution');
 		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_renew');
 		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_use_heartbeat');
+		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_reacquire');
+		expect(toolVmLeaseManual).toContain('old lease id is correlation only, not authority');
+		expect(toolVmLeaseManual).toContain('No later shell, file, exec, heartbeat, or finalize work');
 		expect(toolVmLeaseManual).not.toContain('controller lease request');
 		expect(toolVmLeaseManual).not.toContain('GET lease');
 		expect(toolVmLeaseManual).not.toContain('POST renew');
@@ -449,6 +452,8 @@ describe('manual templates', () => {
 		expect(operationsManual).toContain('secret-resolution-failed is a recovery blocker');
 		expect(operationsManual).toContain('<runtimeDir>/controller-health/events.jsonl');
 		expect(operationsManual).toContain('runtime records plus current process/port checks');
+		expect(operationsManual).toContain('controller_final');
+		expect(operationsManual).toContain('stale_to_reacquired');
 		expect(operationsManual).toContain(
 			'Tool VM lease failures retire or quarantine one lease before gateway restart',
 		);

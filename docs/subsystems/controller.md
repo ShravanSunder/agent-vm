@@ -290,6 +290,16 @@ UUIDv7 values so retries can be idempotent without another round-trip. Ended
 uses leave short tombstones so a duplicate
 start after a completed use is rejected instead of resurrecting old work.
 
+Stale cached handles do not reacquire by calling normal `lease_create`.
+`gateway_control_rpc lease_reacquire` is the controller-owned replacement path:
+the plugin supplies stale evidence for the old lease id, and the controller
+checks bounded old-lease authority plus the current caller context before
+returning a replacement lease. Missing or mismatched authority returns a typed
+denial such as `lease_authority_absent`, `caller_context_absent`,
+`caller_context_session_mismatch`, or `ownership_denied`. The old lease id is
+kept only as correlation evidence for the tombstone window. It must not be used
+for later active-use, heartbeat, SSH, file, exec, or finalize work.
+
 `workMountDir` is a gateway VM path, not a host path and not a `system.json`
 field. It must name a concrete child path below `/zone` or
 `/home/openclaw/.openclaw/state/sandboxes`; those roots are validation
