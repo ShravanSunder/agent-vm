@@ -111,7 +111,11 @@ export {
 	translateRuntimePath,
 } from './runtime-paths/runtime-path-mapping.js';
 export { createToolVmLeaseId, isToolVmLeaseId, parseToolVmLeaseId } from './tool-vm-lease-id.js';
-export { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
+export {
+	defaultToolVmLeaseAuthorityTombstoneTtlMs,
+	isToolVmLeasePeek,
+	isToolVmSshLease,
+} from './tool-vm-lease.js';
 export {
 	isVmCapabilityLease,
 	isVmSshEndpoint,

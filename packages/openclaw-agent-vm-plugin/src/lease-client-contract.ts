@@ -57,6 +57,12 @@ export interface OpenClawGondolinLeaseReacquireRequest {
 	readonly staleEvidence: OpenClawGondolinLeaseStaleEvidence;
 }
 
+export interface OpenClawGondolinLeaseReleaseOptions {
+	readonly force?: boolean;
+	readonly observedAtMs?: number;
+	readonly staleEvidence?: OpenClawGondolinLeaseStaleEvidence;
+}
+
 export interface LeaseClient {
 	// Cached handles use renewLease; read-only runtime probes use peekLease.
 	endActiveUse(leaseId: string, useId: string, request: EndToolVmActiveUseRequest): Promise<void>;
@@ -73,7 +79,7 @@ export interface LeaseClient {
 		oldLeaseId: string,
 		request: OpenClawGondolinLeaseReacquireRequest,
 	): Promise<ToolVmSshLease>;
-	releaseLease(leaseId: string, options?: { readonly force?: boolean }): Promise<void>;
+	releaseLease(leaseId: string, options?: OpenClawGondolinLeaseReleaseOptions): Promise<void>;
 	renewLease(leaseId: string): Promise<ToolVmSshLease>;
 	requestLease(request: OpenClawGondolinLeaseRequest): Promise<ToolVmSshLease>;
 	startActiveUse(

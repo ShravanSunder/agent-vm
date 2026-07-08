@@ -699,7 +699,7 @@ describe('createGondolinPlugin', () => {
 		);
 	});
 
-	it('runs the private e2e route stale-reacquire scenario on one backend handle', async () => {
+	it('runs the private e2e route stale-reacquire scenario by resetting Tool VM SSH on one backend handle', async () => {
 		const registerHttpRoute = vi.fn();
 		let runtimeId = 'lease-old';
 		const runShellCommand = vi
@@ -709,6 +709,9 @@ describe('createGondolinPlugin', () => {
 				stderr: Buffer.from(''),
 				stdout: Buffer.from('first-marker'),
 			})
+			.mockRejectedValueOnce(
+				new Error('kex_exchange_identification: read: Connection reset by peer'),
+			)
 			.mockImplementationOnce(async () => {
 				runtimeId = 'lease-new';
 				return {
@@ -768,24 +771,20 @@ describe('createGondolinPlugin', () => {
 					marker: 'second-marker',
 					readBack: 'second-marker',
 				},
-				staleTrigger: 'finalize-timeout',
+				staleTrigger: 'ssh-command-reset',
 				status: 'ok',
 			},
 			ok: true,
 		});
 		expect(backendFactory).toHaveBeenCalledTimes(1);
-		expect(runShellCommand).toHaveBeenCalledTimes(2);
-		expect(buildExecSpec).toHaveBeenCalledWith({
-			command: 'sleep 60',
-			env: {},
-			usePty: false,
-		});
-		expect(finalizeExec).toHaveBeenCalledWith({
-			exitCode: null,
-			status: 'failed',
-			timedOut: true,
-			token: { kind: 'mock-finalize-token' },
-		});
+		expect(runShellCommand).toHaveBeenCalledTimes(3);
+		expect(runShellCommand.mock.calls[1]?.[0]).toEqual(
+			expect.objectContaining({
+				script: expect.stringContaining('agent-vm-e2e-resetting-tool-vm-sshd'),
+			}),
+		);
+		expect(buildExecSpec).not.toHaveBeenCalled();
+		expect(finalizeExec).not.toHaveBeenCalled();
 	});
 
 	it('does not publish Tool VM runtime status through controller HTTP during full registration', async () => {

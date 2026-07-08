@@ -917,9 +917,16 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(handle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/ssh hung/u);
 		await factory(createFactoryParamsForAgent('beta'));
 
-		expect(releaseLease).toHaveBeenCalledWith('01890f00-0000-7000-8000-000000000001', {
-			force: true,
-		});
+		expect(releaseLease).toHaveBeenCalledWith(
+			'01890f00-0000-7000-8000-000000000001',
+			expect.objectContaining({
+				force: true,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					operation: 'command',
+				},
+			}),
+		);
 		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 
@@ -927,6 +934,15 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const oldLease = createLeaseResponse('sibling-old');
 		const replacementLease = createLeaseResponse('sibling-new');
 		let retiredLeaseId: string | undefined;
+		let retiredReacquireRequest:
+			| {
+					readonly observedAtMs: number;
+					readonly staleEvidence: {
+						readonly kind: 'tool-vm-ssh';
+						readonly operation: 'command';
+					};
+			  }
+			| undefined;
 		let oldCallerContextRegistered = true;
 		const requestLease = vi.fn(async () => {
 			oldCallerContextRegistered = true;
@@ -959,6 +975,16 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const releaseLease = vi.fn(async (leaseId: string, options) => {
 			if (options?.force === true) {
 				retiredLeaseId = leaseId;
+				if (
+					options.observedAtMs !== undefined &&
+					options.staleEvidence?.kind === 'tool-vm-ssh' &&
+					options.staleEvidence.operation === 'command'
+				) {
+					retiredReacquireRequest = {
+						observedAtMs: options.observedAtMs,
+						staleEvidence: options.staleEvidence,
+					};
+				}
 				oldCallerContextRegistered = false;
 			}
 		});
@@ -970,15 +996,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const leaseClient: LeaseClient = {
 			endActiveUse: vi.fn(async () => {}),
 			getRetiredLeaseReacquireRequest: (leaseId) =>
-				retiredLeaseId === leaseId
-					? {
-							observedAtMs: 2_000,
-							staleEvidence: {
-								kind: 'caller-context',
-								reason: 'stale',
-							},
-						}
-					: undefined,
+				retiredLeaseId === leaseId ? retiredReacquireRequest : undefined,
 			heartbeatActiveUse: vi.fn(async () => ({
 				expiresAt: 2_000,
 				heartbeatAfterMs: 1_000,
@@ -1018,12 +1036,21 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		expect(firstHandle.runtimeId).toBe(oldLease.leaseId);
 		expect(secondHandle.runtimeId).toBe(replacementLease.leaseId);
-		expect(releaseLease).toHaveBeenCalledWith(oldLease.leaseId, { force: true });
+		expect(releaseLease).toHaveBeenCalledWith(
+			oldLease.leaseId,
+			expect.objectContaining({
+				force: true,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					operation: 'command',
+				},
+			}),
+		);
 		expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, {
 			observedAtMs: expect.any(Number),
 			staleEvidence: {
-				kind: 'caller-context',
-				reason: 'stale',
+				kind: 'tool-vm-ssh',
+				operation: 'command',
 			},
 		});
 		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([

@@ -1,3 +1,5 @@
+import { defaultToolVmLeaseAuthorityTombstoneTtlMs } from '@agent-vm/gateway-interface';
+
 export type ToolVmLeaseAuthorityState = 'current' | 'replaced' | 'retired';
 
 export interface ToolVmLeaseStableOwner {
@@ -36,8 +38,6 @@ export interface ToolVmLeaseAuthorityStoreOptions {
 	readonly now?: () => number;
 	readonly tombstoneTtlMs?: number;
 }
-
-const defaultToolVmLeaseAuthorityTombstoneTtlMs = 10 * 60 * 1000;
 
 export function createToolVmLeaseAuthorityStore<TCompatibility>(
 	options: ToolVmLeaseAuthorityStoreOptions = {},

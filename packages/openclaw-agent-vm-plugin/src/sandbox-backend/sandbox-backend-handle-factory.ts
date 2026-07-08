@@ -19,6 +19,7 @@ import {
 import {
 	ControllerLeaseRequestError,
 	type LeaseClient,
+	type OpenClawGondolinLeaseReacquireRequest,
 	type OpenClawRuntimeStatusReport,
 } from '../lease-client-contract.js';
 import {
@@ -341,13 +342,22 @@ export function createGondolinSandboxBackendFactory(
 			lease: CachedAgentLeaseEntry['lease'],
 			reason: ToolVmSshFailureKind,
 			error: unknown,
+			reacquireRequest?: OpenClawGondolinLeaseReacquireRequest,
 		): Promise<void> => {
 			agentLeaseCache.delete(cacheKey);
 			writeSandboxBackendLog(
 				`lease marked stale for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}' reason '${reason}': ${formatUnknownError(error)}`,
 			);
 			await leaseClient
-				.releaseLease(lease.leaseId, { force: true })
+				.releaseLease(lease.leaseId, {
+					force: true,
+					...(reacquireRequest === undefined
+						? {}
+						: {
+								observedAtMs: reacquireRequest.observedAtMs,
+								staleEvidence: reacquireRequest.staleEvidence,
+							}),
+				})
 				.catch((releaseError: unknown) => {
 					writeSandboxBackendLog(
 						`best-effort stale lease release failed for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}': ${formatUnknownError(releaseError)}`,
@@ -454,8 +464,8 @@ export function createGondolinSandboxBackendFactory(
 			effectiveGuestCwd: pathIntent.effectiveGuestCwd,
 			lease,
 			leaseClient,
-			markCachedLeaseStale: async (staleLease, reason, error) => {
-				await markLeaseStale(staleLease, reason, error);
+			markCachedLeaseStale: async (staleLease, reason, error, reacquireRequest) => {
+				await markLeaseStale(staleLease, reason, error, reacquireRequest);
 			},
 			rememberReplacementLease: (replacementLease) => {
 				agentLeaseCache.set(cacheKey, { ...requestedCacheEntry, lease: replacementLease });
@@ -486,6 +496,7 @@ function createSandboxBackendHandle(options: {
 		lease: ToolVmSshLease,
 		reason: ToolVmSshFailureKind,
 		error: unknown,
+		reacquireRequest?: OpenClawGondolinLeaseReacquireRequest,
 	) => Promise<void>;
 	readonly publishHealthEvent: (event: AgentVmHealthEvent) => Promise<void>;
 	readonly rememberReplacementLease: (lease: ToolVmSshLease) => void;
@@ -505,12 +516,12 @@ function createSandboxBackendHandle(options: {
 		readonly operation: ToolVmHandleBindingSshOperation;
 		readonly reason: ToolVmSshFailureKind;
 	}): Promise<void> => {
-		binding.markStale({
+		const reacquireRequest = binding.markStale({
 			lease: params.lease,
 			operation: params.operation,
 			reason: params.reason,
 		});
-		await options.markCachedLeaseStale(params.lease, params.reason, params.error);
+		await options.markCachedLeaseStale(params.lease, params.reason, params.error, reacquireRequest);
 	};
 	const createActiveUseHandle = async (
 		operation: ToolVmHandleBindingSshOperation,

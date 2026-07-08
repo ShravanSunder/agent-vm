@@ -73,7 +73,7 @@ interface ToolVmStaleReacquireE2eProbeDetails {
 	readonly second: ToolVmWriteReadE2eProbeStepDetails;
 	readonly sameHandle: true;
 	readonly sessionKey: string;
-	readonly staleTrigger: 'finalize-timeout';
+	readonly staleTrigger: 'ssh-command-reset';
 	readonly status: 'ok';
 	readonly workdir: string;
 }
@@ -403,23 +403,46 @@ async function runToolVmWriteReadE2eProbeStep(options: {
 	};
 }
 
-async function markToolVmWriteReadE2eHandleStaleWithFinalizeTimeout(
+function buildToolVmWriteReadE2eSshResetScript(): string {
+	return [
+		'set -eu',
+		'printf "%s\\n" "agent-vm-e2e-resetting-tool-vm-sshd" >&2',
+		'current_pid=$$',
+		"target_pid=''",
+		'while [ "$current_pid" != "1" ]; do',
+		'  parent_pid=$(awk \'/^PPid:/ { print $2 }\' "/proc/$current_pid/status" 2>/dev/null || true)',
+		'  if [ -z "$parent_pid" ] || [ "$parent_pid" = "0" ]; then',
+		'    break',
+		'  fi',
+		'  parent_comm=$(cat "/proc/$parent_pid/comm" 2>/dev/null || true)',
+		'  if [ "$parent_comm" = "sshd" ]; then',
+		'    target_pid="$parent_pid"',
+		'    break',
+		'  fi',
+		'  current_pid="$parent_pid"',
+		'done',
+		'if [ -z "$target_pid" ]; then',
+		'  printf "%s\\n" "agent-vm-e2e-resetting-tool-vm-sshd: no sshd ancestor found" >&2',
+		'  exit 97',
+		'fi',
+		'kill -9 "$target_pid"',
+		'sleep 5',
+		'printf "%s\\n" "agent-vm-e2e-resetting-tool-vm-sshd: ssh session survived reset" >&2',
+		'exit 98',
+	].join('\n');
+}
+
+async function markToolVmWriteReadE2eHandleStaleWithSshCommandReset(
 	backend: GondolinSandboxBackendHandle,
 ): Promise<void> {
-	if (backend.finalizeExec === undefined) {
-		throw new Error('tool-vm-write-read-e2e: backend does not support finalizeExec stale trigger.');
+	try {
+		await backend.runShellCommand({
+			script: buildToolVmWriteReadE2eSshResetScript(),
+		});
+	} catch {
+		return;
 	}
-	const execSpec = await backend.buildExecSpec({
-		command: 'sleep 60',
-		env: {},
-		usePty: false,
-	});
-	await backend.finalizeExec({
-		exitCode: null,
-		status: 'failed',
-		timedOut: true,
-		...(execSpec.finalizeToken === undefined ? {} : { token: execSpec.finalizeToken }),
-	});
+	throw new Error('tool-vm-write-read-e2e: SSH reset command completed without stale evidence.');
 }
 
 async function runToolVmStaleReacquireE2eProbe(options: {
@@ -444,7 +467,7 @@ async function runToolVmStaleReacquireE2eProbe(options: {
 		},
 	});
 	const oldRuntimeId = backendContext.backend.runtimeId;
-	await markToolVmWriteReadE2eHandleStaleWithFinalizeTimeout(backendContext.backend);
+	await markToolVmWriteReadE2eHandleStaleWithSshCommandReset(backendContext.backend);
 	const second = await runToolVmWriteReadE2eProbeStep({
 		backend: backendContext.backend,
 		params: {
@@ -467,7 +490,7 @@ async function runToolVmStaleReacquireE2eProbe(options: {
 		second,
 		sameHandle: true,
 		sessionKey: backendContext.sessionKey,
-		staleTrigger: 'finalize-timeout',
+		staleTrigger: 'ssh-command-reset',
 		status: 'ok',
 		workdir: backendContext.backend.workdir,
 	};

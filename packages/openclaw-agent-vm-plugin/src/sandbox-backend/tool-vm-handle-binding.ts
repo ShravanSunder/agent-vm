@@ -1,6 +1,11 @@
 import type { ToolVmSshFailureKind, ToolVmSshLease } from '@agent-vm/gateway-interface';
 
-import type { LeaseClient, OpenClawGondolinLeaseStaleEvidence } from '../lease-client-contract.js';
+import {
+	ControllerLeaseRequestError,
+	type LeaseClient,
+	type OpenClawGondolinLeaseReacquireRequest,
+	type OpenClawGondolinLeaseStaleEvidence,
+} from '../lease-client-contract.js';
 
 export type ToolVmHandleBindingSshOperation = 'command' | 'file-bridge' | 'finalize' | 'probe';
 
@@ -17,7 +22,7 @@ export interface ToolVmHandleBinding {
 		readonly observedAtMs?: number;
 		readonly operation: ToolVmHandleBindingSshOperation;
 		readonly reason: ToolVmSshFailureKind;
-	}): void;
+	}): OpenClawGondolinLeaseReacquireRequest | undefined;
 	resolveCurrentLease(): Promise<ToolVmSshLease>;
 }
 
@@ -37,6 +42,10 @@ function staleEvidenceForReason(params: {
 	};
 }
 
+function isTerminalReacquireError(error: unknown): error is ControllerLeaseRequestError {
+	return error instanceof ControllerLeaseRequestError && error.kind === 'client-error';
+}
+
 export function createToolVmHandleBinding(options: {
 	readonly initialLease: ToolVmSshLease;
 	readonly leaseClient: Pick<LeaseClient, 'getRetiredLeaseReacquireRequest' | 'reacquireLease'>;
@@ -47,6 +56,7 @@ export function createToolVmHandleBinding(options: {
 	let currentLease = options.initialLease;
 	let staleBinding: ToolVmHandleStaleBinding | undefined;
 	let pendingReacquire: Promise<ToolVmSshLease> | undefined;
+	let terminalReacquireError: ControllerLeaseRequestError | undefined;
 
 	const resolveStaleBinding = (): ToolVmHandleStaleBinding | undefined => {
 		if (staleBinding !== undefined) {
@@ -67,6 +77,9 @@ export function createToolVmHandleBinding(options: {
 	};
 
 	const resolveCurrentLease = async (): Promise<ToolVmSshLease> => {
+		if (terminalReacquireError !== undefined) {
+			throw terminalReacquireError;
+		}
 		const bindingToReplace = resolveStaleBinding();
 		if (bindingToReplace === undefined) {
 			return currentLease;
@@ -92,6 +105,12 @@ export function createToolVmHandleBinding(options: {
 				options.onReplacementLease?.(replacementLease);
 				return replacementLease;
 			})
+			.catch((error: unknown) => {
+				if (isTerminalReacquireError(error)) {
+					terminalReacquireError = error;
+				}
+				throw error;
+			})
 			.finally(() => {
 				if (pendingReacquire === reacquirePromise) {
 					pendingReacquire = undefined;
@@ -105,13 +124,18 @@ export function createToolVmHandleBinding(options: {
 		currentLease: () => currentLease,
 		markStale: (markOptions) => {
 			if (currentLease.leaseId !== markOptions.lease.leaseId) {
-				return;
+				return undefined;
 			}
-			staleBinding = {
-				lease: markOptions.lease,
+			const reacquireRequest = {
 				observedAtMs: markOptions.observedAtMs ?? now(),
 				staleEvidence: staleEvidenceForReason(markOptions),
+			} satisfies OpenClawGondolinLeaseReacquireRequest;
+			staleBinding = {
+				lease: markOptions.lease,
+				observedAtMs: reacquireRequest.observedAtMs,
+				staleEvidence: reacquireRequest.staleEvidence,
 			};
+			return reacquireRequest;
 		},
 		resolveCurrentLease,
 	};

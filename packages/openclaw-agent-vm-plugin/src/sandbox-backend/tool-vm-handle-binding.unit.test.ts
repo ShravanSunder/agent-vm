@@ -1,12 +1,13 @@
 import { parseToolVmLeaseId, type ToolVmSshLease } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LeaseClient } from '../lease-client-contract.js';
+import { ControllerLeaseRequestError, type LeaseClient } from '../lease-client-contract.js';
 import type {
 	OpenClawFsBridgeLeaseContext,
 	OpenClawSandboxBackendHandle,
 } from './sandbox-backend-contract.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-handle-factory.js';
+import { createToolVmHandleBinding } from './tool-vm-handle-binding.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 type BackendDependencies = Parameters<typeof createGondolinSandboxBackendFactory>[1];
@@ -193,7 +194,16 @@ describe('Tool VM handle binding', () => {
 			2,
 			expect.objectContaining({ ssh: harness.replacementLease.ssh }),
 		);
-		expect(harness.releaseLease).toHaveBeenCalledWith(harness.oldLease.leaseId, { force: true });
+		expect(harness.releaseLease).toHaveBeenCalledWith(
+			harness.oldLease.leaseId,
+			expect.objectContaining({
+				force: true,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					operation: 'command',
+				},
+			}),
+		);
 		expect(handle.runtimeId).toBe(harness.replacementLease.leaseId);
 		expect(handle.runtimeLabel).toBe(harness.replacementLease.leaseId);
 	});
@@ -253,6 +263,16 @@ describe('Tool VM handle binding', () => {
 			2,
 			expect.objectContaining({ ssh: harness.replacementLease.ssh }),
 		);
+		expect(harness.releaseLease).toHaveBeenCalledWith(
+			harness.oldLease.leaseId,
+			expect.objectContaining({
+				force: true,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					operation: 'file-bridge',
+				},
+			}),
+		);
 	});
 
 	it('uses the replacement binding for buildExecSpec after earlier stale evidence', async () => {
@@ -300,4 +320,49 @@ describe('Tool VM handle binding', () => {
 			workdir: '/work',
 		});
 	});
+
+	it.each([
+		{ status: 400, title: 'ownership denial' },
+		{ status: 404, title: 'missing old-lease authority' },
+		{ status: 410, title: 'retired old lease' },
+	] as const)(
+		'terminalizes stale bindings after $title reacquire rejection',
+		async ({ status }) => {
+			const oldLease = createLeaseResponse('1');
+			const terminalError = new ControllerLeaseRequestError({
+				bodyText: JSON.stringify({ message: 'terminal reacquire denial' }),
+				context: 'Gateway control lease_reacquire',
+				responseBody: { message: 'terminal reacquire denial' },
+				status,
+			});
+			const reacquireLease = vi.fn(async () => {
+				throw terminalError;
+			});
+			const binding = createToolVmHandleBinding({
+				initialLease: oldLease,
+				leaseClient: {
+					getRetiredLeaseReacquireRequest: () => undefined,
+					reacquireLease,
+				},
+				now: () => 42,
+			});
+
+			binding.markStale({
+				lease: oldLease,
+				operation: 'command',
+				reason: 'ssh-command-failed',
+			});
+			await expect(binding.resolveCurrentLease()).rejects.toBe(terminalError);
+			await expect(binding.resolveCurrentLease()).rejects.toBe(terminalError);
+
+			expect(reacquireLease).toHaveBeenCalledTimes(1);
+			expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, {
+				observedAtMs: 42,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					operation: 'command',
+				},
+			});
+		},
+	);
 });

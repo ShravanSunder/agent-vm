@@ -144,7 +144,7 @@ interface OpenClawToolVmStaleReacquireProbeResult {
 	readonly scenario: 'stale-reacquire';
 	readonly second: OpenClawToolVmStaleReacquireProbeStepResult;
 	readonly sessionKey: string;
-	readonly staleTrigger: 'finalize-timeout';
+	readonly staleTrigger: 'ssh-command-reset';
 	readonly status: 'ok';
 	readonly workdir: string;
 }
@@ -270,7 +270,7 @@ function parseToolVmStaleReacquireProbeResult(
 		parsed.status !== 'ok' ||
 		parsed.scenario !== 'stale-reacquire' ||
 		parsed.sameHandle !== true ||
-		parsed.staleTrigger !== 'finalize-timeout' ||
+		parsed.staleTrigger !== 'ssh-command-reset' ||
 		typeof parsed.agentId !== 'string' ||
 		typeof parsed.newRuntimeId !== 'string' ||
 		typeof parsed.oldRuntimeId !== 'string' ||
@@ -1284,7 +1284,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 				marker: secondMarker,
 				readBack: secondMarker,
 			},
-			staleTrigger: 'finalize-timeout',
+			staleTrigger: 'ssh-command-reset',
 			status: 'ok',
 			workdir: '/workspace',
 		});
@@ -1302,7 +1302,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 				event.lifecycleTransition === 'stale_to_reacquired' &&
 				event.oldLeaseIdHash === stableTelemetryHash(result.oldRuntimeId) &&
 				event.replacementLeaseIdHash === stableTelemetryHash(result.newRuntimeId) &&
-				event.operation === 'finalize',
+				event.operation === 'command',
 			timeoutMs: 60_000,
 		});
 		expect(lifecycleEvent).toMatchObject({

@@ -18,6 +18,7 @@ import {
 	type GatewayControlRpcOperation,
 } from '@agent-vm/gateway-control-contracts';
 import {
+	defaultToolVmLeaseAuthorityTombstoneTtlMs,
 	parseToolVmLeaseId,
 	type ToolVmLeasePeek,
 	type ToolVmSshLease,
@@ -27,6 +28,7 @@ import {
 	ControllerLeaseRequestError,
 	type JsonValue,
 	type LeaseClient,
+	type OpenClawGondolinLeaseReleaseOptions,
 	type OpenClawGondolinLeaseReacquireRequest,
 	type OpenClawGondolinLeaseRequest,
 } from '../lease-client-contract.js';
@@ -82,7 +84,15 @@ export interface GatewayControlLeaseClientOptions {
 	readonly retiredLeaseReacquireRequestTtlMs?: number;
 }
 
-const defaultRetiredLeaseReacquireRequestTtlMs = 10 * 60 * 1000;
+const cleanupSafeLeaseReleaseRejectionReasons = new Set<GatewayControlLeaseRejectionReason>([
+	'caller_context_absent',
+	'caller_context_stale',
+	'lease_absent',
+	'lease_force_released',
+	'lease_releasing',
+	'lease_retired',
+	'lease_use_tombstoned',
+]);
 
 function createGatewayControlError(params: {
 	readonly context: string;
@@ -133,6 +143,14 @@ function shouldRefreshCallerContextForLeaseRejection(
 	rejectionReason: GatewayControlLeaseRejectionReason | undefined,
 ): boolean {
 	return rejectionReason === 'caller_context_absent' || rejectionReason === 'caller_context_stale';
+}
+
+function isCleanupSafeLeaseReleaseRejection(
+	rejectionReason: GatewayControlLeaseRejectionReason | undefined,
+): boolean {
+	return (
+		rejectionReason !== undefined && cleanupSafeLeaseReleaseRejectionReasons.has(rejectionReason)
+	);
 }
 
 function staleEvidencePayloadForReacquireRequest(
@@ -343,7 +361,7 @@ export function createGatewayControlLeaseClient(
 	const createId = options.createId ?? randomUUID;
 	const now = options.now ?? (() => Date.now());
 	const retiredLeaseReacquireRequestTtlMs =
-		options.retiredLeaseReacquireRequestTtlMs ?? defaultRetiredLeaseReacquireRequestTtlMs;
+		options.retiredLeaseReacquireRequestTtlMs ?? defaultToolVmLeaseAuthorityTombstoneTtlMs;
 	const callerContextIdByCacheKey = new Map<string, string>();
 	const callerContextByLeaseId = new Map<string, LeaseCallerContextRef>();
 	const reacquireRequestByRetiredLeaseId = new Map<string, RetiredLeaseReacquireEntry>();
@@ -550,29 +568,57 @@ export function createGatewayControlLeaseClient(
 		return reacquireRequestByRetiredLeaseId.get(leaseId);
 	};
 
+	const retainReacquireRequestForRetiredLease = (retainOptions: {
+		readonly leaseCallerContext: LeaseCallerContextRef;
+		readonly leaseId: string;
+		readonly reacquireRequest?: OpenClawGondolinLeaseReacquireRequest;
+	}): void => {
+		const existingEntry = getRetiredLeaseReacquireEntry(retainOptions.leaseId);
+		const observedAtMs =
+			retainOptions.reacquireRequest?.observedAtMs ??
+			existingEntry?.reacquireRequest.observedAtMs ??
+			Math.max(1, now());
+		const reacquireRequest =
+			retainOptions.reacquireRequest ??
+			existingEntry?.reacquireRequest ??
+			({
+				observedAtMs,
+				staleEvidence: {
+					kind: 'caller-context',
+					reason: 'stale',
+				},
+			} satisfies OpenClawGondolinLeaseReacquireRequest);
+		reacquireRequestByRetiredLeaseId.set(retainOptions.leaseId, {
+			expiresAtMs: observedAtMs + retiredLeaseReacquireRequestTtlMs,
+			reacquireRequest,
+			request: retainOptions.leaseCallerContext.request,
+		});
+	};
+
 	const forgetCallerContextForLease = (
 		leaseId: string,
 		leaseCallerContext: LeaseCallerContextRef,
-		forgetOptions: { readonly retainReacquireRequest?: boolean } = {},
+		forgetOptions: {
+			readonly forgetRegisteredContext?: boolean;
+			readonly reacquireRequest?: OpenClawGondolinLeaseReacquireRequest;
+			readonly retainReacquireRequest?: boolean;
+		} = {},
 	): void => {
 		callerContextByLeaseId.delete(leaseId);
 		if (forgetOptions.retainReacquireRequest === true) {
-			const observedAtMs = Math.max(1, now());
-			reacquireRequestByRetiredLeaseId.set(leaseId, {
-				expiresAtMs: observedAtMs + retiredLeaseReacquireRequestTtlMs,
-				reacquireRequest: {
-					observedAtMs,
-					staleEvidence: {
-						kind: 'caller-context',
-						reason: 'stale',
-					},
-				},
-				request: leaseCallerContext.request,
+			retainReacquireRequestForRetiredLease({
+				leaseCallerContext,
+				leaseId,
+				...(forgetOptions.reacquireRequest === undefined
+					? {}
+					: { reacquireRequest: forgetOptions.reacquireRequest }),
 			});
 		} else {
 			reacquireRequestByRetiredLeaseId.delete(leaseId);
 		}
-		forgetRegisteredCallerContext(leaseCallerContext.request, leaseCallerContext);
+		if (forgetOptions.forgetRegisteredContext !== false) {
+			forgetRegisteredCallerContext(leaseCallerContext.request, leaseCallerContext);
+		}
 	};
 
 	const sendLeaseCommandWithCallerContextRefresh = async (commandOptions: {
@@ -709,6 +755,77 @@ export function createGatewayControlLeaseClient(
 		};
 	};
 
+	const releaseLeaseWithCleanupTolerance = async (
+		leaseId: string,
+		releaseOptions: OpenClawGondolinLeaseReleaseOptions | undefined,
+	): Promise<void> => {
+		let leaseCallerContext = resolveCallerContextForLease(leaseId);
+		if (leaseCallerContext === undefined) {
+			return;
+		}
+		const buildReleasePayload = (
+			callerContext: LeaseCallerContextRef,
+		): {
+			readonly callerContext: { readonly callerContextId: string };
+			readonly leaseId: string;
+		} => ({
+			callerContext: {
+				callerContextId: callerContext.callerContextId,
+			},
+			leaseId,
+		});
+		let result = await sendCommandUnchecked(
+			'lease_release',
+			buildReleasePayload(leaseCallerContext),
+		);
+		if (
+			result.response.payload.result !== 'ok' &&
+			shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
+		) {
+			forgetRegisteredCallerContext(leaseCallerContext.request, leaseCallerContext);
+			const refreshedCallerContext = await registerCallerContext(leaseCallerContext.request, {
+				forceRefresh: true,
+			});
+			rememberCallerContextForLease({
+				leaseId,
+				registeredCallerContext: refreshedCallerContext,
+				request: leaseCallerContext.request,
+			});
+			leaseCallerContext = requireCallerContextForLease(leaseId, 'Gateway control lease_release');
+			result = await sendCommandUnchecked('lease_release', buildReleasePayload(leaseCallerContext));
+		}
+		const reacquireRequest =
+			releaseOptions?.staleEvidence === undefined
+				? undefined
+				: ({
+						observedAtMs: releaseOptions.observedAtMs ?? Math.max(1, now()),
+						staleEvidence: releaseOptions.staleEvidence,
+					} satisfies OpenClawGondolinLeaseReacquireRequest);
+		if (result.response.payload.result === 'ok') {
+			forgetCallerContextForLease(leaseId, leaseCallerContext, {
+				...(reacquireRequest === undefined ? {} : { reacquireRequest }),
+				retainReacquireRequest: releaseOptions?.force === true,
+			});
+			return;
+		}
+		if (
+			releaseOptions?.force === true &&
+			isCleanupSafeLeaseReleaseRejection(result.response.payload.leaseRejectionReason)
+		) {
+			forgetCallerContextForLease(leaseId, leaseCallerContext, {
+				...(reacquireRequest === undefined ? {} : { reacquireRequest }),
+				retainReacquireRequest: true,
+			});
+			return;
+		}
+		assertCommandResultOk({
+			context: 'Gateway control lease_release',
+			operation: 'lease_release',
+			response: result.response,
+			responseToMessageId: result.messageId,
+		});
+	};
+
 	return {
 		endActiveUse: async (leaseId, useId, request) => {
 			if (resolveCallerContextForLease(leaseId) === undefined) {
@@ -780,7 +897,11 @@ export function createGatewayControlLeaseClient(
 				operation: 'lease_reacquire',
 				response,
 			});
-			reacquireRequestByRetiredLeaseId.delete(oldLeaseId);
+			forgetCallerContextForLease(oldLeaseId, leaseCallerContext, {
+				forgetRegisteredContext: false,
+				reacquireRequest: request,
+				retainReacquireRequest: true,
+			});
 			rememberCallerContextForLease({
 				leaseId: leaseSnapshot.leaseId,
 				registeredCallerContext: {
@@ -793,22 +914,7 @@ export function createGatewayControlLeaseClient(
 			return requirePrivateToolVmLease(leaseSnapshot, 'Gateway control lease_reacquire');
 		},
 		releaseLease: async (leaseId, releaseOptions) => {
-			const leaseCallerContext = resolveCallerContextForLease(leaseId);
-			if (leaseCallerContext === undefined) {
-				return;
-			}
-			await sendLeaseCommandWithCallerContextRefresh({
-				buildPayload: (callerContext) => ({
-					...callerContext,
-					leaseId,
-				}),
-				context: 'Gateway control lease_release',
-				leaseId,
-				operation: 'lease_release',
-			});
-			forgetCallerContextForLease(leaseId, leaseCallerContext, {
-				retainReacquireRequest: releaseOptions?.force === true,
-			});
+			await releaseLeaseWithCleanupTolerance(leaseId, releaseOptions);
 		},
 		renewLease: async (leaseId) => {
 			const response = await sendLeaseCommandWithCallerContextRefresh({

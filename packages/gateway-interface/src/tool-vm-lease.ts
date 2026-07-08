@@ -8,6 +8,8 @@ import {
 	type VmSshPublicEndpoint,
 } from './vm-capability-lease.js';
 
+export const defaultToolVmLeaseAuthorityTombstoneTtlMs = 10 * 60 * 1000;
+
 export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
 	readonly agentId: string;
 	readonly idleTtlMs: number;

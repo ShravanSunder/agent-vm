@@ -65,6 +65,11 @@ function createDefaultIds(): readonly string[] {
 		'88888888-8888-4888-8888-888888888888',
 		'99999999-9999-4999-8999-999999999999',
 		'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+		'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+		'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+		'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+		'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+		'ffffffff-ffff-4fff-8fff-ffffffffffff',
 	];
 }
 
@@ -418,6 +423,178 @@ describe('gateway control lease client recovery behavior', () => {
 				operation: 'finalize',
 			},
 		});
+	});
+
+	it('retains the reacquire hint when force-release cleanup is rejected as caller-context absent', async () => {
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const oldLeaseId = '01890f00-0000-7000-8000-000000000001';
+		const newLeaseId = '01890f00-0000-7000-8000-000000000002';
+		let registeredContextIndex = 0;
+		const contextIds = [
+			'44444444-4444-4444-8444-444444444444',
+			'99999999-9999-4999-8999-999999999999',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+		] as const;
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedMessages.push(payload);
+			if (payload.operation === 'caller_context_register') {
+				const callerContextId = contextIds[registeredContextIndex];
+				if (callerContextId === undefined) {
+					throw new Error('caller context id exhausted');
+				}
+				registeredContextIndex += 1;
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: { callerContextId },
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_create') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_release') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_release',
+					payload: {
+						leaseRejectionReason: 'caller_context_absent',
+						responseToMessageId: envelope.messageId,
+						result: 'rejected',
+					},
+				};
+			}
+			expect(payload.operation).toBe('lease_reacquire');
+			return {
+				kind: 'command_result',
+				operation: 'lease_reacquire',
+				payload: {
+					lease: createLeaseSnapshot(newLeaseId),
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		});
+		const leaseClient = createLeaseClient(controlService);
+
+		await leaseClient.requestLease(leaseRequest);
+		await expect(leaseClient.releaseLease(oldLeaseId, { force: true })).resolves.toBeUndefined();
+		await expect(
+			leaseClient.reacquireLease(oldLeaseId, {
+				observedAtMs: 42,
+				staleEvidence: { kind: 'tool-vm-ssh', operation: 'file-bridge' },
+			}),
+		).resolves.toEqual(expect.objectContaining({ leaseId: newLeaseId }));
+
+		expect(observedMessages.map((message) => message.operation)).toContain('lease_reacquire');
+		expect(
+			observedMessages.some(
+				(message) =>
+					isLeaseReacquireCommand(message) &&
+					message.payload.oldLeaseId === oldLeaseId &&
+					message.payload.callerContext.callerContextId === 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			),
+		).toBe(true);
+	});
+
+	it('keeps old-lease reacquire tombstones after the first successful replacement for sibling handles', async () => {
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const oldLeaseId = '01890f00-0000-7000-8000-000000000001';
+		const newLeaseId = '01890f00-0000-7000-8000-000000000002';
+		let registeredContextIndex = 0;
+		const contextIds = [
+			'44444444-4444-4444-8444-444444444444',
+			'99999999-9999-4999-8999-999999999999',
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+		] as const;
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedMessages.push(payload);
+			if (payload.operation === 'caller_context_register') {
+				const callerContextId = contextIds[registeredContextIndex];
+				if (callerContextId === undefined) {
+					throw new Error('caller context id exhausted');
+				}
+				registeredContextIndex += 1;
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: { callerContextId },
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_create') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_release') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_release',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			expect(payload.operation).toBe('lease_reacquire');
+			return {
+				kind: 'command_result',
+				operation: 'lease_reacquire',
+				payload: {
+					lease: createLeaseSnapshot(newLeaseId),
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		});
+		const leaseClient = createLeaseClient(controlService);
+
+		await leaseClient.requestLease(leaseRequest);
+		await leaseClient.releaseLease(oldLeaseId, { force: true });
+		await expect(
+			leaseClient.reacquireLease(oldLeaseId, {
+				observedAtMs: 42,
+				staleEvidence: { kind: 'tool-vm-ssh', operation: 'command' },
+			}),
+		).resolves.toEqual(expect.objectContaining({ leaseId: newLeaseId }));
+
+		expect(leaseClient.getRetiredLeaseReacquireRequest?.(oldLeaseId)).toEqual({
+			observedAtMs: 42,
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				operation: 'command',
+			},
+		});
+		await expect(
+			leaseClient.reacquireLease(oldLeaseId, {
+				observedAtMs: 99,
+				staleEvidence: { kind: 'tool-vm-ssh', operation: 'file-bridge' },
+			}),
+		).resolves.toEqual(expect.objectContaining({ leaseId: newLeaseId }));
+
+		expect(observedMessages.filter(isLeaseReacquireCommand)).toHaveLength(2);
 	});
 
 	it('expires retained retired-lease reacquire hints with injected time', async () => {
