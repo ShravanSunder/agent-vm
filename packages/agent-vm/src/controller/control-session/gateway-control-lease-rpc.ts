@@ -73,6 +73,60 @@ function callerContextMatchesLeaseOwner(comparison: {
 	);
 }
 
+function zoneGitMountsMatch(
+	leftMount: LeaseCreateOptions['zoneGitMount'],
+	rightMount: LeaseCreateOptions['zoneGitMount'],
+): boolean {
+	if (leftMount === undefined || rightMount === undefined) {
+		return leftMount === rightMount;
+	}
+	return (
+		leftMount.hostZoneFilesDir === rightMount.hostZoneFilesDir &&
+		leftMount.hostZoneGitRoot === rightMount.hostZoneGitRoot
+	);
+}
+
+function leaseCreateCompatibilityMismatchFields(
+	leftOptions: LeaseCreateOptions,
+	rightOptions: LeaseCreateOptions,
+): readonly string[] {
+	const mismatchedFields: string[] = [];
+	if (leftOptions.agentId !== rightOptions.agentId) {
+		mismatchedFields.push('agentId');
+	}
+	if (leftOptions.agentWorkspaceDir !== rightOptions.agentWorkspaceDir) {
+		mismatchedFields.push('agentWorkspaceDir');
+	}
+	if (leftOptions.effectiveIdleTtlMs !== rightOptions.effectiveIdleTtlMs) {
+		mismatchedFields.push('effectiveIdleTtlMs');
+	}
+	if (leftOptions.guestWorkdir !== rightOptions.guestWorkdir) {
+		mismatchedFields.push('guestWorkdir');
+	}
+	if (leftOptions.hostWorkMountDir !== rightOptions.hostWorkMountDir) {
+		mismatchedFields.push('hostWorkMountDir');
+	}
+	if (leftOptions.profileId !== rightOptions.profileId) {
+		mismatchedFields.push('profileId');
+	}
+	if (leftOptions.zoneId !== rightOptions.zoneId) {
+		mismatchedFields.push('zoneId');
+	}
+	if (!zoneGitMountsMatch(leftOptions.zoneGitMount, rightOptions.zoneGitMount)) {
+		mismatchedFields.push('zoneGitMount');
+	}
+	return mismatchedFields;
+}
+
+function leaseCreatePayloadFromReacquirePayload(
+	payload: GatewayControlLeaseReacquireIntentPayload,
+): GatewayControlLeaseCreatePayload {
+	return {
+		callerContext: payload.callerContext,
+		...(payload.idleTtlHintMs === undefined ? {} : { idleTtlHintMs: payload.idleTtlHintMs }),
+	};
+}
+
 function leaseRpcRejection(
 	leaseRejectionReason: GatewayControlLeaseRpcRejection['leaseRejectionReason'],
 ): GatewayControlLeaseRpcRejection {
@@ -187,7 +241,10 @@ export function createGatewayControlLeaseRpcOperations(
 ): GatewayControlLeaseRpcOperations {
 	const now = options.now ?? (() => Date.now());
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
-	const leaseAuthorityStore = createToolVmLeaseAuthorityStore<LeaseCreateOptions>();
+	const leaseAuthorityStore = createToolVmLeaseAuthorityStore<LeaseCreateOptions>({ now });
+	options.leaseManager.subscribeLeaseRetirement?.((event) => {
+		leaseAuthorityStore.markRetired(event.leaseId);
+	});
 
 	function recordLeaseOwner(record: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
@@ -217,6 +274,28 @@ export function createGatewayControlLeaseRpcOperations(
 			callerContext: payload.callerContext,
 			owner: authority.owner,
 		});
+	}
+
+	async function resolveCurrentReacquireCompatibility(optionsToResolve: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly payload: GatewayControlLeaseReacquireIntentPayload;
+	}): Promise<LeaseCreateOptions> {
+		return await options.resolveLeaseCreateOptions({
+			callerContext: optionsToResolve.callerContext,
+			payload: leaseCreatePayloadFromReacquirePayload(optionsToResolve.payload),
+		});
+	}
+
+	function isReacquireCompatibilityCurrent(optionsToCompare: {
+		readonly authorityCompatibility: LeaseCreateOptions;
+		readonly currentCompatibility: LeaseCreateOptions;
+	}): boolean {
+		return (
+			leaseCreateCompatibilityMismatchFields(
+				optionsToCompare.authorityCompatibility,
+				optionsToCompare.currentCompatibility,
+			).length === 0
+		);
 	}
 
 	return {
@@ -309,6 +388,28 @@ export function createGatewayControlLeaseRpcOperations(
 				});
 				return leaseRpcRejection('ownership_denied');
 			}
+			const currentCompatibility = await resolveCurrentReacquireCompatibility({
+				callerContext,
+				payload,
+			});
+			if (
+				!isReacquireCompatibilityCurrent({
+					authorityCompatibility: authority.compatibility,
+					currentCompatibility,
+				})
+			) {
+				emitReacquireLifecycleEvent({
+					callerContext,
+					elapsedMs: 0,
+					leaseRejectionReason: 'ownership_denied',
+					observedAtMs: Math.max(1, now()),
+					operation,
+					oldLeaseId: payload.oldLeaseId,
+					recordHealthEvent: options.recordHealthEvent,
+					result: 'failed',
+				});
+				return leaseRpcRejection('ownership_denied');
+			}
 			if (authority.replacementLeaseId !== undefined) {
 				const replacementSnapshot = options.leaseManager.peekLease(authority.replacementLeaseId);
 				if (replacementSnapshot !== undefined) {
@@ -323,7 +424,7 @@ export function createGatewayControlLeaseRpcOperations(
 				await options.leaseManager.releaseLease(payload.oldLeaseId, { force: true });
 			}
 			leaseAuthorityStore.markRetired(payload.oldLeaseId);
-			const replacementLease = await options.leaseManager.createLease(authority.compatibility);
+			const replacementLease = await options.leaseManager.createLease(currentCompatibility);
 			if (replacementLease.id === payload.oldLeaseId) {
 				emitReacquireLifecycleEvent({
 					callerContext,
@@ -340,7 +441,7 @@ export function createGatewayControlLeaseRpcOperations(
 			leaseAuthorityStore.markReplaced(payload.oldLeaseId, replacementLease.id);
 			recordLeaseOwner({
 				callerContext,
-				leaseCreateOptions: authority.compatibility,
+				leaseCreateOptions: currentCompatibility,
 				leaseId: replacementLease.id,
 			});
 			const replacementSnapshot = await serializeGatewayControlLeaseSnapshot({
@@ -402,6 +503,7 @@ export function createGatewayControlLeaseRpcOperations(
 			}
 			const renewal = await options.leaseManager.renewLease(leaseId);
 			if (renewal.kind === 'not-found') {
+				leaseAuthorityStore.markRetired(leaseId);
 				return undefined;
 			}
 			return await serializeGatewayControlLeaseSnapshot({

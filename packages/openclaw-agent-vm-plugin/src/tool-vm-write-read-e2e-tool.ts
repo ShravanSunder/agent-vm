@@ -432,6 +432,30 @@ function buildToolVmWriteReadE2eSshResetScript(): string {
 	].join('\n');
 }
 
+const sshResetFailureMessageFragments = [
+	'Connection reset by peer',
+	'closed by remote host',
+	'kex_exchange_identification',
+	'ssh_exchange_identification',
+] as const;
+
+const sshResetScriptFailureMessageFragments = [
+	'agent-vm-e2e-resetting-tool-vm-sshd: no sshd ancestor found',
+	'agent-vm-e2e-resetting-tool-vm-sshd: ssh session survived reset',
+] as const;
+
+function errorMessageFromUnknown(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function isExpectedToolVmWriteReadE2eSshResetError(error: unknown): boolean {
+	const message = errorMessageFromUnknown(error);
+	if (sshResetScriptFailureMessageFragments.some((fragment) => message.includes(fragment))) {
+		return false;
+	}
+	return sshResetFailureMessageFragments.some((fragment) => message.includes(fragment));
+}
+
 async function markToolVmWriteReadE2eHandleStaleWithSshCommandReset(
 	backend: GondolinSandboxBackendHandle,
 ): Promise<void> {
@@ -439,8 +463,11 @@ async function markToolVmWriteReadE2eHandleStaleWithSshCommandReset(
 		await backend.runShellCommand({
 			script: buildToolVmWriteReadE2eSshResetScript(),
 		});
-	} catch {
-		return;
+	} catch (error) {
+		if (isExpectedToolVmWriteReadE2eSshResetError(error)) {
+			return;
+		}
+		throw error instanceof Error ? error : new Error(String(error));
 	}
 	throw new Error('tool-vm-write-read-e2e: SSH reset command completed without stale evidence.');
 }

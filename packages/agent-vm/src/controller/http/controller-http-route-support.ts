@@ -111,7 +111,11 @@ export type ControllerLeaseManager = Pick<
 	Partial<
 		Pick<
 			LeaseManager,
-			'endActiveUse' | 'getActiveUseCount' | 'heartbeatActiveUse' | 'startActiveUse'
+			| 'endActiveUse'
+			| 'getActiveUseCount'
+			| 'heartbeatActiveUse'
+			| 'startActiveUse'
+			| 'subscribeLeaseRetirement'
 		>
 	>;
 

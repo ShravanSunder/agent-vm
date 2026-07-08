@@ -516,12 +516,24 @@ function createSandboxBackendHandle(options: {
 		readonly operation: ToolVmHandleBindingSshOperation;
 		readonly reason: ToolVmSshFailureKind;
 	}): Promise<void> => {
-		const reacquireRequest = binding.markStale({
+		const markResult = binding.markStale({
 			lease: params.lease,
 			operation: params.operation,
 			reason: params.reason,
 		});
-		await options.markCachedLeaseStale(params.lease, params.reason, params.error, reacquireRequest);
+		if (markResult.kind === 'superseded') {
+			return;
+		}
+		options.leaseClient.retainRetiredLeaseReacquireRequest?.(
+			params.lease.leaseId,
+			markResult.reacquireRequest,
+		);
+		await options.markCachedLeaseStale(
+			params.lease,
+			params.reason,
+			params.error,
+			markResult.reacquireRequest,
+		);
 	};
 	const createActiveUseHandle = async (
 		operation: ToolVmHandleBindingSshOperation,

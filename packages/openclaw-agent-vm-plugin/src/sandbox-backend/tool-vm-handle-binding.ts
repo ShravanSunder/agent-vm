@@ -9,6 +9,15 @@ import {
 
 export type ToolVmHandleBindingSshOperation = 'command' | 'file-bridge' | 'finalize' | 'probe';
 
+export type ToolVmHandleMarkStaleResult =
+	| {
+			readonly kind: 'stale-current';
+			readonly reacquireRequest: OpenClawGondolinLeaseReacquireRequest;
+	  }
+	| {
+			readonly kind: 'superseded';
+	  };
+
 interface ToolVmHandleStaleBinding {
 	readonly lease: ToolVmSshLease;
 	readonly observedAtMs: number;
@@ -22,7 +31,7 @@ export interface ToolVmHandleBinding {
 		readonly observedAtMs?: number;
 		readonly operation: ToolVmHandleBindingSshOperation;
 		readonly reason: ToolVmSshFailureKind;
-	}): OpenClawGondolinLeaseReacquireRequest | undefined;
+	}): ToolVmHandleMarkStaleResult;
 	resolveCurrentLease(): Promise<ToolVmSshLease>;
 }
 
@@ -43,7 +52,18 @@ function staleEvidenceForReason(params: {
 }
 
 function isTerminalReacquireError(error: unknown): error is ControllerLeaseRequestError {
-	return error instanceof ControllerLeaseRequestError && error.kind === 'client-error';
+	if (!(error instanceof ControllerLeaseRequestError)) {
+		return false;
+	}
+	return (
+		error.leaseRejectionReason === 'lease_absent' ||
+		error.leaseRejectionReason === 'lease_authority_absent' ||
+		error.leaseRejectionReason === 'lease_force_released' ||
+		error.leaseRejectionReason === 'lease_generation_stale' ||
+		error.leaseRejectionReason === 'lease_retired' ||
+		error.leaseRejectionReason === 'lease_use_tombstoned' ||
+		error.leaseRejectionReason === 'ownership_denied'
+	);
 }
 
 export function createToolVmHandleBinding(options: {
@@ -124,7 +144,7 @@ export function createToolVmHandleBinding(options: {
 		currentLease: () => currentLease,
 		markStale: (markOptions) => {
 			if (currentLease.leaseId !== markOptions.lease.leaseId) {
-				return undefined;
+				return { kind: 'superseded' };
 			}
 			const reacquireRequest = {
 				observedAtMs: markOptions.observedAtMs ?? now(),
@@ -135,7 +155,7 @@ export function createToolVmHandleBinding(options: {
 				observedAtMs: reacquireRequest.observedAtMs,
 				staleEvidence: reacquireRequest.staleEvidence,
 			};
-			return reacquireRequest;
+			return { kind: 'stale-current', reacquireRequest };
 		},
 		resolveCurrentLease,
 	};

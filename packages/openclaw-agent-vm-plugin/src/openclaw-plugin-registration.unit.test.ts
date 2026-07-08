@@ -787,6 +787,121 @@ describe('createGondolinPlugin', () => {
 		expect(finalizeExec).not.toHaveBeenCalled();
 	});
 
+	it('accepts remote-host-closed SSH reset evidence in the stale-reacquire e2e route', async () => {
+		const registerHttpRoute = vi.fn();
+		let runtimeId = 'lease-old';
+		const runShellCommand = vi
+			.fn()
+			.mockResolvedValueOnce({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('first-marker'),
+			})
+			.mockRejectedValueOnce(
+				new Error(
+					"Warning: Permanently added 'tool-1.vm.host' (ED25519) to the list of known hosts.\r\nagent-vm-e2e-resetting-tool-vm-sshd\nConnection to tool-1.vm.host closed by remote host.",
+				),
+			)
+			.mockImplementationOnce(async () => {
+				runtimeId = 'lease-new';
+				return {
+					code: 0,
+					stderr: Buffer.from(''),
+					stdout: Buffer.from('second-marker'),
+				};
+			});
+		const backend = createMockToolVmWriteReadBackend({
+			runShellCommand,
+			runtimeId: () => runtimeId,
+		});
+		const backendFactory = vi.fn(async () => backend);
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '.agent-vm/proof-first.txt',
+			marker: 'first-marker',
+			scenario: 'stale-reacquire',
+			secondFilePath: '.agent-vm/proof-second.txt',
+			secondMarker: 'second-marker',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode, response.bodyText).toBe(200);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			details: {
+				newRuntimeId: 'lease-new',
+				oldRuntimeId: 'lease-old',
+				scenario: 'stale-reacquire',
+				second: {
+					readBack: 'second-marker',
+				},
+				status: 'ok',
+			},
+			ok: true,
+		});
+		expect(runShellCommand).toHaveBeenCalledTimes(3);
+	});
+
+	it('rejects stale-reacquire when the SSH reset script reports no sshd ancestor', async () => {
+		const registerHttpRoute = vi.fn();
+		const runShellCommand = vi
+			.fn()
+			.mockResolvedValueOnce({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('first-marker'),
+			})
+			.mockRejectedValueOnce(
+				new Error('agent-vm-e2e-resetting-tool-vm-sshd: no sshd ancestor found'),
+			)
+			.mockResolvedValueOnce({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('second-marker'),
+			});
+		const backend = createMockToolVmWriteReadBackend({
+			runShellCommand,
+		});
+		const backendFactory = vi.fn(async () => backend);
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '.agent-vm/proof-first.txt',
+			marker: 'first-marker',
+			scenario: 'stale-reacquire',
+			secondFilePath: '.agent-vm/proof-second.txt',
+			secondMarker: 'second-marker',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(500);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message: 'agent-vm-e2e-resetting-tool-vm-sshd: no sshd ancestor found',
+			},
+			ok: false,
+		});
+		expect(runShellCommand).toHaveBeenCalledTimes(2);
+	});
+
 	it('does not publish Tool VM runtime status through controller HTTP during full registration', async () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const fetchSpy = vi

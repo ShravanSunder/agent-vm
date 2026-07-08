@@ -322,17 +322,24 @@ describe('Tool VM handle binding', () => {
 	});
 
 	it.each([
-		{ status: 400, title: 'ownership denial' },
-		{ status: 404, title: 'missing old-lease authority' },
-		{ status: 410, title: 'retired old lease' },
+		{ reason: 'ownership_denied', status: 400, title: 'ownership denial' },
+		{ reason: 'lease_authority_absent', status: 404, title: 'missing old-lease authority' },
+		{ reason: 'lease_retired', status: 410, title: 'retired old lease' },
 	] as const)(
 		'terminalizes stale bindings after $title reacquire rejection',
-		async ({ status }) => {
+		async ({ reason, status }) => {
 			const oldLease = createLeaseResponse('1');
 			const terminalError = new ControllerLeaseRequestError({
-				bodyText: JSON.stringify({ message: 'terminal reacquire denial' }),
+				bodyText: JSON.stringify({
+					leaseRejectionReason: reason,
+					message: 'terminal reacquire denial',
+				}),
 				context: 'Gateway control lease_reacquire',
-				responseBody: { message: 'terminal reacquire denial' },
+				leaseRejectionReason: reason,
+				responseBody: {
+					leaseRejectionReason: reason,
+					message: 'terminal reacquire denial',
+				},
 				status,
 			});
 			const reacquireLease = vi.fn(async () => {
@@ -365,4 +372,44 @@ describe('Tool VM handle binding', () => {
 			});
 		},
 	);
+
+	it('does not terminalize refreshable session-mismatch reacquire errors', async () => {
+		const oldLease = createLeaseResponse('1');
+		const replacementLease = createLeaseResponse('2');
+		const refreshableError = new ControllerLeaseRequestError({
+			bodyText: JSON.stringify({
+				leaseRejectionReason: 'caller_context_session_mismatch',
+				message: 'session drift',
+			}),
+			context: 'Gateway control lease_reacquire',
+			leaseRejectionReason: 'caller_context_session_mismatch',
+			responseBody: {
+				leaseRejectionReason: 'caller_context_session_mismatch',
+				message: 'session drift',
+			},
+			status: 400,
+		});
+		const reacquireLease = vi
+			.fn()
+			.mockRejectedValueOnce(refreshableError)
+			.mockResolvedValueOnce(replacementLease);
+		const binding = createToolVmHandleBinding({
+			initialLease: oldLease,
+			leaseClient: {
+				getRetiredLeaseReacquireRequest: () => undefined,
+				reacquireLease,
+			},
+			now: () => 42,
+		});
+
+		binding.markStale({
+			lease: oldLease,
+			operation: 'command',
+			reason: 'ssh-command-failed',
+		});
+		await expect(binding.resolveCurrentLease()).rejects.toBe(refreshableError);
+		await expect(binding.resolveCurrentLease()).resolves.toEqual(replacementLease);
+
+		expect(reacquireLease).toHaveBeenCalledTimes(2);
+	});
 });

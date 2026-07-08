@@ -86,6 +86,13 @@ export interface ToolVmActiveUseSnapshot {
 	readonly useId: string;
 }
 
+export type ToolVmLeaseRetirementReason = 'dead' | 'expired' | 'released';
+
+export interface ToolVmLeaseRetirementEvent {
+	readonly leaseId: string;
+	readonly reason: ToolVmLeaseRetirementReason;
+}
+
 export interface LeaseManager {
 	createLease(options: {
 		readonly agentId: string;
@@ -123,6 +130,7 @@ export interface LeaseManager {
 		leaseId: string,
 		request: StartToolVmActiveUseRequest,
 	): StartToolVmActiveUseResponse | undefined;
+	subscribeLeaseRetirement(listener: (event: ToolVmLeaseRetirementEvent) => void): () => void;
 }
 
 export class AgentLeaseCompatibilityConflictError extends Error {
@@ -319,6 +327,7 @@ export function createLeaseManager(options: {
 	const leaseIdsByAgent = new Map<string, string>();
 	const releasingLeaseIds = new Set<string>();
 	const agentLeaseLocks = new Map<string, Promise<void>>();
+	const leaseRetirementListeners = new Set<(event: ToolVmLeaseRetirementEvent) => void>();
 	const toolVmUsePolicy = options.toolVmUsePolicy ?? defaultToolVmUsePolicy;
 	assertValidToolVmUsePolicy(toolVmUsePolicy);
 
@@ -374,6 +383,12 @@ export function createLeaseManager(options: {
 		return count;
 	}
 
+	function notifyLeaseRetired(event: ToolVmLeaseRetirementEvent): void {
+		for (const listener of leaseRetirementListeners) {
+			listener(event);
+		}
+	}
+
 	function isLeaseExpired(lease: Lease): boolean {
 		return isToolVmLeaseExpired({
 			activeUseCount: activeUseCountForLease(lease.id),
@@ -410,8 +425,12 @@ export function createLeaseManager(options: {
 	const createLeaseId = options.createLeaseId ?? createToolVmLeaseId;
 	const createRuntimeRecordId = options.createRuntimeRecordId ?? randomUUID;
 
-	async function evictLease(lease: Lease): Promise<void> {
+	async function evictLease(
+		lease: Lease,
+		reason: Exclude<ToolVmLeaseRetirementReason, 'released'>,
+	): Promise<void> {
 		deleteLease(lease);
+		notifyLeaseRetired({ leaseId: lease.id, reason });
 		let closeSucceeded = true;
 		try {
 			await lease.vm.close();
@@ -450,13 +469,13 @@ export function createLeaseManager(options: {
 				});
 				if (existingLease) {
 					if (isLeaseExpired(existingLease)) {
-						await evictLease(existingLease);
+						await evictLease(existingLease, 'expired');
 					} else {
 						assertCompatibleAgentLeaseRequest(existingLease, leaseOptions);
 						if (await isLeaseVmLive(existingLease)) {
 							return touchLease(existingLease);
 						}
-						await evictLease(existingLease);
+						await evictLease(existingLease, 'dead');
 					}
 				}
 				const tcpSlot = options.tcpPool.allocate();
@@ -635,7 +654,7 @@ export function createLeaseManager(options: {
 						nowMs: options.now(),
 					})
 				) {
-					await evictLease(currentLease);
+					await evictLease(currentLease, 'expired');
 					return { kind: 'not-found', reason: 'expired' };
 				}
 				const renewalDecision = classifyToolVmLeaseRenewal({
@@ -646,7 +665,7 @@ export function createLeaseManager(options: {
 					vmLive: await isLeaseVmLive(currentLease),
 				});
 				if (renewalDecision.kind === 'evict-dead') {
-					await evictLease(currentLease);
+					await evictLease(currentLease, 'dead');
 					return { kind: 'not-found', reason: 'dead' };
 				}
 				const renewedLease = touchLease(currentLease);
@@ -673,7 +692,7 @@ export function createLeaseManager(options: {
 						return;
 					}
 					if (!(await isLeaseVmLive(currentLease))) {
-						await evictLease(currentLease);
+						await evictLease(currentLease, 'dead');
 					}
 				});
 			}
@@ -733,6 +752,7 @@ export function createLeaseManager(options: {
 				}
 
 				deleteLease(currentLease);
+				notifyLeaseRetired({ leaseId: currentLease.id, reason: 'released' });
 
 				const closeOutcome = classifyToolVmLeaseCloseOutcome({
 					closeSucceeded: releaseError === undefined,
@@ -816,6 +836,12 @@ export function createLeaseManager(options: {
 				expiresAt: activeUse.expiresAt,
 				heartbeatAfterMs: toolVmUsePolicy.heartbeatAfterMs,
 				useId: activeUse.useId,
+			};
+		},
+		subscribeLeaseRetirement(listener) {
+			leaseRetirementListeners.add(listener);
+			return () => {
+				leaseRetirementListeners.delete(listener);
 			};
 		},
 	};

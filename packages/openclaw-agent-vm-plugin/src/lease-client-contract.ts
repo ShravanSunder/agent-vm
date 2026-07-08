@@ -1,3 +1,4 @@
+import type { GatewayControlLeaseRejectionReason } from '@agent-vm/gateway-control-contracts';
 import type {
 	EndToolVmActiveUseRequest,
 	HeartbeatToolVmActiveUseRequest,
@@ -80,6 +81,10 @@ export interface LeaseClient {
 		request: OpenClawGondolinLeaseReacquireRequest,
 	): Promise<ToolVmSshLease>;
 	releaseLease(leaseId: string, options?: OpenClawGondolinLeaseReleaseOptions): Promise<void>;
+	retainRetiredLeaseReacquireRequest?(
+		leaseId: string,
+		request: OpenClawGondolinLeaseReacquireRequest,
+	): boolean;
 	renewLease(leaseId: string): Promise<ToolVmSshLease>;
 	requestLease(request: OpenClawGondolinLeaseRequest): Promise<ToolVmSshLease>;
 	startActiveUse(
@@ -110,12 +115,14 @@ function formatStructuredErrorSuffix(responseBody: JsonValue | undefined): strin
 export class ControllerLeaseRequestError extends Error {
 	readonly bodyText: string;
 	readonly kind: ControllerLeaseRequestErrorKind;
+	readonly leaseRejectionReason?: GatewayControlLeaseRejectionReason;
 	readonly responseBody: JsonValue | undefined;
 	readonly status: number;
 
 	constructor(options: {
 		readonly bodyText: string;
 		readonly context: string;
+		readonly leaseRejectionReason?: GatewayControlLeaseRejectionReason;
 		readonly responseBody: JsonValue | undefined;
 		readonly status: number;
 	}) {
@@ -128,6 +135,9 @@ export class ControllerLeaseRequestError extends Error {
 		);
 		this.bodyText = options.bodyText;
 		this.kind = kind;
+		if (options.leaseRejectionReason !== undefined) {
+			this.leaseRejectionReason = options.leaseRejectionReason;
+		}
 		this.responseBody = options.responseBody;
 		this.status = options.status;
 	}

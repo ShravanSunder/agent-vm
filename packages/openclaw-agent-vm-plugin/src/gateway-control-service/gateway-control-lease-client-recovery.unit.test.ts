@@ -222,7 +222,11 @@ describe('gateway control lease client recovery behavior', () => {
 						reason: reason === 'lease_authority_absent' ? 'lease_authority_absent' : 'stale',
 					},
 				}),
-			).rejects.toMatchObject({ status });
+			).rejects.toMatchObject({
+				leaseRejectionReason: reason,
+				responseBody: expect.objectContaining({ leaseRejectionReason: reason }),
+				status,
+			});
 
 			expect(observedMessages.map((message) => message.operation)).toEqual([
 				'caller_context_register',
@@ -250,6 +254,99 @@ describe('gateway control lease client recovery behavior', () => {
 			expect(reacquireMessage.payload).not.toHaveProperty('workMountDir');
 		},
 	);
+
+	it('refreshes caller context after session-mismatch reacquire rejection', async () => {
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const oldLeaseId = '01890f00-0000-7000-8000-000000000001';
+		const newLeaseId = '01890f00-0000-7000-8000-000000000002';
+		let registeredContextIndex = 0;
+		let reacquireAttempts = 0;
+		const contextIds = [
+			'44444444-4444-4444-8444-444444444444',
+			'99999999-9999-4999-8999-999999999999',
+		] as const;
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedMessages.push(payload);
+			if (payload.operation === 'caller_context_register') {
+				const callerContextId = contextIds[registeredContextIndex];
+				if (callerContextId === undefined) {
+					throw new Error('caller context id exhausted');
+				}
+				registeredContextIndex += 1;
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: { callerContextId },
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_create') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			expect(payload.operation).toBe('lease_reacquire');
+			reacquireAttempts += 1;
+			if (reacquireAttempts === 1) {
+				return {
+					kind: 'command_result',
+					operation: 'lease_reacquire',
+					payload: {
+						leaseRejectionReason: 'caller_context_session_mismatch',
+						responseToMessageId: envelope.messageId,
+						result: 'rejected',
+					},
+				};
+			}
+			return {
+				kind: 'command_result',
+				operation: 'lease_reacquire',
+				payload: {
+					lease: createLeaseSnapshot(newLeaseId),
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		});
+		const leaseClient = createLeaseClient(controlService);
+
+		await leaseClient.requestLease(leaseRequest);
+		await expect(
+			leaseClient.reacquireLease(oldLeaseId, {
+				observedAtMs: 42,
+				staleEvidence: { kind: 'caller-context', reason: 'session_mismatch' },
+			}),
+		).resolves.toEqual(expect.objectContaining({ leaseId: newLeaseId }));
+
+		expect(observedMessages.map((message) => message.operation)).toEqual([
+			'caller_context_register',
+			'lease_create',
+			'lease_reacquire',
+			'caller_context_register',
+			'lease_reacquire',
+		]);
+		expect(
+			observedMessages.filter(isLeaseReacquireCommand).map((message) => message.payload),
+		).toEqual([
+			expect.objectContaining({
+				callerContext: { callerContextId: '44444444-4444-4444-8444-444444444444' },
+				oldLeaseId,
+			}),
+			expect.objectContaining({
+				callerContext: { callerContextId: '99999999-9999-4999-8999-999999999999' },
+				oldLeaseId,
+			}),
+		]);
+	});
 
 	it('remembers replacement lease caller context after successful reacquire', async () => {
 		const observedMessages: GatewayControlRpcMessage[] = [];
@@ -393,7 +490,11 @@ describe('gateway control lease client recovery behavior', () => {
 		const leaseClient = createLeaseClient(controlService);
 
 		await leaseClient.requestLease(leaseRequest);
-		await leaseClient.releaseLease(oldLeaseId, { force: true });
+		await leaseClient.releaseLease(oldLeaseId, {
+			force: true,
+			observedAtMs: 42,
+			staleEvidence: { kind: 'tool-vm-ssh', operation: 'finalize' },
+		});
 		await expect(
 			leaseClient.reacquireLease(oldLeaseId, {
 				observedAtMs: 42,
@@ -423,6 +524,65 @@ describe('gateway control lease client recovery behavior', () => {
 				operation: 'finalize',
 			},
 		});
+	});
+
+	it('does not retain a stale-reacquire hint for explicit force release without stale evidence', async () => {
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const oldLeaseId = '01890f00-0000-7000-8000-000000000001';
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedMessages.push(payload);
+			if (payload.operation === 'caller_context_register') {
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: {
+							callerContextId: '44444444-4444-4444-8444-444444444444',
+						},
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_create') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			expect(payload.operation).toBe('lease_release');
+			return {
+				kind: 'command_result',
+				operation: 'lease_release',
+				payload: {
+					lease: createLeaseSnapshot(oldLeaseId),
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		});
+		const leaseClient = createLeaseClient(controlService);
+
+		await leaseClient.requestLease(leaseRequest);
+		await leaseClient.releaseLease(oldLeaseId, { force: true });
+
+		expect(leaseClient.getRetiredLeaseReacquireRequest?.(oldLeaseId)).toBeUndefined();
+		await expect(
+			leaseClient.reacquireLease(oldLeaseId, {
+				observedAtMs: 42,
+				staleEvidence: { kind: 'tool-vm-ssh', operation: 'finalize' },
+			}),
+		).rejects.toMatchObject({ status: 409 });
+		expect(observedMessages.map((message) => message.operation)).toEqual([
+			'caller_context_register',
+			'lease_create',
+			'lease_release',
+		]);
 	});
 
 	it('retains the reacquire hint when force-release cleanup is rejected as caller-context absent', async () => {
@@ -489,7 +649,13 @@ describe('gateway control lease client recovery behavior', () => {
 		const leaseClient = createLeaseClient(controlService);
 
 		await leaseClient.requestLease(leaseRequest);
-		await expect(leaseClient.releaseLease(oldLeaseId, { force: true })).resolves.toBeUndefined();
+		await expect(
+			leaseClient.releaseLease(oldLeaseId, {
+				force: true,
+				observedAtMs: 42,
+				staleEvidence: { kind: 'tool-vm-ssh', operation: 'file-bridge' },
+			}),
+		).resolves.toBeUndefined();
 		await expect(
 			leaseClient.reacquireLease(oldLeaseId, {
 				observedAtMs: 42,
@@ -572,7 +738,11 @@ describe('gateway control lease client recovery behavior', () => {
 		const leaseClient = createLeaseClient(controlService);
 
 		await leaseClient.requestLease(leaseRequest);
-		await leaseClient.releaseLease(oldLeaseId, { force: true });
+		await leaseClient.releaseLease(oldLeaseId, {
+			force: true,
+			observedAtMs: 42,
+			staleEvidence: { kind: 'tool-vm-ssh', operation: 'command' },
+		});
 		await expect(
 			leaseClient.reacquireLease(oldLeaseId, {
 				observedAtMs: 42,
@@ -645,14 +815,18 @@ describe('gateway control lease client recovery behavior', () => {
 
 		await leaseClient.requestLease(leaseRequest);
 		nowMs = 2_000;
-		await leaseClient.releaseLease(oldLeaseId, { force: true });
+		await leaseClient.releaseLease(oldLeaseId, {
+			force: true,
+			observedAtMs: 2_000,
+			staleEvidence: { kind: 'tool-vm-ssh', operation: 'command' },
+		});
 
 		expect(typeof leaseClient.getRetiredLeaseReacquireRequest).toBe('function');
 		expect(leaseClient.getRetiredLeaseReacquireRequest?.(oldLeaseId)).toEqual({
 			observedAtMs: 2_000,
 			staleEvidence: {
-				kind: 'caller-context',
-				reason: 'stale',
+				kind: 'tool-vm-ssh',
+				operation: 'command',
 			},
 		});
 		nowMs = 2_049;
