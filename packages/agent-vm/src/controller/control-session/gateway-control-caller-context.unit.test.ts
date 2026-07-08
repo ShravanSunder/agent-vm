@@ -164,6 +164,86 @@ describe('gateway control caller context registry', () => {
 		expect(registry.resolve(secondContext.callerContextId)).toEqual(secondContext);
 	});
 
+	it('resolves caller-context ids with typed current-session status', () => {
+		let nextContextId = 0;
+		const registry = createRegistry({
+			createCallerContextId: () => {
+				nextContextId += 1;
+				return `44444444-4444-4444-8444-${String(nextContextId).padStart(12, '0')}`;
+			},
+		});
+		const firstContext = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+		const okResolution = registry.resolveForSession({
+			callerContextId: firstContext.callerContextId,
+			session: acceptedSession,
+		});
+		const mismatchResolution = registry.resolveForSession({
+			callerContextId: firstContext.callerContextId,
+			session: {
+				...acceptedSession,
+				connectionId: 'connection-b',
+				sessionId: 'session-b',
+			},
+		});
+
+		const secondContext = registry.register({
+			payload: registerPayload,
+			session: {
+				...acceptedSession,
+				connectionId: 'connection-b',
+				sessionId: 'session-b',
+			},
+		});
+		const staleResolution = registry.resolveForSession({
+			callerContextId: firstContext.callerContextId,
+			session: {
+				...acceptedSession,
+				connectionId: 'connection-b',
+				sessionId: 'session-b',
+			},
+		});
+		const secondResolution = registry.resolveForSession({
+			callerContextId: secondContext.callerContextId,
+			session: {
+				...acceptedSession,
+				connectionId: 'connection-b',
+				sessionId: 'session-b',
+			},
+		});
+		const absentResolution = registry.resolveForSession({
+			callerContextId: '99999999-9999-4999-8999-999999999999',
+			session: acceptedSession,
+		});
+
+		expect(okResolution).toEqual({ callerContext: firstContext, status: 'ok' });
+		expect(mismatchResolution.status).toBe('session_mismatch');
+		expect(staleResolution.status).toBe('stale');
+		expect(secondResolution).toEqual({ callerContext: secondContext, status: 'ok' });
+		expect(absentResolution.status).toBe('absent');
+	});
+
+	it('keeps released caller-context ids as bounded stale evidence for lease cleanup', () => {
+		const registry = createRegistry({
+			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+		});
+		const context = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+
+		registry.release(context.callerContextId);
+
+		expect(
+			registry.resolveForSession({
+				callerContextId: context.callerContextId,
+				session: acceptedSession,
+			}).status,
+		).toBe('stale');
+	});
+
 	it('evicts completed caller contexts so the hard cap is not a steady-state failure', () => {
 		let nextContextId = 0;
 		const registry = createRegistry({

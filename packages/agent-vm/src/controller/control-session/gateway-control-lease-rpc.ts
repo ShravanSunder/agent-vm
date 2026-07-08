@@ -6,8 +6,15 @@ import {
 	readIdentityPemFromFile,
 } from '../http/controller-http-route-support.js';
 import type { ObservedControllerLeaseCreateRequest } from '../leases/observed-lease-create-request.js';
+import {
+	createToolVmLeaseAuthorityStore,
+	type ToolVmLeaseStableOwner,
+} from '../leases/tool-vm-lease-authority-store.js';
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
-import type { GatewayControlLeaseRpcOperations } from './gateway-control-domain-handler.js';
+import type {
+	GatewayControlLeaseRpcOperations,
+	GatewayControlLeaseRpcRejection,
+} from './gateway-control-domain-handler.js';
 
 type LeaseCreateOptions = Parameters<ControllerLeaseManager['createLease']>[0];
 type GatewayControlLeaseCreatePayload = Parameters<
@@ -24,9 +31,25 @@ export interface GatewayControlLeaseRpcControllerOptions {
 	}) => Promise<LeaseCreateOptions>;
 }
 
+function stableOwnerFromCallerContext(
+	callerContext: GatewayControlTrustedCallerContext,
+): ToolVmLeaseStableOwner {
+	return {
+		agentId: callerContext.agentId,
+		agentWorkspaceDir: callerContext.agentWorkspaceDir,
+		bootId: callerContext.bootId,
+		controllerEpoch: callerContext.controllerEpoch,
+		peerId: callerContext.peerId,
+		purpose: callerContext.purpose,
+		sessionKeyDigest: callerContext.sessionKeyDigest,
+		workMountDir: callerContext.workMountDir,
+		zoneId: callerContext.zoneId,
+	};
+}
+
 function callerContextMatchesLeaseOwner(comparison: {
 	readonly callerContext: GatewayControlTrustedCallerContext;
-	readonly owner: GatewayControlTrustedCallerContext;
+	readonly owner: ToolVmLeaseStableOwner;
 }): boolean {
 	return (
 		comparison.callerContext.agentId === comparison.owner.agentId &&
@@ -39,6 +62,15 @@ function callerContextMatchesLeaseOwner(comparison: {
 		comparison.callerContext.workMountDir === comparison.owner.workMountDir &&
 		comparison.callerContext.zoneId === comparison.owner.zoneId
 	);
+}
+
+function leaseRpcRejection(
+	leaseRejectionReason: GatewayControlLeaseRpcRejection['leaseRejectionReason'],
+): GatewayControlLeaseRpcRejection {
+	return {
+		leaseRejectionReason,
+		result: 'rejected',
+	};
 }
 
 function serializeGatewayControlLeaseSnapshot(options: {
@@ -94,24 +126,36 @@ export function createGatewayControlLeaseRpcOperations(
 	options: GatewayControlLeaseRpcControllerOptions,
 ): GatewayControlLeaseRpcOperations {
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
-	const leaseOwnerContextByLeaseId = new Map<string, GatewayControlTrustedCallerContext>();
+	const leaseAuthorityStore = createToolVmLeaseAuthorityStore<LeaseCreateOptions>();
 
 	function recordLeaseOwner(record: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly leaseCreateOptions: LeaseCreateOptions;
 		readonly leaseId: string;
 	}): void {
-		leaseOwnerContextByLeaseId.set(record.leaseId, record.callerContext);
+		leaseAuthorityStore.recordCurrent({
+			compatibility: record.leaseCreateOptions,
+			leaseId: record.leaseId,
+			owner: stableOwnerFromCallerContext(record.callerContext),
+		});
 	}
 
 	function isOwnedLeaseRequest(payload: {
 		readonly callerContext: GatewayControlTrustedCallerContext | undefined;
 		readonly leaseId: string;
 	}): boolean {
-		const owner = leaseOwnerContextByLeaseId.get(payload.leaseId);
-		if (owner === undefined || payload.callerContext === undefined) {
+		const authority = leaseAuthorityStore.resolve(payload.leaseId);
+		if (
+			authority === undefined ||
+			authority.state !== 'current' ||
+			payload.callerContext === undefined
+		) {
 			return false;
 		}
-		return callerContextMatchesLeaseOwner({ callerContext: payload.callerContext, owner });
+		return callerContextMatchesLeaseOwner({
+			callerContext: payload.callerContext,
+			owner: authority.owner,
+		});
 	}
 
 	return {
@@ -134,6 +178,7 @@ export function createGatewayControlLeaseRpcOperations(
 			const lease = await options.leaseManager.createLease(leaseCreateOptions);
 			recordLeaseOwner({
 				callerContext,
+				leaseCreateOptions,
 				leaseId: lease.id,
 			});
 			return await serializeGatewayControlLeaseSnapshot({
@@ -174,6 +219,44 @@ export function createGatewayControlLeaseRpcOperations(
 				readIdentityPem,
 			});
 		},
+		reacquireLease: async ({ callerContext, payload }) => {
+			const authority = leaseAuthorityStore.resolve(payload.oldLeaseId);
+			if (authority === undefined) {
+				return leaseRpcRejection('lease_authority_absent');
+			}
+			if (!callerContextMatchesLeaseOwner({ callerContext, owner: authority.owner })) {
+				return leaseRpcRejection('ownership_denied');
+			}
+			if (authority.replacementLeaseId !== undefined) {
+				const replacementSnapshot = options.leaseManager.peekLease(authority.replacementLeaseId);
+				if (replacementSnapshot !== undefined) {
+					return await serializeGatewayControlLeaseSnapshot({
+						includeSsh: 'private',
+						lease: replacementSnapshot.lease,
+						readIdentityPem,
+					});
+				}
+			}
+			if (options.leaseManager.peekLease(payload.oldLeaseId) !== undefined) {
+				await options.leaseManager.releaseLease(payload.oldLeaseId, { force: true });
+			}
+			leaseAuthorityStore.markRetired(payload.oldLeaseId);
+			const replacementLease = await options.leaseManager.createLease(authority.compatibility);
+			if (replacementLease.id === payload.oldLeaseId) {
+				return leaseRpcRejection('lease_reacquire_required');
+			}
+			leaseAuthorityStore.markReplaced(payload.oldLeaseId, replacementLease.id);
+			recordLeaseOwner({
+				callerContext,
+				leaseCreateOptions: authority.compatibility,
+				leaseId: replacementLease.id,
+			});
+			return await serializeGatewayControlLeaseSnapshot({
+				includeSsh: 'private',
+				lease: replacementLease,
+				readIdentityPem,
+			});
+		},
 		heartbeatLeaseUse: async ({ callerContext, payload }) => {
 			const { leaseId, useId } = payload;
 			if (!isOwnedLeaseRequest({ callerContext, leaseId })) {
@@ -201,7 +284,7 @@ export function createGatewayControlLeaseRpcOperations(
 				return undefined;
 			}
 			await options.leaseManager.releaseLease(leaseId);
-			leaseOwnerContextByLeaseId.delete(leaseId);
+			leaseAuthorityStore.markRetired(leaseId);
 			return await serializeGatewayControlLeaseSnapshot({
 				includeSsh: false,
 				lease: leaseSnapshot.lease,

@@ -46,6 +46,21 @@ export type GatewayControlCallerContextPurpose =
 	| 'tool_portal_controller_host_action'
 	| 'tool_vm_lease';
 
+export type GatewayControlCallerContextResolution =
+	| {
+			readonly callerContext: GatewayControlTrustedCallerContext;
+			readonly status: 'ok';
+	  }
+	| {
+			readonly status: 'absent';
+	  }
+	| {
+			readonly status: 'stale';
+	  }
+	| {
+			readonly status: 'session_mismatch';
+	  };
+
 export interface GatewayControlCallerContextRegistry {
 	register(options: {
 		readonly payload: GatewayControlCallerContextRegisterPayload;
@@ -53,6 +68,10 @@ export interface GatewayControlCallerContextRegistry {
 	}): GatewayControlTrustedCallerContext;
 	release(callerContextId: string): void;
 	resolve(callerContextId: string): GatewayControlTrustedCallerContext | undefined;
+	resolveForSession(options: {
+		readonly callerContextId: string;
+		readonly session: GatewayControlCallerContextSessionRef;
+	}): GatewayControlCallerContextResolution;
 }
 
 export const DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_LIMIT = 1024;
@@ -147,6 +166,20 @@ function buildCallerContextCacheKey(options: {
 	].join('\u0000');
 }
 
+function callerContextSessionMatches(options: {
+	readonly context: GatewayControlTrustedCallerContext;
+	readonly session: GatewayControlCallerContextSessionRef;
+}): boolean {
+	return (
+		options.context.bootId === options.session.bootId &&
+		options.context.connectionId === options.session.connectionId &&
+		options.context.controllerEpoch === options.session.controllerEpoch &&
+		options.context.peerId === options.session.peerId &&
+		options.context.sessionId === options.session.sessionId &&
+		options.context.zoneId === options.session.zoneId
+	);
+}
+
 export function createGatewayControlCallerContextRegistry(options: {
 	readonly agentAuthorityKeys: Readonly<Record<string, string>>;
 	readonly callerContextProofKey: string;
@@ -159,6 +192,19 @@ export function createGatewayControlCallerContextRegistry(options: {
 	const maxContexts = options.maxContexts ?? DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_LIMIT;
 	const contextById = new Map<string, GatewayControlTrustedCallerContext>();
 	const contextIdByCacheKey = new Map<string, string>();
+	const staleCallerContextIds = new Map<string, true>();
+
+	function rememberStaleCallerContextId(callerContextId: string): void {
+		staleCallerContextIds.delete(callerContextId);
+		staleCallerContextIds.set(callerContextId, true);
+		while (staleCallerContextIds.size > maxContexts) {
+			const oldestCallerContextId = staleCallerContextIds.keys().next().value;
+			if (oldestCallerContextId === undefined) {
+				return;
+			}
+			staleCallerContextIds.delete(oldestCallerContextId);
+		}
+	}
 
 	function removeContext(callerContextId: string): void {
 		const context = contextById.get(callerContextId);
@@ -166,6 +212,7 @@ export function createGatewayControlCallerContextRegistry(options: {
 			return;
 		}
 		contextById.delete(callerContextId);
+		rememberStaleCallerContextId(callerContextId);
 		const cacheKey = [
 			context.zoneId,
 			context.peerId,
@@ -237,11 +284,25 @@ export function createGatewayControlCallerContextRegistry(options: {
 				workMountDir: evidence.workMountDir,
 				zoneId: session.zoneId,
 			} satisfies GatewayControlTrustedCallerContext;
+			staleCallerContextIds.delete(callerContextId);
 			contextById.set(callerContextId, context);
 			contextIdByCacheKey.set(cacheKey, callerContextId);
 			return context;
 		},
 		release: removeContext,
 		resolve: (callerContextId) => contextById.get(callerContextId),
+		resolveForSession: ({ callerContextId, session }) => {
+			const context = contextById.get(callerContextId);
+			if (context !== undefined) {
+				if (callerContextSessionMatches({ context, session })) {
+					return { callerContext: context, status: 'ok' };
+				}
+				return { status: 'session_mismatch' };
+			}
+			if (staleCallerContextIds.has(callerContextId)) {
+				return { status: 'stale' };
+			}
+			return { status: 'absent' };
+		},
 	};
 }

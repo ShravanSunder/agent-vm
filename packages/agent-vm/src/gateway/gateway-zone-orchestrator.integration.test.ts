@@ -3423,6 +3423,7 @@ describe('startGatewayZone', () => {
 			endLeaseUse: vi.fn(async () => undefined),
 			getLease: vi.fn(async () => undefined),
 			heartbeatLeaseUse: vi.fn(async () => undefined),
+			reacquireLease: vi.fn(async () => undefined),
 			releaseLease: vi.fn(async () => undefined),
 			renewLease: vi.fn(async () => undefined),
 			startLeaseUse: vi.fn(async () => undefined),

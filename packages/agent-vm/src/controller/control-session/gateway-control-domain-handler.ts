@@ -3,6 +3,8 @@ import {
 	type GatewayControlLeaseCreateIntentPayload,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlLeaseIdPayload,
+	type GatewayControlLeaseReacquireIntentPayload,
+	type GatewayControlLeaseRejectionReason,
 	type GatewayControlLeaseSnapshot,
 	type GatewayControlLeaseUseEndPayload,
 	type GatewayControlLeaseUseHeartbeatPayload,
@@ -57,6 +59,10 @@ export interface GatewayControlLeaseRpcOperations {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseUseHeartbeatPayload;
 	}): Promise<GatewayControlLeaseUseSnapshot | undefined>;
+	reacquireLease(options: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly payload: GatewayControlLeaseReacquireIntentPayload;
+	}): Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
 	releaseLease(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseIdPayload;
@@ -69,6 +75,11 @@ export interface GatewayControlLeaseRpcOperations {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseUseStartPayload;
 	}): Promise<GatewayControlLeaseUseSnapshot | undefined>;
+}
+
+export interface GatewayControlLeaseRpcRejection {
+	readonly leaseRejectionReason: GatewayControlLeaseRejectionReason;
+	readonly result: 'rejected';
 }
 
 export interface GatewayControlControllerHostActionOperations {
@@ -116,14 +127,6 @@ export interface GatewayControlDomainHandlerOptions {
 	) => void;
 }
 
-type LeaseRejectionReason =
-	| 'absent'
-	| 'force_released'
-	| 'generation_stale'
-	| 'releasing'
-	| 'runtime_not_ready'
-	| 'use_tombstoned';
-
 type CommandResultKind =
 	| 'approval_required'
 	| 'approval_stale'
@@ -147,20 +150,6 @@ function assertLeaseRpcConfigured(
 	return leaseRpc;
 }
 
-function callerContextMatchesSession(
-	callerContext: GatewayControlTrustedCallerContext,
-	session: GatewayControlCallerContextSessionRef,
-): boolean {
-	return (
-		callerContext.bootId === session.bootId &&
-		callerContext.connectionId === session.connectionId &&
-		callerContext.controllerEpoch === session.controllerEpoch &&
-		callerContext.peerId === session.peerId &&
-		callerContext.sessionId === session.sessionId &&
-		callerContext.zoneId === session.zoneId
-	);
-}
-
 function callerContextSessionFromEnvelope(
 	envelope: ControlEnvelope,
 ): GatewayControlCallerContextSessionRef {
@@ -174,20 +163,43 @@ function callerContextSessionFromEnvelope(
 	};
 }
 
+type ToolVmLeaseCallerContextResolution =
+	| {
+			readonly callerContext: GatewayControlTrustedCallerContext;
+			readonly status: 'ok';
+	  }
+	| {
+			readonly leaseRejectionReason: GatewayControlLeaseRejectionReason;
+			readonly status: 'rejected';
+	  };
+
 function resolveCurrentToolVmLeaseCallerContext(options: {
 	readonly callerContextId: string;
 	readonly callerContexts: GatewayControlCallerContextRegistry;
 	readonly session: GatewayControlCallerContextSessionRef;
-}): GatewayControlTrustedCallerContext | undefined {
-	const callerContext = options.callerContexts.resolve(options.callerContextId);
-	if (
-		callerContext === undefined ||
-		callerContext.purpose !== 'tool_vm_lease' ||
-		!callerContextMatchesSession(callerContext, options.session)
-	) {
-		return undefined;
+}): ToolVmLeaseCallerContextResolution {
+	const resolution = options.callerContexts.resolveForSession({
+		callerContextId: options.callerContextId,
+		session: options.session,
+	});
+	switch (resolution.status) {
+		case 'ok':
+			if (resolution.callerContext.purpose !== 'tool_vm_lease') {
+				return { leaseRejectionReason: 'ownership_denied', status: 'rejected' };
+			}
+			return { callerContext: resolution.callerContext, status: 'ok' };
+		case 'absent':
+			return { leaseRejectionReason: 'caller_context_absent', status: 'rejected' };
+		case 'stale':
+			return { leaseRejectionReason: 'caller_context_stale', status: 'rejected' };
+		case 'session_mismatch':
+			return { leaseRejectionReason: 'caller_context_session_mismatch', status: 'rejected' };
 	}
-	return callerContext;
+	return assertUnreachableCallerContextResolution(resolution);
+}
+
+function assertUnreachableCallerContextResolution(resolution: never): never {
+	throw new Error(`unsupported caller-context resolution: ${JSON.stringify(resolution)}`);
 }
 
 function requireString(value: string | undefined, fieldName: string): string {
@@ -389,7 +401,7 @@ function commandResultPayload(options: {
 		readonly safeMessage?: string;
 	};
 	readonly lease?: GatewayControlLeaseSnapshot;
-	readonly leaseRejectionReason?: LeaseRejectionReason;
+	readonly leaseRejectionReason?: GatewayControlLeaseRejectionReason;
 	readonly leaseUse?: GatewayControlLeaseUseSnapshot;
 	readonly responseToMessageId: string;
 	readonly result: CommandResultKind;
@@ -544,13 +556,30 @@ function assertUnreachableControllerHostAction(payload: never): never {
 	throw new Error(`unsupported controller host action: ${JSON.stringify(payload)}`);
 }
 
+function isLeaseRpcRejection(
+	result: GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined,
+): result is GatewayControlLeaseRpcRejection {
+	return result !== undefined && 'result' in result && result.result === 'rejected';
+}
+
 function leaseResultPayload(options: {
-	readonly lease: GatewayControlLeaseSnapshot | undefined;
+	readonly lease: GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined;
+	readonly leaseRejectionReason?: GatewayControlLeaseRejectionReason;
 	readonly responseToMessageId: string;
 }): GatewayControlCommandResultPayload {
+	if (isLeaseRpcRejection(options.lease)) {
+		return commandResultPayload({
+			leaseRejectionReason: options.lease.leaseRejectionReason,
+			responseToMessageId: options.responseToMessageId,
+			result: 'rejected',
+		});
+	}
 	return commandResultPayload({
 		...(options.lease === undefined
-			? { leaseRejectionReason: 'absent' as const, result: 'rejected' as const }
+			? {
+					leaseRejectionReason: options.leaseRejectionReason ?? 'lease_absent',
+					result: 'rejected' as const,
+				}
 			: { lease: options.lease, result: 'ok' as const }),
 		responseToMessageId: options.responseToMessageId,
 	});
@@ -558,11 +587,15 @@ function leaseResultPayload(options: {
 
 function leaseUseResultPayload(options: {
 	readonly leaseUse: GatewayControlLeaseUseSnapshot | undefined;
+	readonly leaseRejectionReason?: GatewayControlLeaseRejectionReason;
 	readonly responseToMessageId: string;
 }): GatewayControlCommandResultPayload {
 	return commandResultPayload({
 		...(options.leaseUse === undefined
-			? { leaseRejectionReason: 'absent' as const, result: 'rejected' as const }
+			? {
+					leaseRejectionReason: options.leaseRejectionReason ?? 'lease_absent',
+					result: 'rejected' as const,
+				}
 			: { leaseUse: options.leaseUse, result: 'ok' as const }),
 		responseToMessageId: options.responseToMessageId,
 	});
@@ -677,24 +710,24 @@ export function createGatewayControlDomainHandler(
 				}
 				case 'lease_create': {
 					const leaseRpc = assertLeaseRpcConfigured(options.leaseRpc);
-					const callerContext = resolveCurrentToolVmLeaseCallerContext({
+					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
 						callerContextId: message.payload.callerContext.callerContextId,
 						callerContexts: options.callerContexts,
 						session: callerContextSession,
 					});
-					if (callerContext === undefined) {
+					if (callerContextResolution.status === 'rejected') {
 						return GatewayControlRpcCommandResultMessageSchema.parse({
 							kind: 'command_result',
 							operation: 'lease_create',
 							payload: commandResultPayload({
-								leaseRejectionReason: 'absent',
+								leaseRejectionReason: callerContextResolution.leaseRejectionReason,
 								responseToMessageId: envelope.messageId,
 								result: 'rejected',
 							}),
 						});
 					}
 					const lease = await leaseRpc.createLease({
-						callerContext,
+						callerContext: callerContextResolution.callerContext,
 						payload: message.payload,
 					});
 					return GatewayControlRpcCommandResultMessageSchema.parse({
@@ -717,18 +750,25 @@ export function createGatewayControlDomainHandler(
 									callerContexts: options.callerContexts,
 									session: callerContextSession,
 								});
-					if (message.payload.callerContext !== undefined && callerContext === undefined) {
+					if (message.payload.callerContext !== undefined && callerContext?.status === 'rejected') {
 						return GatewayControlRpcCommandResultMessageSchema.parse({
 							kind: 'command_result',
 							operation: message.operation,
 							payload: leaseResultPayload({
 								lease: undefined,
+								leaseRejectionReason: callerContext.leaseRejectionReason,
 								responseToMessageId: envelope.messageId,
 							}),
 						});
 					}
 					const lease = await assertLeaseRpcConfigured(options.leaseRpc).getLease(
-						{ callerContext, payload: message.payload },
+						{
+							callerContext:
+								callerContext === undefined || callerContext.status === 'rejected'
+									? undefined
+									: callerContext.callerContext,
+							payload: message.payload,
+						},
 						{
 							includeSsh: message.operation === 'lease_get' ? 'private' : 'public',
 						},
@@ -742,24 +782,55 @@ export function createGatewayControlDomainHandler(
 						}),
 					});
 				}
-				case 'lease_renew': {
-					const callerContext = resolveCurrentToolVmLeaseCallerContext({
+				case 'lease_reacquire': {
+					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
 						callerContextId: message.payload.callerContext.callerContextId,
 						callerContexts: options.callerContexts,
 						session: callerContextSession,
 					});
-					if (callerContext === undefined) {
+					if (callerContextResolution.status === 'rejected') {
+						return GatewayControlRpcCommandResultMessageSchema.parse({
+							kind: 'command_result',
+							operation: 'lease_reacquire',
+							payload: leaseResultPayload({
+								lease: undefined,
+								leaseRejectionReason: callerContextResolution.leaseRejectionReason,
+								responseToMessageId: envelope.messageId,
+							}),
+						});
+					}
+					const lease = await assertLeaseRpcConfigured(options.leaseRpc).reacquireLease({
+						callerContext: callerContextResolution.callerContext,
+						payload: message.payload,
+					});
+					return GatewayControlRpcCommandResultMessageSchema.parse({
+						kind: 'command_result',
+						operation: 'lease_reacquire',
+						payload: leaseResultPayload({
+							lease,
+							responseToMessageId: envelope.messageId,
+						}),
+					});
+				}
+				case 'lease_renew': {
+					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
+						callerContextId: message.payload.callerContext.callerContextId,
+						callerContexts: options.callerContexts,
+						session: callerContextSession,
+					});
+					if (callerContextResolution.status === 'rejected') {
 						return GatewayControlRpcCommandResultMessageSchema.parse({
 							kind: 'command_result',
 							operation: 'lease_renew',
 							payload: leaseResultPayload({
 								lease: undefined,
+								leaseRejectionReason: callerContextResolution.leaseRejectionReason,
 								responseToMessageId: envelope.messageId,
 							}),
 						});
 					}
 					const lease = await assertLeaseRpcConfigured(options.leaseRpc).renewLease({
-						callerContext,
+						callerContext: callerContextResolution.callerContext,
 						payload: message.payload,
 					});
 					return GatewayControlRpcCommandResultMessageSchema.parse({
@@ -772,23 +843,24 @@ export function createGatewayControlDomainHandler(
 					});
 				}
 				case 'lease_release': {
-					const callerContext = resolveCurrentToolVmLeaseCallerContext({
+					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
 						callerContextId: message.payload.callerContext.callerContextId,
 						callerContexts: options.callerContexts,
 						session: callerContextSession,
 					});
-					if (callerContext === undefined) {
+					if (callerContextResolution.status === 'rejected') {
 						return GatewayControlRpcCommandResultMessageSchema.parse({
 							kind: 'command_result',
 							operation: 'lease_release',
 							payload: leaseResultPayload({
 								lease: undefined,
+								leaseRejectionReason: callerContextResolution.leaseRejectionReason,
 								responseToMessageId: envelope.messageId,
 							}),
 						});
 					}
 					const lease = await assertLeaseRpcConfigured(options.leaseRpc).releaseLease({
-						callerContext,
+						callerContext: callerContextResolution.callerContext,
 						payload: message.payload,
 					});
 					if (lease !== undefined) {
@@ -804,23 +876,24 @@ export function createGatewayControlDomainHandler(
 					});
 				}
 				case 'lease_use_start': {
-					const callerContext = resolveCurrentToolVmLeaseCallerContext({
+					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
 						callerContextId: message.payload.callerContext.callerContextId,
 						callerContexts: options.callerContexts,
 						session: callerContextSession,
 					});
-					if (callerContext === undefined) {
+					if (callerContextResolution.status === 'rejected') {
 						return GatewayControlRpcCommandResultMessageSchema.parse({
 							kind: 'command_result',
 							operation: 'lease_use_start',
 							payload: leaseUseResultPayload({
 								leaseUse: undefined,
+								leaseRejectionReason: callerContextResolution.leaseRejectionReason,
 								responseToMessageId: envelope.messageId,
 							}),
 						});
 					}
 					const leaseUse = await assertLeaseRpcConfigured(options.leaseRpc).startLeaseUse({
-						callerContext,
+						callerContext: callerContextResolution.callerContext,
 						payload: {
 							...message.payload,
 							...(message.payload.correlation === undefined
@@ -840,23 +913,24 @@ export function createGatewayControlDomainHandler(
 					});
 				}
 				case 'lease_use_heartbeat': {
-					const callerContext = resolveCurrentToolVmLeaseCallerContext({
+					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
 						callerContextId: message.payload.callerContext.callerContextId,
 						callerContexts: options.callerContexts,
 						session: callerContextSession,
 					});
-					if (callerContext === undefined) {
+					if (callerContextResolution.status === 'rejected') {
 						return GatewayControlRpcCommandResultMessageSchema.parse({
 							kind: 'command_result',
 							operation: 'lease_use_heartbeat',
 							payload: leaseUseResultPayload({
 								leaseUse: undefined,
+								leaseRejectionReason: callerContextResolution.leaseRejectionReason,
 								responseToMessageId: envelope.messageId,
 							}),
 						});
 					}
 					const leaseUse = await assertLeaseRpcConfigured(options.leaseRpc).heartbeatLeaseUse({
-						callerContext,
+						callerContext: callerContextResolution.callerContext,
 						payload: message.payload,
 					});
 					return GatewayControlRpcCommandResultMessageSchema.parse({
@@ -869,23 +943,24 @@ export function createGatewayControlDomainHandler(
 					});
 				}
 				case 'lease_use_end': {
-					const callerContext = resolveCurrentToolVmLeaseCallerContext({
+					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
 						callerContextId: message.payload.callerContext.callerContextId,
 						callerContexts: options.callerContexts,
 						session: callerContextSession,
 					});
-					if (callerContext === undefined) {
+					if (callerContextResolution.status === 'rejected') {
 						return GatewayControlRpcCommandResultMessageSchema.parse({
 							kind: 'command_result',
 							operation: 'lease_use_end',
 							payload: leaseUseResultPayload({
 								leaseUse: undefined,
+								leaseRejectionReason: callerContextResolution.leaseRejectionReason,
 								responseToMessageId: envelope.messageId,
 							}),
 						});
 					}
 					const leaseUse = await assertLeaseRpcConfigured(options.leaseRpc).endLeaseUse({
-						callerContext,
+						callerContext: callerContextResolution.callerContext,
 						payload: message.payload,
 					});
 					return GatewayControlRpcCommandResultMessageSchema.parse({

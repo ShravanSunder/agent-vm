@@ -155,6 +155,7 @@ function createLeaseRpcStub(
 		endLeaseUse: vi.fn(async () => endedLeaseUseSnapshot),
 		getLease: vi.fn(async () => leaseSnapshot),
 		heartbeatLeaseUse: vi.fn(async () => activeLeaseUseSnapshot),
+		reacquireLease: vi.fn(async () => leaseSnapshot),
 		releaseLease: vi.fn(async () => releasedLeaseSnapshot),
 		renewLease: vi.fn(async () => leaseSnapshot),
 		startLeaseUse: vi.fn(async () => activeLeaseUseSnapshot),
@@ -377,7 +378,7 @@ describe('gateway control domain handler', () => {
 			kind: 'command_result',
 			operation: 'lease_create',
 			payload: {
-				leaseRejectionReason: 'absent',
+				leaseRejectionReason: 'caller_context_absent',
 				responseToMessageId: '66666666-6666-4666-8666-666666666666',
 				result: 'rejected',
 			},
@@ -427,7 +428,7 @@ describe('gateway control domain handler', () => {
 			kind: 'command_result',
 			operation: 'lease_create',
 			payload: {
-				leaseRejectionReason: 'absent',
+				leaseRejectionReason: 'caller_context_session_mismatch',
 				responseToMessageId: '66666666-6666-4666-8666-666666666666',
 				result: 'rejected',
 			},
@@ -475,9 +476,107 @@ describe('gateway control domain handler', () => {
 			kind: 'command_result',
 			operation: 'lease_create',
 			payload: {
-				leaseRejectionReason: 'absent',
+				leaseRejectionReason: 'caller_context_session_mismatch',
 				responseToMessageId: '66666666-6666-4666-8666-666666666666',
 				result: 'rejected',
+			},
+		});
+	});
+
+	it('rejects lease operations with a stale caller-context id', async () => {
+		const callerContexts = createRegisteredCallerContexts();
+		callerContexts.release('44444444-4444-4444-8444-444444444444');
+		const renewLease = vi.fn(async () => leaseSnapshot);
+		const leaseRpc = createLeaseRpcStub({ renewLease });
+		const dispatcher = createControlSessionDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				callerContexts,
+				leaseRpc,
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('lease_renew'),
+			payload: {
+				kind: 'command',
+				operation: 'lease_renew',
+				payload: {
+					...callerContextPayload,
+					leaseId: 'lease-main',
+				},
+			},
+		});
+
+		expect(renewLease).not.toHaveBeenCalled();
+		expect(response).toEqual({
+			kind: 'command_result',
+			operation: 'lease_renew',
+			payload: {
+				leaseRejectionReason: 'caller_context_stale',
+				responseToMessageId: '66666666-6666-4666-8666-666666666666',
+				result: 'rejected',
+			},
+		});
+	});
+
+	it('routes lease_reacquire through lease RPC operations', async () => {
+		const leaseRpc = createLeaseRpcStub();
+		const dispatcher = createControlSessionDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				callerContexts: createRegisteredCallerContexts(),
+				leaseRpc,
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('lease_reacquire'),
+			payload: {
+				kind: 'command',
+				operation: 'lease_reacquire',
+				payload: {
+					...callerContextPayload,
+					oldLeaseId: 'lease-main',
+					staleEvidence: {
+						errorCode: 'ssh-command-failed',
+						kind: 'tool-vm-ssh',
+						observedAtMs: 1_000,
+						operation: 'file-bridge',
+					},
+				},
+			},
+		});
+
+		expect(leaseRpc.reacquireLease).toHaveBeenCalledWith({
+			callerContext: expect.objectContaining({
+				agentId: 'main',
+				callerContextId: '44444444-4444-4444-8444-444444444444',
+				purpose: 'tool_vm_lease',
+				zoneId: 'zone-a',
+			}),
+			payload: {
+				...callerContextPayload,
+				oldLeaseId: 'lease-main',
+				staleEvidence: {
+					errorCode: 'ssh-command-failed',
+					kind: 'tool-vm-ssh',
+					observedAtMs: 1_000,
+					operation: 'file-bridge',
+				},
+			},
+		});
+		expect(response).toEqual({
+			kind: 'command_result',
+			operation: 'lease_reacquire',
+			payload: {
+				lease: leaseSnapshot,
+				responseToMessageId: '66666666-6666-4666-8666-666666666666',
+				result: 'ok',
 			},
 		});
 	});
