@@ -369,13 +369,22 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			leaseRpc.getLease(withCallerContextPayload(crossCallerLeasePayload, otherCallerContext), {
 				includeSsh: 'private',
 			}),
-		).resolves.toBeUndefined();
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
 		await expect(
 			leaseRpc.renewLease(withCallerContextPayload(crossCallerLeasePayload, otherCallerContext)),
-		).resolves.toBeUndefined();
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
 		await expect(
 			leaseRpc.releaseLease(withCallerContextPayload(crossCallerLeasePayload, otherCallerContext)),
-		).resolves.toBeUndefined();
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
 	});
 
 	it('keeps leases reachable after reconnect refreshes the caller context id', async () => {
@@ -448,6 +457,73 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				state: 'released',
 			}),
 		);
+	});
+
+	it('rejects current lease work when the same-gateway fence changes after caller-context resolution', async () => {
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager: createTestLeaseManager(),
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async () => ({
+				agentId: callerContext.agentId,
+				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				guestWorkdir: '/workspace',
+				hostWorkMountDir: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: callerContext.zoneId,
+			}),
+		});
+		const lease = await leaseRpc.createLease({
+			callerContext,
+			payload: callerContextPayload,
+		});
+		const sameOwnerDifferentGatewayContext = {
+			...refreshedCallerContext,
+			bootId: 'gateway-boot-b',
+			controllerEpoch: 'epoch-b',
+			peerId: 'gateway-zone-b',
+		} satisfies GatewayControlTrustedCallerContext;
+		const driftedCallerContextPayload = {
+			callerContext: {
+				callerContextId: sameOwnerDifferentGatewayContext.callerContextId,
+			},
+			leaseId: lease.leaseId,
+		};
+
+		await expect(
+			leaseRpc.renewLease(
+				withCallerContextPayload(driftedCallerContextPayload, sameOwnerDifferentGatewayContext),
+			),
+		).resolves.toEqual({
+			leaseRejectionReason: 'caller_context_session_mismatch',
+			result: 'rejected',
+		});
+		await expect(
+			leaseRpc.releaseLease(
+				withCallerContextPayload(driftedCallerContextPayload, sameOwnerDifferentGatewayContext),
+			),
+		).resolves.toEqual({
+			leaseRejectionReason: 'caller_context_session_mismatch',
+			result: 'rejected',
+		});
+		await expect(
+			leaseRpc.startLeaseUse(
+				withCallerContextPayload(
+					{
+						...driftedCallerContextPayload,
+						useId: '01890f00-0000-7000-8000-000000000001',
+					},
+					sameOwnerDifferentGatewayContext,
+				),
+			),
+		).resolves.toEqual({
+			leaseRejectionReason: 'caller_context_session_mismatch',
+			result: 'rejected',
+		});
 	});
 
 	it('reacquires a replacement lease after the old lease was released', async () => {
@@ -651,7 +727,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(3);
 	});
 
-	it('does not treat attachment drift as stable ownership drift after caller-context resolution', async () => {
+	it('allows reacquire after refreshable caller-context attachment credentials rotate', async () => {
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
@@ -681,22 +757,13 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				leaseId: oldLease.leaseId,
 			}),
 		);
-		const trustedResolvedContextAfterAttachmentRefresh = {
-			...callerContext,
-			bootId: 'gateway-boot-b',
-			callerContextId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-			connectionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-			controllerEpoch: 'epoch-b',
-			peerId: 'gateway-zone-b',
-			sessionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-		} satisfies GatewayControlTrustedCallerContext;
 
 		await expect(
 			leaseRpc.reacquireLease({
-				callerContext: trustedResolvedContextAfterAttachmentRefresh,
+				callerContext: refreshedCallerContext,
 				payload: {
 					callerContext: {
-						callerContextId: trustedResolvedContextAfterAttachmentRefresh.callerContextId,
+						callerContextId: refreshedCallerContext.callerContextId,
 					},
 					oldLeaseId: oldLease.leaseId,
 					staleEvidence: {
@@ -707,6 +774,65 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				},
 			}),
 		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+	});
+
+	it('rejects reacquire when the same-gateway fence changes after caller-context resolution', async () => {
+		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
+			agentId: context.agentId,
+			agentWorkspaceDir: context.agentWorkspaceDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: context.zoneId,
+		}));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions,
+		});
+		const oldLease = await leaseRpc.createLease({
+			callerContext,
+			payload: callerContextPayload,
+		});
+		await leaseRpc.releaseLease(
+			withCallerContextPayload({
+				...callerContextPayload,
+				leaseId: oldLease.leaseId,
+			}),
+		);
+		const sameOwnerDifferentGatewayContext = {
+			...refreshedCallerContext,
+			bootId: 'gateway-boot-b',
+			controllerEpoch: 'epoch-b',
+			peerId: 'gateway-zone-b',
+		} satisfies GatewayControlTrustedCallerContext;
+
+		await expect(
+			leaseRpc.reacquireLease({
+				callerContext: sameOwnerDifferentGatewayContext,
+				payload: {
+					callerContext: {
+						callerContextId: sameOwnerDifferentGatewayContext.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'caller-context',
+						observedAtMs: 1_100,
+						reason: 'session_mismatch',
+					},
+				},
+			}),
+		).resolves.toEqual({
+			leaseRejectionReason: 'caller_context_session_mismatch',
+			result: 'rejected',
+		});
+		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(1);
 	});
 
 	it('rejects old-lease reacquire when replacement ownership moved to another same-agent session', async () => {
@@ -1174,7 +1300,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			leaseRpc.heartbeatLeaseUse(
 				withCallerContextPayload(crossCallerUsePayload, otherCallerContext),
 			),
-		).resolves.toBeUndefined();
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
 		await expect(
 			leaseRpc.endLeaseUse(
 				withCallerContextPayload(
@@ -1185,7 +1314,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					otherCallerContext,
 				),
 			),
-		).resolves.toBeUndefined();
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
 		expect(leaseManager.getActiveUses(lease.leaseId)).toEqual([expect.objectContaining({ useId })]);
 	});
 });

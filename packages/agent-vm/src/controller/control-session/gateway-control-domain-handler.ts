@@ -47,18 +47,18 @@ export interface GatewayControlLeaseRpcOperations {
 	endLeaseUse(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseUseEndPayload;
-	}): Promise<GatewayControlLeaseUseSnapshot | undefined>;
+	}): Promise<GatewayControlLeaseUseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
 	getLease(
 		request: {
 			readonly callerContext: GatewayControlTrustedCallerContext | undefined;
 			readonly payload: GatewayControlLeaseIdPayload;
 		},
 		readOptions: { readonly includeSsh: 'private' | 'public' | false },
-	): Promise<GatewayControlLeaseSnapshot | undefined>;
+	): Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
 	heartbeatLeaseUse(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseUseHeartbeatPayload;
-	}): Promise<GatewayControlLeaseUseSnapshot | undefined>;
+	}): Promise<GatewayControlLeaseUseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
 	reacquireLease(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseReacquireIntentPayload;
@@ -66,15 +66,15 @@ export interface GatewayControlLeaseRpcOperations {
 	releaseLease(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseIdPayload;
-	}): Promise<GatewayControlLeaseSnapshot | undefined>;
+	}): Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
 	renewLease(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseIdPayload;
-	}): Promise<GatewayControlLeaseSnapshot | undefined>;
+	}): Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
 	startLeaseUse(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: GatewayControlLeaseUseStartPayload;
-	}): Promise<GatewayControlLeaseUseSnapshot | undefined>;
+	}): Promise<GatewayControlLeaseUseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
 }
 
 export interface GatewayControlLeaseRpcRejection {
@@ -594,7 +594,11 @@ function assertUnreachableControllerHostAction(payload: never): never {
 }
 
 function isLeaseRpcRejection(
-	result: GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined,
+	result:
+		| GatewayControlLeaseSnapshot
+		| GatewayControlLeaseUseSnapshot
+		| GatewayControlLeaseRpcRejection
+		| undefined,
 ): result is GatewayControlLeaseRpcRejection {
 	return result !== undefined && 'result' in result && result.result === 'rejected';
 }
@@ -623,10 +627,17 @@ function leaseResultPayload(options: {
 }
 
 function leaseUseResultPayload(options: {
-	readonly leaseUse: GatewayControlLeaseUseSnapshot | undefined;
+	readonly leaseUse: GatewayControlLeaseUseSnapshot | GatewayControlLeaseRpcRejection | undefined;
 	readonly leaseRejectionReason?: GatewayControlLeaseRejectionReason;
 	readonly responseToMessageId: string;
 }): GatewayControlCommandResultPayload {
+	if (isLeaseRpcRejection(options.leaseUse)) {
+		return commandResultPayload({
+			leaseRejectionReason: options.leaseUse.leaseRejectionReason,
+			responseToMessageId: options.responseToMessageId,
+			result: 'rejected',
+		});
+	}
 	return commandResultPayload({
 		...(options.leaseUse === undefined
 			? {

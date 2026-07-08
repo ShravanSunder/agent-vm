@@ -81,6 +81,17 @@ function callerContextMatchesLeaseOwner(comparison: {
 	);
 }
 
+function callerContextMatchesLeaseSessionFence(comparison: {
+	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly sessionAttachment: ToolVmLeaseSessionAttachment;
+}): boolean {
+	return (
+		comparison.callerContext.bootId === comparison.sessionAttachment.bootId &&
+		comparison.callerContext.controllerEpoch === comparison.sessionAttachment.controllerEpoch &&
+		comparison.callerContext.peerId === comparison.sessionAttachment.peerId
+	);
+}
+
 function zoneGitMountsMatch(
 	leftMount: LeaseCreateOptions['zoneGitMount'],
 	rightMount: LeaseCreateOptions['zoneGitMount'],
@@ -143,6 +154,18 @@ function leaseRpcRejection(
 		result: 'rejected',
 	};
 }
+
+type CurrentLeaseAuthorityDecision =
+	| {
+			readonly status: 'accepted';
+	  }
+	| {
+			readonly rejection: GatewayControlLeaseRpcRejection;
+			readonly status: 'rejected';
+	  }
+	| {
+			readonly status: 'absent';
+	  };
 
 function toolVmSshOperationFromReacquirePayload(
 	payload: GatewayControlLeaseReacquireIntentPayload,
@@ -267,22 +290,67 @@ export function createGatewayControlLeaseRpcOperations(
 		});
 	}
 
-	function isOwnedLeaseRequest(payload: {
+	function resolveCurrentLeaseAuthorityDecision(payload: {
 		readonly callerContext: GatewayControlTrustedCallerContext | undefined;
 		readonly leaseId: string;
-	}): boolean {
+	}): CurrentLeaseAuthorityDecision {
 		const authority = leaseAuthorityStore.resolve(payload.leaseId);
 		if (
 			authority === undefined ||
 			authority.state !== 'current' ||
 			payload.callerContext === undefined
 		) {
-			return false;
+			return { status: 'absent' };
 		}
-		return callerContextMatchesLeaseOwner({
-			callerContext: payload.callerContext,
-			owner: authority.owner,
+		if (
+			!callerContextMatchesLeaseOwner({
+				callerContext: payload.callerContext,
+				owner: authority.owner,
+			})
+		) {
+			return {
+				rejection: leaseRpcRejection('ownership_denied'),
+				status: 'rejected',
+			};
+		}
+		if (
+			!callerContextMatchesLeaseSessionFence({
+				callerContext: payload.callerContext,
+				sessionAttachment: authority.sessionAttachment,
+			})
+		) {
+			return {
+				rejection: leaseRpcRejection('caller_context_session_mismatch'),
+				status: 'rejected',
+			};
+		}
+		return { status: 'accepted' };
+	}
+
+	function currentLeaseAuthorityMatchesCaller(optionsToCheck: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly leaseId: string;
+	}): boolean {
+		return (
+			resolveCurrentLeaseAuthorityDecision({
+				callerContext: optionsToCheck.callerContext,
+				leaseId: optionsToCheck.leaseId,
+			}).status === 'accepted'
+		);
+	}
+
+	function currentLeaseAuthorityRejectionReason(optionsToCheck: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly leaseId: string;
+	}): GatewayControlLeaseRpcRejection['leaseRejectionReason'] {
+		const decision = resolveCurrentLeaseAuthorityDecision({
+			callerContext: optionsToCheck.callerContext,
+			leaseId: optionsToCheck.leaseId,
 		});
+		if (decision.status === 'rejected') {
+			return decision.rejection.leaseRejectionReason;
+		}
+		return 'ownership_denied';
 	}
 
 	async function resolveCurrentReacquireCompatibility(optionsToResolve: {
@@ -304,21 +372,6 @@ export function createGatewayControlLeaseRpcOperations(
 				optionsToCompare.authorityCompatibility,
 				optionsToCompare.currentCompatibility,
 			).length === 0
-		);
-	}
-
-	function currentLeaseAuthorityMatchesCaller(optionsToCheck: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly leaseId: string;
-	}): boolean {
-		const currentAuthority = leaseAuthorityStore.resolve(optionsToCheck.leaseId);
-		return (
-			currentAuthority !== undefined &&
-			currentAuthority.state === 'current' &&
-			callerContextMatchesLeaseOwner({
-				callerContext: optionsToCheck.callerContext,
-				owner: currentAuthority.owner,
-			})
 		);
 	}
 
@@ -353,7 +406,11 @@ export function createGatewayControlLeaseRpcOperations(
 		},
 		endLeaseUse: async ({ callerContext, payload }) => {
 			const { leaseId, useId } = payload;
-			if (!isOwnedLeaseRequest({ callerContext, leaseId })) {
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			if (authorityDecision.status === 'rejected') {
+				return authorityDecision.rejection;
+			}
+			if (authorityDecision.status === 'absent') {
 				return undefined;
 			}
 			const result = options.leaseManager.endActiveUse?.(leaseId, useId, {
@@ -370,7 +427,11 @@ export function createGatewayControlLeaseRpcOperations(
 		},
 		getLease: async ({ callerContext, payload }, { includeSsh }) => {
 			const { leaseId } = payload;
-			if (!isOwnedLeaseRequest({ callerContext, leaseId })) {
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			if (authorityDecision.status === 'rejected') {
+				return authorityDecision.rejection;
+			}
+			if (authorityDecision.status === 'absent') {
 				return undefined;
 			}
 			const leaseSnapshot = options.leaseManager.peekLease(leaseId);
@@ -411,6 +472,24 @@ export function createGatewayControlLeaseRpcOperations(
 					result: 'failed',
 				});
 				return leaseRpcRejection('ownership_denied');
+			}
+			if (
+				!callerContextMatchesLeaseSessionFence({
+					callerContext,
+					sessionAttachment: authority.sessionAttachment,
+				})
+			) {
+				emitReacquireLifecycleEvent({
+					callerContext,
+					elapsedMs: 0,
+					leaseRejectionReason: 'caller_context_session_mismatch',
+					observedAtMs: Math.max(1, now()),
+					operation,
+					oldLeaseId: payload.oldLeaseId,
+					recordHealthEvent: options.recordHealthEvent,
+					result: 'failed',
+				});
+				return leaseRpcRejection('caller_context_session_mismatch');
 			}
 			let currentCompatibility: LeaseCreateOptions;
 			try {
@@ -461,17 +540,21 @@ export function createGatewayControlLeaseRpcOperations(
 							leaseId: authority.replacementLeaseId,
 						})
 					) {
+						const leaseRejectionReason = currentLeaseAuthorityRejectionReason({
+							callerContext,
+							leaseId: authority.replacementLeaseId,
+						});
 						emitReacquireLifecycleEvent({
 							callerContext,
 							elapsedMs: 0,
-							leaseRejectionReason: 'ownership_denied',
+							leaseRejectionReason,
 							observedAtMs: Math.max(1, now()),
 							operation,
 							oldLeaseId: payload.oldLeaseId,
 							recordHealthEvent: options.recordHealthEvent,
 							result: 'failed',
 						});
-						return leaseRpcRejection('ownership_denied');
+						return leaseRpcRejection(leaseRejectionReason);
 					}
 					return await serializeGatewayControlLeaseSnapshot({
 						includeSsh: 'private',
@@ -512,17 +595,21 @@ export function createGatewayControlLeaseRpcOperations(
 					leaseId: replacementLease.id,
 				})
 			) {
+				const leaseRejectionReason = currentLeaseAuthorityRejectionReason({
+					callerContext,
+					leaseId: replacementLease.id,
+				});
 				emitReacquireLifecycleEvent({
 					callerContext,
 					elapsedMs: 0,
-					leaseRejectionReason: 'ownership_denied',
+					leaseRejectionReason,
 					observedAtMs: Math.max(1, now()),
 					operation,
 					oldLeaseId: payload.oldLeaseId,
 					recordHealthEvent: options.recordHealthEvent,
 					result: 'failed',
 				});
-				return leaseRpcRejection('ownership_denied');
+				return leaseRpcRejection(leaseRejectionReason);
 			}
 			leaseAuthorityStore.markReplaced(payload.oldLeaseId, replacementLease.id);
 			recordLeaseOwner({
@@ -549,7 +636,11 @@ export function createGatewayControlLeaseRpcOperations(
 		},
 		heartbeatLeaseUse: async ({ callerContext, payload }) => {
 			const { leaseId, useId } = payload;
-			if (!isOwnedLeaseRequest({ callerContext, leaseId })) {
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			if (authorityDecision.status === 'rejected') {
+				return authorityDecision.rejection;
+			}
+			if (authorityDecision.status === 'absent') {
 				return undefined;
 			}
 			const heartbeat = options.leaseManager.heartbeatActiveUse?.(leaseId, useId, {});
@@ -566,7 +657,11 @@ export function createGatewayControlLeaseRpcOperations(
 		},
 		releaseLease: async ({ callerContext, payload }) => {
 			const { leaseId } = payload;
-			if (!isOwnedLeaseRequest({ callerContext, leaseId })) {
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			if (authorityDecision.status === 'rejected') {
+				return authorityDecision.rejection;
+			}
+			if (authorityDecision.status === 'absent') {
 				return undefined;
 			}
 			const leaseSnapshot = options.leaseManager.peekLease(leaseId);
@@ -584,7 +679,11 @@ export function createGatewayControlLeaseRpcOperations(
 		},
 		renewLease: async ({ callerContext, payload }) => {
 			const { leaseId } = payload;
-			if (!isOwnedLeaseRequest({ callerContext, leaseId })) {
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			if (authorityDecision.status === 'rejected') {
+				return authorityDecision.rejection;
+			}
+			if (authorityDecision.status === 'absent') {
 				return undefined;
 			}
 			const renewal = await options.leaseManager.renewLease(leaseId);
@@ -600,7 +699,11 @@ export function createGatewayControlLeaseRpcOperations(
 		},
 		startLeaseUse: async ({ callerContext, payload }) => {
 			const { correlation, leaseId, useId } = payload;
-			if (!isOwnedLeaseRequest({ callerContext, leaseId })) {
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			if (authorityDecision.status === 'rejected') {
+				return authorityDecision.rejection;
+			}
+			if (authorityDecision.status === 'absent') {
 				return undefined;
 			}
 			const activeUse = options.leaseManager.startActiveUse?.(leaseId, {
