@@ -214,6 +214,52 @@ async function publishFinalizeToolVmSshHealthEvent(options: {
 	}
 }
 
+async function publishStaleToolVmLeaseObservation(options: {
+	readonly agentId: string;
+	readonly correlation?: ToolVmActiveUseCorrelation | undefined;
+	readonly lease: ToolVmSshLease;
+	readonly operation: ToolVmHandleBindingSshOperation;
+	readonly publishHealthEvent: (event: AgentVmHealthEvent) => Promise<void>;
+	readonly reacquireRequest: OpenClawGondolinLeaseReacquireRequest;
+	readonly reason: ToolVmSshFailureKind;
+	readonly zoneId: string;
+}): Promise<void> {
+	const event = {
+		agentId: options.agentId,
+		callerContextState: 'stale',
+		...(options.correlation?.requestId === undefined
+			? {}
+			: { requestId: options.correlation.requestId }),
+		...(options.correlation?.runId === undefined ? {} : { runId: options.correlation.runId }),
+		...(options.correlation?.sessionKeyDigest === undefined
+			? {}
+			: { sessionKeyDigest: options.correlation.sessionKeyDigest }),
+		...(options.correlation?.toolCallId === undefined
+			? {}
+			: { toolCallId: options.correlation.toolCallId }),
+		...(options.correlation?.traceId === undefined ? {} : { traceId: options.correlation.traceId }),
+		elapsedMs: 0,
+		errorCode: options.reason,
+		kind: 'tool-vm-ssh',
+		leaseId: options.lease.leaseId,
+		lifecycleEventRole: 'plugin_observation',
+		lifecycleTransition: 'current_to_stale',
+		observedAtMs: options.reacquireRequest.observedAtMs,
+		oldLeaseId: options.lease.leaseId,
+		operation: options.operation,
+		result: 'failed',
+		transitionId: `lease_reacquire:${options.lease.leaseId}`,
+		zoneId: options.zoneId,
+	} satisfies AgentVmHealthEvent;
+	try {
+		await options.publishHealthEvent(event);
+	} catch (error) {
+		writeSandboxBackendLog(
+			`tool-vm-ssh stale observation publish failed for zone '${options.zoneId}' lease '${options.lease.leaseId}': ${formatUnknownError(error)}`,
+		);
+	}
+}
+
 function mergedAbortSignal(
 	firstSignal: AbortSignal | undefined,
 	secondSignal: AbortSignal,
@@ -369,6 +415,19 @@ export function createGondolinSandboxBackendFactory(
 				`lease marked stale for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}' reason '${reason}': ${formatUnknownError(error)}`,
 			);
 			if (reacquireRequest !== undefined) {
+				await publishStaleToolVmLeaseObservation({
+					agentId,
+					correlation: sessionKeyCorrelation(params.sessionKey),
+					lease,
+					operation:
+						reacquireRequest.staleEvidence.kind === 'tool-vm-ssh'
+							? reacquireRequest.staleEvidence.operation
+							: 'probe',
+					publishHealthEvent,
+					reacquireRequest,
+					reason,
+					zoneId: options.zoneId,
+				});
 				leaseClient.retainRetiredLeaseReacquireRequest?.(lease.leaseId, reacquireRequest);
 			}
 			await leaseClient

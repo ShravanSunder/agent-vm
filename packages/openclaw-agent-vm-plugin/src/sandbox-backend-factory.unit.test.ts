@@ -1182,6 +1182,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	it('publishes a reacquire hint when the cached reuse probe retires a lease used by an existing handle', async () => {
 		const oldLease = createLeaseResponse('cached-probe-old');
 		const replacementLease = createLeaseResponse('cached-probe-new');
+		const publishHealthEvent = vi.fn(async () => {});
 		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
 		let oldCallerContextRegistered = true;
 		const requestLease = vi.fn(async () => {
@@ -1260,6 +1261,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => leaseClient,
+				publishHealthEvent,
 				runRemoteShellScript,
 			},
 		);
@@ -1289,6 +1291,21 @@ describe('createGondolinSandboxBackendFactory', () => {
 				operation: 'probe',
 			},
 		});
+		expect(publishHealthEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'main',
+				callerContextState: 'stale',
+				kind: 'tool-vm-ssh',
+				leaseId: oldLease.leaseId,
+				lifecycleEventRole: 'plugin_observation',
+				lifecycleTransition: 'current_to_stale',
+				oldLeaseId: oldLease.leaseId,
+				operation: 'probe',
+				result: 'failed',
+				transitionId: `lease_reacquire:${oldLease.leaseId}`,
+				zoneId: 'shravan',
+			}),
+		);
 		expect(requestLease).toHaveBeenCalledTimes(1);
 		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
 			replacementLease.leaseId,

@@ -87,8 +87,10 @@ function callerContextMatchesLeaseSessionFence(comparison: {
 }): boolean {
 	return (
 		comparison.callerContext.bootId === comparison.sessionAttachment.bootId &&
+		comparison.callerContext.connectionId === comparison.sessionAttachment.connectionId &&
 		comparison.callerContext.controllerEpoch === comparison.sessionAttachment.controllerEpoch &&
-		comparison.callerContext.peerId === comparison.sessionAttachment.peerId
+		comparison.callerContext.peerId === comparison.sessionAttachment.peerId &&
+		comparison.callerContext.sessionId === comparison.sessionAttachment.sessionId
 	);
 }
 
@@ -176,6 +178,7 @@ function toolVmSshOperationFromReacquirePayload(
 function emitReacquireLifecycleEvent(options: {
 	readonly callerContext: GatewayControlTrustedCallerContext;
 	readonly elapsedMs: number;
+	readonly callerContextState?: ToolVmSshHealthEvent['callerContextState'];
 	readonly leaseRejectionReason?: GatewayControlLeaseRpcRejection['leaseRejectionReason'];
 	readonly observedAtMs: number;
 	readonly operation: ToolVmSshHealthEvent['operation'];
@@ -189,7 +192,11 @@ function emitReacquireLifecycleEvent(options: {
 	}
 	const eventBase = {
 		agentId: options.callerContext.agentId,
-		callerContextState: 'ok' as const,
+		callerContextState:
+			options.callerContextState ??
+			(options.leaseRejectionReason === undefined
+				? 'ok'
+				: callerContextStateForLeaseRejection(options.leaseRejectionReason)),
 		elapsedMs: options.elapsedMs,
 		kind: 'tool-vm-ssh' as const,
 		leaseId: options.replacementLeaseId ?? options.oldLeaseId,
@@ -207,7 +214,7 @@ function emitReacquireLifecycleEvent(options: {
 	if (options.replacementLeaseId === undefined) {
 		options.recordHealthEvent({
 			...eventBase,
-			lifecycleTransition: 'stale_to_retired',
+			lifecycleTransition: 'retired_rejected',
 		});
 		return;
 	}
@@ -216,6 +223,32 @@ function emitReacquireLifecycleEvent(options: {
 		lifecycleTransition: 'stale_to_reacquired',
 		replacementLeaseId: options.replacementLeaseId,
 	});
+}
+
+function callerContextStateForLeaseRejection(
+	leaseRejectionReason: GatewayControlLeaseRpcRejection['leaseRejectionReason'],
+): ToolVmSshHealthEvent['callerContextState'] {
+	switch (leaseRejectionReason) {
+		case 'caller_context_absent':
+		case 'lease_absent':
+		case 'lease_authority_absent':
+			return 'absent';
+		case 'caller_context_session_mismatch':
+			return 'session_mismatch';
+		case 'caller_context_stale':
+		case 'lease_generation_stale':
+			return 'stale';
+		case 'lease_force_released':
+		case 'lease_reacquire_required':
+		case 'lease_releasing':
+		case 'lease_retired':
+		case 'lease_use_tombstoned':
+		case 'ownership_denied':
+		case 'runtime_not_ready':
+			return 'not_applicable';
+	}
+	const exhaustiveReason: never = leaseRejectionReason;
+	return exhaustiveReason;
 }
 
 function serializeGatewayControlLeaseSnapshot(options: {
@@ -501,16 +534,6 @@ export function createGatewayControlLeaseRpcOperations(
 				if (!(error instanceof OpenClawRuntimeStatusUnavailableError)) {
 					throw error;
 				}
-				emitReacquireLifecycleEvent({
-					callerContext,
-					elapsedMs: 0,
-					leaseRejectionReason: 'runtime_not_ready',
-					observedAtMs: Math.max(1, now()),
-					operation,
-					oldLeaseId: payload.oldLeaseId,
-					recordHealthEvent: options.recordHealthEvent,
-					result: 'failed',
-				});
 				return leaseRpcRejection('runtime_not_ready');
 			}
 			if (
