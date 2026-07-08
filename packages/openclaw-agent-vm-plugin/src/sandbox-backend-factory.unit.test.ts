@@ -923,6 +923,123 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 
+	it('reacquires from a sibling handle after shared stale cleanup retires the old caller context', async () => {
+		const oldLease = createLeaseResponse('sibling-old');
+		const replacementLease = createLeaseResponse('sibling-new');
+		let retiredLeaseId: string | undefined;
+		let oldCallerContextRegistered = true;
+		const requestLease = vi.fn(async () => {
+			oldCallerContextRegistered = true;
+			return oldLease;
+		});
+		const startActiveUse = vi.fn(async (leaseId: string, request) => {
+			if (leaseId === oldLease.leaseId && !oldCallerContextRegistered) {
+				throw new ControllerLeaseRequestError({
+					bodyText: JSON.stringify({
+						message: `gateway control lease '${leaseId}' has no registered caller context`,
+					}),
+					context: 'Gateway control lease_use_start',
+					responseBody: {
+						message: `gateway control lease '${leaseId}' has no registered caller context`,
+					},
+					status: 409,
+				});
+			}
+			return {
+				expiresAt: 2_000,
+				heartbeatAfterMs: 1_000,
+				useId: request.useId,
+			};
+		});
+		const reacquireLease = vi.fn(async (oldLeaseId: string) => {
+			expect(oldLeaseId).toBe(oldLease.leaseId);
+			expect(retiredLeaseId).toBe(oldLease.leaseId);
+			return replacementLease;
+		});
+		const releaseLease = vi.fn(async (leaseId: string, options) => {
+			if (options?.force === true) {
+				retiredLeaseId = leaseId;
+				oldCallerContextRegistered = false;
+			}
+		});
+		const runRemoteShellScript = vi
+			.fn()
+			.mockResolvedValueOnce({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('probe') })
+			.mockRejectedValueOnce(new Error('kex reset'))
+			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('ok') });
+		const leaseClient: LeaseClient = {
+			endActiveUse: vi.fn(async () => {}),
+			getRetiredLeaseReacquireRequest: (leaseId) =>
+				retiredLeaseId === leaseId
+					? {
+							observedAtMs: 2_000,
+							staleEvidence: {
+								kind: 'caller-context',
+								reason: 'stale',
+							},
+						}
+					: undefined,
+			heartbeatActiveUse: vi.fn(async () => ({
+				expiresAt: 2_000,
+				heartbeatAfterMs: 1_000,
+			})),
+			peekLease: async () => createLeasePeekResponse(oldLease.leaseId),
+			reacquireLease,
+			releaseLease,
+			renewLease: async () => oldLease,
+			requestLease,
+			startActiveUse,
+		};
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => leaseClient,
+				runRemoteShellScript,
+			},
+		);
+
+		const firstHandle = await factory(createFactoryParamsForAgent('main'));
+		const secondHandle = await factory(createFactoryParamsForAgent('main'));
+
+		await expect(firstHandle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/kex reset/u);
+		await expect(secondHandle.runShellCommand({ script: 'pwd' })).resolves.toEqual({
+			code: 0,
+			stderr: Buffer.alloc(0),
+			stdout: Buffer.from('ok'),
+		});
+
+		expect(firstHandle.runtimeId).toBe(oldLease.leaseId);
+		expect(secondHandle.runtimeId).toBe(replacementLease.leaseId);
+		expect(releaseLease).toHaveBeenCalledWith(oldLease.leaseId, { force: true });
+		expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, {
+			observedAtMs: expect.any(Number),
+			staleEvidence: {
+				kind: 'caller-context',
+				reason: 'stale',
+			},
+		});
+		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
+			oldLease.leaseId,
+			replacementLease.leaseId,
+		]);
+		expect(runRemoteShellScript).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ ssh: oldLease.ssh }),
+		);
+		expect(runRemoteShellScript).toHaveBeenNthCalledWith(
+			3,
+			expect.objectContaining({ ssh: replacementLease.ssh }),
+		);
+	});
+
 	it('refuses a cached agent lease when the agent workspace root changes', async () => {
 		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
 			createLeaseResponse('shravan-beta-100', {

@@ -9,6 +9,10 @@ import type { createGondolinSandboxBackendFactory } from './sandbox-backend-fact
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV = 'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE';
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV =
 	'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY';
+export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV =
+	'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID';
+export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV =
+	'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY';
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH = '/__agent-vm/e2e/tool-vm-write-read';
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER =
 	'x-agent-vm-e2e-tool-vm-write-read-signature';
@@ -18,6 +22,11 @@ const proofFilePathPrefix = '.agent-vm/';
 type GondolinSandboxBackendFactory = ReturnType<typeof createGondolinSandboxBackendFactory>;
 type GondolinSandboxBackendFactoryProvider = () => Promise<GondolinSandboxBackendFactory>;
 type GondolinSandboxBackendHandle = Awaited<ReturnType<GondolinSandboxBackendFactory>>;
+
+interface ConfiguredToolVmWriteReadE2eProbeIdentity {
+	readonly agentId: string;
+	readonly sessionKey: string;
+}
 
 type ToolVmWriteReadE2eRouteParams =
 	| {
@@ -125,6 +134,27 @@ function resolveProbeAgentIdFromSessionKey(sessionKey: string): string {
 	return match[1];
 }
 
+function readConfiguredProbeIdentityFromEnv(): ConfiguredToolVmWriteReadE2eProbeIdentity {
+	const agentId = process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV];
+	if (agentId === undefined || agentId.length === 0) {
+		throw new Error(
+			`tool-vm-write-read-e2e: ${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV} is required.`,
+		);
+	}
+	const sessionKey = process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV];
+	if (sessionKey === undefined || sessionKey.length === 0) {
+		throw new Error(
+			`tool-vm-write-read-e2e: ${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV} is required.`,
+		);
+	}
+	if (resolveProbeAgentIdFromSessionKey(sessionKey) !== agentId) {
+		throw new Error(
+			'tool-vm-write-read-e2e: configured probe session key does not match configured agent id.',
+		);
+	}
+	return { agentId, sessionKey };
+}
+
 function normalizeProofFilePath(filePath: string): string {
 	if (
 		filePath.startsWith('/') ||
@@ -181,18 +211,36 @@ function readProbeStepParams(options: {
 	};
 }
 
-function readRouteParams(params: unknown): ToolVmWriteReadE2eRouteParams {
+function readRouteParams(
+	params: unknown,
+	probeIdentity: ConfiguredToolVmWriteReadE2eProbeIdentity,
+): ToolVmWriteReadE2eRouteParams {
 	if (!isObjectRecord(params)) {
 		throw new Error('tool-vm-write-read-e2e: request body must be an object.');
 	}
-	if (typeof params.sessionKey !== 'string' || params.sessionKey.length === 0) {
-		throw new Error('tool-vm-write-read-e2e: sessionKey is required.');
+	if (params.sessionKey !== undefined && typeof params.sessionKey !== 'string') {
+		throw new Error('tool-vm-write-read-e2e: sessionKey must be a string when provided.');
+	}
+	if (params.agentId !== undefined && typeof params.agentId !== 'string') {
+		throw new Error('tool-vm-write-read-e2e: agentId must be a string when provided.');
 	}
 	const probeParams = readProbeParams(params);
-	const agentId = resolveProbeAgentIdFromSessionKey(params.sessionKey);
-	if (params.agentId !== undefined && params.agentId !== agentId) {
+	if (
+		params.agentId !== undefined &&
+		params.sessionKey !== undefined &&
+		params.agentId !== resolveProbeAgentIdFromSessionKey(params.sessionKey)
+	) {
 		throw new ToolVmWriteReadE2eRouteError(
 			'tool-vm-write-read-e2e: body agentId does not match sessionKey agent.',
+			403,
+		);
+	}
+	if (
+		(params.agentId !== undefined && params.agentId !== probeIdentity.agentId) ||
+		(params.sessionKey !== undefined && params.sessionKey !== probeIdentity.sessionKey)
+	) {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: request identity does not match the configured probe identity.',
 			403,
 		);
 	}
@@ -205,11 +253,11 @@ function readRouteParams(params: unknown): ToolVmWriteReadE2eRouteParams {
 	}
 	if (scenario === 'write-read') {
 		return {
-			agentId,
+			agentId: probeIdentity.agentId,
 			filePath: probeParams.filePath,
 			marker: probeParams.marker,
 			scenario,
-			sessionKey: params.sessionKey,
+			sessionKey: probeIdentity.sessionKey,
 		};
 	}
 	const secondProbeParams = readProbeStepParams({
@@ -218,13 +266,13 @@ function readRouteParams(params: unknown): ToolVmWriteReadE2eRouteParams {
 		params,
 	});
 	return {
-		agentId,
+		agentId: probeIdentity.agentId,
 		filePath: probeParams.filePath,
 		marker: probeParams.marker,
 		scenario,
 		secondFilePath: secondProbeParams.filePath,
 		secondMarker: secondProbeParams.marker,
-		sessionKey: params.sessionKey,
+		sessionKey: probeIdentity.sessionKey,
 	};
 }
 
@@ -440,6 +488,7 @@ export function registerToolVmWriteReadE2eRoute(options: {
 			`tool-vm-write-read-e2e: ${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV} is required.`,
 		);
 	}
+	const probeIdentity = readConfiguredProbeIdentityFromEnv();
 	const registerHttpRoute = options.api.registerHttpRoute;
 	if (typeof registerHttpRoute !== 'function') {
 		throw new Error('tool-vm-write-read-e2e: OpenClaw did not provide registerHttpRoute.');
@@ -457,7 +506,10 @@ export function registerToolVmWriteReadE2eRoute(options: {
 						AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
 					),
 				});
-				const routeParams = readRouteParams(bodyText.length === 0 ? {} : JSON.parse(bodyText));
+				const routeParams = readRouteParams(
+					bodyText.length === 0 ? {} : JSON.parse(bodyText),
+					probeIdentity,
+				);
 				const context = {
 					agentDir: `/zone/agents/${routeParams.agentId}`,
 					agentId: routeParams.agentId,

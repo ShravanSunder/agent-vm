@@ -39,7 +39,7 @@ function staleEvidenceForReason(params: {
 
 export function createToolVmHandleBinding(options: {
 	readonly initialLease: ToolVmSshLease;
-	readonly leaseClient: Pick<LeaseClient, 'reacquireLease'>;
+	readonly leaseClient: Pick<LeaseClient, 'getRetiredLeaseReacquireRequest' | 'reacquireLease'>;
 	readonly now?: () => number;
 	readonly onReplacementLease?: (lease: ToolVmSshLease) => void;
 }): ToolVmHandleBinding {
@@ -48,14 +48,32 @@ export function createToolVmHandleBinding(options: {
 	let staleBinding: ToolVmHandleStaleBinding | undefined;
 	let pendingReacquire: Promise<ToolVmSshLease> | undefined;
 
+	const resolveStaleBinding = (): ToolVmHandleStaleBinding | undefined => {
+		if (staleBinding !== undefined) {
+			return staleBinding;
+		}
+		const retiredReacquireRequest = options.leaseClient.getRetiredLeaseReacquireRequest?.(
+			currentLease.leaseId,
+		);
+		if (retiredReacquireRequest === undefined) {
+			return undefined;
+		}
+		staleBinding = {
+			lease: currentLease,
+			observedAtMs: retiredReacquireRequest.observedAtMs,
+			staleEvidence: retiredReacquireRequest.staleEvidence,
+		};
+		return staleBinding;
+	};
+
 	const resolveCurrentLease = async (): Promise<ToolVmSshLease> => {
-		if (staleBinding === undefined) {
+		const bindingToReplace = resolveStaleBinding();
+		if (bindingToReplace === undefined) {
 			return currentLease;
 		}
 		if (pendingReacquire !== undefined) {
 			return await pendingReacquire;
 		}
-		const bindingToReplace = staleBinding;
 		const reacquirePromise = options.leaseClient
 			.reacquireLease(bindingToReplace.lease.leaseId, {
 				observedAtMs: bindingToReplace.observedAtMs,

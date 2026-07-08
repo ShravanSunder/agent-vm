@@ -56,6 +56,12 @@ interface LeaseCallerContextRef {
 	readonly request: OpenClawGondolinLeaseRequest;
 }
 
+interface RetiredLeaseReacquireEntry {
+	readonly expiresAtMs: number;
+	readonly reacquireRequest: OpenClawGondolinLeaseReacquireRequest;
+	readonly request: OpenClawGondolinLeaseRequest;
+}
+
 interface GatewayControlCommandResultResponse {
 	readonly messageId: string;
 	readonly response: GatewayControlCommandResultMessage;
@@ -73,7 +79,10 @@ export interface GatewayControlLeaseClientOptions {
 	readonly createId?: CreateGatewayControlId;
 	readonly identity: GatewayControlIdentity;
 	readonly now?: () => number;
+	readonly retiredLeaseReacquireRequestTtlMs?: number;
 }
+
+const defaultRetiredLeaseReacquireRequestTtlMs = 10 * 60 * 1000;
 
 function createGatewayControlError(params: {
 	readonly context: string;
@@ -333,9 +342,11 @@ export function createGatewayControlLeaseClient(
 ): LeaseClient {
 	const createId = options.createId ?? randomUUID;
 	const now = options.now ?? (() => Date.now());
+	const retiredLeaseReacquireRequestTtlMs =
+		options.retiredLeaseReacquireRequestTtlMs ?? defaultRetiredLeaseReacquireRequestTtlMs;
 	const callerContextIdByCacheKey = new Map<string, string>();
 	const callerContextByLeaseId = new Map<string, LeaseCallerContextRef>();
-	const reacquireRequestByRetiredLeaseId = new Map<string, OpenClawGondolinLeaseRequest>();
+	const reacquireRequestByRetiredLeaseId = new Map<string, RetiredLeaseReacquireEntry>();
 
 	const sendCommandUnchecked = async (
 		operation: GatewayControlRpcOperation,
@@ -523,6 +534,22 @@ export function createGatewayControlLeaseClient(
 		);
 	};
 
+	const pruneExpiredRetiredLeaseReacquireRequests = (): void => {
+		const nowMs = now();
+		for (const [leaseId, entry] of reacquireRequestByRetiredLeaseId.entries()) {
+			if (entry.expiresAtMs <= nowMs) {
+				reacquireRequestByRetiredLeaseId.delete(leaseId);
+			}
+		}
+	};
+
+	const getRetiredLeaseReacquireEntry = (
+		leaseId: string,
+	): RetiredLeaseReacquireEntry | undefined => {
+		pruneExpiredRetiredLeaseReacquireRequests();
+		return reacquireRequestByRetiredLeaseId.get(leaseId);
+	};
+
 	const forgetCallerContextForLease = (
 		leaseId: string,
 		leaseCallerContext: LeaseCallerContextRef,
@@ -530,7 +557,18 @@ export function createGatewayControlLeaseClient(
 	): void => {
 		callerContextByLeaseId.delete(leaseId);
 		if (forgetOptions.retainReacquireRequest === true) {
-			reacquireRequestByRetiredLeaseId.set(leaseId, leaseCallerContext.request);
+			const observedAtMs = Math.max(1, now());
+			reacquireRequestByRetiredLeaseId.set(leaseId, {
+				expiresAtMs: observedAtMs + retiredLeaseReacquireRequestTtlMs,
+				reacquireRequest: {
+					observedAtMs,
+					staleEvidence: {
+						kind: 'caller-context',
+						reason: 'stale',
+					},
+				},
+				request: leaseCallerContext.request,
+			});
 		} else {
 			reacquireRequestByRetiredLeaseId.delete(leaseId);
 		}
@@ -602,17 +640,17 @@ export function createGatewayControlLeaseClient(
 		if (liveCallerContext !== undefined) {
 			return liveCallerContext;
 		}
-		const reacquireRequest = reacquireRequestByRetiredLeaseId.get(oldLeaseId);
-		if (reacquireRequest === undefined) {
+		const reacquireEntry = getRetiredLeaseReacquireEntry(oldLeaseId);
+		if (reacquireEntry === undefined) {
 			return requireCallerContextForLease(oldLeaseId, context);
 		}
-		const registeredCallerContext = await registerCallerContext(reacquireRequest, {
+		const registeredCallerContext = await registerCallerContext(reacquireEntry.request, {
 			forceRefresh: true,
 		});
 		return {
 			cacheKey: registeredCallerContext.cacheKey,
 			callerContextId: registeredCallerContext.callerContextId,
-			request: reacquireRequest,
+			request: reacquireEntry.request,
 		};
 	};
 
@@ -693,6 +731,8 @@ export function createGatewayControlLeaseClient(
 				response,
 			});
 		},
+		getRetiredLeaseReacquireRequest: (leaseId) =>
+			getRetiredLeaseReacquireEntry(leaseId)?.reacquireRequest,
 		heartbeatActiveUse: async (leaseId, useId) => {
 			const response = await sendLeaseCommandWithCallerContextRefresh({
 				buildPayload: (callerContext) => ({

@@ -419,4 +419,73 @@ describe('gateway control lease client recovery behavior', () => {
 			},
 		});
 	});
+
+	it('expires retained retired-lease reacquire hints with injected time', async () => {
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const oldLeaseId = '01890f00-0000-7000-8000-000000000001';
+		let nowMs = 1_000;
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedMessages.push(payload);
+			if (payload.operation === 'caller_context_register') {
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: {
+							callerContextId: '44444444-4444-4444-8444-444444444444',
+						},
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_create') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			expect(payload.operation).toBe('lease_release');
+			return {
+				kind: 'command_result',
+				operation: 'lease_release',
+				payload: {
+					lease: createLeaseSnapshot(oldLeaseId),
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		});
+		const leaseClient = createLeaseClient(controlService, {
+			now: () => nowMs,
+			retiredLeaseReacquireRequestTtlMs: 50,
+		});
+
+		await leaseClient.requestLease(leaseRequest);
+		nowMs = 2_000;
+		await leaseClient.releaseLease(oldLeaseId, { force: true });
+
+		expect(typeof leaseClient.getRetiredLeaseReacquireRequest).toBe('function');
+		expect(leaseClient.getRetiredLeaseReacquireRequest?.(oldLeaseId)).toEqual({
+			observedAtMs: 2_000,
+			staleEvidence: {
+				kind: 'caller-context',
+				reason: 'stale',
+			},
+		});
+		nowMs = 2_049;
+		expect(leaseClient.getRetiredLeaseReacquireRequest?.(oldLeaseId)).toBeDefined();
+		nowMs = 2_050;
+		expect(leaseClient.getRetiredLeaseReacquireRequest?.(oldLeaseId)).toBeUndefined();
+		expect(observedMessages.map((message) => message.operation)).toEqual([
+			'caller_context_register',
+			'lease_create',
+			'lease_release',
+		]);
+	});
 });

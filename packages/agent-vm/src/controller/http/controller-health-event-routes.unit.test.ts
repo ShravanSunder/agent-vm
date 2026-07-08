@@ -2,6 +2,7 @@ import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 
+import { stableTelemetryHash } from '../../observability/health-event-telemetry.js';
 import { HealthEventStore } from '../health/health-event-store.js';
 import { registerControllerHealthEventRoutes } from './controller-health-event-routes.js';
 
@@ -59,6 +60,57 @@ describe('controller health event routes', () => {
 			kind: 'failed',
 			issues: [{ kind: 'gateway-control-session-unhealthy' }],
 			zoneId: 'beta',
+		});
+	});
+
+	it('redacts raw Tool VM lease lifecycle ids from the public health snapshot', async () => {
+		const { app, store } = createTestHarness();
+		const rawLeaseId = '01890f00-0000-7000-8000-000000000001';
+		const rawReplacementLeaseId = '01890f00-0000-7000-8000-000000000002';
+		const rawActiveUseId = '66666666-6666-4666-8666-666666666666';
+		const rawTransitionId = '77777777-7777-4777-8777-777777777777';
+		store.record({
+			activeUseId: rawActiveUseId,
+			agentId: 'main',
+			callerContextState: 'ok',
+			elapsedMs: 10,
+			kind: 'tool-vm-ssh',
+			leaseId: rawReplacementLeaseId,
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 9_000,
+			oldLeaseId: rawLeaseId,
+			operation: 'file-bridge',
+			replacementLeaseId: rawReplacementLeaseId,
+			result: 'ok',
+			transitionId: rawTransitionId,
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent);
+
+		const snapshotResponse = await app.request('/zones/beta/health-snapshot');
+		const snapshotBody = await snapshotResponse.json();
+		const serializedSnapshot = JSON.stringify(snapshotBody);
+
+		expect(snapshotResponse.status).toBe(200);
+		expect(serializedSnapshot).not.toContain(rawLeaseId);
+		expect(serializedSnapshot).not.toContain(rawReplacementLeaseId);
+		expect(serializedSnapshot).not.toContain(rawActiveUseId);
+		expect(serializedSnapshot).not.toContain(rawTransitionId);
+		expect(serializedSnapshot).toContain(stableTelemetryHash(rawLeaseId));
+		expect(serializedSnapshot).toContain(stableTelemetryHash(rawReplacementLeaseId));
+		expect(serializedSnapshot).toContain(stableTelemetryHash(rawActiveUseId));
+		expect(serializedSnapshot).toContain(stableTelemetryHash(rawTransitionId));
+		expect(snapshotBody).toMatchObject({
+			kind: 'ok',
+			latestEvents: [
+				{
+					activeUseIdHash: stableTelemetryHash(rawActiveUseId),
+					leaseIdHash: stableTelemetryHash(rawReplacementLeaseId),
+					oldLeaseIdHash: stableTelemetryHash(rawLeaseId),
+					replacementLeaseIdHash: stableTelemetryHash(rawReplacementLeaseId),
+					transitionIdHash: stableTelemetryHash(rawTransitionId),
+				},
+			],
 		});
 	});
 

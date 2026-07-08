@@ -24,6 +24,8 @@ import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
 	registerToolVmWriteReadE2eRoute,
 	testExports as toolVmWriteReadE2eToolTestExports,
@@ -65,6 +67,11 @@ beforeEach(() => {
 			main: 'test-main-agent-authority-key-with-enough-length',
 			second: 'test-second-agent-authority-key-with-enough-length',
 		}),
+	);
+	vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV, 'beta');
+	vi.stubEnv(
+		AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
+		'agent:beta:tool-vm-write-read:test-session',
 	);
 });
 
@@ -576,6 +583,42 @@ describe('createGondolinPlugin', () => {
 		expect(response.statusCode).toBe(403);
 		expect(JSON.parse(response.bodyText)).toMatchObject({
 			error: { message: 'tool-vm-write-read-e2e: body agentId does not match sessionKey agent.' },
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('rejects the private e2e Tool VM write/read route when the body selects a foreign signed identity', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV, 'beta');
+		vi.stubEnv(
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
+			'agent:beta:tool-vm-write-read:test-session',
+		);
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			agentId: 'main',
+			sessionKey: 'agent:main:tool-vm-write-read:test-session',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(403);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message:
+					'tool-vm-write-read-e2e: request identity does not match the configured probe identity.',
+			},
 			ok: false,
 		});
 		expect(backendFactory).not.toHaveBeenCalled();

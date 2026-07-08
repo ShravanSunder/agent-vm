@@ -811,6 +811,63 @@ function isNonStalingSuccessfulEvent(event: AgentVmHealthEvent): boolean {
 	return event.kind === 'gateway-recovery' && event.result === 'ok';
 }
 
+type ReacquiredControllerFinalToolVmSshEvent = Extract<
+	AgentVmHealthEvent,
+	{ readonly kind: 'tool-vm-ssh' }
+> & {
+	readonly lifecycleEventRole: 'controller_final';
+	readonly lifecycleTransition: ToolVmLeaseReacquiredLifecycleTransition;
+	readonly oldLeaseId: string;
+	readonly replacementLeaseId: string;
+	readonly transitionId: string;
+};
+
+function isReacquiredControllerFinalEvent(
+	event: AgentVmHealthEvent,
+): event is ReacquiredControllerFinalToolVmSshEvent {
+	return (
+		event.kind === 'tool-vm-ssh' &&
+		event.lifecycleEventRole === 'controller_final' &&
+		isToolVmLeaseReacquiredTransition(event.lifecycleTransition) &&
+		event.result === 'ok'
+	);
+}
+
+function latestReacquiredAtMsByOldLeaseId(
+	events: readonly AgentVmHealthEvent[],
+): ReadonlyMap<string, number> {
+	const latestByOldLeaseId = new Map<string, number>();
+	for (const event of events) {
+		if (!isReacquiredControllerFinalEvent(event)) {
+			continue;
+		}
+		const previousObservedAtMs = latestByOldLeaseId.get(event.oldLeaseId);
+		if (previousObservedAtMs === undefined || previousObservedAtMs < event.observedAtMs) {
+			latestByOldLeaseId.set(event.oldLeaseId, event.observedAtMs);
+		}
+	}
+	return latestByOldLeaseId;
+}
+
+function isPlainToolVmSshEvent(
+	event: AgentVmHealthEvent,
+): event is Extract<AgentVmHealthEvent, { readonly kind: 'tool-vm-ssh' }> {
+	return event.kind === 'tool-vm-ssh' && event.transitionId === undefined;
+}
+
+function filterSupersededToolVmSshEvents(
+	events: readonly AgentVmHealthEvent[],
+): readonly AgentVmHealthEvent[] {
+	const latestReacquiredAtByOldLeaseId = latestReacquiredAtMsByOldLeaseId(events);
+	return events.filter((event) => {
+		if (!isPlainToolVmSshEvent(event)) {
+			return true;
+		}
+		const reacquiredAtMs = latestReacquiredAtByOldLeaseId.get(event.leaseId);
+		return reacquiredAtMs === undefined || reacquiredAtMs < event.observedAtMs;
+	});
+}
+
 export function deriveZoneHealthSnapshot(
 	events: readonly AgentVmHealthEvent[],
 	options: DeriveZoneHealthSnapshotOptions,
@@ -826,7 +883,7 @@ export function deriveZoneHealthSnapshot(
 			latestByKey.set(key, event);
 		}
 	}
-	const latestEvents = [...latestByKey.values()].toSorted(
+	const latestEvents = filterSupersededToolVmSshEvents([...latestByKey.values()]).toSorted(
 		(first, second) => second.observedAtMs - first.observedAtMs,
 	);
 	if (latestEvents.length === 0) {

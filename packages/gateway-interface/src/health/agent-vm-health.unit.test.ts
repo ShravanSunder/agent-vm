@@ -193,6 +193,48 @@ describe('agent-vm health events', () => {
 		});
 	});
 
+	it('supersedes a plain old Tool VM SSH failure after controller-final reacquire succeeds', () => {
+		const plainOldFailure = {
+			agentId: 'main',
+			elapsedMs: 5_021,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			observedAtMs: 1_000,
+			operation: 'file-bridge',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+		const controllerFinal = {
+			agentId: 'main',
+			callerContextState: 'ok',
+			elapsedMs: 10,
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000002',
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 2_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+			result: 'ok',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		expect(
+			deriveZoneHealthSnapshot([plainOldFailure, controllerFinal], {
+				nowMs: 2_500,
+				staleAfterMs: 30_000,
+				zoneId: 'beta',
+			}),
+		).toEqual({
+			kind: 'ok',
+			latestEvents: [controllerFinal],
+			zoneId: 'beta',
+		});
+	});
+
 	it('rejects channel-provider health details outside the operational whitelist', () => {
 		const event = {
 			channelProviderId: 'primary-channel',

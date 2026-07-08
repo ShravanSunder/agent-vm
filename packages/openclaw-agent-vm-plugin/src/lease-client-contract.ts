@@ -60,6 +60,9 @@ export interface OpenClawGondolinLeaseReacquireRequest {
 export interface LeaseClient {
 	// Cached handles use renewLease; read-only runtime probes use peekLease.
 	endActiveUse(leaseId: string, useId: string, request: EndToolVmActiveUseRequest): Promise<void>;
+	getRetiredLeaseReacquireRequest?(
+		leaseId: string,
+	): OpenClawGondolinLeaseReacquireRequest | undefined;
 	heartbeatActiveUse(
 		leaseId: string,
 		useId: string,
