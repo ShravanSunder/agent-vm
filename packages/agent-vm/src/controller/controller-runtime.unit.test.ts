@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ControllerTelemetry } from '../observability/controller-telemetry.js';
+import { stableTelemetryHash } from '../observability/health-event-telemetry.js';
 import type { CheckObservabilityStackReadinessOptions } from '../observability/observability-readiness.js';
 import {
 	createManagedExecProcessStub,
@@ -903,14 +904,14 @@ describe('startControllerRuntime', () => {
 				expect.objectContaining({
 					agentId: 'main',
 					kind: 'tool-vm-ssh',
-					leaseId: replacementLease.leaseId,
+					leaseIdHash: stableTelemetryHash(replacementLease.leaseId),
 					lifecycleEventRole: 'controller_final',
 					lifecycleTransition: 'stale_to_reacquired',
-					oldLeaseId: oldLease.leaseId,
+					oldLeaseIdHash: stableTelemetryHash(oldLease.leaseId),
 					operation: 'finalize',
-					replacementLeaseId: replacementLease.leaseId,
+					replacementLeaseIdHash: stableTelemetryHash(replacementLease.leaseId),
 					result: 'ok',
-					transitionId: `lease_reacquire:${oldLease.leaseId}`,
+					transitionIdHash: stableTelemetryHash(`lease_reacquire:${oldLease.leaseId}`),
 					zoneId: 'shravan',
 				}),
 			]),
