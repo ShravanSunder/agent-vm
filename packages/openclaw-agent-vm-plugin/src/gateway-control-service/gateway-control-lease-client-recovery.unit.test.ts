@@ -324,4 +324,99 @@ describe('gateway control lease client recovery behavior', () => {
 			leaseId: newLeaseId,
 		});
 	});
+
+	it('re-registers caller context for stale reacquire after force release tombstones the old lease map', async () => {
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const oldLeaseId = '01890f00-0000-7000-8000-000000000001';
+		const newLeaseId = '01890f00-0000-7000-8000-000000000002';
+		let registeredContextIndex = 0;
+		const contextIds = [
+			'44444444-4444-4444-8444-444444444444',
+			'99999999-9999-4999-8999-999999999999',
+		] as const;
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedMessages.push(payload);
+			if (payload.operation === 'caller_context_register') {
+				const callerContextId = contextIds[registeredContextIndex];
+				if (callerContextId === undefined) {
+					throw new Error('caller context id exhausted');
+				}
+				registeredContextIndex += 1;
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: { callerContextId },
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_create') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_create',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_release') {
+				return {
+					kind: 'command_result',
+					operation: 'lease_release',
+					payload: {
+						lease: createLeaseSnapshot(oldLeaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			expect(payload.operation).toBe('lease_reacquire');
+			return {
+				kind: 'command_result',
+				operation: 'lease_reacquire',
+				payload: {
+					lease: createLeaseSnapshot(newLeaseId),
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		});
+		const leaseClient = createLeaseClient(controlService);
+
+		await leaseClient.requestLease(leaseRequest);
+		await leaseClient.releaseLease(oldLeaseId, { force: true });
+		await expect(
+			leaseClient.reacquireLease(oldLeaseId, {
+				observedAtMs: 42,
+				staleEvidence: { kind: 'tool-vm-ssh', operation: 'finalize' },
+			}),
+		).resolves.toEqual(expect.objectContaining({ leaseId: newLeaseId }));
+
+		expect(observedMessages.map((message) => message.operation)).toEqual([
+			'caller_context_register',
+			'lease_create',
+			'lease_release',
+			'caller_context_register',
+			'lease_reacquire',
+		]);
+		const reacquireMessage = observedMessages.find(isLeaseReacquireCommand);
+		if (reacquireMessage === undefined) {
+			throw new Error('expected lease_reacquire command');
+		}
+		expect(reacquireMessage.payload).toEqual({
+			callerContext: {
+				callerContextId: '99999999-9999-4999-8999-999999999999',
+			},
+			oldLeaseId,
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				observedAtMs: 42,
+				operation: 'finalize',
+			},
+		});
+	});
 });

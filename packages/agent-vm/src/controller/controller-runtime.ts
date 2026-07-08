@@ -496,6 +496,9 @@ export async function startControllerRuntime(
 			? { onLeaseCreateRequest: dependencies.onLeaseCreateRequest }
 			: {}),
 		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
+		recordHealthEvent: (event) => {
+			healthEventStore.record(event);
+		},
 		resolveLeaseCreateOptions: async ({ callerContext, payload }) =>
 			await resolveOpenClawToolVmLeaseCreateOptions({
 				authorityContext: callerContext,

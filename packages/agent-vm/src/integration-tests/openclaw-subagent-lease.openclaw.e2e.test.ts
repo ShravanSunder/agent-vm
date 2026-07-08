@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { type AgentVmHealthEvent, type ZoneHealthSnapshot } from '@agent-vm/gateway-interface';
 import { type ManagedVm } from '@agent-vm/gondolin-adapter';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
@@ -36,6 +37,7 @@ const mainAgentId = 'main';
 const betaAgentId = 'beta';
 const agentIds = [mainAgentId, betaAgentId] as const;
 const gatewayToken = 'subagent-lease-smoke-gateway-token';
+const zoneId = 'subagent-lease-smoke';
 const toolVmWriteReadProbeKey = 'subagent-e2e-tool-vm-write-read-proof-key';
 const mockOpenAiPort = 18231;
 const subagentE2eResultPrefix = 'AGENT_VM_SUBAGENT_E2E_RESULT ';
@@ -78,6 +80,27 @@ interface OpenClawToolVmWriteReadProbeResult {
 	readonly readBack: string;
 	readonly runtimeId: string;
 	readonly sessionKey: string;
+	readonly status: 'ok';
+	readonly workdir: string;
+}
+
+interface OpenClawToolVmStaleReacquireProbeStepResult {
+	readonly filePath: string;
+	readonly marker: string;
+	readonly readBack: string;
+	readonly runtimeId: string;
+}
+
+interface OpenClawToolVmStaleReacquireProbeResult {
+	readonly agentId: string;
+	readonly first: OpenClawToolVmStaleReacquireProbeStepResult;
+	readonly newRuntimeId: string;
+	readonly oldRuntimeId: string;
+	readonly sameHandle: true;
+	readonly scenario: 'stale-reacquire';
+	readonly second: OpenClawToolVmStaleReacquireProbeStepResult;
+	readonly sessionKey: string;
+	readonly staleTrigger: 'finalize-timeout';
 	readonly status: 'ok';
 	readonly workdir: string;
 }
@@ -168,11 +191,77 @@ function parseToolVmWriteReadProbeResult(value: unknown): OpenClawToolVmWriteRea
 	};
 }
 
+function parseToolVmStaleReacquireProbeStepResult(
+	step: Readonly<Record<string, unknown>>,
+	stepName: string,
+): OpenClawToolVmStaleReacquireProbeStepResult {
+	if (
+		typeof step.filePath !== 'string' ||
+		typeof step.marker !== 'string' ||
+		typeof step.readBack !== 'string' ||
+		typeof step.runtimeId !== 'string'
+	) {
+		throw new Error(
+			`Unexpected OpenClaw Tool VM stale-reacquire ${stepName} result: ${JSON.stringify(step)}`,
+		);
+	}
+	return {
+		filePath: step.filePath,
+		marker: step.marker,
+		readBack: step.readBack,
+		runtimeId: step.runtimeId,
+	};
+}
+
+function parseToolVmStaleReacquireProbeResult(
+	value: unknown,
+): OpenClawToolVmStaleReacquireProbeResult {
+	if (!isObjectRecord(value) || value.ok !== true || !isObjectRecord(value.details)) {
+		throw new Error(
+			`Expected successful OpenClaw Tool VM stale-reacquire route result: ${JSON.stringify(value)}`,
+		);
+	}
+	const parsed = value.details;
+	if (
+		parsed.status !== 'ok' ||
+		parsed.scenario !== 'stale-reacquire' ||
+		parsed.sameHandle !== true ||
+		parsed.staleTrigger !== 'finalize-timeout' ||
+		typeof parsed.agentId !== 'string' ||
+		typeof parsed.newRuntimeId !== 'string' ||
+		typeof parsed.oldRuntimeId !== 'string' ||
+		typeof parsed.sessionKey !== 'string' ||
+		typeof parsed.workdir !== 'string' ||
+		!isObjectRecord(parsed.first) ||
+		!isObjectRecord(parsed.second)
+	) {
+		throw new Error(
+			`Unexpected OpenClaw Tool VM stale-reacquire e2e result: ${JSON.stringify(parsed)}`,
+		);
+	}
+	return {
+		agentId: parsed.agentId,
+		first: parseToolVmStaleReacquireProbeStepResult(parsed.first, 'first'),
+		newRuntimeId: parsed.newRuntimeId,
+		oldRuntimeId: parsed.oldRuntimeId,
+		sameHandle: parsed.sameHandle,
+		scenario: parsed.scenario,
+		second: parseToolVmStaleReacquireProbeStepResult(parsed.second, 'second'),
+		sessionKey: parsed.sessionKey,
+		staleTrigger: parsed.staleTrigger,
+		status: parsed.status,
+		workdir: parsed.workdir,
+	};
+}
+
 async function callToolVmWriteReadProbeRoute(options: {
 	readonly agentId: string;
 	readonly filePath: string;
 	readonly harness: E2eHarnessRuntime;
 	readonly marker: string;
+	readonly scenario?: 'stale-reacquire' | 'write-read';
+	readonly secondFilePath?: string;
+	readonly secondMarker?: string;
 	readonly sessionKey: string;
 }): Promise<unknown> {
 	const gatewayIngress = options.harness.runtime.zones[0]?.gateway?.ingress;
@@ -183,6 +272,9 @@ async function callToolVmWriteReadProbeRoute(options: {
 		agentId: options.agentId,
 		filePath: options.filePath,
 		marker: options.marker,
+		...(options.scenario === undefined ? {} : { scenario: options.scenario }),
+		...(options.secondFilePath === undefined ? {} : { secondFilePath: options.secondFilePath }),
+		...(options.secondMarker === undefined ? {} : { secondMarker: options.secondMarker }),
 		sessionKey: options.sessionKey,
 	});
 	const response = await fetch(
@@ -208,6 +300,40 @@ async function callToolVmWriteReadProbeRoute(options: {
 		);
 	}
 	return responseBody;
+}
+
+function latestHealthEvents(snapshot: ZoneHealthSnapshot): readonly AgentVmHealthEvent[] {
+	return 'latestEvents' in snapshot ? snapshot.latestEvents : [];
+}
+
+async function readHealthSnapshot(controllerUrl: string): Promise<ZoneHealthSnapshot> {
+	const response = await fetch(
+		`${controllerUrl}/zones/${encodeURIComponent(zoneId)}/health-snapshot`,
+	);
+	if (!response.ok) {
+		throw new Error(`Health snapshot returned HTTP ${String(response.status)}.`);
+	}
+	return (await response.json()) as ZoneHealthSnapshot;
+}
+
+async function waitForToolVmLifecycleEvent(options: {
+	readonly controllerUrl: string;
+	readonly matches: (event: AgentVmHealthEvent) => boolean;
+	readonly timeoutMs: number;
+}): Promise<AgentVmHealthEvent> {
+	const deadlineMs = Date.now() + options.timeoutMs;
+	let lastSnapshot: ZoneHealthSnapshot | undefined;
+	while (Date.now() < deadlineMs) {
+		lastSnapshot = await readHealthSnapshot(options.controllerUrl);
+		const event = latestHealthEvents(lastSnapshot).find(options.matches);
+		if (event !== undefined) {
+			return event;
+		}
+		await waitForProtocolRetryInterval(1_000);
+	}
+	throw new Error(
+		`Timed out waiting for Tool VM lifecycle event; last snapshot: ${JSON.stringify(lastSnapshot)}`,
+	);
 }
 
 async function configureOpenClawMockModel(options: {
@@ -423,16 +549,21 @@ async function readControllerStatus(controllerUrl: string): Promise<unknown> {
 	return await response.json();
 }
 
-function activeLeaseCountFromControllerStatus(statusPayload: unknown, zoneId: string): number {
+function activeLeaseCountFromControllerStatus(
+	statusPayload: unknown,
+	expectedZoneId: string,
+): number {
 	if (!isObjectRecord(statusPayload) || !Array.isArray(statusPayload.zones)) {
 		throw new Error('Expected controller-status response with zones array.');
 	}
 	const zoneStatus = statusPayload.zones.find(
 		(zone): zone is { readonly activeLeaseCount: number; readonly id: string } =>
-			isObjectRecord(zone) && zone.id === zoneId && typeof zone.activeLeaseCount === 'number',
+			isObjectRecord(zone) &&
+			zone.id === expectedZoneId &&
+			typeof zone.activeLeaseCount === 'number',
 	);
 	if (zoneStatus === undefined) {
-		throw new Error(`Expected controller-status response for zone '${zoneId}'.`);
+		throw new Error(`Expected controller-status response for zone '${expectedZoneId}'.`);
 	}
 	return zoneStatus.activeLeaseCount;
 }
@@ -1052,7 +1183,84 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			agentId: betaAgentId,
 			agentWorkspaceDir: '/zone/agents/beta',
 			workMountDir: '/zone/agents/beta',
-			zoneId: 'subagent-lease-smoke',
+			zoneId,
 		});
+	});
+
+	it('reacquires a stale beta-agent Tool VM lease before the next same-handle write', async () => {
+		if (gatewayVm === undefined || harness === undefined) {
+			throw new Error('Expected smoke harness to be initialized.');
+		}
+		const firstMarker = `TOOLVM_BETA_STALE_FIRST_${randomUUID()}`;
+		const secondMarker = `TOOLVM_BETA_STALE_SECOND_${randomUUID()}`;
+		const sessionKey = `agent:${betaAgentId}:tool-vm-stale-reacquire:${randomUUID()}`;
+		const firstFilePath = `.agent-vm/s16-tool-vm-stale-first-${randomUUID()}.txt`;
+		const secondFilePath = `.agent-vm/s16-tool-vm-stale-second-${randomUUID()}.txt`;
+
+		const result = parseToolVmStaleReacquireProbeResult(
+			await callToolVmWriteReadProbeRoute({
+				agentId: betaAgentId,
+				filePath: firstFilePath,
+				harness,
+				marker: firstMarker,
+				scenario: 'stale-reacquire',
+				secondFilePath,
+				secondMarker,
+				sessionKey,
+			}),
+		);
+
+		expect(result).toMatchObject({
+			agentId: betaAgentId,
+			first: {
+				filePath: firstFilePath,
+				marker: firstMarker,
+				readBack: firstMarker,
+			},
+			sameHandle: true,
+			scenario: 'stale-reacquire',
+			second: {
+				filePath: secondFilePath,
+				marker: secondMarker,
+				readBack: secondMarker,
+			},
+			staleTrigger: 'finalize-timeout',
+			status: 'ok',
+			workdir: '/workspace',
+		});
+		expect(result.oldRuntimeId).toBe(result.first.runtimeId);
+		expect(result.newRuntimeId).toBe(result.second.runtimeId);
+		expect(result.newRuntimeId).not.toBe(result.oldRuntimeId);
+		expect(result.sessionKey).toContain(`agent:${betaAgentId}:tool-vm-stale-reacquire:`);
+
+		const lifecycleEvent = await waitForToolVmLifecycleEvent({
+			controllerUrl: harness.controllerUrl,
+			matches: (event) =>
+				event.kind === 'tool-vm-ssh' &&
+				event.agentId === betaAgentId &&
+				event.lifecycleEventRole === 'controller_final' &&
+				event.lifecycleTransition === 'stale_to_reacquired' &&
+				event.oldLeaseId === result.oldRuntimeId &&
+				event.replacementLeaseId === result.newRuntimeId &&
+				event.operation === 'finalize',
+			timeoutMs: 60_000,
+		});
+		expect(lifecycleEvent).toMatchObject({
+			agentId: betaAgentId,
+			kind: 'tool-vm-ssh',
+			leaseId: result.newRuntimeId,
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			oldLeaseId: result.oldRuntimeId,
+			replacementLeaseId: result.newRuntimeId,
+			result: 'ok',
+			transitionId: `lease_reacquire:${result.oldRuntimeId}`,
+			zoneId,
+		});
+
+		const controllerStatusPayload = await readControllerStatus(harness.controllerUrl);
+		expect(
+			activeLeaseCountFromControllerStatus(controllerStatusPayload, zoneId),
+		).toBeGreaterThanOrEqual(1);
 	});
 });

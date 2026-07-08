@@ -17,6 +17,32 @@ const proofFilePathPrefix = '.agent-vm/';
 
 type GondolinSandboxBackendFactory = ReturnType<typeof createGondolinSandboxBackendFactory>;
 type GondolinSandboxBackendFactoryProvider = () => Promise<GondolinSandboxBackendFactory>;
+type GondolinSandboxBackendHandle = Awaited<ReturnType<GondolinSandboxBackendFactory>>;
+
+type ToolVmWriteReadE2eRouteParams =
+	| {
+			readonly agentId: string;
+			readonly filePath: string;
+			readonly marker: string;
+			readonly scenario: 'write-read';
+			readonly sessionKey: string;
+	  }
+	| {
+			readonly agentId: string;
+			readonly filePath: string;
+			readonly marker: string;
+			readonly scenario: 'stale-reacquire';
+			readonly secondFilePath: string;
+			readonly secondMarker: string;
+			readonly sessionKey: string;
+	  };
+
+interface ToolVmWriteReadE2eProbeStepDetails {
+	readonly filePath: string;
+	readonly marker: string;
+	readonly readBack: string;
+	readonly runtimeId: string;
+}
 
 interface ToolVmWriteReadE2eProbeDetails {
 	readonly agentId: string;
@@ -25,6 +51,20 @@ interface ToolVmWriteReadE2eProbeDetails {
 	readonly readBack: string;
 	readonly runtimeId: string;
 	readonly sessionKey: string;
+	readonly status: 'ok';
+	readonly workdir: string;
+}
+
+interface ToolVmStaleReacquireE2eProbeDetails {
+	readonly agentId: string;
+	readonly first: ToolVmWriteReadE2eProbeStepDetails;
+	readonly newRuntimeId: string;
+	readonly oldRuntimeId: string;
+	readonly scenario: 'stale-reacquire';
+	readonly second: ToolVmWriteReadE2eProbeStepDetails;
+	readonly sameHandle: true;
+	readonly sessionKey: string;
+	readonly staleTrigger: 'finalize-timeout';
 	readonly status: 'ok';
 	readonly workdir: string;
 }
@@ -104,27 +144,44 @@ function readProbeParams(params: unknown): {
 	readonly filePath: string;
 	readonly marker: string;
 } {
-	if (!isObjectRecord(params) || typeof params.marker !== 'string' || params.marker.length === 0) {
-		throw new Error('tool-vm-write-read-e2e: marker is required.');
+	if (!isObjectRecord(params)) {
+		throw new Error('tool-vm-write-read-e2e: request body must be an object.');
 	}
-	if (params.filePath !== undefined && typeof params.filePath !== 'string') {
-		throw new Error('tool-vm-write-read-e2e: filePath must be a string when provided.');
+	return readProbeStepParams({
+		filePathField: 'filePath',
+		markerField: 'marker',
+		params,
+	});
+}
+
+function readProbeStepParams(options: {
+	readonly filePathField: 'filePath' | 'secondFilePath';
+	readonly markerField: 'marker' | 'secondMarker';
+	readonly params: Readonly<Record<string, unknown>>;
+}): {
+	readonly filePath: string;
+	readonly marker: string;
+} {
+	const marker = options.params[options.markerField];
+	if (typeof marker !== 'string' || marker.length === 0) {
+		throw new Error(`tool-vm-write-read-e2e: ${options.markerField} is required.`);
+	}
+	const filePath = options.params[options.filePathField];
+	if (filePath !== undefined && typeof filePath !== 'string') {
+		throw new Error(
+			`tool-vm-write-read-e2e: ${options.filePathField} must be a string when provided.`,
+		);
 	}
 	return {
 		filePath:
-			params.filePath === undefined || params.filePath.length === 0
+			filePath === undefined || filePath.length === 0
 				? `.agent-vm/e2e-tool-vm-write-read-${Date.now().toString(36)}.txt`
-				: normalizeProofFilePath(params.filePath),
-		marker: params.marker,
+				: normalizeProofFilePath(filePath),
+		marker,
 	};
 }
 
-function readRouteParams(params: unknown): {
-	readonly agentId: string;
-	readonly filePath: string;
-	readonly marker: string;
-	readonly sessionKey: string;
-} {
+function readRouteParams(params: unknown): ToolVmWriteReadE2eRouteParams {
 	if (!isObjectRecord(params)) {
 		throw new Error('tool-vm-write-read-e2e: request body must be an object.');
 	}
@@ -139,10 +196,34 @@ function readRouteParams(params: unknown): {
 			403,
 		);
 	}
+	const scenario = params.scenario === undefined ? 'write-read' : params.scenario;
+	if (scenario !== 'write-read' && scenario !== 'stale-reacquire') {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: scenario must be write-read or stale-reacquire.',
+			400,
+		);
+	}
+	if (scenario === 'write-read') {
+		return {
+			agentId,
+			filePath: probeParams.filePath,
+			marker: probeParams.marker,
+			scenario,
+			sessionKey: params.sessionKey,
+		};
+	}
+	const secondProbeParams = readProbeStepParams({
+		filePathField: 'secondFilePath',
+		markerField: 'secondMarker',
+		params,
+	});
 	return {
 		agentId,
 		filePath: probeParams.filePath,
 		marker: probeParams.marker,
+		scenario,
+		secondFilePath: secondProbeParams.filePath,
+		secondMarker: secondProbeParams.marker,
 		sessionKey: params.sessionKey,
 	};
 }
@@ -191,6 +272,34 @@ async function runToolVmWriteReadE2eProbe(options: {
 		readonly marker: string;
 	};
 }): Promise<ToolVmWriteReadE2eProbeDetails> {
+	const backendContext = await createToolVmWriteReadE2eBackend({
+		context: options.context,
+		factoryProvider: options.factoryProvider,
+	});
+	const step = await runToolVmWriteReadE2eProbeStep({
+		backend: backendContext.backend,
+		params: options.params,
+	});
+	return {
+		agentId: backendContext.agentId,
+		filePath: step.filePath,
+		marker: step.marker,
+		readBack: step.readBack,
+		runtimeId: backendContext.backend.runtimeId,
+		sessionKey: backendContext.sessionKey,
+		status: 'ok',
+		workdir: backendContext.backend.workdir,
+	};
+}
+
+async function createToolVmWriteReadE2eBackend(options: {
+	readonly context: OpenClawPluginToolContext;
+	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
+}): Promise<{
+	readonly agentId: string;
+	readonly backend: GondolinSandboxBackendHandle;
+	readonly sessionKey: string;
+}> {
 	const agentId = requireContextString(options.context.agentId, 'agentId');
 	const sessionKey =
 		options.context.sessionKey === undefined || options.context.sessionKey.length === 0
@@ -212,7 +321,17 @@ async function runToolVmWriteReadE2eProbe(options: {
 		sessionKey,
 		workspaceDir,
 	});
-	const commandResult = await backend.runShellCommand({
+	return { agentId, backend, sessionKey };
+}
+
+async function runToolVmWriteReadE2eProbeStep(options: {
+	readonly backend: GondolinSandboxBackendHandle;
+	readonly params: {
+		readonly filePath: string;
+		readonly marker: string;
+	};
+}): Promise<ToolVmWriteReadE2eProbeStepDetails> {
+	const commandResult = await options.backend.runShellCommand({
 		script: [
 			'set -eu',
 			`proof_file=${shellSingleQuote(options.params.filePath)}`,
@@ -229,14 +348,80 @@ async function runToolVmWriteReadE2eProbe(options: {
 		);
 	}
 	return {
-		agentId,
 		filePath: options.params.filePath,
 		marker: options.params.marker,
 		readBack,
-		runtimeId: backend.runtimeId,
-		sessionKey,
+		runtimeId: options.backend.runtimeId,
+	};
+}
+
+async function markToolVmWriteReadE2eHandleStaleWithFinalizeTimeout(
+	backend: GondolinSandboxBackendHandle,
+): Promise<void> {
+	if (backend.finalizeExec === undefined) {
+		throw new Error('tool-vm-write-read-e2e: backend does not support finalizeExec stale trigger.');
+	}
+	const execSpec = await backend.buildExecSpec({
+		command: 'sleep 60',
+		env: {},
+		usePty: false,
+	});
+	await backend.finalizeExec({
+		exitCode: null,
+		status: 'failed',
+		timedOut: true,
+		...(execSpec.finalizeToken === undefined ? {} : { token: execSpec.finalizeToken }),
+	});
+}
+
+async function runToolVmStaleReacquireE2eProbe(options: {
+	readonly context: OpenClawPluginToolContext;
+	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
+	readonly params: {
+		readonly filePath: string;
+		readonly marker: string;
+		readonly secondFilePath: string;
+		readonly secondMarker: string;
+	};
+}): Promise<ToolVmStaleReacquireE2eProbeDetails> {
+	const backendContext = await createToolVmWriteReadE2eBackend({
+		context: options.context,
+		factoryProvider: options.factoryProvider,
+	});
+	const first = await runToolVmWriteReadE2eProbeStep({
+		backend: backendContext.backend,
+		params: {
+			filePath: options.params.filePath,
+			marker: options.params.marker,
+		},
+	});
+	const oldRuntimeId = backendContext.backend.runtimeId;
+	await markToolVmWriteReadE2eHandleStaleWithFinalizeTimeout(backendContext.backend);
+	const second = await runToolVmWriteReadE2eProbeStep({
+		backend: backendContext.backend,
+		params: {
+			filePath: options.params.secondFilePath,
+			marker: options.params.secondMarker,
+		},
+	});
+	const newRuntimeId = backendContext.backend.runtimeId;
+	if (newRuntimeId === oldRuntimeId) {
+		throw new Error(
+			`tool-vm-write-read-e2e: stale-reacquire returned the old runtime id '${oldRuntimeId}'.`,
+		);
+	}
+	return {
+		agentId: backendContext.agentId,
+		first,
+		newRuntimeId,
+		oldRuntimeId,
+		scenario: 'stale-reacquire',
+		second,
+		sameHandle: true,
+		sessionKey: backendContext.sessionKey,
+		staleTrigger: 'finalize-timeout',
 		status: 'ok',
-		workdir: backend.workdir,
+		workdir: backendContext.backend.workdir,
 	};
 }
 
@@ -273,16 +458,29 @@ export function registerToolVmWriteReadE2eRoute(options: {
 					),
 				});
 				const routeParams = readRouteParams(bodyText.length === 0 ? {} : JSON.parse(bodyText));
-				const details = await runToolVmWriteReadE2eProbe({
-					context: {
-						agentDir: `/zone/agents/${routeParams.agentId}`,
-						agentId: routeParams.agentId,
-						sessionKey: routeParams.sessionKey,
-						workspaceDir: `/zone/agents/${routeParams.agentId}`,
-					},
-					factoryProvider: options.factoryProvider,
-					params: routeParams,
-				});
+				const context = {
+					agentDir: `/zone/agents/${routeParams.agentId}`,
+					agentId: routeParams.agentId,
+					sessionKey: routeParams.sessionKey,
+					workspaceDir: `/zone/agents/${routeParams.agentId}`,
+				} satisfies OpenClawPluginToolContext;
+				const details =
+					routeParams.scenario === 'stale-reacquire'
+						? await runToolVmStaleReacquireE2eProbe({
+								context,
+								factoryProvider: options.factoryProvider,
+								params: {
+									filePath: routeParams.filePath,
+									marker: routeParams.marker,
+									secondFilePath: routeParams.secondFilePath,
+									secondMarker: routeParams.secondMarker,
+								},
+							})
+						: await runToolVmWriteReadE2eProbe({
+								context,
+								factoryProvider: options.factoryProvider,
+								params: routeParams,
+							});
 				response.statusCode = 200;
 				response.setHeader('cache-control', 'no-store');
 				response.setHeader('content-type', 'application/json; charset=utf-8');

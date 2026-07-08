@@ -168,12 +168,18 @@ function createToolVmWriteReadProbeBody(options?: {
 	readonly agentId?: string;
 	readonly filePath?: string;
 	readonly marker?: string;
+	readonly scenario?: 'stale-reacquire' | 'write-read';
+	readonly secondFilePath?: string;
+	readonly secondMarker?: string;
 	readonly sessionKey?: string;
 }): string {
 	return JSON.stringify({
 		agentId: options?.agentId ?? 'beta',
 		filePath: options?.filePath ?? '.agent-vm/proof.txt',
 		marker: options?.marker ?? 'probe-marker',
+		...(options?.scenario === undefined ? {} : { scenario: options.scenario }),
+		...(options?.secondFilePath === undefined ? {} : { secondFilePath: options.secondFilePath }),
+		...(options?.secondMarker === undefined ? {} : { secondMarker: options.secondMarker }),
 		sessionKey: options?.sessionKey ?? 'agent:beta:tool-vm-write-read:test-session',
 	});
 }
@@ -189,14 +195,21 @@ function createToolVmWriteReadProbeHeaders(bodyText: string): Readonly<Record<st
 }
 
 function createMockToolVmWriteReadBackend(options?: {
+	readonly buildExecSpec?: OpenClawSandboxBackendHandle['buildExecSpec'];
+	readonly finalizeExec?: OpenClawSandboxBackendHandle['finalizeExec'];
 	readonly runShellCommand?: OpenClawSandboxBackendHandle['runShellCommand'];
+	readonly runtimeId?: () => string;
 }): OpenClawSandboxBackendHandle {
 	return {
-		buildExecSpec: vi.fn(async () => ({
-			argv: ['sh', '-lc', 'true'],
-			env: {},
-			stdinMode: 'pipe-closed' as const,
-		})),
+		buildExecSpec:
+			options?.buildExecSpec ??
+			vi.fn(async () => ({
+				argv: ['sh', '-lc', 'true'],
+				env: {},
+				finalizeToken: { kind: 'mock-finalize-token' },
+				stdinMode: 'pipe-closed' as const,
+			})),
+		...(options?.finalizeExec === undefined ? {} : { finalizeExec: options.finalizeExec }),
 		id: 'mock-tool-vm-backend',
 		runShellCommand:
 			options?.runShellCommand ??
@@ -205,8 +218,12 @@ function createMockToolVmWriteReadBackend(options?: {
 				stderr: Buffer.from(''),
 				stdout: Buffer.from('probe-marker'),
 			})),
-		runtimeId: 'mock-runtime',
-		runtimeLabel: 'mock-runtime',
+		get runtimeId() {
+			return options?.runtimeId?.() ?? 'mock-runtime';
+		},
+		get runtimeLabel() {
+			return options?.runtimeId?.() ?? 'mock-runtime';
+		},
 		workdir: '/workspace',
 	};
 }
@@ -614,7 +631,7 @@ describe('createGondolinPlugin', () => {
 			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
 		});
 
-		expect(response.statusCode).toBe(200);
+		expect(response.statusCode, response.bodyText).toBe(200);
 		expect(JSON.parse(response.bodyText)).toMatchObject({
 			details: {
 				agentId: 'beta',
@@ -637,6 +654,95 @@ describe('createGondolinPlugin', () => {
 				script: expect.stringContaining("proof_file='.agent-vm/proof.txt'"),
 			}),
 		);
+	});
+
+	it('runs the private e2e route stale-reacquire scenario on one backend handle', async () => {
+		const registerHttpRoute = vi.fn();
+		let runtimeId = 'lease-old';
+		const runShellCommand = vi
+			.fn()
+			.mockResolvedValueOnce({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('first-marker'),
+			})
+			.mockImplementationOnce(async () => {
+				runtimeId = 'lease-new';
+				return {
+					code: 0,
+					stderr: Buffer.from(''),
+					stdout: Buffer.from('second-marker'),
+				};
+			});
+		const finalizeExec = vi.fn(async () => {});
+		const buildExecSpec = vi.fn(async () => ({
+			argv: ['sh', '-lc', 'sleep 60'],
+			env: {},
+			finalizeToken: { kind: 'mock-finalize-token' },
+			stdinMode: 'pipe-closed' as const,
+		}));
+		const backend = createMockToolVmWriteReadBackend({
+			buildExecSpec,
+			finalizeExec,
+			runShellCommand,
+			runtimeId: () => runtimeId,
+		});
+		const backendFactory = vi.fn(async () => backend);
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '.agent-vm/proof-first.txt',
+			marker: 'first-marker',
+			scenario: 'stale-reacquire',
+			secondFilePath: '.agent-vm/proof-second.txt',
+			secondMarker: 'second-marker',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode, response.bodyText).toBe(200);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			details: {
+				agentId: 'beta',
+				first: {
+					filePath: '.agent-vm/proof-first.txt',
+					marker: 'first-marker',
+					readBack: 'first-marker',
+				},
+				newRuntimeId: 'lease-new',
+				oldRuntimeId: 'lease-old',
+				scenario: 'stale-reacquire',
+				second: {
+					filePath: '.agent-vm/proof-second.txt',
+					marker: 'second-marker',
+					readBack: 'second-marker',
+				},
+				staleTrigger: 'finalize-timeout',
+				status: 'ok',
+			},
+			ok: true,
+		});
+		expect(backendFactory).toHaveBeenCalledTimes(1);
+		expect(runShellCommand).toHaveBeenCalledTimes(2);
+		expect(buildExecSpec).toHaveBeenCalledWith({
+			command: 'sleep 60',
+			env: {},
+			usePty: false,
+		});
+		expect(finalizeExec).toHaveBeenCalledWith({
+			exitCode: null,
+			status: 'failed',
+			timedOut: true,
+			token: { kind: 'mock-finalize-token' },
+		});
 	});
 
 	it('does not publish Tool VM runtime status through controller HTTP during full registration', async () => {

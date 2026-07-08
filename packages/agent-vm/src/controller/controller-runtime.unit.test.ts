@@ -15,6 +15,7 @@ import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
+import type { GatewayControlTrustedCallerContext } from './control-session/gateway-control-caller-context.js';
 import type { ControllerRuntimeDependencies } from './controller-runtime-types.js';
 import {
 	classifyGatewayRecoveryRestartError,
@@ -629,8 +630,12 @@ describe('startControllerRuntime', () => {
 		await mkdir(path.join(absoluteLeaseRoot, 'state', zone.id, 'sandboxes', 'agent', 'work'), {
 			recursive: true,
 		});
+		await mkdir(path.join(absoluteLeaseRoot, 'state', zone.id, 'sandboxes', 'main', 'work'), {
+			recursive: true,
+		});
 		const absoluteLeaseZone = {
 			...zone,
+			agents: [{ id: 'main' }],
 			gateway: {
 				...zone.gateway,
 				stateDir: path.join(absoluteLeaseRoot, 'state', zone.id),
@@ -827,6 +832,88 @@ describe('startControllerRuntime', () => {
 					hint: 'agents.defaults.sandbox.backend=gondolin',
 				},
 			],
+		});
+		const gatewayControlLeaseRpc = startGatewayZone.mock.calls[0]?.[0].gatewayControlLeaseRpc;
+		if (gatewayControlLeaseRpc === undefined) {
+			throw new Error('Expected gateway control lease RPC to be passed to gateway startup.');
+		}
+		const controllerLeaseCallerContext = {
+			agentId: 'main',
+			agentWorkspaceDir: '/zone/agents/main',
+			bootId: 'gateway-boot-a',
+			callerContextId: '44444444-4444-4444-8444-444444444444',
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			controllerEpoch: 'controller-epoch-a',
+			peerId: 'gateway-zone-a',
+			purpose: 'tool_vm_lease',
+			sessionId: '33333333-3333-4333-8333-333333333333',
+			sessionKeyDigest: '0123456789abcdef0123456789abcdef',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+			zoneId: 'shravan',
+		} satisfies GatewayControlTrustedCallerContext;
+		const oldLease = await gatewayControlLeaseRpc.createLease({
+			callerContext: controllerLeaseCallerContext,
+			payload: {
+				callerContext: {
+					callerContextId: controllerLeaseCallerContext.callerContextId,
+				},
+			},
+		});
+		await gatewayControlLeaseRpc.releaseLease({
+			callerContext: controllerLeaseCallerContext,
+			payload: {
+				callerContext: {
+					callerContextId: controllerLeaseCallerContext.callerContextId,
+				},
+				leaseId: oldLease.leaseId,
+			},
+		});
+		const refreshedControllerLeaseCallerContext = {
+			...controllerLeaseCallerContext,
+			callerContextId: '99999999-9999-4999-8999-999999999999',
+		} satisfies GatewayControlTrustedCallerContext;
+		const replacementLease = await gatewayControlLeaseRpc.reacquireLease({
+			callerContext: refreshedControllerLeaseCallerContext,
+			payload: {
+				callerContext: {
+					callerContextId: refreshedControllerLeaseCallerContext.callerContextId,
+				},
+				oldLeaseId: oldLease.leaseId,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					observedAtMs: statusNowMs,
+					operation: 'finalize',
+				},
+			},
+		});
+		if (
+			replacementLease === undefined ||
+			'result' in replacementLease ||
+			replacementLease.leaseId === undefined
+		) {
+			throw new Error(`Expected replacement lease, got ${JSON.stringify(replacementLease)}.`);
+		}
+		expect(replacementLease.leaseId).not.toBe(oldLease.leaseId);
+		const lifecycleSnapshotResponse = await startHttpServerArgs.app.request(
+			'/zones/shravan/health-snapshot',
+		);
+		expect(lifecycleSnapshotResponse.status).toBe(200);
+		await expect(lifecycleSnapshotResponse.json()).resolves.toMatchObject({
+			latestEvents: expect.arrayContaining([
+				expect.objectContaining({
+					agentId: 'main',
+					kind: 'tool-vm-ssh',
+					leaseId: replacementLease.leaseId,
+					lifecycleEventRole: 'controller_final',
+					lifecycleTransition: 'stale_to_reacquired',
+					oldLeaseId: oldLease.leaseId,
+					operation: 'finalize',
+					replacementLeaseId: replacementLease.leaseId,
+					result: 'ok',
+					transitionId: `lease_reacquire:${oldLease.leaseId}`,
+					zoneId: 'shravan',
+				}),
+			]),
 		});
 		recordControllerHealthEvent(capturedHealthEventStore, {
 			channelProviderId: 'primary-channel',

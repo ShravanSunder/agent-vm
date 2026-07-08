@@ -335,6 +335,7 @@ export function createGatewayControlLeaseClient(
 	const now = options.now ?? (() => Date.now());
 	const callerContextIdByCacheKey = new Map<string, string>();
 	const callerContextByLeaseId = new Map<string, LeaseCallerContextRef>();
+	const reacquireRequestByRetiredLeaseId = new Map<string, OpenClawGondolinLeaseRequest>();
 
 	const sendCommandUnchecked = async (
 		operation: GatewayControlRpcOperation,
@@ -504,6 +505,7 @@ export function createGatewayControlLeaseClient(
 		readonly registeredCallerContext: RegisteredCallerContextRef;
 		readonly request: OpenClawGondolinLeaseRequest;
 	}): void => {
+		reacquireRequestByRetiredLeaseId.delete(leaseContext.leaseId);
 		callerContextByLeaseId.set(leaseContext.leaseId, {
 			cacheKey: leaseContext.registeredCallerContext.cacheKey,
 			callerContextId: leaseContext.registeredCallerContext.callerContextId,
@@ -524,8 +526,14 @@ export function createGatewayControlLeaseClient(
 	const forgetCallerContextForLease = (
 		leaseId: string,
 		leaseCallerContext: LeaseCallerContextRef,
+		forgetOptions: { readonly retainReacquireRequest?: boolean } = {},
 	): void => {
 		callerContextByLeaseId.delete(leaseId);
+		if (forgetOptions.retainReacquireRequest === true) {
+			reacquireRequestByRetiredLeaseId.set(leaseId, leaseCallerContext.request);
+		} else {
+			reacquireRequestByRetiredLeaseId.delete(leaseId);
+		}
 		forgetRegisteredCallerContext(leaseCallerContext.request, leaseCallerContext);
 	};
 
@@ -584,6 +592,83 @@ export function createGatewayControlLeaseClient(
 			responseToMessageId: result.messageId,
 		});
 		return result.response;
+	};
+
+	const registerReacquireCallerContext = async (
+		oldLeaseId: string,
+		context: string,
+	): Promise<LeaseCallerContextRef> => {
+		const liveCallerContext = resolveCallerContextForLease(oldLeaseId);
+		if (liveCallerContext !== undefined) {
+			return liveCallerContext;
+		}
+		const reacquireRequest = reacquireRequestByRetiredLeaseId.get(oldLeaseId);
+		if (reacquireRequest === undefined) {
+			return requireCallerContextForLease(oldLeaseId, context);
+		}
+		const registeredCallerContext = await registerCallerContext(reacquireRequest, {
+			forceRefresh: true,
+		});
+		return {
+			cacheKey: registeredCallerContext.cacheKey,
+			callerContextId: registeredCallerContext.callerContextId,
+			request: reacquireRequest,
+		};
+	};
+
+	const sendLeaseReacquireCommand = async (
+		oldLeaseId: string,
+		request: OpenClawGondolinLeaseReacquireRequest,
+	): Promise<{
+		readonly leaseCallerContext: LeaseCallerContextRef;
+		readonly response: GatewayControlCommandResultMessage;
+	}> => {
+		let leaseCallerContext = await registerReacquireCallerContext(
+			oldLeaseId,
+			'Gateway control lease_reacquire',
+		);
+		let result = await sendCommandUnchecked('lease_reacquire', {
+			callerContext: { callerContextId: leaseCallerContext.callerContextId },
+			...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
+			oldLeaseId,
+			staleEvidence: staleEvidencePayloadForReacquireRequest(request),
+		});
+		if (
+			result.response.payload.result !== 'ok' &&
+			shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
+		) {
+			forgetRegisteredCallerContext(leaseCallerContext.request, leaseCallerContext);
+			const refreshedCallerContext = await registerCallerContext(leaseCallerContext.request, {
+				forceRefresh: true,
+			});
+			leaseCallerContext = {
+				cacheKey: refreshedCallerContext.cacheKey,
+				callerContextId: refreshedCallerContext.callerContextId,
+				request: leaseCallerContext.request,
+			};
+			result = await sendCommandUnchecked('lease_reacquire', {
+				callerContext: { callerContextId: leaseCallerContext.callerContextId },
+				...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
+				oldLeaseId,
+				staleEvidence: staleEvidencePayloadForReacquireRequest(request),
+			});
+			if (
+				result.response.payload.result !== 'ok' &&
+				shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
+			) {
+				forgetRegisteredCallerContext(leaseCallerContext.request, leaseCallerContext);
+			}
+		}
+		assertCommandResultOk({
+			context: 'Gateway control lease_reacquire',
+			operation: 'lease_reacquire',
+			response: result.response,
+			responseToMessageId: result.messageId,
+		});
+		return {
+			leaseCallerContext,
+			response: result.response,
+		};
 	};
 
 	return {
@@ -649,26 +734,13 @@ export function createGatewayControlLeaseClient(
 			);
 		},
 		reacquireLease: async (oldLeaseId, request) => {
-			const response = await sendLeaseCommandWithCallerContextRefresh({
-				buildPayload: (callerContext) => ({
-					...callerContext,
-					...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
-					oldLeaseId,
-					staleEvidence: staleEvidencePayloadForReacquireRequest(request),
-				}),
-				context: 'Gateway control lease_reacquire',
-				leaseId: oldLeaseId,
-				operation: 'lease_reacquire',
-			});
+			const { leaseCallerContext, response } = await sendLeaseReacquireCommand(oldLeaseId, request);
 			const leaseSnapshot = requireLeaseSnapshot({
 				context: 'Gateway control lease_reacquire',
 				operation: 'lease_reacquire',
 				response,
 			});
-			const leaseCallerContext = requireCallerContextForLease(
-				oldLeaseId,
-				'Gateway control lease_reacquire',
-			);
+			reacquireRequestByRetiredLeaseId.delete(oldLeaseId);
 			rememberCallerContextForLease({
 				leaseId: leaseSnapshot.leaseId,
 				registeredCallerContext: {
@@ -680,7 +752,7 @@ export function createGatewayControlLeaseClient(
 			});
 			return requirePrivateToolVmLease(leaseSnapshot, 'Gateway control lease_reacquire');
 		},
-		releaseLease: async (leaseId) => {
+		releaseLease: async (leaseId, releaseOptions) => {
 			const leaseCallerContext = resolveCallerContextForLease(leaseId);
 			if (leaseCallerContext === undefined) {
 				return;
@@ -694,7 +766,9 @@ export function createGatewayControlLeaseClient(
 				leaseId,
 				operation: 'lease_release',
 			});
-			forgetCallerContextForLease(leaseId, leaseCallerContext);
+			forgetCallerContextForLease(leaseId, leaseCallerContext, {
+				retainReacquireRequest: releaseOptions?.force === true,
+			});
 		},
 		renewLease: async (leaseId) => {
 			const response = await sendLeaseCommandWithCallerContextRefresh({
