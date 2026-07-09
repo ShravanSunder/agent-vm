@@ -258,6 +258,64 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 	});
 
+	it('records sanitized controller-request health evidence when lease create fails after resolution', async () => {
+		const createFailure = new Error('raw ssh credential path /tmp/private-key should not leak');
+		createFailure.name = 'ToolVmCreateFailed';
+		const baseLeaseManager = createTestLeaseManager();
+		const leaseManager = {
+			...baseLeaseManager,
+			createLease: vi.fn(async () => {
+				throw createFailure;
+			}),
+		} satisfies ReturnType<typeof createTestLeaseManager>;
+		const recordedHealthEvents: AgentVmHealthEvent[] = [];
+		const resolveLeaseCreateOptions = vi.fn(async () => ({
+			agentId: callerContext.agentId,
+			agentWorkspaceDir: callerContext.agentWorkspaceDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: callerContext.zoneId,
+		}));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			now: () => 1_000,
+			readIdentityPem: async () => 'identity-pem',
+			recordHealthEvent: (event) => {
+				recordedHealthEvents.push(event);
+			},
+			resolveLeaseCreateOptions,
+		});
+
+		await expect(
+			leaseRpc.createLease({
+				callerContext,
+				payload: callerContextPayload,
+			}),
+		).rejects.toBe(createFailure);
+		expect(recordedHealthEvents).toEqual([
+			{
+				attempt: 1,
+				elapsedMs: 0,
+				errorCode: 'lease_manager_create_lease:ToolVmCreateFailed',
+				kind: 'controller-request',
+				maxAttempts: 1,
+				observedAtMs: 1_000,
+				operation: 'lease-create',
+				result: 'failed',
+				sessionKeyDigest: callerContext.sessionKeyDigest,
+				statusCode: 500,
+				zoneId: callerContext.zoneId,
+			},
+		]);
+		expect(JSON.stringify(recordedHealthEvents)).not.toContain('/tmp/private-key');
+	});
+
 	it('maps active-use lifecycle through the lease manager with sanitized correlation', async () => {
 		const leaseManager = createTestLeaseManager();
 		const leaseRpc = createGatewayControlLeaseRpcOperations({
@@ -1176,13 +1234,15 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
 	});
 
-	it('maps runtime-status unavailability during reacquire compatibility resolution to runtime_not_ready without finalizing the transition', async () => {
-		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+	it('reacquires from stored authority compatibility when runtime status is temporarily unavailable', async () => {
+		const leaseManager = createTestLeaseManager({
+			leaseIds: ['lease-old', 'lease-new', 'lease-newer'],
+		});
 		const recordedHealthEvents: AgentVmHealthEvent[] = [];
 		let resolveCallCount = 0;
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => {
 			resolveCallCount += 1;
-			if (resolveCallCount > 1) {
+			if (resolveCallCount > 2) {
 				throw new OpenClawRuntimeStatusUnavailableError(context.zoneId, 'runtime status missing');
 			}
 			return {
@@ -1211,6 +1271,23 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			callerContext,
 			payload: callerContextPayload,
 		});
+		const firstReplacement = await leaseRpc.reacquireLease({
+			callerContext: refreshedCallerContextIdOnly,
+			payload: {
+				callerContext: {
+					callerContextId: refreshedCallerContext.callerContextId,
+				},
+				oldLeaseId: oldLease.leaseId,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					observedAtMs: 1_100,
+					operation: 'command',
+				},
+			},
+		});
+		if (firstReplacement === undefined || !('leaseId' in firstReplacement)) {
+			throw new Error('Expected first reacquire to return a replacement lease.');
+		}
 
 		await expect(
 			leaseRpc.reacquireLease({
@@ -1219,19 +1296,24 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					callerContext: {
 						callerContextId: refreshedCallerContext.callerContextId,
 					},
-					oldLeaseId: oldLease.leaseId,
+					oldLeaseId: firstReplacement.leaseId,
 					staleEvidence: {
 						kind: 'tool-vm-ssh',
-						observedAtMs: 1_100,
+						observedAtMs: 1_200,
 						operation: 'command',
 					},
 				},
 			}),
-		).resolves.toEqual({
-			leaseRejectionReason: 'runtime_not_ready',
-			result: 'rejected',
-		});
-		expect(recordedHealthEvents).toEqual([]);
+		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-newer' }));
+		expect(recordedHealthEvents).toContainEqual(
+			expect.objectContaining({
+				lifecycleEventRole: 'controller_final',
+				lifecycleTransition: 'stale_to_reacquired',
+				oldLeaseId: firstReplacement.leaseId,
+				replacementLeaseId: 'lease-newer',
+				result: 'ok',
+			}),
+		);
 	});
 
 	it('expires old-lease authority after dead idle lease disappearance', async () => {

@@ -157,6 +157,17 @@ function leaseRpcRejection(
 	};
 }
 
+function safeErrorName(error: unknown): string {
+	return error instanceof Error && error.name.length > 0 ? error.name : 'unknown';
+}
+
+function safeControllerRequestErrorCode(options: {
+	readonly error: unknown;
+	readonly stage: string;
+}): string {
+	return `${options.stage}:${safeErrorName(options.error)}`;
+}
+
 type CurrentLeaseAuthorityDecision =
 	| {
 			readonly status: 'accepted';
@@ -410,32 +421,52 @@ export function createGatewayControlLeaseRpcOperations(
 
 	return {
 		createLease: async ({ callerContext, payload }) => {
-			const leaseCreateOptions = await options.resolveLeaseCreateOptions({
-				callerContext,
-				payload,
-			});
-			options.onLeaseCreateRequest?.({
-				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
-				...(leaseCreateOptions.effectiveIdleTtlMs === undefined
-					? {}
-					: { idleTtlMs: leaseCreateOptions.effectiveIdleTtlMs }),
-				profileId: leaseCreateOptions.profileId,
-				sessionKeyDigest: callerContext.sessionKeyDigest,
-				workMountDir: callerContext.workMountDir,
-				zoneId: leaseCreateOptions.zoneId,
-			});
-			const lease = await options.leaseManager.createLease(leaseCreateOptions);
-			recordLeaseOwner({
-				callerContext,
-				leaseCreateOptions,
-				leaseId: lease.id,
-			});
-			return await serializeGatewayControlLeaseSnapshot({
-				includeSsh: 'private',
-				lease,
-				readIdentityPem,
-			});
+			let stage = 'resolve_lease_create_options';
+			try {
+				const leaseCreateOptions = await options.resolveLeaseCreateOptions({
+					callerContext,
+					payload,
+				});
+				options.onLeaseCreateRequest?.({
+					agentId: callerContext.agentId,
+					agentWorkspaceDir: callerContext.agentWorkspaceDir,
+					...(leaseCreateOptions.effectiveIdleTtlMs === undefined
+						? {}
+						: { idleTtlMs: leaseCreateOptions.effectiveIdleTtlMs }),
+					profileId: leaseCreateOptions.profileId,
+					sessionKeyDigest: callerContext.sessionKeyDigest,
+					workMountDir: callerContext.workMountDir,
+					zoneId: leaseCreateOptions.zoneId,
+				});
+				stage = 'lease_manager_create_lease';
+				const lease = await options.leaseManager.createLease(leaseCreateOptions);
+				recordLeaseOwner({
+					callerContext,
+					leaseCreateOptions,
+					leaseId: lease.id,
+				});
+				stage = 'serialize_lease_snapshot';
+				return await serializeGatewayControlLeaseSnapshot({
+					includeSsh: 'private',
+					lease,
+					readIdentityPem,
+				});
+			} catch (error) {
+				options.recordHealthEvent?.({
+					attempt: 1,
+					elapsedMs: 0,
+					errorCode: safeControllerRequestErrorCode({ error, stage }),
+					kind: 'controller-request',
+					maxAttempts: 1,
+					observedAtMs: Math.max(1, now()),
+					operation: 'lease-create',
+					result: 'failed',
+					sessionKeyDigest: callerContext.sessionKeyDigest,
+					statusCode: 500,
+					zoneId: callerContext.zoneId,
+				});
+				throw error;
+			}
 		},
 		endLeaseUse: async ({ callerContext, payload }) => {
 			const { leaseId, useId } = payload;
@@ -534,7 +565,7 @@ export function createGatewayControlLeaseRpcOperations(
 				if (!(error instanceof OpenClawRuntimeStatusUnavailableError)) {
 					throw error;
 				}
-				return leaseRpcRejection('runtime_not_ready');
+				currentCompatibility = authority.compatibility;
 			}
 			if (
 				!isReacquireCompatibilityCurrent({
