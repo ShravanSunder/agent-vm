@@ -43,6 +43,7 @@ const openClawDeprecatedMcpPortalPluginLoadPath = '/home/openclaw/.openclaw/exte
 const openClawManagedPackageLoadPath = '/pnpm/global/5/node_modules/@openclaw';
 
 export interface OpenClawDeploymentDoctorTarget {
+	readonly configuredAuthLoginDefaultAgentId?: string | undefined;
 	readonly configuredAuthProfileAgentIds?: readonly string[];
 	readonly configuredCodexHarnessAuthAgentIds?: readonly string[];
 	readonly codexHarnessAuthReadErrors?: readonly CodexHarnessAuthReadError[];
@@ -246,6 +247,34 @@ function collectOpenClawAuthTargets(
 	return [];
 }
 
+function collapseOpenClawProviderAuthTargetsToDefaultAgent(props: {
+	readonly authTargets: readonly OpenClawAuthTarget[];
+	readonly defaultAgentId: string | undefined;
+}): readonly OpenClawAuthTarget[] {
+	if (props.defaultAgentId === undefined) {
+		return props.authTargets;
+	}
+	const providerTargets = props.authTargets.filter(
+		(authTarget) => authTarget.kind === 'openclaw-provider',
+	);
+	if (providerTargets.length === 0) {
+		return props.authTargets;
+	}
+	const codexHarnessTargets = props.authTargets.filter(
+		(authTarget) => authTarget.kind === 'codex-harness',
+	);
+	const collapsedProviderTargets = new Map<string, OpenClawAuthTarget>();
+	for (const authTarget of providerTargets) {
+		collapsedProviderTargets.set(authTarget.provider, {
+			agentId: props.defaultAgentId,
+			kind: 'openclaw-provider',
+			provider: authTarget.provider,
+			targetId: props.defaultAgentId,
+		});
+	}
+	return [...codexHarnessTargets, ...collapsedProviderTargets.values()];
+}
+
 function collectConfiguredOpenAiModelNames(config: OpenClawDeploymentConfig): readonly string[] {
 	const modelNames = new Set<string>();
 	const defaultModelName = resolveOpenClawModelName(config.agents?.defaults?.model);
@@ -328,7 +357,11 @@ function buildAgentAuthProfileChecks(
 	const configuredCodexHarnessAuthAgentIds = new Set(
 		target.configuredCodexHarnessAuthAgentIds ?? [],
 	);
-	return collectOpenClawAuthTargets(target.config).map((authTarget) => {
+	const authTargets = collapseOpenClawProviderAuthTargetsToDefaultAgent({
+		authTargets: collectOpenClawAuthTargets(target.config),
+		defaultAgentId: target.configuredAuthLoginDefaultAgentId,
+	});
+	return authTargets.map((authTarget) => {
 		const hasAuthProfile =
 			authTarget.agentId !== undefined && configuredAuthProfileAgentIds.has(authTarget.agentId);
 		const hasCodexHarnessAuth =
@@ -345,8 +378,8 @@ function buildAgentAuthProfileChecks(
 					? `Codex harness auth.json present for agent ${authTarget.agentId}`
 					: authTarget.kind === 'openclaw-provider'
 						? authTarget.agentId === undefined
-							? `Run agent-vm auth openclaw ${authTarget.provider} --zone ${target.zoneId} for the default OpenClaw auth profile.`
-							: `Run agent-vm auth openclaw ${authTarget.provider} --zone ${target.zoneId} --agent ${authTarget.agentId} or configure gateway.authProfilesByAgent.${authTarget.agentId}.`
+							? `Run agent-vm auth openclaw login ${authTarget.provider} --zone ${target.zoneId} for the default OpenClaw auth profile.`
+							: `Run agent-vm auth openclaw login ${authTarget.provider} --zone ${target.zoneId} --agent ${authTarget.agentId} or configure gateway.authProfilesByAgent.${authTarget.agentId}.`
 						: `Run agent-vm auth codex-harness --zone ${target.zoneId} --agent ${authTarget.agentId} or configure gateway.authProfilesByAgent.${authTarget.agentId}.`,
 		} satisfies DoctorCheck;
 	});
@@ -545,6 +578,7 @@ export async function collectOpenClawDeploymentDoctorChecks(
 					? {
 							config: target.config,
 							codexHarnessAuthReadErrors: codexHarnessAuthScan.readErrors,
+							configuredAuthLoginDefaultAgentId: zone?.gateway.authLogin?.defaultAgent,
 							configuredCodexHarnessAuthAgentIds: codexHarnessAuthScan.agentIds,
 							configuredAuthProfileAgentIds:
 								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],

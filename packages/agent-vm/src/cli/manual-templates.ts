@@ -306,7 +306,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 		Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension. The gondolin extension registers Tool Portal native tools and calls Tool Portal with MCP providers as an internal backend when configured.
 		Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in packageOverrides.openclaw. Transitive workarounds use packageOverrides.pnpm, and the rebuilt image must be inspected before calling that workaround active.
 
-	Use agent-vm init --openclaw-agents sun,shravan to scaffold declared same-zone managed OpenClaw agents with /zone/agents/<id> workspaces. Keep OpenClaw agents.list, zones[].agents, Tool Portal/MCP Portal bindings, and per-agent auth/profile files aligned before validation.
+	Use agent-vm init --openclaw-agents sun,shravan to scaffold declared same-zone managed OpenClaw agents with /zone/agents/<id> workspaces. Keep OpenClaw agents.list, zones[].agents, and Tool Portal/MCP Portal bindings aligned before validation. For OpenClaw provider auth, gateway.authLogin.defaultAgent may own the shared profile store; use gateway.authProfilesByAgent only when agents intentionally need separate prebuilt auth profile files.
 
 	Run agent-vm validate after editing OpenClaw config or system config. Validate owns static schema and policy shape, including removed fields and WebSocket upgrade policy. Run agent-vm doctor after rebuilding or starting the deployment to check runtime host readiness, plugin paths, memory slots, workspace access, sandbox plugin tools, and configured auth profile material.
 	`,
@@ -475,8 +475,8 @@ When gateway.zoneGit is configured:
 				`
 Managed OpenClaw gateway zones may declare multiple trusted agents. Use scope=agent so OpenClaw resolves each agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
 
-Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for prebuilt OpenClaw auth profiles, gateway.authLogin for interactive OpenClaw profile login helpers, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
-agent-vm auth openclaw login <provider> --all-configured-profiles logs in each configured gateway.authLogin.providers.<provider>.profileIds entry for gateway.authLogin.defaultAgent and verifies those profile IDs afterward. Use --dry-run before a refresh when you want to inspect the target agent and profile list.
+Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for intentionally separate prebuilt OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
+Shared OpenClaw provider auth works through gateway.authLogin. agent-vm auth openclaw login <provider> --all-configured-profiles logs in each configured gateway.authLogin.providers.<provider>.profileIds entry for gateway.authLogin.defaultAgent and verifies those profile IDs afterward. Use --dry-run before a refresh when you want to inspect the target agent and profile list.
 Native Codex-runtime agents use codex-harness --all-agents to run one device-auth session per agent listed in the zone's system config. Use --agent <agentId> for a one-off login outside that configured list.
 
 OpenClaw tool allowlists are a policy layer. They do not remove binaries from the Tool VM image if a broad shell tool can still run them.

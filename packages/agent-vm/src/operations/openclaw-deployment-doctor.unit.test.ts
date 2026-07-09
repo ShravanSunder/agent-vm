@@ -34,9 +34,17 @@ const openClawPluginApprovalSession = {
 
 function createSystemConfig(
 	openClawConfigPath: string,
-	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
+	authProfilesByAgent: Record<
+		string,
+		| { readonly ref: string; readonly source: '1password' }
+		| { readonly source: 'config'; readonly value: string }
+	> = {},
 	mcpConfigDir?: string,
 	stateDir = './state/shravan',
+	authLogin?: {
+		readonly defaultAgent?: string;
+		readonly providers: Record<string, { readonly profileIds: string[] }>;
+	},
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -90,6 +98,7 @@ function createSystemConfig(
 						stateDir,
 						zoneFilesDir: './zone-files/shravan',
 						authProfilesByAgent,
+						...(authLogin === undefined ? {} : { authLogin }),
 					},
 					id: 'shravan',
 					agents: [{ id: 'sun' }],
@@ -859,7 +868,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Run agent-vm auth openclaw openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+			hint: 'Run agent-vm auth openclaw login openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
 		});
 	});
 
@@ -986,7 +995,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-default'),
 			).toMatchObject({
 				ok: false,
-				hint: 'Run agent-vm auth openclaw openai --zone shravan for the default OpenClaw auth profile.',
+				hint: 'Run agent-vm auth openclaw login openai --zone shravan for the default OpenClaw auth profile.',
 			});
 		}
 	});
@@ -1019,8 +1028,51 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Run agent-vm auth openclaw openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+			hint: 'Run agent-vm auth openclaw login openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
 		});
+	});
+
+	it('checks only the configured OpenClaw auth login default agent for shared provider auth', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthLoginDefaultAgentId: 'main',
+				configuredAuthProfileAgentIds: ['main'],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'main' }, { id: 'shravan' }, { id: 'alevtina' }, { id: 'ember' }],
+					},
+					models: {
+						providers: {
+							openai: {
+								agentRuntime: { id: 'openclaw' },
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-main'),
+		).toMatchObject({
+			ok: true,
+			hint: 'OpenClaw auth profile configured for agent main',
+		});
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-agent-auth-profile-shravan-shravan',
+		);
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-agent-auth-profile-shravan-alevtina',
+		);
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-agent-auth-profile-shravan-ember',
+		);
 	});
 
 	it('does not emit auth profile checks for Codex harness defaults when agents.list is missing or empty', () => {
@@ -1152,6 +1204,67 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				ok: false,
 				hint: 'Run agent-vm auth codex-harness --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
 			});
+		} finally {
+			await rm(temporaryDirectory, { force: true, recursive: true });
+		}
+	});
+
+	it('threads authLogin.defaultAgent into shared OpenClaw provider auth checks', async () => {
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
+		await mkdir(configDirectory, { recursive: true });
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						model: { primary: 'openai/gpt-5.5' },
+						sandbox: openClawToolVmSandbox,
+						workspace: '/zone/agents/default',
+					},
+					list: [{ id: 'main' }, { id: 'shravan' }, { id: 'alevtina' }, { id: 'ember' }],
+				},
+				models: {
+					providers: {
+						openai: {
+							agentRuntime: { id: 'openclaw' },
+						},
+					},
+				},
+			}),
+			'utf8',
+		);
+
+		try {
+			const checks = await collectOpenClawDeploymentDoctorChecks(
+				createSystemConfig(
+					openClawConfigPath,
+					{ main: { source: 'config', value: '{"profiles":[]}' } },
+					undefined,
+					path.join(temporaryDirectory, 'state', 'shravan'),
+					{
+						defaultAgent: 'main',
+						providers: { openai: { profileIds: ['openai-codex:main@example.com'] } },
+					},
+				),
+			);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-main'),
+			).toMatchObject({
+				ok: true,
+				hint: 'OpenClaw auth profile configured for agent main',
+			});
+			expect(checks.map((check) => check.name)).not.toContain(
+				'openclaw-agent-auth-profile-shravan-shravan',
+			);
+			expect(checks.map((check) => check.name)).not.toContain(
+				'openclaw-agent-auth-profile-shravan-alevtina',
+			);
+			expect(checks.map((check) => check.name)).not.toContain(
+				'openclaw-agent-auth-profile-shravan-ember',
+			);
 		} finally {
 			await rm(temporaryDirectory, { force: true, recursive: true });
 		}

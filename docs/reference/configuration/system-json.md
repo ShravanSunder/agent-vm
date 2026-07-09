@@ -946,11 +946,14 @@ OpenClaw `logging.redactSensitive` must stay enabled; disabling forms such as
 
 `gateway.authProfilesByAgent` writes OpenClaw auth profiles to
 `<stateDir>/agents/<agentId>/agent/auth-profiles.json` before the gateway VM
-boots. There is no shared per-agent fallback; configure each agent that needs an
-auth profile. `gateway.authProfilesRef` and `gateway.authProfilesByAgent`
-support `environment`, `1password`, and `config` sources. Inline `config`
-values here are plaintext OpenClaw auth profiles and should be limited to local
-or test deployments.
+boots. Configure per-agent entries only when agents intentionally keep separate
+OpenClaw auth stores. For the shared OpenClaw provider auth model, configure
+`gateway.authLogin.defaultAgent` and refresh the configured provider profiles
+for that agent; doctor validates that shared auth owner instead of requiring
+duplicate auth material for every OpenClaw agent. `gateway.authProfilesRef` and
+`gateway.authProfilesByAgent` support `environment`, `1password`, and `config`
+sources. Inline `config` values here are plaintext OpenClaw auth profiles and
+should be limited to local or test deployments.
 
 `gateway.authLogin` is separate from auth material. It stores only the operator
 profile ids used by `agent-vm auth openclaw login <provider>`:
