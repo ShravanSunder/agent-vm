@@ -13,6 +13,11 @@ import {
 } from '@earendil-works/gondolin';
 import { describe, expect, it, vi } from 'vitest';
 
+import type {
+	ManagedVmDestroyReceiptV1,
+	ManagedVmDestroyTargetV1,
+	ManagedVmOwnershipReservationReferenceV1,
+} from './exact-vm-lifecycle.js';
 import { configureHostNetworkDefaults } from './host-network-defaults.js';
 import type { PinnedRealFsRoot } from './pinned-realfs.js';
 import {
@@ -81,6 +86,71 @@ type TestManagedVmInstance = ManagedVmInstance & {
 	getHostPid(): number | null;
 };
 
+const TEST_OWNERSHIP_RESERVATION_REFERENCE = {
+	expectedContractVersion: 1,
+	expectedRevision: 1,
+	reservationId: 'reservation-vm-123',
+	reservationPath: '/tmp/agent-vm-tests/reservation-vm-123/reservation.json',
+} satisfies ManagedVmOwnershipReservationReferenceV1;
+
+const TEST_DESTROY_TARGET = {
+	contractVersion: 1,
+	controllerEpoch: 'controller-test',
+	ownerProcess: {
+		command: 'agent-vm-test',
+		pid: process.pid,
+		startCookie: 'test-cookie',
+	},
+	parentGateway: null,
+	reservationId: 'reservation-vm-123',
+	reservationPath: TEST_OWNERSHIP_RESERVATION_REFERENCE.reservationPath,
+	resources: {
+		disposableStoragePaths: [],
+		ingressListener: false,
+		ingressSockets: false,
+		retainedStoragePaths: [],
+		sshListener: false,
+		sshSessions: false,
+	},
+	role: 'standalone',
+	runner: {
+		backend: 'qemu',
+		discoveryIdentity: 'gondolin-exact-vm:test',
+		executable: '/usr/bin/qemu-system-aarch64',
+	},
+	sessionLabel: 'agent-vm-test',
+	vmId: 'vm-123',
+} satisfies ManagedVmDestroyTargetV1;
+
+function createTestDestroyReceipt(complete = true): ManagedVmDestroyReceiptV1 {
+	const resourceStatus = complete ? 'already-absent' : 'incomplete';
+	return {
+		complete,
+		completedAt: '2026-07-10T00:00:00.000Z',
+		contractVersion: 1,
+		controllerEpoch: 'controller-test',
+		parentGateway: null,
+		requestedRunner: {
+			backend: 'qemu',
+			discoveryIdentity: 'gondolin-exact-vm:test',
+			executableName: 'qemu-system-aarch64',
+		},
+		reservationId: 'reservation-vm-123',
+		resources: {
+			disposableStorage: { status: resourceStatus },
+			exactRunner: { status: resourceStatus },
+			ingressListener: { status: resourceStatus },
+			ingressSockets: { status: resourceStatus },
+			qmp: { status: resourceStatus },
+			sessionIpc: { status: resourceStatus },
+			sshListener: { status: resourceStatus },
+			sshSessions: { status: resourceStatus },
+		},
+		role: 'standalone',
+		vmId: 'vm-123',
+	};
+}
+
 function createFakeVmInstance(
 	options: {
 		readonly hostPid?: number | null;
@@ -92,9 +162,10 @@ function createFakeVmInstance(
 		exec: vi.fn(() => createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' })),
 		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 		enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+		getDestroyTarget: vi.fn(() => TEST_DESTROY_TARGET),
 		getHostPid: vi.fn(() => options.hostPid ?? null),
 		setIngressRoutes: vi.fn(),
-		close: vi.fn(async () => {}),
+		close: vi.fn(async () => createTestDestroyReceipt()),
 	};
 }
 
@@ -188,6 +259,7 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -258,6 +330,7 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				env: {},
@@ -337,6 +410,7 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				env: {},
@@ -460,6 +534,7 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: ['api.openai.com'],
 				cpus: 1,
 				env: {},
@@ -492,13 +567,15 @@ describe('createManagedVm', () => {
 		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const setIngressRoutesMock = vi.fn();
-		const closeMock = vi.fn(async () => {});
+		const closeReceipt = createTestDestroyReceipt();
+		const closeMock = vi.fn(async () => closeReceipt);
 		const fakeVmInstance: ManagedVmInstance = {
 			fs: fakeFs,
 			id: 'vm-123',
 			exec: execMock,
 			enableSsh: enableSshMock,
 			enableIngress: enableIngressMock,
+			getDestroyTarget: vi.fn(() => TEST_DESTROY_TARGET),
 			setIngressRoutes: setIngressRoutesMock,
 			close: closeMock,
 		};
@@ -512,6 +589,7 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: ['api.openai.com'],
 				cpus: 2,
 				env: { OPENCLAW_LOG_LEVEL: 'debug' },
@@ -594,8 +672,9 @@ describe('createManagedVm', () => {
 		await managedVm.enableSsh();
 		await managedVm.enableIngress();
 		expect(managedVm.getVmInstance()).toBe(fakeVmInstance);
+		expect(managedVm.getDestroyTarget()).toEqual(TEST_DESTROY_TARGET);
 		managedVm.setIngressRoutes([{ port: 18789, prefix: '/', stripPrefix: true }]);
-		await managedVm.close();
+		await expect(managedVm.close()).resolves.toEqual(closeReceipt);
 
 		expect(enableSshMock).toHaveBeenCalled();
 		expect(enableIngressMock).toHaveBeenCalled();
@@ -624,6 +703,7 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: ['api.perplexity.ai'],
 				cpus: 1,
 				env: { OPENCLAW_LOG_LEVEL: 'debug' },
@@ -669,6 +749,7 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -703,6 +784,7 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -744,6 +826,7 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 2,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -771,6 +854,7 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 2,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -796,6 +880,7 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 2,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -836,6 +921,7 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				env: {
@@ -874,6 +960,7 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/tool',
@@ -899,6 +986,39 @@ describe('createManagedVm', () => {
 		expect(closePinnedRealFsRoot).toHaveBeenCalledWith(pinnedRoot);
 	});
 
+	it('preserves an incomplete VM destruction receipt after pinned-root cleanup', async () => {
+		const pinnedRoot = createPinnedRoot(151);
+		const incompleteReceipt = createTestDestroyReceipt(false);
+		const vmInstance = createFakeVmInstance();
+		vmInstance.close = vi.fn(async () => incompleteReceipt);
+		const closePinnedRealFsRoot = vi.fn();
+		const dependencies = createBaseDependencies({
+			closePinnedRealFsRoot,
+			createVm: async () => vmInstance,
+		});
+		const managedVm = await createManagedVm(
+			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/tool',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/work': {
+						kind: 'realfs',
+						pinnedHostRoot: pinnedRoot,
+					},
+				},
+			},
+			dependencies,
+		);
+
+		await expect(managedVm.close()).resolves.toEqual(incompleteReceipt);
+		expect(closePinnedRealFsRoot).toHaveBeenCalledOnce();
+	});
+
 	it('closes pinned roots when VM creation fails', async () => {
 		const pinnedRoot = createPinnedRoot(202);
 		const closePinnedRealFsRoot = vi.fn();
@@ -912,6 +1032,7 @@ describe('createManagedVm', () => {
 		await expect(
 			createManagedVm(
 				{
+					ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 					allowedHosts: [],
 					cpus: 1,
 					imagePath: '/vm-images/tool',
@@ -948,6 +1069,7 @@ describe('createManagedVm', () => {
 		await expect(
 			createManagedVm(
 				{
+					ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 					allowedHosts: [],
 					cpus: 1,
 					imagePath: '/vm-images/tool',

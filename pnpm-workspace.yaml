@@ -1,2 +1,5 @@
 packages:
   - 'packages/*'
+
+patchedDependencies:
+  '@earendil-works/gondolin@0.12.0': patches/@earendil-works__gondolin@0.12.0.patch

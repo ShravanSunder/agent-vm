@@ -27,6 +27,13 @@ import {
 } from '@earendil-works/gondolin';
 
 import {
+	MANAGED_VM_EXACT_LIFECYCLE_CONTRACT_VERSION,
+	assertManagedVmExactLifecycleContractVersion,
+	type ManagedVmDestroyReceiptV1,
+	type ManagedVmDestroyTargetV1,
+	type ManagedVmOwnershipReservationReferenceV1,
+} from './exact-vm-lifecycle.js';
+import {
 	configureHostNetworkDefaults,
 	type HostNetworkDefaultsResult,
 } from './host-network-defaults.js';
@@ -35,6 +42,8 @@ import {
 	createPinnedRealFsProvider,
 	type PinnedRealFsRoot,
 } from './pinned-realfs.js';
+
+assertManagedVmExactLifecycleContractVersion(MANAGED_VM_EXACT_LIFECYCLE_CONTRACT_VERSION);
 
 export const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
 export const SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK = '::ffff:198.18.0.1';
@@ -86,8 +95,9 @@ export interface ManagedVmInstance {
 	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	getHostPid?(): number | null;
+	getDestroyTarget(): ManagedVmDestroyTargetV1;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
-	close(): Promise<void>;
+	close(): Promise<ManagedVmDestroyReceiptV1>;
 }
 
 export interface ManagedVmDependencies {
@@ -120,6 +130,7 @@ export interface VfsMountSpec {
 }
 
 export interface CreateVmOptions {
+	readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
 	readonly imagePath: string;
 	readonly memory: string;
 	readonly cpus: number;
@@ -143,9 +154,10 @@ export interface ManagedVm {
 	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	getHostPid(): number | null;
+	getDestroyTarget(): ManagedVmDestroyTargetV1;
 	getVmInstance(): ManagedVmInstance;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
-	close(): Promise<void>;
+	close(): Promise<ManagedVmDestroyReceiptV1>;
 }
 
 /* oxlint-disable typescript-eslint/no-unsafe-type-assertion -- VM.create() returns
@@ -572,6 +584,7 @@ export async function createManagedVm(
 			...(options.onResponse ? { onResponse: options.onResponse } : {}),
 		});
 		vmInstance = await dependencies.createVm({
+			ownershipReservation: options.ownershipReservation,
 			...(options.imagePath.length > 0 ? { sandbox: { imagePath: options.imagePath } } : {}),
 			...(options.sessionLabel ? { sessionLabel: options.sessionLabel } : {}),
 			rootfs: {
@@ -629,16 +642,20 @@ export async function createManagedVm(
 		getHostPid(): number | null {
 			return vmInstance.getHostPid?.() ?? null;
 		},
+		getDestroyTarget(): ManagedVmDestroyTargetV1 {
+			return vmInstance.getDestroyTarget();
+		},
 		getVmInstance(): ManagedVmInstance {
 			return vmInstance;
 		},
 		setIngressRoutes(routes: readonly IngressRoute[]): void {
 			vmInstance.setIngressRoutes(routes);
 		},
-		async close(): Promise<void> {
+		async close(): Promise<ManagedVmDestroyReceiptV1> {
 			let closeError: unknown;
+			let receipt: ManagedVmDestroyReceiptV1 | undefined;
 			try {
-				await vmInstance.close();
+				receipt = await vmInstance.close();
 			} catch (error) {
 				closeError = error;
 			}
@@ -650,6 +667,10 @@ export async function createManagedVm(
 			if (closeError !== undefined) {
 				throw closeError;
 			}
+			if (receipt === undefined) {
+				throw new Error('Gondolin VM close completed without an exact destruction receipt');
+			}
+			return receipt;
 		},
 	};
 }
