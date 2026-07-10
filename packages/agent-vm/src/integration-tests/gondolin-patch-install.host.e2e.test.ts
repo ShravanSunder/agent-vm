@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, '../../../..');
 const patchRelativePath = 'patches/@earendil-works__gondolin@0.12.0.patch';
-const expectedPatchSha256 = 'c061b9111ee82d9beda83a36202da7637b8d04f3cffcb2c1ecb6dfb54f499400';
+const expectedPatchSha256 = '91942bf3ab503e81710ed159851164277651c27051ae0b3439a0997f44f0b654';
 const expectedInstalledFileSha256 = {
 	'dist/src/index.d.ts': '32e86acfd85cedd2b1e956abc719f4e5fcfadc8fc2943e0b112b3cdcc0fc1be0',
 	'dist/src/index.js': 'd4b6e9c5a2bff324e84a3ef249922496be3a484e8e20caa3e74614f64a78a754',
