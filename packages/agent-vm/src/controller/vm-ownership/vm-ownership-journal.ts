@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { ZodError } from 'zod';
 
@@ -20,6 +21,7 @@ export type VmOwnershipJournalErrorCode =
 	| 'membership-malformed'
 	| 'membership-missing'
 	| 'membership-identity-mismatch'
+	| 'membership-lock-conflict'
 	| 'membership-revision-conflict'
 	| 'membership-revision-regressed'
 	| 'membership-state-transition-refused'
@@ -54,6 +56,7 @@ export interface VmOwnershipJournal {
 
 interface CreateVmOwnershipJournalOptions {
 	readonly nowMs: () => number;
+	readonly onCrossProcessLockAcquired?: () => Promise<void>;
 	readonly stateDirectory: string;
 }
 
@@ -394,6 +397,7 @@ export function createVmOwnershipJournal(
 	const ownershipDirectory = path.join(stateDirectory, 'vm-ownership');
 	const membershipDirectory = path.join(ownershipDirectory, 'gateway-membership');
 	const reservationDirectory = path.join(ownershipDirectory, 'reservations');
+	const operationLockPath = path.join(ownershipDirectory, 'journal-operation.lock');
 
 	const membershipPath = (gatewayEpochId: string): string => {
 		assertGatewayEpochIdSafe(gatewayEpochId);
@@ -445,6 +449,76 @@ export function createVmOwnershipJournal(
 		}
 	};
 
+	const acquireCrossProcessOperationLock = async (): Promise<() => Promise<void>> => {
+		await ensureStorage();
+		const lockKind = await inspectPathWithoutFollowingSymlinks(operationLockPath);
+		if (lockKind !== 'missing' && lockKind !== 'regular-file') {
+			throw new VmOwnershipJournalError('ownership-storage-unsafe');
+		}
+		const lockDatabase = new DatabaseSync(operationLockPath);
+		let transactionAcquired = false;
+		try {
+			lockDatabase.exec('PRAGMA busy_timeout = 0; BEGIN IMMEDIATE;');
+			transactionAcquired = true;
+			await chmod(operationLockPath, 0o600);
+			await options.onCrossProcessLockAcquired?.();
+			return async (): Promise<void> => {
+				let commitError: unknown;
+				try {
+					lockDatabase.exec('COMMIT;');
+				} catch (error) {
+					commitError = error;
+				}
+				let closeError: unknown;
+				try {
+					lockDatabase.close();
+				} catch (error) {
+					closeError = error;
+				}
+				if (commitError !== undefined && closeError !== undefined) {
+					throw new AggregateError(
+						[commitError, closeError],
+						'VM ownership journal lock commit and close both failed',
+						{ cause: commitError },
+					);
+				}
+				if (commitError !== undefined) {
+					throw commitError;
+				}
+				if (closeError !== undefined) {
+					throw closeError;
+				}
+			};
+		} catch (error) {
+			const primaryError =
+				!transactionAcquired && error instanceof Error && /database is locked/iu.test(error.message)
+					? new VmOwnershipJournalError('membership-lock-conflict')
+					: error;
+			const cleanupErrors: unknown[] = [];
+			if (transactionAcquired) {
+				try {
+					lockDatabase.exec('ROLLBACK;');
+				} catch (rollbackError) {
+					cleanupErrors.push(rollbackError);
+				}
+			}
+			try {
+				lockDatabase.close();
+			} catch (closeError) {
+				cleanupErrors.push(closeError);
+			}
+			if (cleanupErrors.length > 0) {
+				// oxlint-disable-next-line preserve-caught-error -- AggregateError errors[0] and cause both preserve the caught acquisition failure.
+				throw new AggregateError(
+					[primaryError, ...cleanupErrors],
+					'VM ownership journal lock acquisition and cleanup both failed',
+					{ cause: error },
+				);
+			}
+			throw primaryError;
+		}
+	};
+
 	const loadMembershipWithoutQueue = async (
 		gatewayEpochId: string,
 	): Promise<GatewayMembershipRecord> => {
@@ -492,14 +566,41 @@ export function createVmOwnershipJournal(
 		});
 		stateDirectoryOperationQueues.set(stateDirectory, currentOperation);
 		await priorOperation.catch(() => undefined);
+		let releaseCrossProcessLock: (() => Promise<void>) | undefined;
+		let operationOutcome:
+			| { readonly ok: false; readonly error: unknown }
+			| { readonly ok: true; readonly value: TResult };
 		try {
-			return await operation();
+			releaseCrossProcessLock = await acquireCrossProcessOperationLock();
+			operationOutcome = { ok: true, value: await operation() };
+		} catch (error) {
+			operationOutcome = { error, ok: false };
+		}
+		let lockReleaseError: unknown;
+		try {
+			await releaseCrossProcessLock?.();
+		} catch (error) {
+			lockReleaseError = error;
 		} finally {
 			releaseOperation?.();
 			if (stateDirectoryOperationQueues.get(stateDirectory) === currentOperation) {
 				stateDirectoryOperationQueues.delete(stateDirectory);
 			}
 		}
+		if (!operationOutcome.ok) {
+			if (lockReleaseError !== undefined) {
+				throw new AggregateError(
+					[operationOutcome.error, lockReleaseError],
+					'VM ownership journal operation and lock release both failed',
+					{ cause: operationOutcome.error },
+				);
+			}
+			throw operationOutcome.error;
+		}
+		if (lockReleaseError !== undefined) {
+			throw lockReleaseError;
+		}
+		return operationOutcome.value;
 	};
 
 	return {

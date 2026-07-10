@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -412,6 +412,87 @@ describe('VmOwnershipJournal', () => {
 		expect(successfulResults).toHaveLength(1);
 		const loaded = await firstJournal.loadGatewayMembership(record.gateway.gatewayEpochId);
 		expect(loaded).toEqual(successfulResults[0]?.value);
+	});
+
+	it('reports lock release failure without masking the primary error or poisoning the local queue', async () => {
+		// Arrange
+		const stateDirectory = await createTemporaryStateDirectory();
+		const operationLockJournalPath = path.join(
+			stateDirectory,
+			'vm-ownership',
+			'journal-operation.lock-journal',
+		);
+		let acquiredLockCount = 0;
+		const journal = createVmOwnershipJournal({
+			nowMs: () => 1_720_000_000_000,
+			onCrossProcessLockAcquired: async (): Promise<void> => {
+				acquiredLockCount += 1;
+				if (acquiredLockCount === 1) {
+					await unlink(operationLockJournalPath);
+				}
+			},
+			stateDirectory,
+		});
+		const invalidRecord = createMembershipRecord(
+			'gateway-epoch-release-failure',
+			journal.reservationPathFor('reservation-gateway-epoch-release-failure'),
+			{ revision: 2 },
+		);
+
+		// Act
+		const firstError = await journal
+			.createGatewayMembership(invalidRecord)
+			.catch((error: unknown) => error);
+		const secondRecords = await journal.loadAllGatewayMemberships();
+
+		// Assert
+		expect.soft(firstError).toBeInstanceOf(AggregateError);
+		if (firstError instanceof AggregateError) {
+			expect(firstError.errors[0]).toMatchObject({ code: 'membership-revision-regressed' });
+			expect(String(firstError.errors[1])).toContain('disk I/O error');
+		}
+		expect(secondRecords).toEqual([]);
+		expect(acquiredLockCount).toBe(2);
+	});
+
+	it('preserves a durable membership and releases the local queue when lock release fails', async () => {
+		// Arrange
+		const stateDirectory = await createTemporaryStateDirectory();
+		const operationLockJournalPath = path.join(
+			stateDirectory,
+			'vm-ownership',
+			'journal-operation.lock-journal',
+		);
+		let acquiredLockCount = 0;
+		const journal = createVmOwnershipJournal({
+			nowMs: () => 1_720_000_000_000,
+			onCrossProcessLockAcquired: async (): Promise<void> => {
+				acquiredLockCount += 1;
+				if (acquiredLockCount === 1) {
+					await unlink(operationLockJournalPath);
+				}
+			},
+			stateDirectory,
+		});
+		const record = createMembershipRecord(
+			'gateway-epoch-durable-release-failure',
+			journal.reservationPathFor('reservation-gateway-epoch-durable-release-failure'),
+		);
+
+		// Act
+		const createError = await journal
+			.createGatewayMembership(record)
+			.catch((error: unknown) => error);
+		const serializedRecord = JSON.parse(
+			await readFile(journal.membershipPathForTesting(record.gateway.gatewayEpochId), 'utf8'),
+		) as unknown;
+		const secondRecord = await journal.loadGatewayMembership(record.gateway.gatewayEpochId);
+
+		// Assert
+		expect(String(createError)).toContain('disk I/O error');
+		expect(serializedRecord).toEqual(record);
+		expect(secondRecord).toEqual(record);
+		expect(acquiredLockCount).toBe(2);
 	});
 
 	it.each(['provisional', 'current'] as const)(
