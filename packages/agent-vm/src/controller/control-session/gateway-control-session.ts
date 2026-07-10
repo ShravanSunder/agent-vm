@@ -73,7 +73,9 @@ export type SerializedGatewayControlSessionMaterial = z.infer<
 
 export interface CreateGatewayControlSessionMaterialOptions {
 	readonly agentIds?: readonly string[];
+	readonly bootId?: string;
 	readonly controllerEpoch: string;
+	readonly generationId?: string;
 	readonly zoneId: string;
 }
 
@@ -97,10 +99,10 @@ export function createGatewayControlSessionMaterial(
 	);
 	return {
 		agentAuthorityKeys,
-		bootId: randomUUID(),
+		bootId: options.bootId ?? randomUUID(),
 		callerContextProofKey: randomBytes(32).toString('base64url'),
 		controllerEpoch: options.controllerEpoch,
-		generationId: randomUUID(),
+		generationId: options.generationId ?? randomUUID(),
 		peerId: `gateway-${options.zoneId}`,
 		privateKey,
 		verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
