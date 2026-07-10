@@ -409,7 +409,7 @@ export function createVmOwnershipJournal(
 
 	const reservationPathFor = (reservationId: string): string => {
 		assertGatewayEpochIdSafe(reservationId);
-		return path.join(reservationDirectory, reservationId, 'reservation.json');
+		return path.join(reservationDirectory, reservationId, 'reservation-v1.json');
 	};
 
 	const assertReservationPathOwned = (reservationPath: string, reservationId: string): void => {
@@ -425,7 +425,7 @@ export function createVmOwnershipJournal(
 			relativeSegments.length !== 2 ||
 			!relativeSegments[0] ||
 			!relativeSegments[1] ||
-			path.basename(reservationPath) !== 'reservation.json'
+			path.basename(reservationPath) !== 'reservation-v1.json'
 		) {
 			throw new VmOwnershipJournalError('ownership-storage-unsafe');
 		}

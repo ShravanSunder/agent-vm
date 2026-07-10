@@ -61,7 +61,8 @@ function createToolReservation(
 		},
 		reservationId,
 		reservationPath:
-			options.reservationPath ?? `/var/lib/agent-vm/reservations/${reservationId}/reservation.json`,
+			options.reservationPath ??
+			`/var/lib/agent-vm/reservations/${reservationId}/reservation-v1.json`,
 		role: 'tool',
 		vmId: `vm-${reservationId}`,
 	};

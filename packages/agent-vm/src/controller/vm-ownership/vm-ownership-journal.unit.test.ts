@@ -729,8 +729,17 @@ describe('VmOwnershipJournal', () => {
 		});
 
 		// Act / Assert
+		expect(journal.reservationPathFor('reservation-a')).toBe(
+			path.join(
+				stateDirectory,
+				'vm-ownership',
+				'reservations',
+				'reservation-a',
+				'reservation-v1.json',
+			),
+		);
 		expect(() =>
-			journal.assertReservationPathOwned('/tmp/outside/reservation.json', 'reservation-a'),
+			journal.assertReservationPathOwned('/tmp/outside/reservation-v1.json', 'reservation-a'),
 		).toThrow(expect.objectContaining({ code: 'ownership-storage-unsafe' }));
 		expect(() =>
 			journal.assertReservationPathOwned(
@@ -740,6 +749,18 @@ describe('VmOwnershipJournal', () => {
 					'reservations',
 					'nested',
 					'extra',
+					'reservation-v1.json',
+				),
+				'reservation-a',
+			),
+		).toThrow(expect.objectContaining({ code: 'ownership-storage-unsafe' }));
+		expect(() =>
+			journal.assertReservationPathOwned(
+				path.join(
+					stateDirectory,
+					'vm-ownership',
+					'reservations',
+					'reservation-a',
 					'reservation.json',
 				),
 				'reservation-a',
@@ -759,7 +780,7 @@ describe('VmOwnershipJournal', () => {
 		).not.toThrow();
 		await expect(
 			journal.createGatewayMembership(
-				createMembershipRecord('gateway-epoch-a', '/tmp/outside/reservation.json'),
+				createMembershipRecord('gateway-epoch-a', '/tmp/outside/reservation-v1.json'),
 			),
 		).rejects.toMatchObject({ code: 'ownership-storage-unsafe' });
 	});
