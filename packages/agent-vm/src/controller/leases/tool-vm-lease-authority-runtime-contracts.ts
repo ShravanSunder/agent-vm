@@ -10,8 +10,10 @@ import type {
 	ToolVmLeafAuthorityReference,
 	ToolVmLeaseAuthorityCommand,
 	ToolVmLeaseCompatibility,
+	ToolVmLeaseLeafState,
 	ToolVmRuntimeBinding,
 	ToolVmSshBinding,
+	ToolVmActiveUse,
 } from './tool-vm-lease-authority-state.js';
 
 export interface ToolVmRuntimeLeaseIdentity {
@@ -58,7 +60,12 @@ export class RejectedToolVmProvisioningCleanupError extends AggregateError {
 }
 
 export interface ToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLeaseIdentity> {
-	applyAuthorityCommand(command: RuntimeForwardedAuthorityCommand): void;
+	activeUseCount(leaseId: string): number;
+	activeUseSnapshots(leaseId: string): readonly ToolVmActiveUse[];
+	applyAuthorityCommand(
+		command: RuntimeForwardedAuthorityCommand,
+	): ToolVmLeaseLeafState | undefined;
+	authorityForLease(leaseId: string): ToolVmLeafAuthorityReference | undefined;
 	beginProvisioning(options: {
 		readonly authority: ToolVmLeafAuthorityReference;
 		readonly compatibility: ToolVmLeaseCompatibility;
@@ -88,6 +95,7 @@ export interface ToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLeaseId
 	}): TLease | undefined;
 	getLease(leaseId: string): TLease | undefined;
 	leaseIdsOwnedByGateway(gateway: GatewayEpochIdentity): readonly string[];
+	leafSnapshotForLease(leaseId: string): ToolVmLeaseLeafState | undefined;
 	listLeases(): readonly TLease[];
 	rejectedCleanupIdsOwnedByGateway(gateway: GatewayEpochIdentity): readonly string[];
 	registerGateway(gateway: GatewayEpochIdentity): void;

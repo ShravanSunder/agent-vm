@@ -24,8 +24,10 @@ import {
 	reduceToolVmLeaseAuthorityState,
 	ToolVmLeaseAuthorityTransitionError,
 	type ToolVmLeafAuthorityReference,
+	type ToolVmLeaseLeafState,
 	type ToolVmLeaseAuthorityRetentionPolicy,
 	type ToolVmLeaseAuthorityState,
+	type ToolVmActiveUse,
 } from './tool-vm-lease-authority-state.js';
 
 export {
@@ -101,6 +103,21 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 			throw new Error('Tool VM runtime resource does not match the requested leaf authority.');
 		}
 		return resource;
+	}
+
+	function resourceForLeaseId(
+		leaseId: string,
+	): MutableToolVmLeaseRuntimeResource<TLease> | undefined {
+		const resourceKey = authorityResourceKeysByLeaseId.get(leaseId);
+		return resourceKey === undefined ? undefined : resourcesByAuthority.get(resourceKey);
+	}
+
+	function leafSnapshotForResource(
+		resource: MutableToolVmLeaseRuntimeResource<TLease>,
+	): ToolVmLeaseLeafState {
+		return structuredClone(
+			requireLiveLeaf(requireAuthorityState(resource.authority.gateway), resource.authority),
+		);
 	}
 
 	function committedLeaseForResource(
@@ -182,7 +199,15 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 	}
 
 	return {
-		applyAuthorityCommand(command): void {
+		activeUseCount(leaseId): number {
+			const resource = resourceForLeaseId(leaseId);
+			return resource === undefined ? 0 : leafSnapshotForResource(resource).activeUses.size;
+		},
+		activeUseSnapshots(leaseId): readonly ToolVmActiveUse[] {
+			const leaf = this.leafSnapshotForLease(leaseId);
+			return leaf === undefined ? [] : [...leaf.activeUses.values()];
+		},
+		applyAuthorityCommand(command): ToolVmLeaseLeafState | undefined {
 			if (command.kind === 'prune-tombstones') {
 				for (const [gatewayKey, state] of authorityStatesByGateway.entries()) {
 					const prunedState = reduceToolVmLeaseAuthorityState(state, command);
@@ -200,13 +225,21 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 						authorityStatesByGateway.set(gatewayKey, prunedState);
 					}
 				}
-				return;
+				return undefined;
 			}
 			const gateway = 'authority' in command ? command.authority.gateway : command.gateway;
 			replaceAuthorityState(
 				gateway,
 				reduceToolVmLeaseAuthorityState(requireAuthorityState(gateway), command),
 			);
+			if (!('authority' in command)) {
+				return undefined;
+			}
+			return leafSnapshotForResource(requireResource(command.authority));
+		},
+		authorityForLease(leaseId): ToolVmLeafAuthorityReference | undefined {
+			const resource = resourceForLeaseId(leaseId);
+			return resource === undefined ? undefined : structuredClone(resource.authority);
 		},
 		async beginProvisioning(beginOptions): Promise<ToolVmProvisionalOwnershipProof> {
 			const ownershipProof = await beginOptions.ownership.ready;
@@ -425,15 +458,15 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 			);
 		},
 		getLease(leaseId): TLease | undefined {
-			const resourceKey = authorityResourceKeysByLeaseId.get(leaseId);
-			if (resourceKey === undefined) {
-				return undefined;
-			}
-			const resource = resourcesByAuthority.get(resourceKey);
+			const resource = resourceForLeaseId(leaseId);
 			return resource === undefined ? undefined : committedLeaseForResource(resource);
 		},
 		leaseIdsOwnedByGateway(gateway): readonly string[] {
 			return leaseIdsForGateway(gateway);
+		},
+		leafSnapshotForLease(leaseId): ToolVmLeaseLeafState | undefined {
+			const resource = resourceForLeaseId(leaseId);
+			return resource === undefined ? undefined : leafSnapshotForResource(resource);
 		},
 		listLeases(): readonly TLease[] {
 			return [...resourcesByAuthority.values()].flatMap((resource) => {
