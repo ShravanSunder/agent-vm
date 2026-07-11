@@ -16,6 +16,7 @@ import {
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
+import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import { createControlSessionDispatcher } from './control-session-dispatcher.js';
 import {
@@ -108,7 +109,7 @@ const leaseSnapshot = {
 	ssh: {
 		host: 'tool-7.vm.host',
 		identityPem: '-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n-----END OPENSSH PRIVATE KEY-----',
-		knownHostsLine: '',
+		knownHostsLine: `tool-7.vm.host ${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}`,
 		port: 22,
 		user: 'root',
 	},

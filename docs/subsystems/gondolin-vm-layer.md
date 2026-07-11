@@ -37,7 +37,7 @@ Gondolin (`@earendil-works/gondolin`) is the external SDK that runs QEMU micro-V
   |-- fs                                 Gondolin VmFs: access, mkdir, listDir, stat,
   |                                      rename, buffered and streaming read/write,
   |                                      delete
-  |-- enableSsh(options?) -> SshAccess   Open SSH tunnel; returns host, port, user, identityFile
+  |-- enableSsh(options?) -> SshAccess   Open SSH tunnel; returns client and exact server identity
   |-- enableIngress(options?) -> IngressAccess
   |                                      Open inbound HTTP route; returns host, port
   |-- setIngressRoutes(routes)           Configure path-prefix routing into the VM
@@ -233,6 +233,13 @@ egress header rewriting, or HTTP secret substitution. Keep mappings narrow and
 debug timeouts as control-link or SSH-path failures, not as HTTP ingress
 failures.
 
+`enableSsh()` generates one Ed25519 server identity under the live VM's
+ephemeral `/run` state and starts `sshd` with that key explicitly. Reopening
+SSH on the same live VM preserves the identity; replacing the VM produces a
+different identity. `SshAccess.serverHostKey` exposes only the validated public
+algorithm/blob. Agent VM composes the Gateway-visible known-hosts alias and
+fails closed if the field is missing or malformed.
+
 ## VM Capability Transports
 
 `gateway-interface` defines the small shared lease vocabulary for VM
@@ -244,6 +251,11 @@ the controller creates or reuses the Tool VM, calls `enableSsh()`, returns an
 SSH capability to the OpenClaw gateway, and then leaves command I/O on the
 gateway-to-Tool-VM SSH data path. The controller is the control plane, not a
 command/file proxy.
+
+The raw mapping remains byte-transparent. Server authentication is therefore
+end-to-end between the Gateway SSH client and the exact Tool VM `sshd`, even
+though the host-side TCP slot is reusable. A replacement Tool VM on the same
+slot cannot satisfy the old lease's pinned server identity.
 
 `gondolin-rpc` and `ingress-service` are reserved names for future capability
 work. `gondolin-rpc` should mean controller-owned execution through `ManagedVm`

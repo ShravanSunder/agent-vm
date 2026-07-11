@@ -1126,9 +1126,11 @@ describe('createGondolinPlugin', () => {
 });
 
 describe('createBackendDeps', () => {
-	it('delegates buildExecSpec to SSH helpers', async () => {
+	it('binds exec sessions to the exact lease host key with strict checking', async () => {
 		const ssh = createMockSshHelpers();
 		const deps = createBackendDeps(ssh);
+		const leaseKnownHostsLine =
+			'tool-0.vm.host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexecLeaseHostKey';
 
 		const execSpec = await deps.buildExecSpec({
 			command: 'ls -la',
@@ -1136,7 +1138,7 @@ describe('createBackendDeps', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine: leaseKnownHostsLine,
 				port: 22,
 				user: 'sandbox',
 			},
@@ -1146,11 +1148,18 @@ describe('createBackendDeps', () => {
 
 		expect(ssh.createSshSandboxSessionFromSettings).toHaveBeenCalledWith(
 			expect.objectContaining({
-				target: 'sandbox@tool-0.vm.host:22',
 				identityData: 'pem',
-				strictHostKeyChecking: false,
+				knownHostsData: leaseKnownHostsLine,
+				strictHostKeyChecking: true,
+				target: 'sandbox@tool-0.vm.host:22',
 				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 			}),
+		);
+		expect(ssh.createSshSandboxSessionFromSettings).not.toHaveBeenCalledWith(
+			expect.objectContaining({ knownHostsData: '' }),
+		);
+		expect(ssh.createSshSandboxSessionFromSettings).not.toHaveBeenCalledWith(
+			expect.objectContaining({ strictHostKeyChecking: false }),
 		);
 		expect(ssh.buildExecRemoteCommand).toHaveBeenCalledWith({
 			command: 'ls -la',
@@ -1182,7 +1191,8 @@ describe('createBackendDeps', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine:
+					'tool-0.vm.host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIfinalizeDisposeHostKey',
 				port: 22,
 				user: 'sandbox',
 			},
@@ -1207,7 +1217,8 @@ describe('createBackendDeps', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine:
+					'tool-0.vm.host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIfinalizeWithoutDisposeHostKey',
 				port: 22,
 				user: 'sandbox',
 			},
@@ -1220,7 +1231,7 @@ describe('createBackendDeps', () => {
 		await token.dispose();
 	});
 
-	it('delegates runRemoteShellScript to SSH helpers', async () => {
+	it('binds filesystem shell sessions to the exact lease host key with strict checking', async () => {
 		const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
 		const ssh = createMockSshHelpers({
 			buildRemoteCommand: vi.fn(() => '/bin/sh -c pwd gondolin-sandbox-fs'),
@@ -1233,12 +1244,14 @@ describe('createBackendDeps', () => {
 		});
 
 		const deps = createBackendDeps(ssh);
+		const leaseKnownHostsLine =
+			'tool-0.vm.host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIfilesystemLeaseHostKey';
 		const result = await deps.runRemoteShellScript({
 			script: 'pwd',
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine: leaseKnownHostsLine,
 				port: 22,
 				user: 'sandbox',
 			},
@@ -1246,6 +1259,21 @@ describe('createBackendDeps', () => {
 
 		expect(result.code).toBe(0);
 		expect(result.stdout.toString()).toBe('/work\n');
+		expect(ssh.createSshSandboxSessionFromSettings).toHaveBeenCalledWith(
+			expect.objectContaining({
+				identityData: 'pem',
+				knownHostsData: leaseKnownHostsLine,
+				strictHostKeyChecking: true,
+				target: 'sandbox@tool-0.vm.host:22',
+				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
+			}),
+		);
+		expect(ssh.createSshSandboxSessionFromSettings).not.toHaveBeenCalledWith(
+			expect.objectContaining({ knownHostsData: '' }),
+		);
+		expect(ssh.createSshSandboxSessionFromSettings).not.toHaveBeenCalledWith(
+			expect.objectContaining({ strictHostKeyChecking: false }),
+		);
 		expect(ssh.buildRemoteCommand).toHaveBeenCalledWith([
 			'/bin/sh',
 			'-c',

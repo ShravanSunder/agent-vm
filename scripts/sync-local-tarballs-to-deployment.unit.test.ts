@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
 	AGENT_VM_PACKAGE_NAMES,
+	GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH,
+	GONDOLIN_EXACT_VM_PATCH_SHA256,
 	OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES,
 	TOOL_VM_TARBALL_PACKAGE_NAMES,
 	assertGondolinPatchIdentity,
@@ -46,6 +48,14 @@ async function writeJsonFixture(filePath: string, value: unknown): Promise<void>
 }
 
 describe('beta tarball sync planning', () => {
+	it('pins the default Gondolin patch identity to the current workspace patch', async () => {
+		const patchBytes = await readFile(
+			new URL(`../${GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH}`, import.meta.url),
+		);
+
+		expect(calculateGondolinPatchSha256(patchBytes)).toBe(GONDOLIN_EXACT_VM_PATCH_SHA256);
+	});
+
 	it('rejects Gondolin patch bytes that do not match the frozen identity', () => {
 		expect(() => assertGondolinPatchIdentity(Buffer.from('wrong patch'), '0'.repeat(64))).toThrow(
 			/Gondolin exact-VM patch SHA-256 mismatch/u,

@@ -6,6 +6,7 @@ import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -26,6 +27,7 @@ import {
 import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
+	serializeLeaseForResponse,
 } from './controller-http-route-support.js';
 import { createControllerApp } from './controller-http-routes.js';
 
@@ -55,7 +57,7 @@ function createLeaseStub(
 	tcpSlot: number,
 	overrides: Partial<Pick<Lease, 'agentId' | 'profileId' | 'zoneId'>> = {},
 ): Lease {
-	return {
+	const lease = {
 		agentId: overrides.agentId ?? 'main',
 		agentWorkspaceDir: '/host/agent-work',
 		createdAt: tcpSlot,
@@ -69,6 +71,7 @@ function createLeaseStub(
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
 			port: 19000 + tcpSlot,
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			user: 'sandbox',
 		},
 		tcpSlot,
@@ -76,6 +79,7 @@ function createLeaseStub(
 			close: vi.fn(async () => createCompleteVmDestroyReceipt(`tool-vm-${leaseId}`)),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',
 				port: 19000 + tcpSlot,
@@ -91,7 +95,8 @@ function createLeaseStub(
 		},
 		hostWorkMountDir: '/host/sandbox-work',
 		zoneId: overrides.zoneId ?? 'shravan',
-	};
+	} satisfies Lease;
+	return lease;
 }
 
 function createPreparedWorkerTaskStub(
@@ -185,6 +190,42 @@ function createWorkerTaskResultStub(taskId: string): WorkerTaskResult {
 }
 
 describe('createControllerApp', () => {
+	it('serializes the exact Tool VM SSH server identity for private HTTP lease responses', async () => {
+		const lease = createLeaseStub('lease-ssh-identity', 3);
+
+		const serializedLease = await serializeLeaseForResponse(lease, async () => 'identity-pem', {
+			idleTtlMs: lease.effectiveIdleTtlMs,
+		});
+
+		expect(serializedLease.ssh.knownHostsLine).toBe(
+			`tool-3.vm.host ${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}`,
+		);
+		expect(serializedLease.ssh.knownHostsLine).not.toHaveLength(0);
+	});
+
+	it.each([
+		['missing', undefined],
+		['malformed algorithm', { algorithm: 'ssh-rsa', publicKeyBase64: 'not-base64!' }],
+	] as const)(
+		'fails closed for a %s SSH server identity in private HTTP lease serialization',
+		async (_identityKind, serverHostKey) => {
+			const lease = createLeaseStub('lease-invalid-ssh-identity', 4);
+			if (serverHostKey === undefined) {
+				Reflect.deleteProperty(lease.sshAccess, 'serverHostKey');
+			} else {
+				Reflect.set(lease.sshAccess, 'serverHostKey', serverHostKey);
+			}
+
+			await expect(
+				serializeLeaseForResponse(lease, async () => 'identity-pem', {
+					idleTtlMs: lease.effectiveIdleTtlMs,
+				}),
+			).rejects.toThrow(
+				"Lease 'lease-invalid-ssh-identity' does not have a valid ssh-ed25519 server host key.",
+			);
+		},
+	);
+
 	it('returns recovering health while runtime startup is not ready', async () => {
 		const app = createControllerAppForTest({
 			runtimeReadiness: () => ({ ready: false, state: 'recovering' }),

@@ -4,10 +4,16 @@ import type {
 	ManagedExecProcess,
 	ManagedExecResult,
 	ManagedVmFs,
+	SshServerHostKey,
 	VmDestroyTargetV1,
 	VmDestroyReceiptV1,
 	VmOwnershipReservationReferenceV1,
 } from '@agent-vm/gondolin-adapter';
+
+export const TEST_SSH_SERVER_HOST_KEY = {
+	algorithm: 'ssh-ed25519',
+	publicKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+} satisfies SshServerHostKey;
 
 export interface ManagedVmTestIdentityOptions {
 	readonly controllerEpoch?: string;

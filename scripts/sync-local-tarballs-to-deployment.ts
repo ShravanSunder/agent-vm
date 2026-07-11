@@ -57,7 +57,7 @@ export const GONDOLIN_EXACT_VM_PATCH_PACKAGE_KEY = '@earendil-works/gondolin@0.1
 export const GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH =
 	'patches/@earendil-works__gondolin@0.12.0.patch';
 export const GONDOLIN_EXACT_VM_PATCH_SHA256 =
-	'4d9bae4c2ddce9e0435b457d63ceee3140a60acdb89055ff240f17a7a3fa1914';
+	'842d798fa671945669a1a2150ba39bdd04f4d00ec610963b8df397c84ceeba7b';
 
 type AgentVmPackageName = (typeof AGENT_VM_PACKAGE_NAMES)[number];
 

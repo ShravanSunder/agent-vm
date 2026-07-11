@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IncompleteVmDestructionError } from '../../shared/vm-destruction-receipt.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -142,6 +143,7 @@ function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
 		close: vi.fn(async () => createCompleteVmDestroyReceipt(id)),
 		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 		enableSsh: vi.fn(async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -314,6 +316,7 @@ describe('createLeaseManager', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
 						port: 19000,
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						user: 'sandbox',
 					};
 				}),
@@ -1492,6 +1495,7 @@ describe('createLeaseManager', () => {
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
 			port: 19000,
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			user: 'sandbox',
 		}));
 		const leaseManager = createLeaseManager({
@@ -1558,6 +1562,7 @@ describe('createLeaseManager', () => {
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh ...',
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',
@@ -1725,6 +1730,7 @@ describe('createLeaseManager', () => {
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh ...',
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',
@@ -2448,6 +2454,7 @@ describe('createLeaseManager', () => {
 				close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-list')),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh ...',
 					host: '127.0.0.1',
 					identityFile: '/tmp/key',
@@ -2526,6 +2533,7 @@ describe('createLeaseManager', () => {
 				close: closeMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh ...',
 					host: '127.0.0.1',
 					identityFile: '/tmp/key',
@@ -2965,6 +2973,7 @@ describe('createLeaseManager — runtime record disk integration', () => {
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh ...',
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',

@@ -275,7 +275,7 @@ not by VM-facing public HTTP lease routes.
     |       |-- zone.agentToolVmProfiles[agentId]
     |       |-- otherwise zone.defaultToolVmProfile
     |-- 5. createManagedVm(...)        Boot a tool VM with the slot's port
-    |-- 5. vm.enableSsh({ port })      Start SSH listener, get access details
+    |-- 5. vm.enableSsh({ port })      Start SSH listener, validate exact server identity
     |-- 6. Build Lease record          id = UUIDv7
     |-- 7. Store in leases Map with effectiveIdleTtlMs
     |
@@ -295,7 +295,8 @@ not by VM-facing public HTTP lease routes.
 
 Each lease holds: `id`, `zoneId`, `agentId`, `profileId`, `agentWorkspaceDir`,
 `hostWorkMountDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
-identity file, user), `createdAt`, `lastUsedAt`, and `effectiveIdleTtlMs`. The
+client identity file, user, exact Ed25519 server identity), `createdAt`,
+`lastUsedAt`, and `effectiveIdleTtlMs`. The
 lease manager does not clean work mount files on release; OpenClaw-selected
 lease work mounts are owned by the caller that supplied `workMountDir`.
 

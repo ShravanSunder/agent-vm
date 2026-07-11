@@ -90,7 +90,7 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		}
 	});
 
-	it('should create tool VM, enable SSH, then SSH from gateway VM to tool VM', async () => {
+	it('pins exact Tool VM SSH identity and rejects an old key after same-slot replacement', async () => {
 		const t0 = Date.now();
 		const log = (msg: string): void => {
 			process.stdout.write(`[${String(Date.now() - t0).padStart(5)}ms] ${msg}\n`);
@@ -149,12 +149,15 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		const identityPem = await readFile(toolSsh.identityFile, 'utf-8');
 
 		await gatewayVm.exec('mkdir -p /root/.ssh && chmod 700 /root/.ssh');
-		// Write identity via base64 to avoid escaping issues
+		// Write SSH material via base64 to avoid shell escaping ambiguity.
 		const b64Key = Buffer.from(identityPem).toString('base64');
+		const firstKnownHostsLine = `tool-0.vm.host ${toolSsh.serverHostKey.algorithm} ${toolSsh.serverHostKey.publicKeyBase64}\n`;
+		const firstKnownHostsBase64 = Buffer.from(firstKnownHostsLine).toString('base64');
 		await gatewayVm.exec(
-			`echo ${b64Key} | base64 -d > /root/.ssh/tool_key && chmod 600 /root/.ssh/tool_key`,
+			`echo ${b64Key} | base64 -d > /root/.ssh/tool_key && chmod 600 /root/.ssh/tool_key && ` +
+				`echo ${firstKnownHostsBase64} | base64 -d > /root/.ssh/known_hosts && chmod 600 /root/.ssh/known_hosts`,
 		);
-		log('SSH identity installed in gateway VM');
+		log('SSH client and exact server identity installed in gateway VM');
 
 		// Step 4: SSH from gateway VM to tool VM through tcp.hosts
 		log('SSHing from gateway to tool...');
@@ -162,8 +165,8 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		// answer is only present for SSRF compatibility and is not a raw TCP path.
 		const sshResult = await gatewayVm.exec(
 			'ssh -4 -p 22 -i /root/.ssh/tool_key ' +
-				'-o StrictHostKeyChecking=no ' +
-				'-o UserKnownHostsFile=/dev/null ' +
+				'-o StrictHostKeyChecking=yes ' +
+				'-o UserKnownHostsFile=/root/.ssh/known_hosts ' +
 				'-o BatchMode=yes ' +
 				'-o ConnectTimeout=10 ' +
 				'root@tool-0.vm.host ' +
@@ -180,7 +183,67 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		expect(sshResult.stdout).toContain('tool_vm_marker');
 		expect(sshResult.stdout).toContain(expectedGuestArchitecture);
 
-		// Step 5: Verify the two VMs are different (different exec channels)
+		// Step 5: Replace only the Tool VM on the same TCP slot. Install the new
+		// client credential but deliberately keep the old pinned server key.
+		await closeVmAndRequireCompleteReceipt(toolVm, 'first Tool VM replacement');
+		toolVm = await createManagedVm({
+			ownershipReservation: await createStandaloneOwnershipReservation(
+				testDeploymentRoot,
+				'tool-replacement',
+			),
+			imagePath: '',
+			memory: '512M',
+			cpus: 1,
+			rootfsMode: 'cow',
+			allowedHosts: [],
+			secrets: {},
+			vfsMounts: {},
+		});
+		const replacementToolSsh = await toolVm.enableSsh({
+			user: 'root',
+			listenHost: '127.0.0.1',
+			listenPort: toolSshPort,
+		});
+		expect(replacementToolSsh.serverHostKey).not.toEqual(toolSsh.serverHostKey);
+		if (!replacementToolSsh.identityFile) {
+			throw new Error('Replacement SSH identity file not available');
+		}
+		const replacementIdentityPem = await readFile(replacementToolSsh.identityFile, 'utf8');
+		const replacementIdentityBase64 = Buffer.from(replacementIdentityPem).toString('base64');
+		await gatewayVm.exec(
+			`echo ${replacementIdentityBase64} | base64 -d > /root/.ssh/tool_key && chmod 600 /root/.ssh/tool_key`,
+		);
+		await toolVm.exec('echo replacement_tool_vm_marker > /tmp/marker.txt');
+
+		const staleServerIdentityResult = await gatewayVm.exec(
+			'ssh -4 -p 22 -i /root/.ssh/tool_key ' +
+				'-o StrictHostKeyChecking=yes ' +
+				'-o UserKnownHostsFile=/root/.ssh/known_hosts ' +
+				'-o BatchMode=yes -o ConnectTimeout=10 ' +
+				'root@tool-0.vm.host true',
+		);
+		expect(staleServerIdentityResult.exitCode).not.toBe(0);
+		expect(staleServerIdentityResult.stderr).toMatch(
+			/host key verification failed|remote host identification has changed/iu,
+		);
+
+		// Step 6: Replace the pinned public identity and prove the new exact leaf.
+		const replacementKnownHostsLine = `tool-0.vm.host ${replacementToolSsh.serverHostKey.algorithm} ${replacementToolSsh.serverHostKey.publicKeyBase64}\n`;
+		const replacementKnownHostsBase64 = Buffer.from(replacementKnownHostsLine).toString('base64');
+		await gatewayVm.exec(
+			`echo ${replacementKnownHostsBase64} | base64 -d > /root/.ssh/known_hosts && chmod 600 /root/.ssh/known_hosts`,
+		);
+		const replacementSshResult = await gatewayVm.exec(
+			'ssh -4 -p 22 -i /root/.ssh/tool_key ' +
+				'-o StrictHostKeyChecking=yes ' +
+				'-o UserKnownHostsFile=/root/.ssh/known_hosts ' +
+				'-o BatchMode=yes -o ConnectTimeout=10 ' +
+				'root@tool-0.vm.host "cat /tmp/marker.txt"',
+		);
+		expect(replacementSshResult.exitCode).toBe(0);
+		expect(replacementSshResult.stdout).toContain('replacement_tool_vm_marker');
+
+		// Step 7: Verify the two live VMs are different (different exec channels)
 		const gwHostname = await gatewayVm.exec('cat /proc/sys/kernel/hostname');
 		const toolHostname = await toolVm.exec('cat /proc/sys/kernel/hostname');
 
@@ -193,5 +256,5 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		expect(toolHostname.exitCode).toBe(0);
 
 		log('PASS: cross-VM SSH works through tcp.hosts');
-	}, 60_000);
+	}, 90_000);
 });

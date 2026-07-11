@@ -11,7 +11,7 @@ import {
 	type VmFs as GondolinVmFs,
 	type VirtualProvider,
 } from '@earendil-works/gondolin';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import type {
 	ManagedVmDestroyReceiptV1,
@@ -27,6 +27,7 @@ import {
 	createManagedVm,
 	type ManagedVmDependencies,
 	type ManagedVmInstance,
+	type SshAccess,
 } from './vm-adapter.js';
 
 function createTestProvider(): VirtualProvider {
@@ -122,6 +123,11 @@ const TEST_DESTROY_TARGET = {
 	vmId: 'vm-123',
 } satisfies ManagedVmDestroyTargetV1;
 
+const TEST_SSH_SERVER_HOST_KEY = {
+	algorithm: 'ssh-ed25519',
+	publicKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+} as const;
+
 function createTestDestroyReceipt(complete = true): ManagedVmDestroyReceiptV1 {
 	const resourceStatus = complete ? 'already-absent' : 'incomplete';
 	return {
@@ -161,7 +167,11 @@ function createFakeVmInstance(
 		id: 'vm-123',
 		exec: vi.fn(() => createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' })),
 		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-		enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+		enableSsh: vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2222,
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		})),
 		getDestroyTarget: vi.fn(() => TEST_DESTROY_TARGET),
 		getHostPid: vi.fn(() => options.hostPid ?? null),
 		setIngressRoutes: vi.fn(),
@@ -212,6 +222,13 @@ function createPinnedRoot(fd: number): PinnedRealFsRoot {
 }
 
 describe('createManagedVm', () => {
+	it('requires a structured ssh-ed25519 server host key in ManagedVm SSH access', () => {
+		expectTypeOf<SshAccess>().toHaveProperty('serverHostKey').toEqualTypeOf<{
+			readonly algorithm: 'ssh-ed25519';
+			readonly publicKeyBase64: string;
+		}>();
+	});
+
 	it('forces host Node DNS and family-autoselection defaults for Gondolin tcpHosts', () => {
 		const setDefaultResultOrder = vi.fn();
 		const setDefaultAutoSelectFamily = vi.fn();
@@ -564,7 +581,11 @@ describe('createManagedVm', () => {
 			capturedExecCommand = command;
 			return createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' });
 		});
-		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
+		const enableSshMock = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2222,
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		}));
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const setIngressRoutesMock = vi.fn();
 		const closeReceipt = createTestDestroyReceipt();
@@ -669,7 +690,9 @@ describe('createManagedVm', () => {
 			windowBytes: 32 * 1024,
 		});
 		expect(capturedExecCommand).not.toBe(readonlyCommand);
-		await managedVm.enableSsh();
+		await expect(managedVm.enableSsh()).resolves.toMatchObject({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		});
 		await managedVm.enableIngress();
 		expect(managedVm.getVmInstance()).toBe(fakeVmInstance);
 		expect(managedVm.getDestroyTarget()).toEqual(TEST_DESTROY_TARGET);
@@ -682,6 +705,77 @@ describe('createManagedVm', () => {
 			{ port: 18789, prefix: '/', stripPrefix: true },
 		]);
 		expect(closeMock).toHaveBeenCalled();
+	});
+
+	it('fails closed when Gondolin omits the required SSH server host identity', async () => {
+		const sshAccessWithoutServerHostKey = {
+			host: '127.0.0.1',
+			port: 2222,
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		};
+		Reflect.deleteProperty(sshAccessWithoutServerHostKey, 'serverHostKey');
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(
+				async (): Promise<ManagedVmInstance> => ({
+					...createFakeVmInstance(),
+					enableSsh: vi.fn(async () => sshAccessWithoutServerHostKey),
+				}),
+			),
+		});
+		const managedVm = await createManagedVm(
+			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/tool-vm',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		await expect(managedVm.enableSsh()).rejects.toThrow(
+			'Gondolin SSH access did not include a valid ssh-ed25519 server host key',
+		);
+	});
+
+	it('fails closed when Gondolin returns a malformed SSH server host identity', async () => {
+		const malformedSshAccess = {
+			host: '127.0.0.1',
+			port: 2222,
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		};
+		Reflect.set(malformedSshAccess, 'serverHostKey', {
+			algorithm: 'ssh-rsa',
+			publicKeyBase64: 'not-base64!',
+		});
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(
+				async (): Promise<ManagedVmInstance> => ({
+					...createFakeVmInstance(),
+					enableSsh: vi.fn(async () => malformedSshAccess),
+				}),
+			),
+		});
+		const managedVm = await createManagedVm(
+			{
+				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/tool-vm',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		await expect(managedVm.enableSsh()).rejects.toThrow(
+			'Gondolin SSH access did not include a valid ssh-ed25519 server host key',
+		);
 	});
 
 	it('passes Gondolin mediated secret placeholders into VM environment', async () => {

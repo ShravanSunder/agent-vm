@@ -13,6 +13,7 @@ import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -36,6 +37,7 @@ function createFakeManagedVmInstance(): FakeManagedVmInstance {
 		exec: () => createManagedExecProcessStub(),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh fake',
 			host: '127.0.0.1',
 			port: 2222,
@@ -63,6 +65,7 @@ function createFakeManagedVm(): ManagedVm {
 		close: async () => createCompleteVmDestroyReceipt('gateway-secret-resolution-smoke-vm'),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh fake',
 			host: '127.0.0.1',
 			port: 2222,

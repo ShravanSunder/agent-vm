@@ -10,10 +10,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, '../../../..');
 const patchRelativePath = 'patches/@earendil-works__gondolin@0.12.0.patch';
-const expectedPatchSha256 = '4d9bae4c2ddce9e0435b457d63ceee3140a60acdb89055ff240f17a7a3fa1914';
+const expectedPatchSha256 = '842d798fa671945669a1a2150ba39bdd04f4d00ec610963b8df397c84ceeba7b';
 const expectedInstalledFileSha256 = {
-	'dist/src/index.d.ts': 'c5aebf60185ee1bebd85f25ae300d0cf0b5511501f0e3953ecf1f697fd6c8dc7',
+	'dist/src/index.d.ts': '1e880e35b3bce2caf1591f9929b4eb6d313f0176dbfb85a6a91a1d72f5409052',
 	'dist/src/index.js': '611beb906628529eff6518ae99ccf88a87d7591ff9b29655f1a6d84f0df46a1b',
+	'dist/src/vm/core.d.ts': 'd9479abe77398b544954db9318a854615a22d82a7648b46fa74d819c9ed92996',
+	'dist/src/vm/core.js': 'caf273be423e81119129b420539eef3af58645ed858a2ff455127df7d5b0e217',
 	'dist/src/vm/exact-lifecycle-contracts.d.ts':
 		'697180ee4660efb0c85f36a08535120d32dee81e8fe9ea081f61cd6eb1e43e7e',
 	'dist/src/vm/exact-lifecycle-contracts.js':
@@ -22,6 +24,8 @@ const expectedInstalledFileSha256 = {
 		'5a3859226a1963b686e92679bdd08a599c2ced011359386ef594b8f76acac676',
 	'dist/src/vm/exact-lifecycle.js':
 		'5bfc6e182eebff4e7746187ec966ab8d5a91384d19c532f484ae5cd6de1c06e7',
+	'dist/src/vm/ssh-access.d.ts': '743369475891d4122d23119106664be9f9f3bc9f8684d32a10f86c3c214fcee3',
+	'dist/src/vm/ssh-access.js': 'aa3b267ee27e4d6fcf8b68727c3d5f5cb734b0f4ab7729c9c176cdea13e3e9ce',
 	'dist/src/vm/vm-exact-destruction.js':
 		'6d4b54918cad48c93753b607fb5b60fce5a57762b18624e3725816712b695eef',
 	'dist/src/vm/vm-ownership-reservation.d.ts':
@@ -84,7 +88,7 @@ describe('published Gondolin exact-VM patch installation', () => {
 		const patchEntries = patchText.match(/^diff --git .+$/gmu) ?? [];
 
 		expect(sha256(patchBytes)).toBe(expectedPatchSha256);
-		expect(patchEntries).toHaveLength(68);
+		expect(patchEntries).toHaveLength(72);
 		expect(
 			patchEntries.every((entry) =>
 				/^diff --git a\/dist\/.+\.(?:js|js\.map|d\.ts|d\.ts\.map) b\/dist\//u.test(entry),
@@ -133,6 +137,7 @@ describe('published Gondolin exact-VM patch installation', () => {
   type VmDestroyReceiptV1,
   type VmDestroyTargetV1,
   type VmOwnershipReservationV1,
+  type SshServerHostKey,
 } from '@earendil-works/gondolin';
 
 const contractVersion: 1 = GONDOLIN_EXACT_VM_LIFECYCLE_CONTRACT_VERSION;
@@ -146,9 +151,11 @@ void readVmOwnershipReservation;
 const receipt: VmDestroyReceiptV1 | undefined = undefined;
 const target: VmDestroyTargetV1 | undefined = undefined;
 const reservation: VmOwnershipReservationV1 | undefined = undefined;
+const sshServerHostKey: SshServerHostKey | undefined = undefined;
 void receipt;
 void target;
 void reservation;
+void sshServerHostKey;
 `,
 		);
 		await execFileAsync(

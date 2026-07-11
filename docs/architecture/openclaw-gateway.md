@@ -187,10 +187,10 @@ Gondolin ingress.
        |  3. Probe existing VM; evict stale leases
        |  4. tcpPool.allocate() → slot 0 (port 19000)
        |  5. createManagedVm() → boot tool VM
-       |  6. vm.enableSsh() → SSH access ready
+       |  6. vm.enableSsh() → client credential + exact server identity
        |  7. Store lease record
        v
-  Response: { leaseId, ssh: { host, port: 19000, user, identityFile } }
+  Response: { leaseId, ssh: { host, user, identityPem, knownHostsLine } }
        |
        v
   Gateway uses SSH directly to execute code in tool VM
@@ -254,6 +254,14 @@ adapter behavior inside `@agent-vm/openclaw-agent-vm-plugin`; it translates
 OpenClaw's sandbox file API into remote shell scripts over that SSH lease. The
 controller does not expose a generic filesystem RPC for Tool VMs and does not
 proxy command stdout/stderr.
+
+Every live Tool VM gets a unique ephemeral Ed25519 SSH server key. Gondolin
+forces `sshd` to use that key and returns only its public identity. The
+controller binds it to the Gateway-visible `tool-<slot>.vm.host` alias and
+includes that exact `known_hosts` line in the private lease capability.
+OpenClaw supplies the line to both command and filesystem SSH sessions with
+strict host-key checking enabled. Missing or malformed server identity fails
+lease delivery closed; neither path uses TOFU or a permissive host-key fallback.
 
 During the Socket.IO control-plane hard cutover, managed OpenClaw zones may
 declare multiple trusted agents in the same gateway zone. Caller-context

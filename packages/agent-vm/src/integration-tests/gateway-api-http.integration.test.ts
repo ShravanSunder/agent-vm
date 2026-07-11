@@ -19,6 +19,7 @@ import type { Lease } from '../controller/leases/lease-manager.js';
 import { OPENCLAW_TOOL_VM_WORKSPACE_MOUNT } from '../controller/leases/lease-work-mount-paths.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -99,6 +100,7 @@ describe('live integration: API client → controller over real HTTP', () => {
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',
 				port: 19000,
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				user: 'sandbox',
 			},
 			tcpSlot: 0,
@@ -106,6 +108,7 @@ describe('live integration: API client → controller over real HTTP', () => {
 				close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-smoke')),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					host: '127.0.0.1',
 					identityFile: '/tmp/key',
 					port: 19000,

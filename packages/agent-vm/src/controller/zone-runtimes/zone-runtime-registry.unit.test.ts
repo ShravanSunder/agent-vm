@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import type { GatewayZone, GatewayZoneStartResult } from '../../gateway/gateway-zone-support.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -37,7 +38,11 @@ function createManagedVmInstanceStub(vmId: string, hostPid: number | null): Mana
 	return {
 		close: async () => createCompleteVmDestroyReceipt(vmId),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
-		enableSsh: async () => ({ host: '127.0.0.1', port: 22 }),
+		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+			host: '127.0.0.1',
+			port: 22,
+		}),
 		exec: () => createManagedExecProcessStub({ stdout: 'ok' }),
 		fs: createManagedVmFsStub(),
 		getDestroyTarget: () => createTestVmDestroyTarget(vmId),
@@ -416,6 +421,7 @@ describe('zone runtime contracts', () => {
 			coldStart: async () => ({ leaseReleaseFailureCount: 0 }),
 			destroy: async (purged: boolean) => ({ ok: true, purged, zoneId: 'shravan' }),
 			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh root@127.0.0.1',
 				host: '127.0.0.1',
 				port: 22,
@@ -518,6 +524,7 @@ describe('createOpenClawZoneRuntime', () => {
 						close,
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh root@127.0.0.1',
 							host: '127.0.0.1',
 							port: 22,
@@ -647,6 +654,7 @@ describe('createOpenClawZoneRuntime', () => {
 								: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh root@127.0.0.1',
 							host: '127.0.0.1',
 							port: 22,
@@ -722,6 +730,7 @@ describe('createOpenClawZoneRuntime', () => {
 						),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh root@127.0.0.1',
 							host: '127.0.0.1',
 							port: 22,
@@ -800,6 +809,7 @@ describe('createOpenClawZoneRuntime', () => {
 				close: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh root@127.0.0.1',
 					host: '127.0.0.1',
 					port: 22,
@@ -902,6 +912,7 @@ describe('createOpenClawZoneRuntime', () => {
 					close,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh root@127.0.0.1',
 						host: '127.0.0.1',
 						port: 22,
@@ -960,6 +971,7 @@ describe('createOpenClawZoneRuntime', () => {
 				close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-2')),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh root@127.0.0.1',
 					host: '127.0.0.1',
 					port: 22,
@@ -1537,6 +1549,7 @@ function createFakeOpenClawRuntime(
 		},
 		destroy: async (purged) => ({ ok: true, purged, zoneId }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh root@127.0.0.1',
 			host: '127.0.0.1',
 			port: 22,
@@ -1578,6 +1591,7 @@ function createFakeOpenClawRuntime(
 							vm: {
 								close: async () => createCompleteVmDestroyReceipt('fake-openclaw-runtime'),
 								enableSsh: async () => ({
+									serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 									command: 'ssh root@127.0.0.1',
 									host: '127.0.0.1',
 									port: 22,

@@ -10,6 +10,7 @@ import type { LoadedSystemConfig, SystemConfig } from '../../config/system-confi
 import { GatewayOwnershipUnsafeError } from '../../gateway/gateway-ownership-evidence.js';
 import type { GatewayZone, GatewayZoneStartResult } from '../../gateway/gateway-zone-support.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -267,7 +268,11 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 				vm: {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() =>
 						createManagedExecProcessStub({
 							exitCode: 7,
@@ -316,7 +321,11 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 				vm: {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -359,7 +368,11 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 				vm: {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -453,7 +466,11 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 				vm: {
 					close: closeGatewayVm,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -543,7 +560,11 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 					vm: {
 						close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -653,7 +674,11 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 				vm: {
 					close: closeGatewayVm,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -763,7 +788,11 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 				vm: {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -830,7 +859,11 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 							? firstGatewayClose
 							: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -890,7 +923,11 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 				vm: {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -992,7 +1029,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					vm: {
 						close: closeGateway,
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -1055,7 +1096,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					vm: {
 						close: closeGateway,
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -1113,7 +1158,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				vm: {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () => createTestVmDestroyTarget(gatewayVmId, { role: 'gateway' }),
@@ -1176,7 +1225,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					vm: {
 						close: closeGateway,
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -1228,7 +1281,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				vm: {
 					close: closeGateway,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -1295,7 +1352,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				vm: {
 					close: closeGateway,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -1357,7 +1418,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				vm: {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn((command: string) => {
 						executedCommands.push(command);
 						return createManagedExecProcessStub({ stdout: '200' });
@@ -1416,7 +1481,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						return createCompleteVmDestroyReceipt();
 					}),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: gatewayExec,
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -1475,7 +1544,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				vm: {
 					close: closeGateway,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -1540,7 +1613,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 								? oldGatewayClose
 								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18_791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -1605,7 +1682,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 									})
 								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec:
 							gatewayStartCount === 1
 								? oldGatewayExec
@@ -1683,7 +1764,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 								? staleGatewayClose
 								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -1747,7 +1832,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			vm: {
 				close: staleGatewayClose,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 22,
+				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-stale', { role: 'gateway' }),
@@ -1802,7 +1891,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					vm: {
 						close: closeGateway,
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -1889,7 +1982,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 								? staleGatewayClose
 								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -1942,7 +2039,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			vm: {
 				close: staleGatewayClose,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 22,
+				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-stale', { role: 'gateway' }),
@@ -1988,7 +2089,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 								? staleGatewayClose
 								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () =>
@@ -2049,7 +2154,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			vm: {
 				close: staleGatewayClose,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 22,
+				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-stale', { role: 'gateway' }),
@@ -2102,7 +2211,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						vm: {
 							close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 							enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-							enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+							enableSsh: vi.fn(async () => ({
+								serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+								host: '127.0.0.1',
+								port: 22,
+							})),
 							exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 							fs: createManagedVmFsStub(),
 							getDestroyTarget: () =>
@@ -2209,7 +2322,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				vm: {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 22,
+					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () =>
@@ -2267,7 +2384,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					vm: {
 						close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+							host: '127.0.0.1',
+							port: 22,
+						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
 						getDestroyTarget: () => createTestVmDestroyTarget(vmId, { role: 'gateway' }),

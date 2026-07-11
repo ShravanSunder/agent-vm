@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -47,6 +48,7 @@ function createVmInstanceStub(hostPid: number, vmId: string): ManagedVmInstance 
 		close: async () => createCompleteVmDestroyReceipt(vmId),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -70,6 +72,7 @@ function createManagedVmStub(options: {
 		close: async () => createCompleteVmDestroyReceipt(options.id),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',

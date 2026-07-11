@@ -251,7 +251,11 @@ function requirePrivateToolVmLease(
 	snapshot: GatewayControlLeaseSnapshot,
 	context: string,
 ): ToolVmSshLease {
-	if (snapshot.ssh?.identityPem === undefined || snapshot.ssh.knownHostsLine === undefined) {
+	if (
+		snapshot.ssh?.identityPem === undefined ||
+		snapshot.ssh.knownHostsLine === undefined ||
+		snapshot.ssh.knownHostsLine.trim().length === 0
+	) {
 		throw createGatewayControlError({
 			context,
 			message: 'gateway control lease snapshot did not include private SSH material',

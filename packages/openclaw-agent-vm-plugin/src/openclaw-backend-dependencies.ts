@@ -19,7 +19,8 @@ export function createBackendDeps(ssh: SshHelpers): {
 			const session = await ssh.createSshSandboxSessionFromSettings({
 				command: 'ssh',
 				identityData: sshCreds.identityPem,
-				strictHostKeyChecking: false,
+				knownHostsData: sshCreds.knownHostsLine,
+				strictHostKeyChecking: true,
 				target: `${sshCreds.user}@${sshCreds.host}:${sshCreds.port}`,
 				updateHostKeys: false,
 				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
@@ -62,7 +63,8 @@ export function createBackendDeps(ssh: SshHelpers): {
 			const session = await ssh.createSshSandboxSessionFromSettings({
 				command: 'ssh',
 				identityData: sshCreds.identityPem,
-				strictHostKeyChecking: false,
+				knownHostsData: sshCreds.knownHostsLine,
+				strictHostKeyChecking: true,
 				target: `${sshCreds.user}@${sshCreds.host}:${sshCreds.port}`,
 				updateHostKeys: false,
 				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,

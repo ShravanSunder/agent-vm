@@ -14,6 +14,7 @@ import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -1161,7 +1162,12 @@ function createManagedVmStub(): ManagedVm {
 		id: 'vm-smoke-test',
 		close: async () => createCompleteVmDestroyReceipt('vm-smoke-test'),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18789 }),
-		enableSsh: async () => ({ host: '127.0.0.1', port: 2222, user: 'root' }),
+		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+			host: '127.0.0.1',
+			port: 2222,
+			user: 'root',
+		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
 		getDestroyTarget: () => createTestVmDestroyTarget('vm-smoke-test'),

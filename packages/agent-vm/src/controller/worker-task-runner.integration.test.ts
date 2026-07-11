@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -362,7 +363,12 @@ describe('worker-task-runner', () => {
 			id: workerVmId,
 			close: async () => await managedVmCloseMock(),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222, user: 'root' })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+				user: 'root',
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
 			getDestroyTarget: () =>

@@ -2698,6 +2698,7 @@
 																"minLength": 1
 															},
 															"knownHostsLine": {
+																"minLength": 1,
 																"type": "string"
 															},
 															"port": {

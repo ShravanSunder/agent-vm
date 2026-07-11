@@ -20,6 +20,7 @@ import {
 	type ShadowPredicate,
 	type ShadowProviderOptions,
 	type SshOptions,
+	type SshServerHostKey as GondolinSshServerHostKey,
 	type VMOptions,
 	type VmFs as GondolinVmFs,
 	type VirtualProvider,
@@ -80,7 +81,48 @@ export interface SshAccess {
 	readonly command?: string;
 	readonly identityFile?: string;
 	readonly port: number;
+	readonly serverHostKey: GondolinSshServerHostKey;
 	readonly user?: string;
+}
+
+export type SshServerHostKey = GondolinSshServerHostKey;
+
+export function isSshServerHostKey(value: unknown): value is SshServerHostKey {
+	if (typeof value !== 'object' || value === null) {
+		return false;
+	}
+	if (!('algorithm' in value) || !('publicKeyBase64' in value)) {
+		return false;
+	}
+	const algorithm = value.algorithm;
+	const publicKeyBase64 = value.publicKeyBase64;
+	if (
+		algorithm !== 'ssh-ed25519' ||
+		typeof publicKeyBase64 !== 'string' ||
+		!/^[A-Za-z0-9+/]+={0,2}$/u.test(publicKeyBase64)
+	) {
+		return false;
+	}
+
+	try {
+		const decodedPublicKey = Buffer.from(publicKeyBase64, 'base64');
+		if (decodedPublicKey.toString('base64') !== publicKeyBase64 || decodedPublicKey.length < 4) {
+			return false;
+		}
+		const algorithmLength = decodedPublicKey.readUInt32BE(0);
+		const algorithmStart = 4;
+		const algorithmEnd = algorithmStart + algorithmLength;
+		const publicKeyLengthOffset = algorithmEnd;
+		const publicKeyStart = publicKeyLengthOffset + 4;
+		return (
+			algorithmEnd + 4 <= decodedPublicKey.length &&
+			decodedPublicKey.subarray(algorithmStart, algorithmEnd).toString('utf8') === 'ssh-ed25519' &&
+			decodedPublicKey.readUInt32BE(publicKeyLengthOffset) === 32 &&
+			decodedPublicKey.length === publicKeyStart + 32
+		);
+	} catch {
+		return false;
+	}
 }
 
 export interface IngressAccess {
@@ -634,7 +676,11 @@ export async function createManagedVm(
 			return vmInstance.exec(normalizedCommand, execOptions);
 		},
 		async enableSsh(sshOptions?: EnableSshOptions): Promise<SshAccess> {
-			return await vmInstance.enableSsh(sshOptions);
+			const sshAccess = await vmInstance.enableSsh(sshOptions);
+			if (!isSshServerHostKey(Reflect.get(sshAccess, 'serverHostKey'))) {
+				throw new Error('Gondolin SSH access did not include a valid ssh-ed25519 server host key.');
+			}
+			return sshAccess;
 		},
 		async enableIngress(ingressOptions?: EnableIngressOptions): Promise<IngressAccess> {
 			return await vmInstance.enableIngress(resolveManagedVmIngressOptions(ingressOptions));

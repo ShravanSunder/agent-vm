@@ -43,6 +43,7 @@ import type { OpenClawProcessSupervisor } from '../controller/process-supervisor
 import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -742,6 +743,7 @@ function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
 		close: async () => createCompleteGatewayVmDestroyReceipt(vmId),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -786,7 +788,11 @@ function createHealthyGatewayVmStub(
 			getDestroyTarget: () => createGatewayVmDestroyTarget(vmId),
 			close,
 			enableIngress,
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec,
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => pid),
@@ -866,7 +872,11 @@ describe('startGatewayZone', () => {
 		const taskTitles: string[] = [];
 		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123'));
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
-		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
+		const enableSshMock = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2222,
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		}));
 		const execMock = vi.fn((command: string) =>
 			createManagedExecProcessStub({
 				stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
@@ -1107,7 +1117,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-123'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123')),
 			enableIngress: enableIngressMock,
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn((command: string) =>
 				createManagedExecProcessStub({
 					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
@@ -1178,7 +1192,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-123'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123')),
 			enableIngress: enableIngressMock,
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn((command: string) =>
 				createManagedExecProcessStub({
 					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
@@ -1247,7 +1265,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-123'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123')),
 			enableIngress: enableIngressMock,
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn((command: string) =>
 				createManagedExecProcessStub({
 					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
@@ -1696,7 +1718,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-tool-cleanup'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-tool-cleanup')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28301),
@@ -1738,7 +1764,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-ordered-recovery'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-ordered-recovery')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28303),
@@ -1850,7 +1880,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-gateway-only'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-gateway-only')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28286),
@@ -1921,7 +1955,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28290),
@@ -2132,7 +2170,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-native'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-native')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28290),
@@ -2210,7 +2252,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-generated-egress'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-generated-egress')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28291),
@@ -2271,7 +2317,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-egress'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-egress')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28291),
@@ -2328,7 +2378,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-websocket-policy'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-websocket-policy')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28291),
@@ -2416,7 +2470,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-tool-websocket-policy'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-tool-websocket-policy')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28292),
@@ -2488,7 +2546,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-no-websocket-policy'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-no-websocket-policy')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28293),
@@ -2583,7 +2645,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-mediated-stdio'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-mediated-stdio')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28293),
@@ -2685,7 +2751,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-loopback'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-loopback')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28292),
@@ -2730,7 +2800,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-override'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-override')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28286),
@@ -2878,7 +2952,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-openclaw-live-not-ready'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -2926,7 +3004,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-456'),
 			close: closeMock,
 			enableIngress: enableIngressMock,
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28283),
@@ -2988,7 +3070,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-789'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3050,7 +3136,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-timeout'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3103,7 +3193,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-default-timeout'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-default-timeout')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3141,7 +3235,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-config-failed'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn((command: string) =>
 				command.includes('cat > /etc/profile.d/openclaw-env.sh')
 					? createManagedExecProcessStub({
@@ -3188,7 +3286,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-not-ready-500'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-not-ready-500')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi
 				.fn()
 				.mockReturnValueOnce(createManagedExecProcessStub({ stdout: '500' }))
@@ -3235,7 +3337,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-command-health'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-command-health')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3292,7 +3398,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-failed-bootstrap'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-failed-bootstrap')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn((command: string) =>
 				command === secretBearingBootstrapCommand
 					? createManagedExecProcessStub({
@@ -3366,7 +3476,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-retry-health'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-retry-health')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3412,7 +3526,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-token'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-token')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3771,7 +3889,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-record-fail'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3817,7 +3939,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-record-fail-incomplete-close'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3911,7 +4037,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-prep-before-boot'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-prep-before-boot')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
@@ -3956,7 +4086,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-quarantine'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-quarantine')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28293),
@@ -4023,7 +4157,7 @@ describe('startGatewayZone', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'identity-pem',
-				knownHostsLine: '',
+				knownHostsLine: `tool-0.vm.host ${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}`,
 				port: 22,
 				user: 'root',
 			},
@@ -4055,7 +4189,11 @@ describe('startGatewayZone', () => {
 			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-control-session'),
 			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-control-session')),
 			enableIngress: enableIngressMock,
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			getHostPid: vi.fn(() => 28283),

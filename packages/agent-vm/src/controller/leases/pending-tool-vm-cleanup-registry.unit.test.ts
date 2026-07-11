@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -74,6 +75,7 @@ function createManagedVmStub(close: ManagedVm['close'], id: string = 'tool-vm-li
 		close,
 		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 		enableSsh: vi.fn(async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',

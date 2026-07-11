@@ -3,6 +3,7 @@ import type { VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -79,6 +80,8 @@ const TEST_GATEWAY_EPOCH = {
 	generationId: 'gateway-generation-a',
 	zoneId: callerContext.zoneId,
 } satisfies GatewayEpochIdentity;
+
+const TEST_TOOL_VM_KNOWN_HOSTS_LINE = `tool-0.vm.host ${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}`;
 
 function refuseUnexpectedGatewayOwnershipOperation(): never {
 	throw new Error('unexpected Gateway ownership operation in lease RPC test');
@@ -167,10 +170,24 @@ function createManagedVmStub(
 		readonly closeError?: Error;
 		readonly closeReceipts?: readonly VmDestroyReceiptV1[];
 		readonly isLive?: () => boolean;
+		readonly omitServerHostKey?: boolean;
+		readonly serverHostKeyOverride?: unknown;
 	} = {},
 ): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
 		let closeReceiptIndex = 0;
+		const sshAccess = {
+			host: '127.0.0.1',
+			identityFile: '/tmp/tool-vm-key',
+			port: 19000,
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+			user: 'sandbox',
+		};
+		if (options.omitServerHostKey === true) {
+			Reflect.deleteProperty(sshAccess, 'serverHostKey');
+		} else if (options.serverHostKeyOverride !== undefined) {
+			Reflect.set(sshAccess, 'serverHostKey', options.serverHostKeyOverride);
+		}
 		const vm = {
 			close: vi.fn(async () => {
 				if (options.closeError !== undefined) {
@@ -184,12 +201,7 @@ function createManagedVmStub(
 				return createCompleteVmDestroyReceipt('tool-vm-1');
 			}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({
-				host: '127.0.0.1',
-				identityFile: '/tmp/tool-vm-key',
-				port: 19000,
-				user: 'sandbox',
-			})),
+			enableSsh: vi.fn(async () => sshAccess),
 			exec: vi.fn(() =>
 				options.isLive?.() === false
 					? createManagedExecProcessStub({ exitCode: 1, stderr: 'dead', stdout: '' })
@@ -216,6 +228,8 @@ function createTestLeaseManager(
 		readonly now?: () => number;
 		readonly ownershipCoordinator?: GatewayOwnershipCoordinator;
 		readonly tcpPool?: ReturnType<typeof createTcpPool>;
+		readonly omitServerHostKey?: boolean;
+		readonly serverHostKeyOverride?: unknown;
 	} = {},
 ): ReturnType<typeof createLeaseManager> {
 	let leaseIdIndex = 0;
@@ -232,6 +246,12 @@ function createTestLeaseManager(
 				...(options.closeError === undefined ? {} : { closeError: options.closeError }),
 				...(options.closeReceipts === undefined ? {} : { closeReceipts: options.closeReceipts }),
 				...(options.isLive === undefined ? {} : { isLive: options.isLive }),
+				...(options.omitServerHostKey === undefined
+					? {}
+					: { omitServerHostKey: options.omitServerHostKey }),
+				...(options.serverHostKeyOverride === undefined
+					? {}
+					: { serverHostKeyOverride: options.serverHostKeyOverride }),
 			}),
 		deleteToolVmRuntimeRecord: vi.fn(async () => {}),
 		now: options.now ?? (() => 1_000),
@@ -328,7 +348,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'identity-pem',
-				knownHostsLine: '',
+				knownHostsLine: TEST_TOOL_VM_KNOWN_HOSTS_LINE,
 				port: 22,
 				user: 'sandbox',
 			},
@@ -365,6 +385,45 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			zoneId: 'zone-a',
 		});
 	});
+
+	it.each([
+		['missing', { omitServerHostKey: true }],
+		[
+			'malformed',
+			{
+				serverHostKeyOverride: {
+					algorithm: 'ssh-rsa',
+					publicKeyBase64: 'not-base64!',
+				},
+			},
+		],
+	] as const)(
+		'fails closed instead of serializing a lease with a %s SSH server host identity',
+		async (_identityKind, leaseManagerOptions) => {
+			const leaseRpc = createGatewayControlLeaseRpcOperations({
+				leaseManager: createTestLeaseManager(leaseManagerOptions),
+				readIdentityPem: async () => 'identity-pem',
+				resolveLeaseCreateOptions: async () => ({
+					agentId: callerContext.agentId,
+					agentWorkspaceDir: callerContext.agentWorkspaceDir,
+					expectedGateway: TEST_GATEWAY_EPOCH,
+					guestWorkdir: '/workspace',
+					hostWorkMountDir: '/host/validated-work',
+					profile: {
+						cpus: 2,
+						imageProfile: 'tool-default',
+						memory: '2G',
+					},
+					profileId: 'standard',
+					zoneId: callerContext.zoneId,
+				}),
+			});
+
+			await expect(
+				leaseRpc.createLease({ callerContext, payload: callerContextPayload }),
+			).rejects.toThrow("Lease 'lease-main' does not have a valid ssh-ed25519 server host key.");
+		},
+	);
 
 	it('forwards the exact expected Gateway and refuses stale-G admission before VM creation', async () => {
 		const staleGateway = {

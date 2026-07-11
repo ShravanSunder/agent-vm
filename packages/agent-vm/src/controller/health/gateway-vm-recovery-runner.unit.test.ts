@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createTestVmOwnershipReservationReference,
@@ -536,7 +537,11 @@ function createGatewayHandle(vmId: string, hostPid: number): GatewayZoneRuntimeH
 		},
 		vm: {
 			close: async () => createCompleteVmDestroyReceipt(vmId),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 22 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 22,
+			}),
 			exec: () => createManagedExecProcessStub({ stdout: '' }),
 			getHostPid: () => hostPid,
 			id: vmId,

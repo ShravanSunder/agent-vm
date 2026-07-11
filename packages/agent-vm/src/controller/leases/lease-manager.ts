@@ -14,6 +14,7 @@ import {
 } from '@agent-vm/gateway-interface';
 import type {
 	ManagedVm,
+	SshServerHostKey,
 	VmDestroyReceiptV1,
 	VmOwnershipReservationReferenceV1,
 } from '@agent-vm/gondolin-adapter';
@@ -71,6 +72,7 @@ export interface Lease {
 		readonly host: string;
 		readonly identityFile?: string;
 		readonly port: number;
+		readonly serverHostKey: SshServerHostKey;
 		readonly user?: string;
 	};
 	readonly tcpSlot: number;

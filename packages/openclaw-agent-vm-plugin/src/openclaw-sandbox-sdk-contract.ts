@@ -37,6 +37,7 @@ export interface SshHelpers {
 	readonly createSshSandboxSessionFromSettings: (settings: {
 		readonly command: string;
 		readonly identityData?: string;
+		readonly knownHostsData?: string;
 		readonly strictHostKeyChecking: boolean;
 		readonly target: string;
 		readonly updateHostKeys: boolean;

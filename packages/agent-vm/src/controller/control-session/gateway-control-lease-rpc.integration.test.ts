@@ -17,6 +17,7 @@ import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -183,6 +184,7 @@ function createManagedVmStub(): Parameters<typeof createLeaseManager>[0]['create
 			close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				host: '127.0.0.1',
 				identityFile: '/tmp/tool-vm-key',
 				port: 19000,

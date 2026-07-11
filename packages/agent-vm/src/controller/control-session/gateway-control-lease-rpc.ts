@@ -17,6 +17,7 @@ import {
 	type ToolVmLeaseSessionAttachment,
 	type ToolVmLeaseStableOwner,
 } from '../leases/tool-vm-lease-authority-store.js';
+import { buildToolVmKnownHostsLine } from '../leases/tool-vm-ssh-server-identity.js';
 import { OpenClawRuntimeStatusUnavailableError } from '../openclaw-runtime-status.js';
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
 import type {
@@ -300,12 +301,17 @@ function serializeGatewayControlLeaseSnapshot(options: {
 		if (identityPem.trim().length === 0) {
 			throw new Error(`Lease '${options.lease.id}' SSH identity file is empty.`);
 		}
+		const knownHostsLine = buildToolVmKnownHostsLine({
+			leaseId: options.lease.id,
+			serverHostKey: Reflect.get(options.lease.sshAccess, 'serverHostKey'),
+			tcpSlot: options.lease.tcpSlot,
+		});
 		return {
 			...baseSnapshot,
 			ssh: {
 				...publicSshAccess,
 				identityPem,
-				knownHostsLine: '',
+				knownHostsLine,
 			},
 		};
 	})();

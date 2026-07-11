@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 
 import type { Lease, LeaseManager } from '../leases/lease-manager.js';
+import { buildToolVmKnownHostsLine } from '../leases/tool-vm-ssh-server-identity.js';
 import type {
 	PreparedWorkerTask,
 	WorkerTaskInput,
@@ -149,6 +150,11 @@ export async function serializeLeaseForResponse(
 	if (identityPem.trim().length === 0) {
 		throw new Error(`Lease '${lease.id}' SSH identity file is empty.`);
 	}
+	const knownHostsLine = buildToolVmKnownHostsLine({
+		leaseId: lease.id,
+		serverHostKey: Reflect.get(lease.sshAccess, 'serverHostKey'),
+		tcpSlot: lease.tcpSlot,
+	});
 	return {
 		agentId: lease.agentId,
 		idleTtlMs: options.idleTtlMs,
@@ -156,7 +162,7 @@ export async function serializeLeaseForResponse(
 		ssh: {
 			host: `tool-${lease.tcpSlot}.vm.host`,
 			identityPem,
-			knownHostsLine: '',
+			knownHostsLine,
 			port: 22,
 			user: lease.sshAccess.user ?? 'root',
 		},

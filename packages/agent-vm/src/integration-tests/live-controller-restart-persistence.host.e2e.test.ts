@@ -16,6 +16,7 @@ import { startControllerHttpServer } from '../controller/http/controller-http-se
 import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import { gatewayMembershipRecordSchema } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -137,6 +138,7 @@ async function createGatewayVmMock(
 		close: createExactDestroyReceipt,
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh root@127.0.0.1',
 			host: '127.0.0.1',
 			port: 19000,
@@ -189,6 +191,7 @@ function createToolVmMock(identityFile: string): ManagedVm {
 		close: async () => createCompleteVmDestroyReceipt('tool-vm-live-restart'),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh sandbox@127.0.0.1',
 			host: '127.0.0.1',
 			identityFile,

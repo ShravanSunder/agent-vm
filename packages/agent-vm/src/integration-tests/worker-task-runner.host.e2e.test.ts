@@ -13,6 +13,7 @@ import type { ServerDeps } from '../../../agent-vm-worker/src/server.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -220,7 +221,12 @@ describe('worker-task-runner integration', () => {
 				id: workerVmId,
 				close: closeVmMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: workerPort })),
-				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222, user: 'root' })),
+				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 2222,
+					user: 'root',
+				})),
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () =>

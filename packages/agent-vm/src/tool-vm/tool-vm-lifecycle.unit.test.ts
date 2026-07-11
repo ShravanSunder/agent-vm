@@ -26,6 +26,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writePreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -222,7 +223,11 @@ describe('createToolVm', () => {
 		const managedVm = {
 			close: async () => createCompleteVmDestroyReceipt(),
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 19000,
+			}),
 			exec,
 			fs: createManagedVmFsStub(),
 			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
@@ -230,7 +235,11 @@ describe('createToolVm', () => {
 			getVmInstance: () => ({
 				close: async () => createCompleteVmDestroyReceipt(),
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec: () => createManagedExecProcessStub(),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
@@ -314,7 +323,11 @@ describe('createToolVm', () => {
 		const managedVm = {
 			close: async () => createCompleteVmDestroyReceipt(),
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 19000,
+			}),
 			exec,
 			fs: createManagedVmFsStub(),
 			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
@@ -322,7 +335,11 @@ describe('createToolVm', () => {
 			getVmInstance: () => ({
 				close: async () => createCompleteVmDestroyReceipt(),
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec: () => createManagedExecProcessStub(),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
@@ -500,7 +517,11 @@ describe('createToolVm', () => {
 		const managedVm = {
 			close: async () => createCompleteVmDestroyReceipt(),
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 19000,
+			}),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
 			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
@@ -508,7 +529,11 @@ describe('createToolVm', () => {
 			getVmInstance: () => ({
 				close: async () => createCompleteVmDestroyReceipt(),
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec: () => createManagedExecProcessStub(),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
@@ -607,7 +632,11 @@ describe('createToolVm', () => {
 			const managedVm = {
 				close: async () => createCompleteVmDestroyReceipt(),
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec,
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
@@ -615,7 +644,11 @@ describe('createToolVm', () => {
 				getVmInstance: () => ({
 					close: async () => createCompleteVmDestroyReceipt(),
 					enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-					enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+					enableSsh: async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 19000,
+					}),
 					exec: () => createManagedExecProcessStub(),
 					fs: createManagedVmFsStub(),
 					getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
@@ -716,7 +749,11 @@ describe('createToolVm', () => {
 		const managedVm = {
 			close: closeMock,
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 19000,
+			}),
 			exec: () =>
 				createManagedExecProcessStub({
 					exitCode: 1,
@@ -728,7 +765,11 @@ describe('createToolVm', () => {
 			getVmInstance: () => ({
 				close: async () => incompleteVmDestroyReceipt,
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec: () => createManagedExecProcessStub(),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance-incomplete-create-rollback'),
@@ -788,7 +829,11 @@ describe('createToolVm', () => {
 		const managedVm = {
 			close: async () => createCompleteVmDestroyReceipt(),
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 19000,
+			}),
 			exec,
 			fs: createManagedVmFsStub(),
 			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
@@ -796,7 +841,11 @@ describe('createToolVm', () => {
 			getVmInstance: () => ({
 				close: async () => createCompleteVmDestroyReceipt(),
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec: () => createManagedExecProcessStub(),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
@@ -938,7 +987,11 @@ describe('createToolVm', () => {
 		const managedVm = {
 			close: async () => createCompleteVmDestroyReceipt(),
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 19000,
+			}),
 			exec: () => createManagedExecProcessStub(),
 			fs: createManagedVmFsStub(),
 			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
@@ -946,7 +999,11 @@ describe('createToolVm', () => {
 			getVmInstance: () => ({
 				close: async () => createCompleteVmDestroyReceipt(),
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec: () => createManagedExecProcessStub(),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
@@ -1015,7 +1072,11 @@ describe('createToolVm', () => {
 		const managedVm = {
 			close: async () => createCompleteVmDestroyReceipt(),
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 19000,
+			}),
 			exec,
 			fs: createManagedVmFsStub(),
 			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
@@ -1023,7 +1084,11 @@ describe('createToolVm', () => {
 			getVmInstance: () => ({
 				close: async () => createCompleteVmDestroyReceipt(),
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec: () => createManagedExecProcessStub(),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
@@ -1081,7 +1146,11 @@ describe('createToolVm', () => {
 		const managedVm = {
 			close: async () => createCompleteVmDestroyReceipt(),
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			enableSsh: async () => ({
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 19000,
+			}),
 			exec: () => createManagedExecProcessStub(),
 			fs: createManagedVmFsStub(),
 			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
@@ -1089,7 +1158,11 @@ describe('createToolVm', () => {
 			getVmInstance: () => ({
 				close: async () => createCompleteVmDestroyReceipt(),
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				enableSsh: async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					host: '127.0.0.1',
+					port: 19000,
+				}),
 				exec: () => createManagedExecProcessStub(),
 				fs: createManagedVmFsStub(),
 				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),

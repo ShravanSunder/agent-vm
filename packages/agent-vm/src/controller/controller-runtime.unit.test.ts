@@ -21,6 +21,7 @@ import type { ControllerTelemetry } from '../observability/controller-telemetry.
 import { stableTelemetryHash } from '../observability/health-event-telemetry.js';
 import type { CheckObservabilityStackReadinessOptions } from '../observability/observability-readiness.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
@@ -60,7 +61,11 @@ function createManagedVmInstanceStub(vmId: string, hostPid: number | null): Mana
 	return {
 		close: async () => createCompleteVmDestroyReceipt(vmId),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
-		enableSsh: async () => ({ host: '127.0.0.1', port: 19_000 }),
+		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+			host: '127.0.0.1',
+			port: 19_000,
+		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
 		getDestroyTarget: () => createTestVmDestroyTarget(vmId),
@@ -103,6 +108,7 @@ async function createManagedVmStubFromOwnershipReservation(
 		close: createExactDestroyReceipt,
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -828,6 +834,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -864,6 +871,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -1391,6 +1399,7 @@ describe('startControllerRuntime', () => {
 					close: closeGatewayVm,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -1467,6 +1476,7 @@ describe('startControllerRuntime', () => {
 				close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-1')),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh ...',
 					host: '127.0.0.1',
 					identityFile: '/tmp/key',
@@ -1592,6 +1602,7 @@ describe('startControllerRuntime', () => {
 				close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-telemetry')),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh ...',
 					host: '127.0.0.1',
 					identityFile: '/tmp/key',
@@ -1804,6 +1815,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-1')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -1838,6 +1850,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2020,6 +2033,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-1')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2055,6 +2069,7 @@ describe('startControllerRuntime', () => {
 						close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
 							identityFile: '/tmp/key',
@@ -2188,6 +2203,7 @@ describe('startControllerRuntime', () => {
 							: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2219,6 +2235,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-auto-recovery')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2363,6 +2380,7 @@ describe('startControllerRuntime', () => {
 				close: closeGatewayVm,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh ...',
 					host: '127.0.0.1',
 					identityFile: '/tmp/key',
@@ -2400,6 +2418,7 @@ describe('startControllerRuntime', () => {
 					),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2513,6 +2532,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2543,6 +2563,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-auto-cold-start')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2682,6 +2703,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-secret-refresh')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2711,6 +2733,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-secret-refresh')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2837,6 +2860,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-same')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2874,6 +2898,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-auto-recovery')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -2978,6 +3003,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-boot-fail')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -3065,6 +3091,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-worker-stop')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -3103,6 +3130,7 @@ describe('startControllerRuntime', () => {
 						close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-worker')),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
 							identityFile: '/tmp/key',
@@ -3194,6 +3222,7 @@ describe('startControllerRuntime', () => {
 						close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-worker-task')),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
 							identityFile: '/tmp/key',
@@ -3518,6 +3547,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-worker-capacity')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -3627,6 +3657,7 @@ describe('startControllerRuntime', () => {
 					close: closeGatewayVm,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -3656,6 +3687,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-cleanup-test')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -3777,6 +3809,7 @@ describe('startControllerRuntime', () => {
 						close: closeGatewayVm,
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
 							identityFile: '/tmp/key',
@@ -3885,6 +3918,7 @@ describe('startControllerRuntime', () => {
 						close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-cleanup-failure')),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
 							identityFile: '/tmp/key',
@@ -3941,6 +3975,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-clean')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -3982,6 +4017,7 @@ describe('startControllerRuntime', () => {
 						close: closeGatewayVm,
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
 							identityFile: '/tmp/key',
@@ -4051,6 +4087,7 @@ describe('startControllerRuntime', () => {
 					close: closeGatewayVm,
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -4092,6 +4129,7 @@ describe('startControllerRuntime', () => {
 					),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -4175,6 +4213,7 @@ describe('startControllerRuntime', () => {
 					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-close-flush')),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
 						identityFile: '/tmp/key',
@@ -4215,6 +4254,7 @@ describe('startControllerRuntime', () => {
 							close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-close-flush')),
 							enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 							enableSsh: vi.fn(async () => ({
+								serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 								command: 'ssh ...',
 								host: '127.0.0.1',
 								identityFile: '/tmp/key',

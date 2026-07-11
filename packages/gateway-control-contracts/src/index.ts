@@ -583,7 +583,7 @@ export const GatewayControlToolVmSshAccessSchema = z
 	.object({
 		host: z.string().min(1),
 		identityPem: z.string().min(1).optional(),
-		knownHostsLine: z.string().optional(),
+		knownHostsLine: z.string().min(1).optional(),
 		port: z.number().int().positive(),
 		user: z.string().min(1),
 	})
