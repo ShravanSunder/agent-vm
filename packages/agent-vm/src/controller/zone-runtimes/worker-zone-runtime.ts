@@ -3,6 +3,7 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerDestroy as runControllerDestroyDefault } from '../../operations/destroy-zone.js';
+import { containsUnprovenVmDestructionError } from '../../shared/vm-destruction-receipt.js';
 import type { ActiveTaskRegistry, ActiveWorkerTask } from '../active-task-registry.js';
 import { pullDefaultForTask, type PullDefaultRequest } from '../git-pull-default-operations.js';
 import {
@@ -53,7 +54,7 @@ export interface CreateWorkerZoneRuntimeOptions {
 		| 'tryReserve'
 	>;
 	readonly controllerGithubToken: string | null;
-	readonly controllerEpoch?: string;
+	readonly controllerEpoch: string;
 	readonly callerUrl?: string;
 	readonly executeWorkerTask?: (
 		prepared: PreparedWorkerTask,
@@ -268,8 +269,9 @@ export function createWorkerZoneRuntime(
 					heartbeatAcquired = true;
 				}
 				return await (options.executeWorkerTask ?? executeWorkerTaskDefault)(prepared, {
+					controllerEpoch: options.controllerEpoch,
 					controlSession: {
-						controllerEpoch: options.controllerEpoch ?? 'worker-control-test-controller-epoch',
+						controllerEpoch: options.controllerEpoch,
 						operations: {
 							pullDefaultForTask: pullDefaultForActiveTask,
 							pushTaskBranches: pushBranchesForActiveTask,
@@ -287,7 +289,10 @@ export function createWorkerZoneRuntime(
 					systemConfig: options.systemConfig,
 				});
 			} catch (error) {
-				if (options.activeTaskRegistry.get(prepared.zoneId, prepared.taskId)) {
+				if (
+					!containsUnprovenVmDestructionError(error) &&
+					options.activeTaskRegistry.get(prepared.zoneId, prepared.taskId)
+				) {
 					options.activeTaskRegistry.clear(prepared.zoneId, prepared.taskId);
 				}
 				throw error;

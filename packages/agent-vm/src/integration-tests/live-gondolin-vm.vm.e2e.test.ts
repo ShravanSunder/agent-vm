@@ -1,9 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createManagedVm } from '@agent-vm/gondolin-adapter';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import {
+	createManagedVm,
+	createManagedVmOwnershipReservation,
+	type ManagedVm,
+	type ManagedVmOwnershipReservationReferenceV1,
+} from '@agent-vm/gondolin-adapter';
 /**
  * Live e2e test — boots real Gondolin VMs.
  *
@@ -12,8 +17,9 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
  * Requires: QEMU installed, ~30s per test, creates real VMs.
  * NOT part of the standard test suite (too slow, needs QEMU).
  */
-import { describe, it, expect, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { assertVmDestructionComplete } from '../shared/vm-destruction-receipt.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
@@ -21,6 +27,28 @@ const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.ski
 
 const ingressReadyTimeoutMs = 10_000;
 const ingressRetryIntervalMs = 100;
+
+async function createStandaloneOwnershipReservation(
+	testDeploymentRoot: string,
+	vmPurposeLabel: string,
+): Promise<ManagedVmOwnershipReservationReferenceV1> {
+	const vmIdentity = `${vmPurposeLabel}-${randomUUID()}`;
+	const ownershipReservation = await createManagedVmOwnershipReservation({
+		controllerEpoch: 'live-gondolin-vm-e2e',
+		parentGateway: null,
+		reservationId: `reservation-${vmIdentity}`,
+		reservationRoot: path.join(testDeploymentRoot, 'state', 'vm-ownership'),
+		role: 'standalone',
+		sessionLabel: `live-gondolin-vm-${vmPurposeLabel}`,
+		vmId: `vm-${vmIdentity}`,
+	});
+	return ownershipReservation.reference;
+}
+
+async function closeVmAndRequireCompleteReceipt(vm: ManagedVm, context: string): Promise<void> {
+	const receipt = await vm.close();
+	assertVmDestructionComplete(receipt, context);
+}
 
 async function fetchIngressUntilReady(url: string): Promise<{
 	readonly body: string;
@@ -52,16 +80,30 @@ async function fetchIngressUntilReady(url: string): Promise<{
 
 describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 	let vm: ManagedVm | null = null;
+	let testDeploymentRoot: string | null = null;
+
+	beforeAll(async () => {
+		testDeploymentRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-gondolin-vm-e2e-'));
+	});
 
 	afterAll(async () => {
 		if (vm) {
-			await vm.close();
+			await closeVmAndRequireCompleteReceipt(vm, 'final Gondolin VM E2E cleanup');
 			vm = null;
+		}
+		if (testDeploymentRoot !== null) {
+			await rm(testDeploymentRoot, { force: true, recursive: true });
+			testDeploymentRoot = null;
 		}
 	});
 
 	it('should boot a basic VM and exec a command', async () => {
+		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
 		vm = await createManagedVm({
+			ownershipReservation: await createStandaloneOwnershipReservation(
+				testDeploymentRoot,
+				'basic-exec',
+			),
 			imagePath: '', // use default Gondolin image (alpine-base:latest, auto-downloads)
 			memory: '512M',
 			cpus: 1,
@@ -85,9 +127,15 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 		await writeFile(path.join(tmpDir, 'test.txt'), 'vfs_mount_works');
 
 		// Close previous VM and create one with VFS
-		await vm.close();
+		await closeVmAndRequireCompleteReceipt(vm, 'basic exec VM cleanup');
+		vm = null;
+		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
 
 		vm = await createManagedVm({
+			ownershipReservation: await createStandaloneOwnershipReservation(
+				testDeploymentRoot,
+				'vfs-mount',
+			),
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
@@ -111,13 +159,18 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 
 	it('should persist writable RealFS /workspace files across disposable VM lifetimes', async () => {
 		if (vm) {
-			await vm.close();
+			await closeVmAndRequireCompleteReceipt(vm, 'VFS mount VM cleanup');
 			vm = null;
 		}
+		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
 
 		const hostWorkMountDir = await mkdtemp(path.join(os.tmpdir(), 'gondolin-live-work-'));
 		try {
 			vm = await createManagedVm({
+				ownershipReservation: await createStandaloneOwnershipReservation(
+					testDeploymentRoot,
+					'realfs-write',
+				),
 				imagePath: '',
 				memory: '512M',
 				cpus: 1,
@@ -140,8 +193,13 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 				readFile(path.join(hostWorkMountDir, 'project', 'notes.md'), 'utf8'),
 			).resolves.toBe('persisted through realfs');
 
-			await vm.close();
+			await closeVmAndRequireCompleteReceipt(vm, 'RealFS writer VM cleanup');
+			vm = null;
 			vm = await createManagedVm({
+				ownershipReservation: await createStandaloneOwnershipReservation(
+					testDeploymentRoot,
+					'realfs-read',
+				),
 				imagePath: '',
 				memory: '512M',
 				cpus: 1,
@@ -161,7 +219,7 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 			expect(readResult.stdout.trim()).toBe('persisted through realfs');
 		} finally {
 			if (vm) {
-				await vm.close();
+				await closeVmAndRequireCompleteReceipt(vm, 'RealFS reader VM cleanup');
 				vm = null;
 			}
 			await rm(hostWorkMountDir, { recursive: true, force: true });
@@ -170,11 +228,16 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 
 	it('should enable ingress and expose a guest HTTP server', async () => {
 		if (vm) {
-			await vm.close();
+			await closeVmAndRequireCompleteReceipt(vm, 'prior Gondolin VM cleanup');
 			vm = null;
 		}
+		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
 
 		vm = await createManagedVm({
+			ownershipReservation: await createStandaloneOwnershipReservation(
+				testDeploymentRoot,
+				'ingress-and-ssh',
+			),
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,

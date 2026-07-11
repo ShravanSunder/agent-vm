@@ -9,11 +9,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { createSecretResolverFromSystemConfig } from '../controller/controller-runtime-support.js';
+import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 
 type FakeManagedVmInstance = ManagedVmInstance & {
@@ -28,7 +32,7 @@ type FakeManagedVmInstance = ManagedVmInstance & {
 
 function createFakeManagedVmInstance(): FakeManagedVmInstance {
 	return {
-		close: async () => {},
+		close: async () => createCompleteVmDestroyReceipt('gateway-secret-resolution-smoke-vm'),
 		exec: () => createManagedExecProcessStub(),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
@@ -39,7 +43,8 @@ function createFakeManagedVmInstance(): FakeManagedVmInstance {
 			user: 'root',
 		}),
 		fs: createManagedVmFsStub(),
-		id: 'gateway-secret-resolution-smoke-instance',
+		getDestroyTarget: () => createTestVmDestroyTarget('gateway-secret-resolution-smoke-vm'),
+		id: 'gateway-secret-resolution-smoke-vm',
 		server: {
 			controller: {
 				child: {
@@ -55,7 +60,7 @@ function createFakeManagedVm(): ManagedVm {
 	const fakeVmInstance = createFakeManagedVmInstance();
 	return {
 		id: 'gateway-secret-resolution-smoke-vm',
-		close: async () => {},
+		close: async () => createCompleteVmDestroyReceipt('gateway-secret-resolution-smoke-vm'),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
 			command: 'ssh fake',
@@ -66,9 +71,25 @@ function createFakeManagedVm(): ManagedVm {
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getDestroyTarget: () => createTestVmDestroyTarget('gateway-secret-resolution-smoke-vm'),
 		getHostPid: () => 12_345,
 		getVmInstance: () => fakeVmInstance,
 		setIngressRoutes: () => {},
+	};
+}
+
+function createExactVmOwnershipStub(vmId: string): VmCreationOwnership {
+	const ownershipReservation = createTestVmOwnershipReservationReference(vmId);
+	return {
+		ownershipReservation,
+		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId),
+		destroyLive: async (closeLiveVm) => {
+			const receipt = await closeLiveVm();
+			if (receipt.vmId !== vmId || receipt.reservationId !== ownershipReservation.reservationId) {
+				throw new Error(`Expected exact destruction receipt for VM '${vmId}'.`);
+			}
+			return receipt;
+		},
 	};
 }
 
@@ -204,6 +225,8 @@ describe('smoke: gateway startup secret resolution', () => {
 		try {
 			await startGatewayZone(
 				{
+					createVmOwnership: async () =>
+						createExactVmOwnershipStub('gateway-secret-resolution-smoke-vm'),
 					secretResolver,
 					systemConfig,
 					zoneId: 'secret-smoke',
@@ -213,10 +236,6 @@ describe('smoke: gateway startup secret resolution', () => {
 						built: false,
 						fingerprint: 'gateway-secret-resolution-smoke',
 						imagePath: path.join(tempRoot, 'image'),
-					}),
-					cleanupOrphanedGatewayIfPresent: async () => ({
-						cleanedUp: false,
-						killedPid: null,
 					}),
 					createManagedVm: async () => createFakeManagedVm(),
 					loadBuildConfig: async () =>

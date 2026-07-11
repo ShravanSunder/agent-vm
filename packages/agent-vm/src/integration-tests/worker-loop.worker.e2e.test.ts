@@ -251,6 +251,7 @@ describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 				zoneId: 'worker-e2e',
 			});
 			const result = await executeWorkerTask(prepared, {
+				controllerEpoch: 'worker-smoke-e2e-controller-epoch',
 				secretResolver,
 				systemConfig: project.systemConfig,
 			});
@@ -402,6 +403,7 @@ describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 				},
 			};
 			const result = await executeWorkerTask(prepared, {
+				controllerEpoch: 'worker-git-rpc-e2e-controller-epoch',
 				controlSession: {
 					controllerEpoch: 'worker-git-rpc-e2e-controller-epoch',
 					operations,

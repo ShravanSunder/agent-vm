@@ -22,29 +22,42 @@ import type {
 	BuildImageResult,
 	ManagedVm,
 	ManagedVmInstance,
+	VmDestroyTargetV1,
+	VmDestroyReceiptV1,
 } from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import type {
 	ControlSessionClient,
 	GatewayControlLeaseRpcOperations,
 } from '../controller/control-session/index.js';
-import { resolveGatewayControlSessionMaterialPath } from '../controller/control-session/index.js';
 import {
+	createGatewayControlSessionMaterial,
+	resolveGatewayControlSessionMaterialPath,
+} from '../controller/control-session/index.js';
+import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
+import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
+import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
-import { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
 import {
 	preflightGatewayZoneStart,
-	startGatewayZone,
+	startGatewayZone as startGatewayZoneProduction,
 	validateGatewayControlCallerContextRegistration,
+	type GatewayManagerDependencies,
 } from './gateway-zone-orchestrator.js';
 import type {
 	GatewayControlSessionConnector,
 	GatewayManagedVmFactoryOptions,
+	GatewayZoneStartResult,
+	PendingGatewayVmCreationContainment,
+	StartGatewayZoneOptions,
 } from './gateway-zone-support.js';
 
 interface DeferredPromise<TResult> {
@@ -52,11 +65,194 @@ interface DeferredPromise<TResult> {
 	readonly resolve: (result: TResult) => void;
 }
 
+type TestStartGatewayZoneOptions = Omit<StartGatewayZoneOptions, 'createVmOwnership'> &
+	Partial<Pick<StartGatewayZoneOptions, 'createVmOwnership'>>;
+
+interface TestVmOwnershipHarness {
+	readonly createVmOwnership: Mock<StartGatewayZoneOptions['createVmOwnership']>;
+	readonly destroyDetached: Mock<VmCreationOwnership['destroyDetached']>;
+	readonly destroyLive: Mock<VmCreationOwnership['destroyLive']>;
+	readonly ownershipReservation: VmCreationOwnership['ownershipReservation'];
+	readonly vmOwnership: VmCreationOwnership;
+}
+
+const testGatewayBootId = 'gateway-boot-exact';
+const testGatewayGenerationId = 'gateway-generation-exact';
+
+function createTestGatewayEpochIdentity(
+	vmId: string,
+	controllerEpoch = 'controller-epoch-test',
+): GatewayEpochIdentity {
+	return {
+		bootId: testGatewayBootId,
+		controllerEpoch,
+		gatewayEpochId: `gateway-epoch-${vmId}`,
+		gatewayVmId: vmId,
+		generationId: testGatewayGenerationId,
+		zoneId: 'shravan',
+	};
+}
+
+const createExactTestGatewayControlSessionMaterial: GatewayManagerDependencies['createGatewayControlSessionMaterial'] =
+	({ controllerEpoch, zoneId }) =>
+		createGatewayControlSessionMaterial({
+			agentIds: ['main'],
+			bootId: testGatewayBootId,
+			controllerEpoch,
+			generationId: testGatewayGenerationId,
+			zoneId,
+		});
+
+function createTestVmOwnershipHarness(
+	vmId = 'gateway-vm-ownership-test',
+	gatewayIdentity?: GatewayEpochIdentity,
+): TestVmOwnershipHarness {
+	const ownershipReservation = createTestVmOwnershipReservationReference(vmId, {
+		role: 'gateway',
+	});
+	const destroyDetached = vi.fn(async () => createCompleteGatewayVmDestroyReceipt(vmId));
+	const destroyLive = vi.fn(
+		async (closeLiveVm: () => Promise<VmDestroyReceiptV1>): Promise<VmDestroyReceiptV1> =>
+			await closeLiveVm(),
+	);
+	const vmOwnership: VmCreationOwnership = {
+		...(gatewayIdentity === undefined ? {} : { gatewayIdentity }),
+		ownershipReservation,
+		destroyDetached,
+		destroyLive,
+	};
+	return {
+		createVmOwnership: vi.fn(async () => vmOwnership),
+		destroyDetached,
+		destroyLive,
+		ownershipReservation,
+		vmOwnership,
+	};
+}
+
+async function createDefaultTestVmOwnership(
+	options: Parameters<StartGatewayZoneOptions['createVmOwnership']>[0],
+	controllerEpoch: string,
+	resolveCreatedVmId: () => string | undefined,
+): Promise<VmCreationOwnership> {
+	const reservedGatewayVmId = `test-gateway-vm-${options.zoneId}`;
+	// The real adapter derives its VM id from the ownership reservation. Older
+	// test factories choose an arbitrary fake id internally, so the shared test
+	// fixture binds that id when the fake factory returns. Focused ownership
+	// tests below use fixed identities and do not take this compatibility path.
+	const gatewayIdentity =
+		options.kind === 'gateway-epoch' && options.controlIdentity !== undefined
+			? {
+					bootId: options.controlIdentity.bootId,
+					controllerEpoch,
+					gatewayEpochId: `test-gateway-epoch-${options.zoneId}`,
+					get gatewayVmId(): string {
+						return resolveCreatedVmId() ?? reservedGatewayVmId;
+					},
+					generationId: options.controlIdentity.generationId,
+					zoneId: options.zoneId,
+				}
+			: undefined;
+	return createTestVmOwnershipHarness(
+		options.kind === 'gateway-epoch' ? reservedGatewayVmId : 'test-standalone-vm',
+		gatewayIdentity,
+	).vmOwnership;
+}
+
+function withTestVmOwnership(
+	options: TestStartGatewayZoneOptions,
+	resolveCreatedVmId: () => string | undefined = () => undefined,
+): StartGatewayZoneOptions {
+	const controllerEpoch = options.controlSession?.controllerEpoch ?? 'controller-epoch-test';
+	return {
+		createVmOwnership: async (createOptions) =>
+			await createDefaultTestVmOwnership(createOptions, controllerEpoch, resolveCreatedVmId),
+		...options,
+	};
+}
+
+const connectTestGatewayControlSession: GatewayControlSessionConnector = async () => ({
+	close: vi.fn(),
+	emitApplicationMessage: vi.fn(async () => ({ ok: true })),
+	getDiagnostics: vi.fn(() => ({
+		accepted: true,
+		connected: true,
+		endpointPath: '/__agent-vm/gateway-control',
+		helloCount: 1,
+		ready: true,
+		transportName: 'websocket',
+	})),
+	ready: Promise.resolve({
+		connectionId: '55555555-5555-4555-8555-555555555555',
+		controllerEpoch: 'controller-epoch-test',
+		outcome: 'accepted',
+		sessionId: '33333333-3333-4333-8333-333333333333',
+	}),
+});
+
+function startGatewayZone(
+	options: TestStartGatewayZoneOptions,
+	dependencies: GatewayManagerDependencies = {},
+): Promise<GatewayZoneStartResult> {
+	let createdVmId: string | undefined;
+	const createManagedVm = dependencies.createManagedVm;
+	return startGatewayZoneProduction(
+		withTestVmOwnership(
+			{
+				controlSession: { controllerEpoch: 'controller-epoch-test' },
+				...options,
+			},
+			() => createdVmId,
+		),
+		{
+			connectGatewayControlSession: connectTestGatewayControlSession,
+			...dependencies,
+			...(createManagedVm === undefined
+				? {}
+				: {
+						createManagedVm: async (createOptions: GatewayManagedVmFactoryOptions) => {
+							const managedVm = await createManagedVm(createOptions);
+							createdVmId = managedVm.id;
+							return managedVm;
+						},
+					}),
+		},
+	);
+}
+
 const testCallerContextProofKey = 'test-caller-context-proof-key';
 const testAgentAuthorityKeys: Readonly<Record<string, string>> = {
 	main: 'test-main-agent-authority-key-with-enough-length',
 	second: 'test-second-agent-authority-key-with-enough-length',
 };
+
+function createIncompleteGatewayVmDestroyReceipt(vmId: string): VmDestroyReceiptV1 {
+	return {
+		contractVersion: 1,
+		reservationId: `reservation-${vmId}`,
+		vmId,
+		controllerEpoch: 'controller-epoch-test',
+		parentGateway: null,
+		role: 'gateway',
+		requestedRunner: {
+			backend: 'qemu',
+			executableName: 'qemu-system-aarch64',
+			discoveryIdentity: `runner-${vmId}`,
+		},
+		complete: false,
+		completedAt: '2026-07-10T00:00:00.000Z',
+		resources: {
+			exactRunner: { status: 'unproven', reason: 'runner-resistant' },
+			ingressListener: { status: 'destroyed' },
+			ingressSockets: { status: 'destroyed' },
+			sshListener: { status: 'already-absent' },
+			sshSessions: { status: 'already-absent' },
+			sessionIpc: { status: 'destroyed' },
+			qmp: { status: 'destroyed' },
+			disposableStorage: { status: 'destroyed' },
+		},
+	};
+}
 
 function signTestCallerContextProof(
 	input: GatewayControlCallerContextProofPayloadInput,
@@ -503,9 +699,18 @@ const minimalBuildConfig: BuildConfig = {
 	distro: 'alpine',
 };
 
+function createGatewayVmDestroyTarget(vmId: string): VmDestroyTargetV1 {
+	return createTestVmDestroyTarget(vmId, { role: 'gateway' });
+}
+
+function createCompleteGatewayVmDestroyReceipt(vmId: string): VmDestroyReceiptV1 {
+	return createCompleteVmDestroyReceipt(vmId, { role: 'gateway' });
+}
+
 function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
+	const vmId = `vm-instance-${pid}`;
 	return {
-		close: async () => {},
+		close: async () => createCompleteGatewayVmDestroyReceipt(vmId),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
 			command: 'ssh ...',
@@ -516,8 +721,9 @@ function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getDestroyTarget: () => createGatewayVmDestroyTarget(vmId),
 		getHostPid: () => pid,
-		id: `vm-instance-${pid}`,
+		id: vmId,
 		server: {
 			controller: {
 				child: {
@@ -527,6 +733,35 @@ function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
 		},
 		setIngressRoutes: () => {},
 	} as ManagedVmInstance;
+}
+
+function createHealthyGatewayVmStub(
+	vmId: string,
+	pid: number,
+): {
+	readonly close: Mock<ManagedVm['close']>;
+	readonly exec: Mock<ManagedVm['exec']>;
+	readonly managedVm: ManagedVm;
+} {
+	const close = vi.fn(async () => createCompleteGatewayVmDestroyReceipt(vmId));
+	const exec = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
+	const vmInstance = createVmInstanceStub(pid);
+	return {
+		close,
+		exec,
+		managedVm: {
+			id: vmId,
+			getDestroyTarget: () => createGatewayVmDestroyTarget(vmId),
+			close,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec,
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => pid),
+			getVmInstance: vi.fn(() => vmInstance),
+			setIngressRoutes: vi.fn(),
+		},
+	};
 }
 
 function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
@@ -569,7 +804,7 @@ function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): 
 describe('startGatewayZone', () => {
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
 		const taskTitles: string[] = [];
-		const closeMock = vi.fn(async () => {});
+		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123'));
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
 		const execMock = vi.fn((command: string) =>
@@ -580,6 +815,7 @@ describe('startGatewayZone', () => {
 		const setIngressRoutesMock = vi.fn();
 		const managedVm: ManagedVm = {
 			id: 'vm-123',
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-123'),
 			close: closeMock,
 			enableIngress: enableIngressMock,
 			enableSsh: enableSshMock,
@@ -726,25 +962,25 @@ describe('startGatewayZone', () => {
 			bufferResponseBody: false,
 			listenPort: 18791,
 		});
-		// Phase A proves ownership without cleanup. Phase B preflights
-		// replacement secrets/host state. Phase D then builds the startup
-		// artifacts before any orphan cleanup is allowed. The
-		// mcpPortalMaterialization branch does not push a title.
+		// OpenClaw ownership reconciliation is controller-start work, not
+		// gateway-zone startup work. The mcpPortalMaterialization branch does
+		// not push a title.
 		expect(taskTitles).toEqual([
-			'Preflighting gateway runtime ownership',
 			'Preflighting gateway start',
 			'Validating OpenClaw Tool VM requirements',
 			'Resolving zone secrets',
 			'Building gateway image',
-			'Cleaning orphaned tool VMs',
-			'Cleaning orphaned gateway runtime',
 			'Preparing host state',
+			'Reserving gateway VM ownership',
 			'Booting gateway VM',
 			'Configuring gateway',
 			'Starting gateway',
 			'Waiting for service health',
+			'Connecting gateway control session',
 			'Recording gateway runtime',
 		]);
+		expect(cleanupOrphanedToolVmsIfPresentMock).not.toHaveBeenCalled();
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 		expect(result).toMatchObject({
 			image: {
 				fingerprint: 'fingerprint-123',
@@ -765,7 +1001,8 @@ describe('startGatewayZone', () => {
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const managedVm: ManagedVm = {
 			id: 'vm-123',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-123'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123')),
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn((command: string) =>
@@ -835,7 +1072,8 @@ describe('startGatewayZone', () => {
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const managedVm: ManagedVm = {
 			id: 'vm-123',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-123'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123')),
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn((command: string) =>
@@ -903,7 +1141,8 @@ describe('startGatewayZone', () => {
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const managedVm: ManagedVm = {
 			id: 'vm-123',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-123'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123')),
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn((command: string) =>
@@ -991,10 +1230,6 @@ describe('startGatewayZone', () => {
 			}),
 			'utf8',
 		);
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
-			cleanedUp: true,
-			killedPid: 28282,
-		}));
 		const buildImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'fp',
@@ -1010,28 +1245,17 @@ describe('startGatewayZone', () => {
 				},
 				{
 					buildImage,
-					cleanupOrphanedGatewayIfPresent,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 
-		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 		expect(buildImage).not.toHaveBeenCalled();
 	});
 
-	it('does not clean orphaned gateway runtime when secret preflight fails', async () => {
+	it('does not build the gateway image when secret preflight fails', async () => {
 		const systemConfig = await createSystemConfig();
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
-			cleanedUp: true,
-			killedPid: 28282,
-		}));
-		const cleanupOrphanedToolVmsIfPresent = vi.fn(async () => ({
-			cleanedCount: 1,
-			killedPids: [28282] as readonly number[],
-			quarantinedCount: 0,
-			warnings: [] as readonly string[],
-		}));
 		const buildImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'fp',
@@ -1055,15 +1279,12 @@ describe('startGatewayZone', () => {
 				},
 				{
 					buildImage,
-					cleanupOrphanedGatewayIfPresent,
-					cleanupOrphanedToolVmsIfPresent,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
 		).rejects.toThrow('Failed to resolve zone secrets: op failed');
 
-		expect(cleanupOrphanedToolVmsIfPresent).not.toHaveBeenCalled();
-		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 		expect(buildImage).not.toHaveBeenCalled();
 	});
 
@@ -1105,15 +1326,14 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 	});
 
-	it('does not create a gateway VM when orphan gateway cleanup blocks cold-start ownership', async () => {
+	it('does not consult legacy cleanup or create a gateway VM when OpenClaw image build fails', async () => {
 		const systemConfig = await createSystemConfig();
+		const buildError = new Error('gateway image build failed');
 		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
-			throw new Error('createManagedVm should not be called');
+			throw new Error('createManagedVm should not run after image build fails');
 		});
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => {
-			throw new Error(
-				'Gateway runtime record is missing but configured ingress port 18791 is owned by pid 98765.',
-			);
+		const buildImage = vi.fn(async (): Promise<BuildImageResult> => {
+			throw buildError;
 		});
 
 		await expect(
@@ -1128,42 +1348,20 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					cleanupOrphanedGatewayIfPresent,
+					buildImage,
 					createManagedVm,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
-		).rejects.toThrow(/configured ingress port 18791/u);
+		).rejects.toBe(buildError);
 
-		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith(
-			expect.objectContaining({
-				configuredIngressPort: 18791,
-				zoneId: 'shravan',
-			}),
-		);
+		expect(buildImage).toHaveBeenCalledOnce();
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('reports owner-unsafe before secret resolution when both startup preflights fail', async () => {
+	it('surfaces OpenClaw secret failure before image build', async () => {
 		const systemConfig = await createSystemConfig();
-		const preflightOrphanedGatewayCleanupIfPresent = vi.fn(async () => {
-			await new Promise<void>((resolve) => setImmediate(resolve));
-			throw new GatewayOwnershipUnsafeError({
-				evidence: {
-					kind: 'missing-record-port-owned',
-					ownerCommand: 'qemu-system-aarch64',
-					ownerPid: 98_765,
-					port: 18_791,
-				},
-				message:
-					'Gateway runtime record is missing but configured ingress port 18791 is owned by pid 98765.',
-			});
-		});
 		const secretResolver: SecretResolver = {
 			resolve: async () => {
 				throw new Error('Failed to resolve zone secrets: op failed');
@@ -1188,27 +1386,13 @@ describe('startGatewayZone', () => {
 				{
 					buildImage,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
-					preflightOrphanedGatewayCleanupIfPresent,
 				},
 			),
-		).rejects.toMatchObject({
-			code: 'GATEWAY_OWNERSHIP_UNSAFE',
-			evidence: {
-				kind: 'missing-record-port-owned',
-				ownerPid: 98_765,
-				port: 18_791,
-			},
-		});
+		).rejects.toThrow(
+			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve zone secrets: op failed",
+		);
 
-		expect(preflightOrphanedGatewayCleanupIfPresent).toHaveBeenCalledWith({
-			configuredIngressPort: 18791,
-			expectedConfigPath: systemConfig.systemConfigPath,
-			expectedControllerPort: systemConfig.host.controllerPort,
-			mode: 'in-process-recovery',
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			stateDir: systemConfig.zones[0]?.gateway.stateDir,
-			zoneId: 'shravan',
-		});
+		expect(preflightOrphanedGatewayCleanupIfPresentMock).not.toHaveBeenCalled();
 		expect(buildImage).not.toHaveBeenCalled();
 	});
 
@@ -1255,7 +1439,8 @@ describe('startGatewayZone', () => {
 			),
 		).rejects.toThrow('createManagedVm should not be called');
 
-		expect(taskTitles).toContain('Preflighting gateway runtime ownership');
+		expect(taskTitles).not.toContain('Preflighting gateway runtime ownership');
+		expect(taskTitles).not.toContain('Cleaning orphaned gateway runtime');
 		expect(taskTitles).not.toContain('Checking host observability stack');
 		expect(checkObservabilityStackReadiness).not.toHaveBeenCalled();
 		expect(buildImage).toHaveBeenCalled();
@@ -1402,10 +1587,11 @@ describe('startGatewayZone', () => {
 		expect(buildImage).toHaveBeenCalled();
 	});
 
-	it('cleans orphaned tool VMs for OpenClaw zones after startup preflight succeeds', async () => {
+	it('does not invoke legacy PID cleanup for OpenClaw zones after ownership reconciliation', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-tool-cleanup',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-tool-cleanup'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-tool-cleanup')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -1419,13 +1605,6 @@ describe('startGatewayZone', () => {
 		if (!zone || zone.gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw gateway test zone.');
 		}
-		const cleanupOrphanedToolVmsIfPresent = vi.fn(async () => ({
-			cleanedCount: 1,
-			killedPids: [28282] as readonly number[],
-			quarantinedCount: 0,
-			warnings: [] as readonly string[],
-		}));
-
 		await startGatewayZone(
 			{
 				secretResolver: createOpenClawSecretResolver({
@@ -1442,28 +1621,19 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
-				cleanupOrphanedToolVmsIfPresent,
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
 		);
 
-		expect(cleanupOrphanedToolVmsIfPresent).toHaveBeenCalledTimes(1);
-		expect(cleanupOrphanedToolVmsIfPresent).toHaveBeenCalledWith({
-			expectedConfigPath: systemConfig.systemConfigPath,
-			expectedControllerPort: 18800,
-			mode: 'in-process-recovery',
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			stateDir: zone.gateway.stateDir,
-			tcpBasePort: 19000,
-			zoneId: 'shravan',
-		});
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 	});
 
-	it('cleans OpenClaw tool VM children before gateway runtime cleanup', async () => {
+	it('does not preflight or mutate legacy OpenClaw runtime records before exact ownership boot', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-ordered-recovery',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-ordered-recovery'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-ordered-recovery')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -1472,18 +1642,7 @@ describe('startGatewayZone', () => {
 			getVmInstance: vi.fn(() => createVmInstanceStub(28303)),
 			setIngressRoutes: vi.fn(),
 		};
-		const toolVmCleanup = createDeferredPromise<{
-			readonly cleanedCount: number;
-			readonly killedPids: readonly number[];
-			readonly quarantinedCount: number;
-			readonly warnings: readonly string[];
-		}>();
-		const cleanupOrphanedToolVmsIfPresent = vi.fn(() => toolVmCleanup.promise);
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
-			cleanedUp: false,
-			killedPid: null,
-		}));
-		const startPromise = startGatewayZone(
+		await startGatewayZone(
 			{
 				secretResolver: createOpenClawSecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
@@ -1499,33 +1658,16 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
-				cleanupOrphanedGatewayIfPresent,
-				cleanupOrphanedToolVmsIfPresent,
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
 		);
 
-		await vi.waitFor(() => {
-			expect(cleanupOrphanedToolVmsIfPresent).toHaveBeenCalledTimes(1);
-		});
-		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
-
-		toolVmCleanup.resolve({
-			cleanedCount: 1,
-			killedPids: [28282],
-			quarantinedCount: 0,
-			warnings: [],
-		});
-		await startPromise;
-
-		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledTimes(1);
-		expect(cleanupOrphanedToolVmsIfPresent.mock.invocationCallOrder[0]).toBeLessThan(
-			cleanupOrphanedGatewayIfPresent.mock.invocationCallOrder[0] ?? 0,
-		);
+		expect(preflightOrphanedGatewayCleanupIfPresentMock).not.toHaveBeenCalled();
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 	});
 
-	it('skips tool VM cleanup for worker gateway zones', async () => {
+	it('starts one Worker gateway VM without legacy cleanup phases', async () => {
 		const systemConfig = await createSystemConfig();
 		const workerSystemConfig: LoadedSystemConfig = {
 			...systemConfig,
@@ -1550,15 +1692,29 @@ describe('startGatewayZone', () => {
 			resolve: async () => 'openai-key',
 			resolveAll: async () => ({ OPENAI_API_KEY: 'openai-key' }),
 		};
-		const cleanupOrphanedToolVmsIfPresent = vi.fn(async () => ({
-			cleanedCount: 0,
-			killedPids: [] as readonly number[],
-			quarantinedCount: 0,
-			warnings: [] as readonly string[],
-		}));
+		const taskTitles: string[] = [];
+		const managedVm: ManagedVm = {
+			close: vi.fn(async () =>
+				createCompleteGatewayVmDestroyReceipt('worker-vm-no-legacy-cleanup'),
+			),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('worker-vm-no-legacy-cleanup'),
+			getHostPid: vi.fn(() => 12346),
+			getVmInstance: vi.fn(() => createVmInstanceStub(12346)),
+			id: 'worker-vm-no-legacy-cleanup',
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async () => managedVm);
 
-		await startGatewayZone(
+		const result = await startGatewayZone(
 			{
+				runTask: async (title, run) => {
+					taskTitles.push(title);
+					await run();
+				},
 				secretResolver,
 				systemConfig: workerSystemConfig,
 				zoneId: 'shravan',
@@ -1569,30 +1725,27 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp-worker',
 					imagePath: '/tmp/worker-image',
 				})),
-				cleanupOrphanedToolVmsIfPresent,
-				createManagedVm: vi.fn(async () => ({
-					close: vi.fn(),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(),
-					exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: vi.fn(() => 12346),
-					getVmInstance: vi.fn(() => createVmInstanceStub(12346)),
-					id: 'worker-vm-no-tool-cleanup',
-					setIngressRoutes: vi.fn(),
-				})),
+				createManagedVm,
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				writeGatewayRuntimeRecord: vi.fn(async () => {}),
 			},
 		);
 
-		expect(cleanupOrphanedToolVmsIfPresent).not.toHaveBeenCalled();
+		expect(result.vm).toBe(managedVm);
+		expect(result.processSpec.startCommand).toContain('agent-vm-worker');
+		expect(createManagedVm).toHaveBeenCalledOnce();
+		expect(taskTitles).not.toContain('Preflighting gateway runtime ownership');
+		expect(taskTitles).not.toContain('Cleaning orphaned gateway runtime');
+		expect(cleanupOrphanedToolVmsIfPresentMock).not.toHaveBeenCalled();
+		expect(preflightOrphanedGatewayCleanupIfPresentMock).not.toHaveBeenCalled();
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 	});
 
 	it('resolves only gateway audience secrets while starting the gateway VM', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-gateway-only',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-gateway-only'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-gateway-only')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -1662,7 +1815,8 @@ describe('startGatewayZone', () => {
 		const lifecycleZones: GatewayZoneConfig[] = [];
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -1717,8 +1871,12 @@ describe('startGatewayZone', () => {
 			},
 		);
 
-		expect(lifecycleZones[0]?.runtimePluginConfigs).toEqual({
+		expect(lifecycleZones[0]?.runtimePluginConfigs).toMatchObject({
 			gondolin: {
+				controlSession: {
+					controllerEpoch: 'controller-epoch-test',
+					peerId: 'gateway-shravan',
+				},
 				toolPortal: { configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective' },
 			},
 		});
@@ -1868,7 +2026,8 @@ describe('startGatewayZone', () => {
 		const lifecycleZones: GatewayZoneConfig[] = [];
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp-native',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-native'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-native')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -1945,7 +2104,8 @@ describe('startGatewayZone', () => {
 		});
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp-generated-egress',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-generated-egress'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-generated-egress')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2005,7 +2165,8 @@ describe('startGatewayZone', () => {
 		});
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp-egress',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-egress'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-egress')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2061,7 +2222,8 @@ describe('startGatewayZone', () => {
 		}
 		const managedVm: ManagedVm = {
 			id: 'vm-websocket-policy',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-websocket-policy'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-websocket-policy')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2148,7 +2310,8 @@ describe('startGatewayZone', () => {
 		}
 		const managedVm: ManagedVm = {
 			id: 'vm-tool-websocket-policy',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-tool-websocket-policy'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-tool-websocket-policy')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2219,7 +2382,8 @@ describe('startGatewayZone', () => {
 		}
 		const managedVm: ManagedVm = {
 			id: 'vm-no-websocket-policy',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-no-websocket-policy'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-no-websocket-policy')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2313,7 +2477,8 @@ describe('startGatewayZone', () => {
 		});
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp-mediated-stdio',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-mediated-stdio'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-mediated-stdio')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2414,7 +2579,8 @@ describe('startGatewayZone', () => {
 		});
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp-loopback',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-mcp-loopback'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-mcp-loopback')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2458,7 +2624,8 @@ describe('startGatewayZone', () => {
 	it('merges environmentOverride into vm environment before boot', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-override',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-override'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-override')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -2567,16 +2734,13 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp-worker',
 					imagePath: '/tmp/worker-image',
 				})),
-				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
-					cleanedUp: false,
-					killedPid: null,
-				})),
 				createManagedVm: vi.fn(async () => ({
-					close: vi.fn(),
+					close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('worker-vm-123')),
 					enableIngress: enableIngressMock,
 					enableSsh: vi.fn(),
 					exec: execMock,
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () => createGatewayVmDestroyTarget('worker-vm-123'),
 					getHostPid: vi.fn(() => 12345),
 					getVmInstance: vi.fn(() => createVmInstanceStub(12345)),
 					id: 'worker-vm-123',
@@ -2592,7 +2756,9 @@ describe('startGatewayZone', () => {
 	});
 
 	it('waits for service health instead of OpenClaw readiness during startup', async () => {
-		const closeMock = vi.fn(async () => {});
+		const closeMock = vi.fn(async () =>
+			createCompleteGatewayVmDestroyReceipt('vm-openclaw-live-not-ready'),
+		);
 		const executedCommands: string[] = [];
 		const execMock = vi.fn((command: string) => {
 			executedCommands.push(command);
@@ -2606,6 +2772,7 @@ describe('startGatewayZone', () => {
 		});
 		const managedVm: ManagedVm = {
 			id: 'vm-openclaw-live-not-ready',
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-openclaw-live-not-ready'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
@@ -2647,12 +2814,13 @@ describe('startGatewayZone', () => {
 	});
 
 	it('splits env secrets from http-mediation secrets based on injection config', async () => {
-		const closeMock = vi.fn(async () => {});
+		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-456'));
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const execMock = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
 		const setIngressRoutesMock = vi.fn();
 		const managedVm: ManagedVm = {
 			id: 'vm-456',
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-456'),
 			close: closeMock,
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
@@ -2710,10 +2878,11 @@ describe('startGatewayZone', () => {
 	});
 
 	it('builds tcp hosts with Tool VM SSH entries only', async () => {
-		const closeMock = vi.fn(async () => {});
+		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-789'));
 		const execMock = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
 		const managedVm: ManagedVm = {
 			id: 'vm-789',
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-789'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
@@ -2761,7 +2930,7 @@ describe('startGatewayZone', () => {
 	});
 
 	it('throws with the gateway log tail and closes the vm when service health polling exhausts all attempts', async () => {
-		const closeMock = vi.fn(async () => {});
+		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-timeout'));
 		const execMock = vi.fn((command: string) => {
 			if (command.includes('tail -n 80')) {
 				return createManagedExecProcessStub({
@@ -2775,6 +2944,7 @@ describe('startGatewayZone', () => {
 		});
 		const managedVm: ManagedVm = {
 			id: 'vm-timeout',
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-timeout'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
@@ -2827,7 +2997,8 @@ describe('startGatewayZone', () => {
 		});
 		const managedVm: ManagedVm = {
 			id: 'vm-default-timeout',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-default-timeout'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-default-timeout')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
@@ -2861,9 +3032,10 @@ describe('startGatewayZone', () => {
 	});
 
 	it('throws command stdout and stderr and closes the vm when gateway configuration fails', async () => {
-		const closeMock = vi.fn(async () => {});
+		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-config-failed'));
 		const managedVm: ManagedVm = {
 			id: 'vm-config-failed',
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-config-failed'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
@@ -2910,7 +3082,8 @@ describe('startGatewayZone', () => {
 	it('does not treat non-2xx http responses as ready', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-not-ready-500',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-not-ready-500'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-not-ready-500')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi
@@ -2956,7 +3129,8 @@ describe('startGatewayZone', () => {
 		const execMock = vi.fn((_command: string) => createManagedExecProcessStub());
 		const managedVm: ManagedVm = {
 			id: 'vm-command-health',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-command-health'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-command-health')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
@@ -3012,7 +3186,8 @@ describe('startGatewayZone', () => {
 			"export FUTURE_SECRET='do-not-leak-command-material' && false";
 		const managedVm: ManagedVm = {
 			id: 'vm-failed-bootstrap',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-failed-bootstrap'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-failed-bootstrap')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn((command: string) =>
@@ -3085,7 +3260,8 @@ describe('startGatewayZone', () => {
 		let healthProbeCount = 0;
 		const managedVm: ManagedVm = {
 			id: 'vm-retry-health',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-retry-health'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-retry-health')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
@@ -3109,10 +3285,6 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
-				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
-					cleanedUp: false,
-					killedPid: null,
-				})),
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				loadGatewayLifecycle: createHttpHealthGatewayLifecycle,
@@ -3134,7 +3306,8 @@ describe('startGatewayZone', () => {
 		const execMock = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
 		const managedVm: ManagedVm = {
 			id: 'vm-token',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-token'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-token')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
@@ -3160,10 +3333,6 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
-				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
-					cleanedUp: false,
-					killedPid: null,
-				})),
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
@@ -3183,10 +3352,240 @@ describe('startGatewayZone', () => {
 		);
 	});
 
+	it('reserves exact ownership immediately before VM creation and returns the same ownership handle', async () => {
+		const taskTitles: string[] = [];
+		const ownership = createTestVmOwnershipHarness(
+			'vm-owned-start',
+			createTestGatewayEpochIdentity('vm-owned-start'),
+		);
+		const { managedVm } = createHealthyGatewayVmStub('vm-owned-start', 28_294);
+		const createManagedVm = vi.fn(async () => managedVm);
+
+		const result = await startGatewayZone(
+			{
+				createVmOwnership: ownership.createVmOwnership,
+				runTask: async (title, run) => {
+					taskTitles.push(title);
+					await run();
+				},
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					PERPLEXITY_API_KEY: 'pplx-key',
+				}),
+				systemConfig: await createSystemConfig(),
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		const reservationTaskIndex = taskTitles.indexOf('Reserving gateway VM ownership');
+		expect(taskTitles.slice(reservationTaskIndex, reservationTaskIndex + 2)).toEqual([
+			'Reserving gateway VM ownership',
+			'Booting gateway VM',
+		]);
+		expect(ownership.createVmOwnership.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+			createManagedVm.mock.invocationCallOrder[0] ?? 0,
+		);
+		expect(ownership.createVmOwnership).toHaveBeenCalledWith({
+			controlIdentity: {
+				bootId: testGatewayBootId,
+				generationId: testGatewayGenerationId,
+			},
+			kind: 'gateway-epoch',
+			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			zoneId: 'shravan',
+		});
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				ownershipReservation: ownership.ownershipReservation,
+			}),
+		);
+		expect(result.vmOwnership).toBe(ownership.vmOwnership);
+		expect(ownership.destroyDetached).not.toHaveBeenCalled();
+		expect(ownership.destroyLive).not.toHaveBeenCalled();
+	});
+
+	it('publishes pending VM containment and never configures a late Gateway create after containment starts', async () => {
+		const pendingManagedVm = createDeferredPromise<ManagedVm>();
+		const containmentPublished = createDeferredPromise<void>();
+		const { close, exec, managedVm } = createHealthyGatewayVmStub(
+			'vm-late-after-containment',
+			28_394,
+		);
+		let pendingContainment: PendingGatewayVmCreationContainment | undefined;
+		const gatewayIdentity = createTestGatewayEpochIdentity('vm-late-after-containment');
+		const ownershipReservation = createTestVmOwnershipReservationReference(
+			'vm-late-after-containment',
+			{ role: 'gateway' },
+		);
+		const vmOwnership: VmCreationOwnership = {
+			containPendingCreate: async (containmentOptions) => {
+				const lateCreatedVm = await containmentOptions.pendingCreate;
+				return await containmentOptions.closeLateCreatedVm(lateCreatedVm);
+			},
+			destroyDetached: vi.fn(async () =>
+				createCompleteGatewayVmDestroyReceipt('vm-late-after-containment'),
+			),
+			destroyLive: vi.fn(
+				async (closeLiveVm: () => Promise<VmDestroyReceiptV1>): Promise<VmDestroyReceiptV1> =>
+					await closeLiveVm(),
+			),
+			gatewayIdentity,
+			ownershipReservation,
+		};
+
+		const startPromise = startGatewayZone(
+			{
+				createVmOwnership: vi.fn(async () => vmOwnership),
+				onPendingVmCreation: (containment) => {
+					pendingContainment = containment;
+					containmentPublished.resolve();
+				},
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					PERPLEXITY_API_KEY: 'pplx-key',
+				}),
+				systemConfig: await createSystemConfig(),
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+				createManagedVm: vi.fn(async () => await pendingManagedVm.promise),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+		await containmentPublished.promise;
+		if (pendingContainment === undefined) {
+			throw new Error('Expected pending Gateway VM containment to be published.');
+		}
+		const containmentPromise = pendingContainment.contain();
+
+		pendingManagedVm.resolve(managedVm);
+
+		await expect(containmentPromise).resolves.toEqual(
+			createCompleteGatewayVmDestroyReceipt('vm-late-after-containment'),
+		);
+		await expect(startPromise).rejects.toThrow('Pending Gateway VM creation was contained');
+		expect(close).toHaveBeenCalledOnce();
+		expect(exec).not.toHaveBeenCalled();
+	});
+
+	it('passes exact control identity to ownership and destroys detached reservation when VM creation rejects', async () => {
+		const ownership = createTestVmOwnershipHarness(
+			'vm-create-reject',
+			createTestGatewayEpochIdentity('vm-create-reject', 'controller-epoch-exact'),
+		);
+		const createError = new Error('gateway VM create rejected');
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
+			throw createError;
+		});
+
+		await expect(
+			startGatewayZone(
+				{
+					controlSession: { controllerEpoch: 'controller-epoch-exact' },
+					createVmOwnership: ownership.createVmOwnership,
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+					createManagedVm,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toBe(createError);
+
+		expect(ownership.createVmOwnership).toHaveBeenCalledWith({
+			controlIdentity: {
+				bootId: testGatewayBootId,
+				generationId: testGatewayGenerationId,
+			},
+			kind: 'gateway-epoch',
+			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			zoneId: 'shravan',
+		});
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				ownershipReservation: ownership.ownershipReservation,
+			}),
+		);
+		expect(ownership.destroyDetached).toHaveBeenCalledOnce();
+		expect(ownership.destroyLive).not.toHaveBeenCalled();
+	});
+
+	it('uses live ownership destruction for startup rollback after VM creation succeeds', async () => {
+		const ownership = createTestVmOwnershipHarness(
+			'vm-owned-rollback',
+			createTestGatewayEpochIdentity('vm-owned-rollback'),
+		);
+		const { close, managedVm } = createHealthyGatewayVmStub('vm-owned-rollback', 28_295);
+		const recordError = new Error('runtime record write failed');
+
+		await expect(
+			startGatewayZone(
+				{
+					createVmOwnership: ownership.createVmOwnership,
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					writeGatewayRuntimeRecord: vi.fn(async () => {
+						throw recordError;
+					}),
+				},
+			),
+		).rejects.toBe(recordError);
+
+		expect(ownership.destroyLive).toHaveBeenCalledOnce();
+		expect(close).toHaveBeenCalledOnce();
+		expect(ownership.destroyDetached).not.toHaveBeenCalled();
+	});
+
 	it('closes the booted gateway VM if writing the runtime record fails', async () => {
-		const closeMock = vi.fn(async () => {});
+		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-record-fail'));
 		const managedVm: ManagedVm = {
 			id: 'vm-record-fail',
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-record-fail'),
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
@@ -3214,10 +3613,6 @@ describe('startGatewayZone', () => {
 						fingerprint: 'fp',
 						imagePath: '/tmp/img',
 					})),
-					cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
-						cleanedUp: false,
-						killedPid: null,
-					})),
 					createManagedVm: vi.fn(async () => managedVm),
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 					writeGatewayRuntimeRecord: vi.fn(async () => {
@@ -3230,15 +3625,69 @@ describe('startGatewayZone', () => {
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 
+	it('surfaces incomplete gateway teardown during startup rollback', async () => {
+		const closeMock = vi.fn(async () =>
+			createIncompleteGatewayVmDestroyReceipt('vm-record-fail-incomplete-close'),
+		);
+		const managedVm: ManagedVm = {
+			id: 'vm-record-fail-incomplete-close',
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-record-fail-incomplete-close'),
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28290),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
+		};
+
+		let thrownError: unknown;
+		try {
+			await startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					writeGatewayRuntimeRecord: vi.fn(async () => {
+						throw new Error('disk full');
+					}),
+				},
+			);
+		} catch (error) {
+			thrownError = error;
+		}
+
+		expect(thrownError).toBeInstanceOf(AggregateError);
+		const aggregateError = thrownError as AggregateError;
+		expect(aggregateError.errors).toEqual([
+			expect.objectContaining({ message: 'disk full' }),
+			expect.objectContaining({ message: expect.stringMatching(/incomplete/u) }),
+		]);
+		expect(closeMock).toHaveBeenCalledOnce();
+	});
+
 	it('does not create a gateway VM when final host-state preparation fails', async () => {
 		const prepError = new Error('prep failed: disk full');
 		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
 			throw new Error('createManagedVm should not run after prepareHostState fails');
 		});
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
-			cleanedUp: true,
-			killedPid: 48282,
-		}));
+		const prepareHostState = vi.fn(async () => {
+			throw prepError;
+		});
 
 		await expect(
 			startGatewayZone(
@@ -3257,20 +3706,18 @@ describe('startGatewayZone', () => {
 						fingerprint: 'fp',
 						imagePath: '/tmp/img',
 					})),
-					cleanupOrphanedGatewayIfPresent,
 					createManagedVm,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 					loadGatewayLifecycle: () => ({
 						...createHttpHealthGatewayLifecycle(),
-						prepareHostState: async () => {
-							throw prepError;
-						},
+						prepareHostState,
 					}),
 				},
 			),
 		).rejects.toThrow(prepError.message);
 
-		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledTimes(1);
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
+		expect(prepareHostState).toHaveBeenCalledOnce();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
@@ -3278,7 +3725,8 @@ describe('startGatewayZone', () => {
 		const prepareHostState = vi.fn(async () => {});
 		const managedVm: ManagedVm = {
 			id: 'vm-prep-before-boot',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-prep-before-boot'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-prep-before-boot')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -3305,10 +3753,6 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
-				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
-					cleanedUp: false,
-					killedPid: null,
-				})),
 				createManagedVm,
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				loadGatewayLifecycle: () => ({
@@ -3323,22 +3767,11 @@ describe('startGatewayZone', () => {
 		);
 	});
 
-	it('continues startup when cleanup skips a foreign runtime record after preflight', async () => {
-		// cleanupOrphanedGatewayIfPresent's scoped fences (projectNamespace,
-		// configPath, controllerPort, zoneId, sessionLabel) can find that an
-		// existing runtime record belongs to a DIFFERENT controller. In
-		// 'in-process-recovery' mode it skips that record and returns
-		// cleanedUp:false with a cleanupWarning, WITHOUT signalling the
-		// foreign process. Startup should continue after replacement
-		// prerequisites have already been proven.
-		const cleanupQuarantineMock = vi.fn(async () => ({
-			cleanedUp: false,
-			cleanupWarning: `Gateway runtime record at '/state' belongs to projectNamespace 'other', not 'claw-tests-a1b2c3d4'. Refusing scoped cleanup. Skipping the stale runtime record without signaling its recorded process during in-process recovery.`,
-			killedPid: null,
-		}));
+	it('starts OpenClaw without consulting legacy foreign-runtime cleanup authority', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-quarantine',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-quarantine'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-quarantine')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
@@ -3364,17 +3797,12 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
-				cleanupOrphanedGatewayIfPresent: cleanupQuarantineMock,
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
 		);
 
-		expect(cleanupQuarantineMock).toHaveBeenCalledWith(
-			expect.objectContaining({
-				mode: 'in-process-recovery',
-			}),
-		);
+		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 		expect(result.vm).toBe(managedVm);
 		expect(result.ingress).toEqual({ host: '127.0.0.1', port: 18791 });
 	});
@@ -3436,7 +3864,8 @@ describe('startGatewayZone', () => {
 		}));
 		const managedVm: ManagedVm = {
 			id: 'vm-control-session',
-			close: vi.fn(async () => {}),
+			getDestroyTarget: () => createGatewayVmDestroyTarget('vm-control-session'),
+			close: vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-control-session')),
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),

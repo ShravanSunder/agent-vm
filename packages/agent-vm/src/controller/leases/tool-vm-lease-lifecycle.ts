@@ -1,3 +1,5 @@
+import type { VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
+
 export interface ToolVmLeaseTimingInput {
 	readonly effectiveIdleTtlMs: number;
 	readonly lastUsedAt: number;
@@ -66,9 +68,9 @@ export function classifyToolVmLeaseReleaseRequest(
 }
 
 export function classifyToolVmLeaseCloseOutcome(input: {
-	readonly closeSucceeded: boolean;
+	readonly destroyReceipt: VmDestroyReceiptV1 | undefined;
 }): ToolVmLeaseCloseOutcome {
-	return input.closeSucceeded
+	return input.destroyReceipt?.complete === true
 		? { kind: 'release-tcp-and-delete-record' }
 		: { kind: 'quarantine-tcp-and-preserve-record' };
 }

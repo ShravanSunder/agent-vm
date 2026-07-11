@@ -19,6 +19,7 @@ import {
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
+	type ManagedVmDestroyReceiptV1,
 } from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
@@ -39,7 +40,6 @@ import {
 import { findOpenClawLeaseWorkMountAgentMismatch } from '../controller/leases/lease-work-mount-paths.js';
 import { assertCanonicalOpenClawAgentWorkspaceDir } from '../controller/leases/openclaw-agent-workspace-paths.js';
 import { createOpenClawGatewayLeasePathMapping } from '../controller/leases/openclaw-gateway-lease-path-mapping.js';
-import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
 import {
 	createObservabilityRuntimeConfig,
 	type ObservabilityRuntimeConfig,
@@ -47,6 +47,7 @@ import {
 import { checkObservabilityStackReadiness as checkObservabilityStackReadinessDefault } from '../observability/observability-readiness.js';
 import { assertOpenClawToolVmRequirements } from '../operations/openclaw-deployment-requirements.js';
 import { runTaskWithResult, type RunTaskFn } from '../shared/run-task.js';
+import { assertVmDestructionComplete } from '../shared/vm-destruction-receipt.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 import { runGatewayHealthCheck } from './gateway-health-check.js';
 import {
@@ -54,11 +55,6 @@ import {
 	type GatewayImageBuilderDependencies,
 } from './gateway-image-builder.js';
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';
-import { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
-import {
-	cleanupOrphanedGatewayIfPresent,
-	preflightOrphanedGatewayCleanupIfPresent,
-} from './gateway-recovery.js';
 import {
 	buildGatewayRuntimeRecord,
 	writeGatewayRuntimeRecord,
@@ -72,6 +68,7 @@ import {
 	type GatewayControlSessionConnector,
 	type GatewayControlSessionMaterialFactory,
 	type GatewayManagedVmFactoryOptions,
+	type GatewayZonePreflightOptions,
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
 } from './gateway-zone-support.js';
@@ -165,6 +162,37 @@ function assertOpenClawTcpHostsOverrideDoesNotBypassObservabilityMediation(optio
 				`OpenClaw tcpHostsOverride cannot map observability collector host '${observabilityCollectorHost}'; use mediated OTLP HTTP observability instead.`,
 			);
 		}
+	}
+}
+
+function assertGatewayVmOwnershipMatchesControlIdentity(options: {
+	readonly controlSessionMaterial: GatewayControlSessionMaterial | undefined;
+	readonly vmOwnership: Awaited<ReturnType<StartGatewayZoneOptions['createVmOwnership']>>;
+	readonly zone: GatewayZone;
+}): void {
+	const gatewayIdentity = options.vmOwnership.gatewayIdentity;
+	if (options.zone.gateway.type !== 'openclaw') {
+		if (gatewayIdentity !== undefined) {
+			throw new Error(
+				`Worker zone '${options.zone.id}' received Gateway-epoch ownership instead of standalone ownership.`,
+			);
+		}
+		return;
+	}
+	if (options.controlSessionMaterial === undefined || gatewayIdentity === undefined) {
+		throw new Error(
+			`OpenClaw zone '${options.zone.id}' requires one shared Gateway and control identity.`,
+		);
+	}
+	if (
+		gatewayIdentity.bootId !== options.controlSessionMaterial.bootId ||
+		gatewayIdentity.controllerEpoch !== options.controlSessionMaterial.controllerEpoch ||
+		gatewayIdentity.generationId !== options.controlSessionMaterial.generationId ||
+		gatewayIdentity.zoneId !== options.controlSessionMaterial.zoneId
+	) {
+		throw new Error(
+			`OpenClaw zone '${options.zone.id}' Gateway ownership identity does not match its control material.`,
+		);
 	}
 }
 
@@ -276,15 +304,12 @@ function verifyGatewayControlCallerContextProof(options: {
 
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadinessDefault;
-	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
-	readonly cleanupOrphanedToolVmsIfPresent?: typeof cleanupOrphanedToolVmsIfPresent;
 	readonly connectGatewayControlSession?: GatewayControlSessionConnector;
 	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
 	readonly createGatewayControlSessionMaterial?: GatewayControlSessionMaterialFactory;
 	readonly gatewayReadinessMaxAttempts?: number;
 	readonly gatewayReadinessRetryDelayMs?: number;
 	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
-	readonly preflightOrphanedGatewayCleanupIfPresent?: typeof preflightOrphanedGatewayCleanupIfPresent;
 	// Injected by tests so the gateway record build doesn't shell out to ps
 	// against a fake pid. Production omits this; uses the real default.
 	readonly readProcessIdentity?: (
@@ -769,7 +794,7 @@ async function buildGatewayImageForZone(
 }
 
 export async function preflightGatewayZoneStart(
-	options: StartGatewayZoneOptions,
+	options: GatewayZonePreflightOptions,
 	dependencies: Pick<
 		GatewayManagerDependencies,
 		| 'buildGondolinImage'
@@ -804,7 +829,7 @@ export async function preflightGatewayZoneStart(
 }
 
 async function preflightGatewayZoneStartPrerequisites(
-	options: StartGatewayZoneOptions,
+	options: GatewayZonePreflightOptions,
 	dependencies: Pick<GatewayManagerDependencies, 'loadGatewayLifecycle'> = {},
 ): Promise<GatewayZoneStartPrerequisitePreflightResult> {
 	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
@@ -905,36 +930,7 @@ export async function startGatewayZone(
 			: buildControlSessionRuntimePrivateEnvironment({ material: controlSessionMaterial });
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 
-	// Phase A: prove ownership before doing any other startup work.
-	//
-	// This phase is ordered ahead of secret resolution and image work so
-	// owner-unsafe evidence cannot be masked by a faster 1Password, config,
-	// or build failure. Safety beats diagnostic speed here: if an unknown
-	// process owns the gateway ingress, the controller must report that as
-	// the current blocker and must not proceed toward a second gateway. This
-	// preflight is intentionally non-destructive; actual cleanup happens only
-	// after secrets, host-state preflight, and image build have succeeded.
-	const preflightOrphanedGatewayCleanup = async (): Promise<void> => {
-		const preflightResult = await (
-			dependencies.preflightOrphanedGatewayCleanupIfPresent ??
-			preflightOrphanedGatewayCleanupIfPresent
-		)({
-			configuredIngressPort: zone.gateway.port,
-			expectedConfigPath: options.systemConfig.systemConfigPath,
-			expectedControllerPort: options.systemConfig.host.controllerPort,
-			mode: 'in-process-recovery',
-			projectNamespace: options.systemConfig.host.projectNamespace,
-			stateDir: zone.gateway.stateDir,
-			zoneId: zone.id,
-		});
-		if (preflightResult.ownershipEvidence !== undefined) {
-			throw new GatewayOwnershipUnsafeError({
-				evidence: preflightResult.ownershipEvidence,
-				message: `Gateway ownership is unsafe for zone '${zone.id}': ${preflightResult.ownershipEvidence.kind}.`,
-			});
-		}
-	};
-	await runTaskStep('Preflighting gateway runtime ownership', preflightOrphanedGatewayCleanup);
+	// Phase A: prove standalone Worker ownership before doing any other startup work.
 	if (options.observabilityStartupCheck !== 'skip') {
 		await checkGatewayObservabilityStartup({
 			checkObservabilityStackReadiness:
@@ -955,43 +951,6 @@ export async function startGatewayZone(
 		async () => await preflightGatewayZoneStartPrerequisites(options, dependencies),
 	);
 	const startupSecretResolver = startupPreflight.secretResolver;
-
-	// Phase C cleanup runs after replacement prerequisites are proven. Tool VM
-	// children are cleaned before the gateway so an old gateway cannot continue
-	// issuing work while child recovery runs.
-	const cleanupOrphanedGateway = async (): Promise<void> => {
-		const cleanupResult = await (
-			dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent
-		)({
-			configuredIngressPort: zone.gateway.port,
-			expectedConfigPath: options.systemConfig.systemConfigPath,
-			expectedControllerPort: options.systemConfig.host.controllerPort,
-			mode: 'in-process-recovery',
-			projectNamespace: options.systemConfig.host.projectNamespace,
-			stateDir: zone.gateway.stateDir,
-			zoneId: zone.id,
-		});
-		if (cleanupResult.ownershipEvidence !== undefined) {
-			throw new GatewayOwnershipUnsafeError({
-				evidence: cleanupResult.ownershipEvidence,
-				message: `Gateway ownership is unsafe for zone '${zone.id}': ${cleanupResult.ownershipEvidence.kind}.`,
-			});
-		}
-	};
-	const cleanupOrphanedToolVms = async (): Promise<void> => {
-		if (zone.gateway.type !== 'openclaw') {
-			return;
-		}
-		await (dependencies.cleanupOrphanedToolVmsIfPresent ?? cleanupOrphanedToolVmsIfPresent)({
-			expectedConfigPath: options.systemConfig.systemConfigPath,
-			expectedControllerPort: options.systemConfig.host.controllerPort,
-			mode: 'in-process-recovery',
-			projectNamespace: options.systemConfig.host.projectNamespace,
-			stateDir: zone.gateway.stateDir,
-			tcpBasePort: options.systemConfig.tcpPool.basePort,
-			zoneId: zone.id,
-		});
-	};
 
 	// Phase D: collect startup artifacts in parallel.
 	//
@@ -1069,14 +1028,6 @@ export async function startGatewayZone(
 		resolvedSecretsPromise,
 		imagePromise,
 	]);
-	if (zone.gateway.type === 'openclaw') {
-		await runTaskStep('Cleaning orphaned tool VMs', async () => {
-			await cleanupOrphanedToolVms();
-			await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
-		});
-	} else {
-		await runTaskStep('Cleaning orphaned gateway runtime', cleanupOrphanedGateway);
-	}
 	const runtimePluginConfigs = mergeRuntimePluginConfigs(
 		mergeRuntimePluginConfigs(
 			toolPortalMaterialization.runtimePluginConfigs,
@@ -1148,7 +1099,31 @@ export async function startGatewayZone(
 	await runTaskStep('Preparing host state', async () => {
 		await lifecycle.prepareHostState?.(lifecycleZone, startupSecretResolver);
 	});
-	const managedVm = await runTaskWithResult(
+	const vmOwnership = await runTaskWithResult(
+		runTaskStep,
+		'Reserving gateway VM ownership',
+		async () =>
+			await options.createVmOwnership({
+				...(controlSessionMaterial === undefined
+					? {}
+					: {
+							controlIdentity: {
+								bootId: controlSessionMaterial.bootId,
+								generationId: controlSessionMaterial.generationId,
+							},
+						}),
+				kind: zone.gateway.type === 'openclaw' ? 'gateway-epoch' : 'standalone',
+				sessionLabel: vmSpec.sessionLabel,
+				zoneId: zone.id,
+			}),
+	);
+	assertGatewayVmOwnershipMatchesControlIdentity({
+		controlSessionMaterial,
+		vmOwnership,
+		zone,
+	});
+	let pendingCreateContainment: Promise<ManagedVmDestroyReceiptV1> | undefined;
+	const createManagedVmPromise = runTaskWithResult(
 		runTaskStep,
 		'Booting gateway VM',
 		async () =>
@@ -1158,6 +1133,7 @@ export async function startGatewayZone(
 				env: environment,
 				imagePath: image.imagePath,
 				memory: zone.gateway.memory,
+				ownershipReservation: vmOwnership.ownershipReservation,
 				rootfsMode: vmSpec.rootfsMode,
 				...(vmSpec.runtimeRootfsSize ? { runtimeRootfsSize: vmSpec.runtimeRootfsSize } : {}),
 				onRequest: createGatewayVmRequestHook({ vmSpec, zone: lifecycleZone }),
@@ -1168,7 +1144,57 @@ export async function startGatewayZone(
 				vfsMounts,
 			}),
 	);
+	if (options.onPendingVmCreation !== undefined) {
+		const containPendingCreate = vmOwnership.containPendingCreate;
+		if (containPendingCreate === undefined) {
+			throw new Error(
+				`Gateway VM ownership for zone '${zone.id}' cannot contain a pending creation.`,
+			);
+		}
+		options.onPendingVmCreation({
+			contain(): Promise<ManagedVmDestroyReceiptV1> {
+				pendingCreateContainment ??= containPendingCreate({
+					closeLateCreatedVm: async (lateCreatedVm) => await lateCreatedVm.close(),
+					pendingCreate: createManagedVmPromise,
+				});
+				void pendingCreateContainment.catch(() => undefined);
+				return pendingCreateContainment;
+			},
+		});
+	}
+	let managedVm: ManagedVm;
 	try {
+		managedVm = await createManagedVmPromise;
+		if (pendingCreateContainment !== undefined) {
+			await pendingCreateContainment;
+			throw new Error(`Pending Gateway VM creation was contained for zone '${zone.id}'.`);
+		}
+	} catch (createError) {
+		if (pendingCreateContainment !== undefined) {
+			await pendingCreateContainment;
+			throw createError;
+		}
+		try {
+			await vmOwnership.destroyDetached();
+		} catch (cleanupError) {
+			const aggregateError = new AggregateError(
+				[createError, cleanupError],
+				`Gateway VM creation failed and detached cleanup was not proven for zone '${zone.id}'.`,
+			);
+			aggregateError.cause = createError;
+			throw aggregateError;
+		}
+		throw createError;
+	}
+	try {
+		if (
+			vmOwnership.gatewayIdentity !== undefined &&
+			managedVm.id !== vmOwnership.gatewayIdentity.gatewayVmId
+		) {
+			throw new Error(
+				`Gateway VM '${managedVm.id}' does not match reserved VM '${vmOwnership.gatewayIdentity.gatewayVmId}'.`,
+			);
+		}
 		await runTaskStep('Configuring gateway', async () => {
 			await execGatewayCommand({
 				command: processSpec.bootstrapCommand,
@@ -1314,14 +1340,25 @@ export async function startGatewayZone(
 			ingress,
 			processSpec,
 			vm: managedVm,
+			vmOwnership,
 			zone,
 		};
 	} catch (error) {
-		await managedVm.close().catch((closeError: unknown) => {
-			process.stderr.write(
-				`[agent-vm] Failed to close gateway VM after startup failure: ${closeError instanceof Error ? closeError.message : JSON.stringify(closeError)}\n`,
+		let closeError: unknown;
+		try {
+			const destroyReceipt = await vmOwnership.destroyLive(async () => await managedVm.close());
+			assertVmDestructionComplete(destroyReceipt, `Gateway VM '${managedVm.id}' startup rollback`);
+		} catch (caughtCloseError) {
+			closeError = caughtCloseError;
+		}
+		if (closeError !== undefined) {
+			const aggregateError = new AggregateError(
+				[error, closeError],
+				`Gateway startup failed and VM '${managedVm.id}' teardown was not proven complete.`,
 			);
-		});
+			aggregateError.cause = error;
+			throw aggregateError;
+		}
 		throw error;
 	}
 }

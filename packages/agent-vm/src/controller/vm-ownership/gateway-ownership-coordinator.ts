@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 
 import {
 	createManagedVmOwnershipReservation as createManagedVmOwnershipReservationDefault,
@@ -14,35 +13,33 @@ import {
 	type ManagedVmOwnershipReservationV1,
 } from '@agent-vm/gondolin-adapter';
 
+import { vmDestroyReceiptMatchesTarget } from '../../shared/vm-destruction-receipt.js';
+import {
+	createGatewayDestructionBudget,
+	type GatewayDestructionBudget,
+} from './gateway-destruction-budget.js';
+export {
+	GatewayOwnershipCoordinatorError,
+	type GatewayOwnershipCoordinatorErrorCode,
+} from './gateway-ownership-errors.js';
 import {
 	registerGatewayMembershipBarrier,
 	type GatewayMembershipBarrier,
 	type GatewaySealResult,
 } from './gateway-membership-barrier.js';
+import { GatewayOwnershipCoordinatorError } from './gateway-ownership-errors.js';
+import { createGatewayOwnershipStartupReconciler } from './gateway-ownership-startup-reconciliation.js';
 import {
+	serializeVmOwnershipPrincipal,
 	type GatewayEpochIdentity,
 	type GatewayOwnershipReservationReference,
 	type ToolVmOwnershipReservationReference,
+	type VmOwnershipDeploymentIdentity,
+	type VmOwnershipPrincipal,
 } from './vm-ownership-contracts.js';
 import { createVmOwnershipJournal } from './vm-ownership-journal.js';
-
-export type GatewayOwnershipCoordinatorErrorCode =
-	| 'gateway-already-current'
-	| 'gateway-identity-mismatch'
-	| 'gateway-not-current'
-	| 'owner-unsafe'
-	| 'reservation-identity-mismatch'
-	| 'state-directory-mismatch';
-
-export class GatewayOwnershipCoordinatorError extends Error {
-	public constructor(
-		public readonly code: GatewayOwnershipCoordinatorErrorCode,
-		options: { readonly cause?: unknown } = {},
-	) {
-		super(`Gateway ownership coordinator refused operation: ${code}`, options);
-		this.name = 'GatewayOwnershipCoordinatorError';
-	}
-}
+import { createVmOwnershipReservationAuthority } from './vm-ownership-reservation-authority.js';
+import { listManagedVmOwnershipReservationPaths as listManagedVmOwnershipReservationPathsDefault } from './vm-ownership-reservation-inventory.js';
 
 export interface GatewayOwnershipEpochHandle {
 	readonly gatewayIdentity: GatewayEpochIdentity;
@@ -55,6 +52,12 @@ export interface ProvisionalToolVmOwnershipHandle {
 	destroyDetached(): Promise<ManagedVmDestroyReceiptV1>;
 	destroyLive(
 		closeLiveVm: () => Promise<ManagedVmDestroyReceiptV1>,
+	): Promise<ManagedVmDestroyReceiptV1>;
+}
+
+export interface PendingGatewayDetachedDestroyAttemptPort {
+	attemptGatewayDetachedDestroy(
+		expectedGateway: GatewayEpochIdentity,
 	): Promise<ManagedVmDestroyReceiptV1>;
 }
 
@@ -76,18 +79,32 @@ export interface GatewayOwnershipCoordinator {
 		receipt: ManagedVmDestroyReceiptV1,
 	): Promise<void>;
 	recordGatewayDestroyUnavailable(expectedGateway: GatewayEpochIdentity): Promise<void>;
+	reconcileControllerStartup(
+		zoneIds: readonly string[],
+		options?: { readonly standaloneZoneId?: string },
+	): Promise<void>;
+	resolveGatewayEpoch(expected: {
+		readonly bootId: string;
+		readonly controllerEpoch: string;
+		readonly zoneId: string;
+	}): GatewayEpochIdentity;
 	sealGatewayEpoch(expectedGateway: GatewayEpochIdentity): GatewaySealResult;
 }
 
 interface CreateGatewayOwnershipCoordinatorOptions {
 	readonly controllerEpoch: string;
 	readonly createId: () => string;
+	readonly deploymentIdentity: VmOwnershipDeploymentIdentity;
 	readonly createManagedVmOwnershipReservation?: (
 		options: CreateManagedVmOwnershipReservationOptions,
 	) => Promise<CreatedManagedVmOwnershipReservation>;
 	readonly destroyManagedVmExact?: (
 		target: ManagedVmDestroyTargetV1,
 	) => Promise<ManagedVmDestroyReceiptV1>;
+	readonly destructionBudget?: GatewayDestructionBudget;
+	readonly listManagedVmOwnershipReservationPaths?: (
+		reservationRoot: string,
+	) => Promise<readonly string[]>;
 	readonly nowMs: () => number;
 	readonly readManagedVmDestroyTarget?: (
 		reservationPath: string,
@@ -95,6 +112,7 @@ interface CreateGatewayOwnershipCoordinatorOptions {
 	readonly readManagedVmOwnershipReservation?: (
 		reservationPath: string,
 	) => Promise<ManagedVmOwnershipReservationV1>;
+	readonly standaloneReservationRoot?: string;
 	readonly stateDirectoryForZone: (zoneId: string) => string;
 }
 
@@ -104,45 +122,6 @@ interface CurrentGatewayOwnership {
 	readonly membershipBarrier: GatewayMembershipBarrier;
 	readonly stateDirectory: string;
 	ownerUnsafe: boolean;
-}
-
-function reservationRootForStateDirectory(stateDirectory: string): string {
-	return path.join(path.resolve(stateDirectory), 'vm-ownership', 'reservations');
-}
-
-function reservationPathFor(options: {
-	readonly reservationId: string;
-	readonly stateDirectory: string;
-}): string {
-	return path.join(
-		reservationRootForStateDirectory(options.stateDirectory),
-		options.reservationId,
-		'reservation-v1.json',
-	);
-}
-
-function managedReservationReference(options: {
-	readonly reservationId: string;
-	readonly stateDirectory: string;
-}): ManagedVmOwnershipReservationReferenceV1 {
-	return {
-		expectedContractVersion: 1,
-		expectedRevision: 1,
-		reservationId: options.reservationId,
-		reservationPath: reservationPathFor(options),
-	};
-}
-
-function managedReservationReferencesEqual(
-	left: ManagedVmOwnershipReservationReferenceV1,
-	right: ManagedVmOwnershipReservationReferenceV1,
-): boolean {
-	return (
-		left.expectedContractVersion === right.expectedContractVersion &&
-		left.expectedRevision === right.expectedRevision &&
-		left.reservationId === right.reservationId &&
-		left.reservationPath === right.reservationPath
-	);
 }
 
 function gatewayIdentityMatches(
@@ -159,7 +138,32 @@ function gatewayIdentityMatches(
 	);
 }
 
+function gatewayZonePrincipal(options: {
+	readonly deploymentIdentity: VmOwnershipDeploymentIdentity;
+	readonly zoneId: string;
+}): Extract<VmOwnershipPrincipal, { readonly kind: 'gateway-zone' }> {
+	return {
+		...options.deploymentIdentity,
+		kind: 'gateway-zone',
+		zoneId: options.zoneId,
+	};
+}
+
+function stableAgentPrincipal(options: {
+	readonly agentId: string;
+	readonly deploymentIdentity: VmOwnershipDeploymentIdentity;
+	readonly zoneId: string;
+}): Extract<VmOwnershipPrincipal, { readonly kind: 'stable-agent' }> {
+	return {
+		...options.deploymentIdentity,
+		agentId: options.agentId,
+		kind: 'stable-agent',
+		zoneId: options.zoneId,
+	};
+}
+
 function createGatewayJournalReservationReference(options: {
+	readonly deploymentIdentity: VmOwnershipDeploymentIdentity;
 	readonly gatewayIdentity: GatewayEpochIdentity;
 	readonly reservation: CreatedManagedVmOwnershipReservation;
 }): GatewayOwnershipReservationReference {
@@ -167,18 +171,24 @@ function createGatewayJournalReservationReference(options: {
 		controllerEpoch: options.gatewayIdentity.controllerEpoch,
 		expectedRevision: options.reservation.reference.expectedRevision,
 		parentGateway: null,
-		principal: { kind: 'gateway-zone', zoneId: options.gatewayIdentity.zoneId },
+		principal: gatewayZonePrincipal({
+			deploymentIdentity: options.deploymentIdentity,
+			zoneId: options.gatewayIdentity.zoneId,
+		}),
 		reservationId: options.reservation.reference.reservationId,
 		reservationPath: options.reservation.reference.reservationPath,
 		role: 'gateway',
+		sessionLabel: options.reservation.reservation.sessionLabel,
 		vmId: options.gatewayIdentity.gatewayVmId,
 	};
 }
 
 function createToolJournalReservationReference(options: {
 	readonly agentId: string;
+	readonly deploymentIdentity: VmOwnershipDeploymentIdentity;
 	readonly gatewayIdentity: GatewayEpochIdentity;
 	readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
+	readonly sessionLabel: string;
 	readonly vmId: string;
 }): ToolVmOwnershipReservationReference {
 	return {
@@ -188,93 +198,17 @@ function createToolJournalReservationReference(options: {
 			gatewayEpochId: options.gatewayIdentity.gatewayEpochId,
 			gatewayVmId: options.gatewayIdentity.gatewayVmId,
 		},
-		principal: {
+		principal: stableAgentPrincipal({
 			agentId: options.agentId,
-			kind: 'stable-agent',
+			deploymentIdentity: options.deploymentIdentity,
 			zoneId: options.gatewayIdentity.zoneId,
-		},
+		}),
 		reservationId: options.ownershipReservation.reservationId,
 		reservationPath: options.ownershipReservation.reservationPath,
 		role: 'tool',
+		sessionLabel: options.sessionLabel,
 		vmId: options.vmId,
 	};
-}
-
-function parentGatewaysEqual(
-	left: ManagedVmDestroyTargetV1['parentGateway'],
-	right: ManagedVmDestroyTargetV1['parentGateway'],
-): boolean {
-	return isDeepStrictEqual(left, right);
-}
-
-function receiptExecutableName(executablePath: string): string {
-	const executableName = path.basename(executablePath);
-	return /^[A-Za-z0-9._+-]{1,128}$/u.test(executableName) ? executableName : 'runner';
-}
-
-function destroyReceiptMatchesTarget(
-	receipt: ManagedVmDestroyReceiptV1,
-	target: ManagedVmDestroyTargetV1,
-): boolean {
-	const expectedRunner = {
-		backend: target.runner.backend,
-		discoveryIdentity: target.runner.discoveryIdentity,
-		executableName: receiptExecutableName(target.runner.executable),
-		...(target.runner.pid === undefined ? {} : { pid: target.runner.pid }),
-		...(target.runner.startCookie === undefined ? {} : { startCookie: target.runner.startCookie }),
-	};
-	return (
-		receipt.complete &&
-		receipt.contractVersion === target.contractVersion &&
-		receipt.controllerEpoch === target.controllerEpoch &&
-		parentGatewaysEqual(receipt.parentGateway, target.parentGateway) &&
-		receipt.reservationId === target.reservationId &&
-		receipt.role === target.role &&
-		receipt.vmId === target.vmId &&
-		isDeepStrictEqual(receipt.requestedRunner, expectedRunner)
-	);
-}
-
-function reservationMatchesReference(options: {
-	readonly expected: {
-		readonly controllerEpoch: string;
-		readonly parentGateway: ManagedVmOwnershipReservationV1['parentGateway'];
-		readonly reservationId: string;
-		readonly role: ManagedVmOwnershipReservationV1['role'];
-		readonly vmId: string;
-	};
-	readonly reservation: ManagedVmOwnershipReservationV1;
-}): boolean {
-	return (
-		options.reservation.contractVersion === 1 &&
-		options.reservation.controllerEpoch === options.expected.controllerEpoch &&
-		parentGatewaysEqual(options.reservation.parentGateway, options.expected.parentGateway) &&
-		options.reservation.reservationId === options.expected.reservationId &&
-		options.reservation.role === options.expected.role &&
-		options.reservation.vmId === options.expected.vmId
-	);
-}
-
-function targetMatchesReservation(options: {
-	readonly reservation: ManagedVmOwnershipReservationV1;
-	readonly reservationPath: string;
-	readonly target: ManagedVmDestroyTargetV1;
-}): boolean {
-	const { reservation, reservationPath, target } = options;
-	return (
-		target.contractVersion === reservation.contractVersion &&
-		target.controllerEpoch === reservation.controllerEpoch &&
-		parentGatewaysEqual(target.parentGateway, reservation.parentGateway) &&
-		target.principal === reservation.principal &&
-		target.reservationId === reservation.reservationId &&
-		target.reservationPath === reservationPath &&
-		target.role === reservation.role &&
-		target.sessionLabel === reservation.sessionLabel &&
-		target.vmId === reservation.vmId &&
-		isDeepStrictEqual(target.ownerProcess, reservation.ownerProcess) &&
-		isDeepStrictEqual(target.resources, reservation.resources) &&
-		isDeepStrictEqual(target.runner, reservation.runner)
-	);
 }
 
 function combinePrimaryAndCleanupErrors(options: {
@@ -296,20 +230,40 @@ function isMissingPathError(error: unknown): boolean {
 
 export function createGatewayOwnershipCoordinator(
 	coordinatorOptions: CreateGatewayOwnershipCoordinatorOptions,
-): GatewayOwnershipCoordinator {
+): GatewayOwnershipCoordinator & PendingGatewayDetachedDestroyAttemptPort {
 	const createManagedVmOwnershipReservation =
 		coordinatorOptions.createManagedVmOwnershipReservation ??
 		createManagedVmOwnershipReservationDefault;
-	const destroyManagedVmExact =
-		coordinatorOptions.destroyManagedVmExact ?? destroyManagedVmExactDefault;
+	const destructionBudget =
+		coordinatorOptions.destructionBudget ?? createGatewayDestructionBudget();
+	const listManagedVmOwnershipReservationPaths =
+		coordinatorOptions.listManagedVmOwnershipReservationPaths ??
+		listManagedVmOwnershipReservationPathsDefault;
 	const readManagedVmDestroyTarget =
 		coordinatorOptions.readManagedVmDestroyTarget ?? readManagedVmDestroyTargetDefault;
 	const readManagedVmOwnershipReservation =
 		coordinatorOptions.readManagedVmOwnershipReservation ??
 		readManagedVmOwnershipReservationDefault;
+	const reservationAuthority = createVmOwnershipReservationAuthority({
+		destroyManagedVmExact: coordinatorOptions.destroyManagedVmExact ?? destroyManagedVmExactDefault,
+		destructionBudget,
+		readManagedVmDestroyTarget,
+		readManagedVmOwnershipReservation,
+	});
+	const {
+		destroyManagedVmTarget,
+		destroyMatchingReservation,
+		managedReservationReference,
+		readMatchingDestroyInputs,
+		referencesEqual: managedReservationReferencesEqual,
+		reservationPathFor,
+		reservationRootForStateDirectory,
+	} = reservationAuthority;
 	const currentGatewayByZone = new Map<string, CurrentGatewayOwnership>();
 	const gatewayBeginInFlightZones = new Set<string>();
 	const ownerUnsafeZones = new Set<string>();
+	let startupReconciliationInFlight = false;
+	const startupReconciliationInFlightZones = new Set<string>();
 	const stateDirectoryByZone = new Map<string, string>();
 
 	const requireCurrentGateway = (zoneId: string): CurrentGatewayOwnership => {
@@ -336,6 +290,19 @@ export function createGatewayOwnershipCoordinator(
 		return currentGateway;
 	};
 
+	const requireMatchingGatewayForContainment = (
+		expectedGateway: GatewayEpochIdentity,
+	): CurrentGatewayOwnership => {
+		const currentGateway = currentGatewayByZone.get(expectedGateway.zoneId);
+		if (currentGateway === undefined) {
+			throw new GatewayOwnershipCoordinatorError('gateway-not-current');
+		}
+		if (!gatewayIdentityMatches(currentGateway.gatewayIdentity, expectedGateway)) {
+			throw new GatewayOwnershipCoordinatorError('gateway-identity-mismatch');
+		}
+		return currentGateway;
+	};
+
 	const assertCanonicalStateDirectory = (zoneId: string, stateDirectory: string): string => {
 		const canonicalStateDirectory = path.resolve(stateDirectory);
 		const existingStateDirectory = stateDirectoryByZone.get(zoneId);
@@ -354,55 +321,49 @@ export function createGatewayOwnershipCoordinator(
 		ownerUnsafeZones.add(currentGateway.gatewayIdentity.zoneId);
 	};
 
-	const readMatchingDestroyInputs = async (options: {
-		readonly controllerEpoch: string;
-		readonly parentGateway: ManagedVmOwnershipReservationV1['parentGateway'];
-		readonly reservationId: string;
-		readonly reservationPath: string;
-		readonly role: ManagedVmOwnershipReservationV1['role'];
-		readonly vmId: string;
-	}): Promise<{
-		readonly reservation: ManagedVmOwnershipReservationV1;
-		readonly target: ManagedVmDestroyTargetV1;
-	}> => {
-		const [reservation, target] = await Promise.all([
-			readManagedVmOwnershipReservation(options.reservationPath),
-			readManagedVmDestroyTarget(options.reservationPath),
-		]);
-		if (
-			!reservationMatchesReference({ expected: options, reservation }) ||
-			!targetMatchesReservation({
-				reservation,
-				reservationPath: options.reservationPath,
-				target,
-			})
-		) {
-			throw new GatewayOwnershipCoordinatorError('reservation-identity-mismatch');
-		}
-		return { reservation, target };
-	};
-
-	const destroyMatchingReservation = async (options: {
-		readonly controllerEpoch: string;
-		readonly parentGateway: ManagedVmOwnershipReservationV1['parentGateway'];
-		readonly reservationId: string;
-		readonly reservationPath: string;
-		readonly role: ManagedVmOwnershipReservationV1['role'];
-		readonly vmId: string;
-	}): Promise<{
-		readonly receipt: ManagedVmDestroyReceiptV1;
-		readonly reservationRevision: number;
-	}> => {
-		const { reservation, target } = await readMatchingDestroyInputs(options);
-		const receipt = await destroyManagedVmExact(target);
-		if (!destroyReceiptMatchesTarget(receipt, target)) {
-			throw new GatewayOwnershipCoordinatorError('owner-unsafe');
-		}
-		return { receipt, reservationRevision: reservation.revision };
+	const startupReconciler = createGatewayOwnershipStartupReconciler({
+		assertCanonicalStateDirectory,
+		authority: reservationAuthority,
+		deploymentIdentity: coordinatorOptions.deploymentIdentity,
+		destructionBudget,
+		isZoneAlreadyCurrent: (zoneId) =>
+			currentGatewayByZone.has(zoneId) || gatewayBeginInFlightZones.has(zoneId),
+		listReservationPaths: listManagedVmOwnershipReservationPaths,
+		markZoneOwnerUnsafe: (zoneId) => ownerUnsafeZones.add(zoneId),
+		nowMs: coordinatorOptions.nowMs,
+		readReservation: readManagedVmOwnershipReservation,
+		readTarget: readManagedVmDestroyTarget,
+		...(coordinatorOptions.standaloneReservationRoot === undefined
+			? {}
+			: { standaloneReservationRoot: coordinatorOptions.standaloneReservationRoot }),
+		stateDirectoryForZone: coordinatorOptions.stateDirectoryForZone,
+	});
+	const attemptGatewayDetachedDestroy = async (
+		expectedGateway: GatewayEpochIdentity,
+	): Promise<ManagedVmDestroyReceiptV1> => {
+		const currentGateway = requireMatchingGatewayForContainment(expectedGateway);
+		const destroyed = await destroyMatchingReservation({
+			controllerEpoch: currentGateway.gatewayIdentity.controllerEpoch,
+			parentGateway: null,
+			principal: gatewayZonePrincipal({
+				deploymentIdentity: coordinatorOptions.deploymentIdentity,
+				zoneId: currentGateway.gatewayIdentity.zoneId,
+			}),
+			reservationId: currentGateway.gatewayReservation.reference.reservationId,
+			reservationPath: currentGateway.gatewayReservation.reference.reservationPath,
+			role: 'gateway',
+			sessionLabel: currentGateway.gatewayReservation.reservation.sessionLabel,
+			vmId: currentGateway.gatewayIdentity.gatewayVmId,
+		});
+		return destroyed.receipt;
 	};
 
 	return {
+		attemptGatewayDetachedDestroy,
 		async beginGatewayEpoch(beginOptions): Promise<GatewayOwnershipEpochHandle> {
+			if (startupReconciliationInFlightZones.has(beginOptions.zoneId)) {
+				throw new GatewayOwnershipCoordinatorError('startup-reconciliation-in-progress');
+			}
 			const existingGateway = currentGatewayByZone.get(beginOptions.zoneId);
 			if (existingGateway?.membershipBarrier.snapshot().state === 'owner-unsafe') {
 				throw new GatewayOwnershipCoordinatorError('owner-unsafe');
@@ -426,6 +387,10 @@ export function createGatewayOwnershipCoordinator(
 				generationId: beginOptions.generationId,
 				zoneId: beginOptions.zoneId,
 			} satisfies GatewayEpochIdentity;
+			const gatewayPrincipal = gatewayZonePrincipal({
+				deploymentIdentity: coordinatorOptions.deploymentIdentity,
+				zoneId: beginOptions.zoneId,
+			});
 			const reservationId = `gateway-reservation-${identityToken}`;
 			gatewayBeginInFlightZones.add(beginOptions.zoneId);
 			try {
@@ -434,10 +399,7 @@ export function createGatewayOwnershipCoordinator(
 					gatewayReservation = await createManagedVmOwnershipReservation({
 						controllerEpoch: coordinatorOptions.controllerEpoch,
 						parentGateway: null,
-						principal: JSON.stringify({
-							kind: 'gateway-zone',
-							zoneId: beginOptions.zoneId,
-						}),
+						principal: serializeVmOwnershipPrincipal(gatewayPrincipal),
 						reservationId,
 						reservationRoot: reservationRootForStateDirectory(stateDirectory),
 						role: 'gateway',
@@ -450,9 +412,11 @@ export function createGatewayOwnershipCoordinator(
 						await destroyMatchingReservation({
 							controllerEpoch: coordinatorOptions.controllerEpoch,
 							parentGateway: null,
+							principal: gatewayPrincipal,
 							reservationId,
 							reservationPath: reservationPathFor({ reservationId, stateDirectory }),
 							role: 'gateway',
+							sessionLabel: beginOptions.sessionLabel,
 							vmId: gatewayIdentity.gatewayVmId,
 						});
 					} catch (cleanupError) {
@@ -470,8 +434,8 @@ export function createGatewayOwnershipCoordinator(
 				const expectedReference = managedReservationReference({ reservationId, stateDirectory });
 				if (!managedReservationReferencesEqual(gatewayReservation.reference, expectedReference)) {
 					try {
-						const receipt = await destroyManagedVmExact(gatewayReservation.target);
-						if (!destroyReceiptMatchesTarget(receipt, gatewayReservation.target)) {
+						const receipt = await destroyManagedVmTarget(gatewayReservation.target);
+						if (!vmDestroyReceiptMatchesTarget(receipt, gatewayReservation.target)) {
 							throw new GatewayOwnershipCoordinatorError('owner-unsafe');
 						}
 					} catch (cleanupError) {
@@ -487,9 +451,11 @@ export function createGatewayOwnershipCoordinator(
 					const persistedGateway = await readMatchingDestroyInputs({
 						controllerEpoch: gatewayIdentity.controllerEpoch,
 						parentGateway: null,
+						principal: gatewayPrincipal,
 						reservationId,
 						reservationPath: expectedReference.reservationPath,
 						role: 'gateway',
+						sessionLabel: beginOptions.sessionLabel,
 						vmId: gatewayIdentity.gatewayVmId,
 					});
 					if (persistedGateway.reservation.revision !== expectedReference.expectedRevision) {
@@ -498,8 +464,8 @@ export function createGatewayOwnershipCoordinator(
 				} catch (primaryError) {
 					const cleanupErrors: unknown[] = [];
 					try {
-						const receipt = await destroyManagedVmExact(gatewayReservation.target);
-						if (!destroyReceiptMatchesTarget(receipt, gatewayReservation.target)) {
+						const receipt = await destroyManagedVmTarget(gatewayReservation.target);
+						if (!vmDestroyReceiptMatchesTarget(receipt, gatewayReservation.target)) {
 							throw new GatewayOwnershipCoordinatorError('owner-unsafe');
 						}
 					} catch (cleanupError) {
@@ -521,6 +487,7 @@ export function createGatewayOwnershipCoordinator(
 					membershipBarrier = await registerGatewayMembershipBarrier({
 						gateway: gatewayIdentity,
 						gatewayReservation: createGatewayJournalReservationReference({
+							deploymentIdentity: coordinatorOptions.deploymentIdentity,
 							gatewayIdentity,
 							reservation: gatewayReservation,
 						}),
@@ -529,8 +496,8 @@ export function createGatewayOwnershipCoordinator(
 				} catch (primaryError) {
 					const cleanupErrors: unknown[] = [];
 					try {
-						const receipt = await destroyManagedVmExact(gatewayReservation.target);
-						if (!destroyReceiptMatchesTarget(receipt, gatewayReservation.target)) {
+						const receipt = await destroyManagedVmTarget(gatewayReservation.target);
+						if (!vmDestroyReceiptMatchesTarget(receipt, gatewayReservation.target)) {
 							throw new GatewayOwnershipCoordinatorError('owner-unsafe');
 						}
 					} catch (cleanupError) {
@@ -563,6 +530,11 @@ export function createGatewayOwnershipCoordinator(
 			const identityToken = coordinatorOptions.createId();
 			const reservationId = `tool-reservation-${identityToken}`;
 			const vmId = `tool-vm-${identityToken}`;
+			const toolPrincipal = stableAgentPrincipal({
+				agentId: admitOptions.agentId,
+				deploymentIdentity: coordinatorOptions.deploymentIdentity,
+				zoneId: currentGateway.gatewayIdentity.zoneId,
+			});
 			const ownershipReservation = managedReservationReference({
 				reservationId,
 				stateDirectory: currentGateway.stateDirectory,
@@ -571,8 +543,10 @@ export function createGatewayOwnershipCoordinator(
 				currentGateway.gatewayIdentity,
 				createToolJournalReservationReference({
 					agentId: admitOptions.agentId,
+					deploymentIdentity: coordinatorOptions.deploymentIdentity,
 					gatewayIdentity: currentGateway.gatewayIdentity,
 					ownershipReservation,
+					sessionLabel: admitOptions.sessionLabel,
 					vmId,
 				}),
 			);
@@ -582,11 +556,7 @@ export function createGatewayOwnershipCoordinator(
 					epoch: currentGateway.gatewayIdentity.gatewayEpochId,
 					vmId: currentGateway.gatewayIdentity.gatewayVmId,
 				},
-				principal: JSON.stringify({
-					agentId: admitOptions.agentId,
-					kind: 'stable-agent',
-					zoneId: currentGateway.gatewayIdentity.zoneId,
-				}),
+				principal: serializeVmOwnershipPrincipal(toolPrincipal),
 				reservationId,
 				reservationRoot: reservationRootForStateDirectory(currentGateway.stateDirectory),
 				role: 'tool',
@@ -600,9 +570,11 @@ export function createGatewayOwnershipCoordinator(
 						epoch: currentGateway.gatewayIdentity.gatewayEpochId,
 						vmId: currentGateway.gatewayIdentity.gatewayVmId,
 					},
+					principal: toolPrincipal,
 					reservationId,
 					reservationPath: ownershipReservation.reservationPath,
 					role: 'tool',
+					sessionLabel: admitOptions.sessionLabel,
 					vmId,
 				});
 				return destroyed.reservationRevision;
@@ -625,9 +597,11 @@ export function createGatewayOwnershipCoordinator(
 								epoch: currentGateway.gatewayIdentity.gatewayEpochId,
 								vmId: currentGateway.gatewayIdentity.gatewayVmId,
 							},
+							principal: toolPrincipal,
 							reservationId,
 							reservationPath: ownershipReservation.reservationPath,
 							role: 'tool',
+							sessionLabel: admitOptions.sessionLabel,
 							vmId,
 						});
 						if (persistedTool.reservation.revision !== ownershipReservation.expectedRevision) {
@@ -660,8 +634,8 @@ export function createGatewayOwnershipCoordinator(
 				let observedReservationRevision = ownershipReservation.expectedRevision;
 				try {
 					if (creationResult.status === 'fulfilled' && !referenceMatches) {
-						const receipt = await destroyManagedVmExact(creationResult.value.target);
-						if (!destroyReceiptMatchesTarget(receipt, creationResult.value.target)) {
+						const receipt = await destroyManagedVmTarget(creationResult.value.target);
+						if (!vmDestroyReceiptMatchesTarget(receipt, creationResult.value.target)) {
 							throw new GatewayOwnershipCoordinatorError('owner-unsafe');
 						}
 						observedReservationRevision = creationResult.value.reservation.revision;
@@ -731,17 +705,22 @@ export function createGatewayOwnershipCoordinator(
 							epoch: currentGateway.gatewayIdentity.gatewayEpochId,
 							vmId: currentGateway.gatewayIdentity.gatewayVmId,
 						},
+						principal: toolPrincipal,
 						reservationId,
 						reservationPath: ownershipReservation.reservationPath,
 						role: 'tool',
+						sessionLabel: admitOptions.sessionLabel,
 						vmId,
 					});
 					observedReservationRevision = destroyInputs.reservation.revision;
 					const receipt =
 						closeLiveVm === undefined
-							? await destroyManagedVmExact(destroyInputs.target)
-							: await closeLiveVm();
-					if (!destroyReceiptMatchesTarget(receipt, destroyInputs.target)) {
+							? await destroyManagedVmTarget(destroyInputs.target)
+							: await destructionBudget.runTarget(
+									`tool VM '${destroyInputs.target.vmId}'`,
+									closeLiveVm,
+								);
+					if (!vmDestroyReceiptMatchesTarget(receipt, destroyInputs.target)) {
 						throw new GatewayOwnershipCoordinatorError('owner-unsafe');
 					}
 					await admission.recordDestroyDisposition({
@@ -805,21 +784,15 @@ export function createGatewayOwnershipCoordinator(
 			await sealed.barrier;
 			await currentGateway.membershipBarrier.beginGatewayDestroying(expectedGateway);
 			try {
-				const destroyed = await destroyMatchingReservation({
-					controllerEpoch: currentGateway.gatewayIdentity.controllerEpoch,
-					parentGateway: null,
-					reservationId: currentGateway.gatewayReservation.reference.reservationId,
-					reservationPath: currentGateway.gatewayReservation.reference.reservationPath,
-					role: 'gateway',
-					vmId: currentGateway.gatewayIdentity.gatewayVmId,
-				});
+				const receipt = await attemptGatewayDetachedDestroy(expectedGateway);
 				await currentGateway.membershipBarrier.recordGatewayDestroyDisposition(expectedGateway, {
 					complete: true,
 				});
 				currentGatewayByZone.delete(expectedGateway.zoneId);
-				return destroyed.receipt;
+				return receipt;
 			} catch (primaryError) {
 				const cleanupErrors: unknown[] = [];
+				markCurrentGatewayOwnerUnsafe(currentGateway);
 				try {
 					await currentGateway.membershipBarrier.recordGatewayDestroyDisposition(expectedGateway, {
 						complete: false,
@@ -845,14 +818,22 @@ export function createGatewayOwnershipCoordinator(
 				const { target } = await readMatchingDestroyInputs({
 					controllerEpoch: currentGateway.gatewayIdentity.controllerEpoch,
 					parentGateway: null,
+					principal: gatewayZonePrincipal({
+						deploymentIdentity: coordinatorOptions.deploymentIdentity,
+						zoneId: currentGateway.gatewayIdentity.zoneId,
+					}),
 					reservationId: currentGateway.gatewayReservation.reference.reservationId,
 					reservationPath: currentGateway.gatewayReservation.reference.reservationPath,
 					role: 'gateway',
+					sessionLabel: currentGateway.gatewayReservation.reservation.sessionLabel,
 					vmId: currentGateway.gatewayIdentity.gatewayVmId,
 				});
-				receiptMatches = destroyReceiptMatchesTarget(receipt, target);
+				receiptMatches = vmDestroyReceiptMatchesTarget(receipt, target);
 			} catch {
 				receiptMatches = false;
+			}
+			if (!receiptMatches) {
+				markCurrentGatewayOwnerUnsafe(currentGateway);
 			}
 			await currentGateway.membershipBarrier.recordGatewayDestroyDisposition(expectedGateway, {
 				complete: receiptMatches,
@@ -864,11 +845,52 @@ export function createGatewayOwnershipCoordinator(
 		},
 		async recordGatewayDestroyUnavailable(expectedGateway): Promise<void> {
 			const currentGateway = requireExpectedGateway(expectedGateway);
+			markCurrentGatewayOwnerUnsafe(currentGateway);
 			await currentGateway.membershipBarrier.beginGatewayDestroying(expectedGateway);
 			await currentGateway.membershipBarrier.recordGatewayDestroyDisposition(expectedGateway, {
 				complete: false,
 			});
 			throw new GatewayOwnershipCoordinatorError('owner-unsafe');
+		},
+		async reconcileControllerStartup(zoneIds, reconciliationOptions): Promise<void> {
+			const requestedZoneIds = [...zoneIds];
+			const uniqueZoneIds = new Set(requestedZoneIds);
+			if (
+				startupReconciliationInFlight ||
+				uniqueZoneIds.size !== requestedZoneIds.length ||
+				requestedZoneIds.some((zoneId) => startupReconciliationInFlightZones.has(zoneId))
+			) {
+				throw new GatewayOwnershipCoordinatorError('startup-reconciliation-in-progress');
+			}
+			startupReconciliationInFlight = true;
+			for (const zoneId of requestedZoneIds) {
+				startupReconciliationInFlightZones.add(zoneId);
+			}
+			try {
+				await startupReconciler.reconcile(requestedZoneIds, reconciliationOptions);
+			} finally {
+				for (const zoneId of requestedZoneIds) {
+					startupReconciliationInFlightZones.delete(zoneId);
+				}
+				startupReconciliationInFlight = false;
+			}
+		},
+		resolveGatewayEpoch(expected): GatewayEpochIdentity {
+			const currentGateway = requireCurrentGateway(expected.zoneId);
+			const membershipState = currentGateway.membershipBarrier.snapshot().state;
+			if (membershipState === 'owner-unsafe') {
+				throw new GatewayOwnershipCoordinatorError('owner-unsafe');
+			}
+			if (membershipState !== 'admitting') {
+				throw new GatewayOwnershipCoordinatorError('gateway-not-admitting');
+			}
+			if (
+				currentGateway.gatewayIdentity.bootId !== expected.bootId ||
+				currentGateway.gatewayIdentity.controllerEpoch !== expected.controllerEpoch
+			) {
+				throw new GatewayOwnershipCoordinatorError('gateway-identity-mismatch');
+			}
+			return structuredClone(currentGateway.gatewayIdentity);
 		},
 		sealGatewayEpoch(expectedGateway): GatewaySealResult {
 			return requireExpectedGateway(expectedGateway).membershipBarrier.sealGatewayEpoch(

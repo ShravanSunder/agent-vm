@@ -4,17 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm, VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 import type { ControlSessionClient, WorkerControlRpcOperations } from './control-session/index.js';
+import type { VmCreationOwnership } from './vm-ownership/vm-creation-ownership.js';
 import type { WorkerTaskInput } from './worker-task-runner.js';
 import type { WorkerTaskPollClock } from './worker-task-runner.js';
 
@@ -55,6 +60,41 @@ const completedTaskStateSchema = z.object({
 const closedTaskStateSchema = z.object({
 	status: z.literal('closed'),
 });
+
+const workerControllerEpoch = 'worker-controller-epoch-test';
+const workerVmId = 'worker-vm-1';
+const completeVmDestroyReceipt = createCompleteVmDestroyReceipt(workerVmId, {
+	controllerEpoch: workerControllerEpoch,
+	role: 'standalone',
+});
+const incompleteVmDestroyReceipt = {
+	...completeVmDestroyReceipt,
+	complete: false,
+	resources: {
+		...completeVmDestroyReceipt.resources,
+		exactRunner: { status: 'unproven', reason: 'runner-resistant' },
+	},
+} satisfies VmDestroyReceiptV1;
+
+function createStandaloneVmOwnershipStub(): {
+	readonly destroyLiveMock: Mock<VmCreationOwnership['destroyLive']>;
+	readonly vmOwnership: VmCreationOwnership;
+} {
+	const destroyLiveMock = vi.fn<VmCreationOwnership['destroyLive']>(
+		async (closeLiveVm) => await closeLiveVm(),
+	);
+	return {
+		destroyLiveMock,
+		vmOwnership: {
+			destroyDetached: vi.fn(async () => completeVmDestroyReceipt),
+			destroyLive: destroyLiveMock,
+			ownershipReservation: createTestVmOwnershipReservationReference(workerVmId, {
+				controllerEpoch: workerControllerEpoch,
+				role: 'standalone',
+			}),
+		},
+	};
+}
 
 function buildWorkerConfigInput(): Record<string, unknown> {
 	return {
@@ -180,6 +220,7 @@ const systemConfig = {
 
 async function executePreparedWorkerTaskForTest(options: {
 	readonly input: WorkerTaskInput;
+	readonly onTaskFinished?: (zoneId: string, taskId: string) => Promise<void>;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
 	readonly secretResolver: { resolve: () => Promise<string>; resolveAll: () => Promise<{}> };
@@ -198,6 +239,8 @@ async function executePreparedWorkerTaskForTest(options: {
 		zoneId: options.zoneId,
 	});
 	return await executeWorkerTask(prepared, {
+		...(options.onTaskFinished ? { onTaskFinished: options.onTaskFinished } : {}),
+		controllerEpoch: workerControllerEpoch,
 		secretResolver: options.secretResolver,
 		systemConfig: options.systemConfig,
 		pollClock: options.pollClock ?? createInstantPollClock(),
@@ -281,7 +324,8 @@ function createWorkerControlOperationsStub(): WorkerControlRpcOperations {
 describe('worker-task-runner', () => {
 	let tempDir: string;
 	let managedVm: ManagedVm;
-	let managedVmCloseMock: Mock<() => Promise<void>>;
+	let managedVmCloseMock: Mock<() => Promise<VmDestroyReceiptV1>>;
+	let vmOwnershipDestroyLiveMock: Mock<VmCreationOwnership['destroyLive']>;
 
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runner-'));
@@ -313,19 +357,26 @@ describe('worker-task-runner', () => {
 			throw new Error(`Unexpected fetch ${url}`);
 		}) as typeof fetch;
 
-		managedVmCloseMock = vi.fn(async (): Promise<void> => {});
+		managedVmCloseMock = vi.fn(async () => completeVmDestroyReceipt);
 		managedVm = {
-			id: 'worker-vm-1',
+			id: workerVmId,
 			close: async () => await managedVmCloseMock(),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222, user: 'root' })),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
+			getDestroyTarget: () =>
+				createTestVmDestroyTarget(workerVmId, {
+					controllerEpoch: workerControllerEpoch,
+					role: 'standalone',
+				}),
 			setIngressRoutes: vi.fn(),
 			getHostPid: () => null,
 			getVmInstance: vi.fn(),
 		};
 
+		const standaloneOwnership = createStandaloneVmOwnershipStub();
+		vmOwnershipDestroyLiveMock = standaloneOwnership.destroyLiveMock;
 		startGatewayZoneMock.mockResolvedValue({
 			image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
 			ingress: { host: '127.0.0.1', port: 18791 },
@@ -338,6 +389,7 @@ describe('worker-task-runner', () => {
 				logPath: '/tmp/worker.log',
 			},
 			vm: managedVm,
+			vmOwnership: standaloneOwnership.vmOwnership,
 			zone,
 		});
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
@@ -399,6 +451,51 @@ describe('worker-task-runner', () => {
 				},
 			}),
 		);
+		expect(vmOwnershipDestroyLiveMock).toHaveBeenCalledOnce();
+		expect(managedVmCloseMock).toHaveBeenCalledOnce();
+	});
+
+	it('reserves standalone Worker VMs under the deployment-global runtime root', async () => {
+		// Arrange / Act
+		await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-shared-ownership-root',
+				prompt: 'verify shared ownership root',
+				repos: [],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+		const startOptions = startGatewayZoneMock.mock.calls[0]?.[0] as
+			| StartGatewayZoneOptions
+			| undefined;
+		if (startOptions === undefined) {
+			throw new Error('Worker task did not invoke gateway startup.');
+		}
+		const vmOwnership = await startOptions.createVmOwnership({
+			kind: 'standalone',
+			sessionLabel: 'worker-shared-ownership-root',
+			zoneId: 'shravan',
+		});
+
+		// Assert
+		const expectedReservationRoot = path.join(
+			systemConfig.runtimeDir,
+			'vm-ownership',
+			'standalone-reservations',
+		);
+		expect(path.dirname(path.dirname(vmOwnership.ownershipReservation.reservationPath))).toBe(
+			expectedReservationRoot,
+		);
+		expect(vmOwnership.ownershipReservation.reservationPath).not.toContain(
+			`${path.sep}worker-tasks${path.sep}`,
+		);
+		await fs.rm(path.join(systemConfig.runtimeDir, 'vm-ownership'), {
+			force: true,
+			recursive: true,
+		});
 	});
 
 	it('writes effective worker config into per-task state during pre-start', async () => {
@@ -1593,6 +1690,7 @@ describe('worker-task-runner', () => {
 		});
 
 		const result = await executeWorkerTask(prepared, {
+			controllerEpoch: workerControllerEpoch,
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
 		});
@@ -1713,6 +1811,7 @@ describe('worker-task-runner', () => {
 
 		const result = await executeWorkerTask(prepared, {
 			connectWorkerControlSession,
+			controllerEpoch: workerControllerEpoch,
 			controlSession: {
 				controllerEpoch: 'worker-epoch-a',
 				operations: createWorkerControlOperationsStub(),
@@ -1765,6 +1864,7 @@ describe('worker-task-runner', () => {
 		await expect(
 			executeWorkerTask(prepared, {
 				connectWorkerControlSession,
+				controllerEpoch: workerControllerEpoch,
 				controlSession: {
 					controllerEpoch: 'worker-epoch-a',
 					operations: createWorkerControlOperationsStub(),
@@ -1818,6 +1918,7 @@ describe('worker-task-runner', () => {
 		await expect(
 			executeWorkerTask(prepared, {
 				connectWorkerControlSession,
+				controllerEpoch: workerControllerEpoch,
 				controlSession: {
 					controllerEpoch: 'worker-epoch-a',
 					operations: createWorkerControlOperationsStub(),
@@ -1896,7 +1997,7 @@ describe('worker-task-runner', () => {
 		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
-	it('aggregates the primary task failure when shutdown hooks also fail', async () => {
+	it('preserves task resources when primary failure is followed by unproven VM destruction', async () => {
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url =
 				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -1940,11 +2041,37 @@ describe('worker-task-runner', () => {
 		expect(aggregateError.message).toMatch(/cleanup also failed/u);
 		expect(aggregateError.errors).toEqual([
 			expect.objectContaining({ message: expect.stringMatching(/Worker task timed out/u) }),
-			expect.objectContaining({ message: 'vm close failed' }),
-			expect.objectContaining({ message: 'compose cleanup failed' }),
+			expect.objectContaining({
+				cause: expect.objectContaining({ message: 'vm close failed' }),
+				message: expect.stringMatching(/did not prove exact destruction/u),
+			}),
 		]);
 		expect(managedVmCloseMock).toHaveBeenCalled();
-		expect(stopRepoResourceProvidersMock).toHaveBeenCalled();
+		expect(stopRepoResourceProvidersMock).not.toHaveBeenCalled();
+	});
+
+	it('reports Worker VM cleanup failure when close resolves with an incomplete receipt', async () => {
+		managedVmCloseMock.mockResolvedValueOnce(incompleteVmDestroyReceipt);
+		const onTaskFinished = vi.fn(async () => {});
+
+		await expect(
+			executePreparedWorkerTaskForTest({
+				input: {
+					requestTaskId: 'request-task-incomplete-worker-close',
+					prompt: 'fix login',
+					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+					context: {},
+				},
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				zoneId: 'shravan',
+				onTaskFinished,
+			}),
+		).rejects.toThrow(/incomplete/u);
+
+		expect(managedVmCloseMock).toHaveBeenCalledOnce();
+		expect(onTaskFinished).not.toHaveBeenCalled();
+		expect(stopRepoResourceProvidersMock).not.toHaveBeenCalled();
 	});
 
 	it('aggregates provider, resource-directory, and runtime cleanup failures after shutdown', async () => {

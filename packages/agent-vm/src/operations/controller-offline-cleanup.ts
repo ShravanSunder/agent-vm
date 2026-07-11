@@ -1,17 +1,15 @@
+import { randomUUID } from 'node:crypto';
+
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import {
-	cleanupOrphanedToolVmsIfPresent,
-	type ToolVmCleanupResult,
-} from '../controller/leases/tool-vm-recovery.js';
-import { cleanupOrphanedGatewayIfPresent } from '../gateway/gateway-recovery.js';
+import { acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault } from '../controller/vm-ownership/controller-ownership-lock.js';
+import { createGatewayOwnershipCoordinator } from '../controller/vm-ownership/gateway-ownership-coordinator.js';
+import { vmOwnershipDeploymentIdentityForSystemConfig } from '../controller/vm-ownership/vm-ownership-deployment-identity.js';
+import { standaloneVmOwnershipReservationRoot } from '../controller/vm-ownership/vm-ownership-reservation-inventory.js';
 
 export interface ControllerOfflineCleanupResult {
 	readonly results: readonly {
-		readonly cleanedUp: boolean;
-		readonly cleanupWarning?: string;
-		readonly killedPid: number | null;
+		readonly ownershipDisposition: 'complete';
 		readonly stateDir: string;
-		readonly toolVmCleanup: ToolVmCleanupResult;
 		readonly zoneId: string;
 	}[];
 }
@@ -61,9 +59,41 @@ async function assertControllerUnavailableForOfflineCleanup(controllerPort: numb
 }
 
 interface ControllerOfflineCleanupDependencies {
+	readonly acquireControllerOwnershipLock?: typeof acquireControllerOwnershipLockDefault;
 	readonly assertControllerUnavailableForOfflineCleanup?: (controllerPort: number) => Promise<void>;
-	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
-	readonly cleanupOrphanedToolVmsIfPresent?: typeof cleanupOrphanedToolVmsIfPresent;
+	readonly reconcileExactVmOwnership?: (options: {
+		readonly systemConfig: LoadedSystemConfig;
+		readonly zoneId: string;
+	}) => Promise<void>;
+}
+
+async function reconcileExactVmOwnership(options: {
+	readonly systemConfig: LoadedSystemConfig;
+	readonly zoneId: string;
+}): Promise<void> {
+	const coordinator = createGatewayOwnershipCoordinator({
+		controllerEpoch: `offline-cleanup-${randomUUID()}`,
+		createId: randomUUID,
+		deploymentIdentity: vmOwnershipDeploymentIdentityForSystemConfig(options.systemConfig),
+		nowMs: Date.now,
+		standaloneReservationRoot: standaloneVmOwnershipReservationRoot(
+			options.systemConfig.runtimeDir,
+		),
+		stateDirectoryForZone: (zoneId): string => {
+			const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
+			if (!zone) {
+				throw new Error(`Unknown zone '${zoneId}' while resolving VM ownership state.`);
+			}
+			return zone.gateway.stateDir;
+		},
+	});
+	const zone = options.systemConfig.zones.find((candidate) => candidate.id === options.zoneId);
+	if (!zone) {
+		throw new Error(`Unknown zone '${options.zoneId}'.`);
+	}
+	await coordinator.reconcileControllerStartup(zone.gateway.type === 'openclaw' ? [zone.id] : [], {
+		standaloneZoneId: zone.id,
+	});
 }
 
 export async function runControllerOfflineCleanup(
@@ -81,41 +111,56 @@ export async function runControllerOfflineCleanup(
 		throw new Error(`Unknown zone '${options.zoneId}'.`);
 	}
 
-	if (options.force !== true) {
-		await (
-			dependencies.assertControllerUnavailableForOfflineCleanup ??
-			assertControllerUnavailableForOfflineCleanup
-		)(options.systemConfig.host.controllerPort);
+	const controllerOwnershipLock = await (
+		dependencies.acquireControllerOwnershipLock ?? acquireControllerOwnershipLockDefault
+	)({ runtimeDirectory: options.systemConfig.runtimeDir });
+	let cleanupResult: ControllerOfflineCleanupResult | undefined;
+	let cleanupError: unknown;
+	try {
+		if (options.force !== true) {
+			await (
+				dependencies.assertControllerUnavailableForOfflineCleanup ??
+				assertControllerUnavailableForOfflineCleanup
+			)(options.systemConfig.host.controllerPort);
+		}
+
+		await (dependencies.reconcileExactVmOwnership ?? reconcileExactVmOwnership)({
+			systemConfig: options.systemConfig,
+			zoneId: zone.id,
+		});
+		cleanupResult = {
+			results: [
+				{
+					ownershipDisposition: 'complete',
+					stateDir: zone.gateway.stateDir,
+					zoneId: zone.id,
+				},
+			],
+		};
+	} catch (error) {
+		cleanupError = error;
 	}
-
-	const cleanupToolVms =
-		dependencies.cleanupOrphanedToolVmsIfPresent ?? cleanupOrphanedToolVmsIfPresent;
-	const cleanupGateway =
-		dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent;
-	const results: ControllerOfflineCleanupResult['results'][number][] = [];
-	const toolVmCleanup = await cleanupToolVms({
-		expectedConfigPath: options.systemConfig.systemConfigPath,
-		expectedControllerPort: options.systemConfig.host.controllerPort,
-		mode: 'offline-cleanup',
-		projectNamespace: options.systemConfig.host.projectNamespace,
-		stateDir: zone.gateway.stateDir,
-		tcpBasePort: options.systemConfig.tcpPool.basePort,
-		zoneId: zone.id,
-	});
-	const result = await cleanupGateway({
-		expectedConfigPath: options.systemConfig.systemConfigPath,
-		expectedControllerPort: options.systemConfig.host.controllerPort,
-		mode: 'offline-cleanup',
-		projectNamespace: options.systemConfig.host.projectNamespace,
-		stateDir: zone.gateway.stateDir,
-		zoneId: zone.id,
-	});
-	results.push({
-		...result,
-		stateDir: zone.gateway.stateDir,
-		toolVmCleanup,
-		zoneId: zone.id,
-	});
-
-	return { results };
+	let lockReleaseError: unknown;
+	try {
+		await controllerOwnershipLock.release();
+	} catch (error) {
+		lockReleaseError = error;
+	}
+	if (cleanupError !== undefined && lockReleaseError !== undefined) {
+		throw new AggregateError(
+			[cleanupError, lockReleaseError],
+			'Controller offline cleanup and ownership lock release both failed',
+			{ cause: cleanupError },
+		);
+	}
+	if (cleanupError !== undefined) {
+		throw cleanupError;
+	}
+	if (lockReleaseError !== undefined) {
+		throw lockReleaseError;
+	}
+	if (cleanupResult === undefined) {
+		throw new Error('Controller offline cleanup completed without a result.');
+	}
+	return cleanupResult;
 }

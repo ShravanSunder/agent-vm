@@ -1,5 +1,6 @@
 import {
 	GONDOLIN_EXACT_VM_LIFECYCLE_CONTRACT_VERSION,
+	GONDOLIN_VM_OWNERSHIP_PRINCIPAL_MAX_CODE_UNITS,
 	createVmOwnershipReservation,
 	destroyVmExact,
 	readVmDestroyTarget,
@@ -14,6 +15,8 @@ import {
 } from '@earendil-works/gondolin';
 
 export const MANAGED_VM_EXACT_LIFECYCLE_CONTRACT_VERSION = 1 as const;
+export const MANAGED_VM_OWNERSHIP_PRINCIPAL_MAX_CODE_UNITS =
+	GONDOLIN_VM_OWNERSHIP_PRINCIPAL_MAX_CODE_UNITS;
 
 export type CreateVmOwnershipReservationOptions = GondolinCreateVmOwnershipReservationOptions;
 export type CreatedVmOwnershipReservation = GondolinCreatedVmOwnershipReservation;

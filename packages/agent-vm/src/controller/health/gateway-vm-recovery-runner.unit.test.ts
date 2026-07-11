@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createManagedExecProcessStub } from '../../testing/managed-vm-test-helpers.js';
+import {
+	createCompleteVmDestroyReceipt,
+	createManagedExecProcessStub,
+	createTestVmOwnershipReservationReference,
+} from '../../testing/managed-vm-test-helpers.js';
+import type { VmCreationOwnership } from '../vm-ownership/vm-creation-ownership.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
 import { ControllerZoneRuntimeStartError } from '../zone-runtimes/zone-runtime-errors.js';
 import type { GatewayZoneRuntimeHandle } from '../zone-runtimes/zone-runtime-types.js';
@@ -530,11 +535,20 @@ function createGatewayHandle(vmId: string, hostPid: number): GatewayZoneRuntimeH
 			startCommand: 'start',
 		},
 		vm: {
-			close: async () => {},
+			close: async () => createCompleteVmDestroyReceipt(vmId),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 22 }),
 			exec: () => createManagedExecProcessStub({ stdout: '' }),
 			getHostPid: () => hostPid,
 			id: vmId,
 		},
+		vmOwnership: createGatewayVmOwnershipStub(vmId),
+	};
+}
+
+function createGatewayVmOwnershipStub(vmId: string): VmCreationOwnership {
+	return {
+		ownershipReservation: createTestVmOwnershipReservationReference(vmId, { role: 'gateway' }),
+		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId, { role: 'gateway' }),
+		destroyLive: async (closeLiveVm) => await closeLiveVm(),
 	};
 }

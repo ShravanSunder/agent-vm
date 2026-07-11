@@ -4,6 +4,7 @@ import type {
 	GatewayZoneConfig,
 	GatewayZoneObservabilityConfig,
 } from '@agent-vm/gateway-interface';
+import type { ManagedVmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import type {
@@ -17,14 +18,28 @@ import type {
 import type { GatewayVmRecoverySourceKey } from '../controller/health/gateway-vm-recovery-policy.js';
 import type { HealthEventStore } from '../controller/health/health-event-store.js';
 import type { OpenClawRuntimeStatusStore } from '../controller/openclaw-runtime-status.js';
+import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 
 export type GatewayZone = SystemConfig['zones'][number];
+
+export interface PendingGatewayVmCreationContainment {
+	contain(): Promise<ManagedVmDestroyReceiptV1>;
+}
 
 export interface StartGatewayZoneOptions {
 	readonly controlSession?: {
 		readonly controllerEpoch: string;
 	};
+	readonly createVmOwnership: (options: {
+		readonly controlIdentity?: {
+			readonly bootId: string;
+			readonly generationId: string;
+		};
+		readonly kind: 'gateway-epoch' | 'standalone';
+		readonly sessionLabel: string;
+		readonly zoneId: string;
+	}) => Promise<VmCreationOwnership>;
 	readonly environmentOverride?: Record<string, string>;
 	readonly gatewayControlControllerHostActions?: GatewayControlControllerHostActionOperations;
 	readonly gatewayControlLeaseRpc?: GatewayControlLeaseRpcOperations;
@@ -32,6 +47,7 @@ export interface StartGatewayZoneOptions {
 	readonly healthEventStore?: HealthEventStore;
 	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
 	readonly observabilityStartupCheck?: 'default' | 'skip';
+	readonly onPendingVmCreation?: (containment: PendingGatewayVmCreationContainment) => void;
 	readonly prebuiltImage?: import('@agent-vm/gondolin-adapter').BuildImageResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
@@ -45,6 +61,8 @@ export interface StartGatewayZoneOptions {
 	readonly zoneOverride?: GatewayZone;
 }
 
+export type GatewayZonePreflightOptions = Omit<StartGatewayZoneOptions, 'createVmOwnership'>;
+
 export interface GatewayZoneStartResult {
 	readonly controlSession?: ControlSessionClient | undefined;
 	readonly controlSessionRecoverySourceKey?: GatewayVmRecoverySourceKey | undefined;
@@ -55,6 +73,7 @@ export interface GatewayZoneStartResult {
 	};
 	readonly processSpec: GatewayProcessSpec;
 	readonly vm: import('@agent-vm/gondolin-adapter').ManagedVm;
+	readonly vmOwnership: VmCreationOwnership;
 	readonly zone: GatewayZone;
 }
 
@@ -86,6 +105,7 @@ export interface GatewayManagedVmFactoryOptions {
 	readonly env?: Record<string, string>;
 	readonly imagePath: string;
 	readonly memory: string;
+	readonly ownershipReservation: import('@agent-vm/gondolin-adapter').ManagedVmOwnershipReservationReferenceV1;
 	readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
 	readonly runtimeRootfsSize?: string;

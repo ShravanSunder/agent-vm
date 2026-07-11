@@ -6,8 +6,10 @@ import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
 } from '../../testing/managed-vm-test-helpers.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { HealthEventStore } from '../health/health-event-store.js';
@@ -71,7 +73,7 @@ function createLeaseStub(
 		},
 		tcpSlot,
 		vm: {
-			close: vi.fn(async () => {}),
+			close: vi.fn(async () => createCompleteVmDestroyReceipt(`tool-vm-${leaseId}`)),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
 				host: '127.0.0.1',
@@ -81,6 +83,7 @@ function createLeaseStub(
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
+			getDestroyTarget: () => createTestVmDestroyTarget(`tool-vm-${leaseId}`),
 			id: `tool-vm-${leaseId}`,
 			setIngressRoutes: vi.fn(),
 			getHostPid: () => null,

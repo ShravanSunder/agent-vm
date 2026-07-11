@@ -3,15 +3,21 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import { serve } from '@hono/node-server';
+import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createApp } from '../../../agent-vm-worker/src/server.js';
 import type { ServerDeps } from '../../../agent-vm-worker/src/server.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 
 const startGatewayZoneMock = vi.fn();
@@ -20,6 +26,32 @@ const startRepoResourceProvidersMock = vi.fn(async () => ({
 	startedProviders: [],
 }));
 const stopRepoResourceProvidersMock = vi.fn(async () => {});
+const workerControllerEpoch = 'worker-host-e2e-controller-epoch';
+const workerVmId = 'worker-vm-1';
+const completeVmDestroyReceipt = createCompleteVmDestroyReceipt(workerVmId, {
+	controllerEpoch: workerControllerEpoch,
+	role: 'standalone',
+});
+
+function createStandaloneVmOwnershipStub(): {
+	readonly destroyLiveMock: Mock<VmCreationOwnership['destroyLive']>;
+	readonly vmOwnership: VmCreationOwnership;
+} {
+	const destroyLiveMock = vi.fn<VmCreationOwnership['destroyLive']>(
+		async (closeLiveVm) => await closeLiveVm(),
+	);
+	return {
+		destroyLiveMock,
+		vmOwnership: {
+			destroyDetached: vi.fn(async () => completeVmDestroyReceipt),
+			destroyLive: destroyLiveMock,
+			ownershipReservation: createTestVmOwnershipReservationReference(workerVmId, {
+				controllerEpoch: workerControllerEpoch,
+				role: 'standalone',
+			}),
+		},
+	};
+}
 
 vi.mock('../gateway/gateway-zone-orchestrator.js', () => ({
 	startGatewayZone: startGatewayZoneMock,
@@ -80,13 +112,14 @@ describe('worker-task-runner integration', () => {
 	let tempDir: string;
 	let server: { close: (cb?: () => void) => void } | null = null;
 	let workerPort: number;
-	let closeVmMock: ReturnType<typeof vi.fn>;
+	let closeVmMock: Mock<() => Promise<VmDestroyReceiptV1>>;
+	let vmOwnershipDestroyLiveMock: Mock<VmCreationOwnership['destroyLive']>;
 	let receivedTaskBody: Parameters<ServerDeps['submitTask']>[0] | null;
 
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-task-runner-integration-'));
 		workerPort = await findOpenPort();
-		closeVmMock = vi.fn(async () => {});
+		closeVmMock = vi.fn(async () => completeVmDestroyReceipt);
 
 		let activeTaskId: string | null = null;
 		let currentStatus: 'pending' | 'completed' = 'pending';
@@ -170,6 +203,8 @@ describe('worker-task-runner integration', () => {
 		});
 
 		server = serve({ fetch: app.fetch, port: workerPort });
+		const standaloneOwnership = createStandaloneVmOwnershipStub();
+		vmOwnershipDestroyLiveMock = standaloneOwnership.destroyLiveMock;
 		startGatewayZoneMock.mockResolvedValue({
 			image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
 			ingress: { host: '127.0.0.1', port: workerPort },
@@ -182,16 +217,22 @@ describe('worker-task-runner integration', () => {
 				logPath: '/tmp/worker.log',
 			},
 			vm: {
-				id: 'worker-vm-1',
+				id: workerVmId,
 				close: closeVmMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: workerPort })),
 				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222, user: 'root' })),
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
+				getDestroyTarget: () =>
+					createTestVmDestroyTarget(workerVmId, {
+						controllerEpoch: workerControllerEpoch,
+						role: 'standalone',
+					}),
 				setIngressRoutes: vi.fn(),
 				getHostPid: () => null,
 				getVmInstance: vi.fn(),
 			},
+			vmOwnership: standaloneOwnership.vmOwnership,
 			zone: systemConfig.zones[0],
 		});
 	});
@@ -289,6 +330,7 @@ describe('worker-task-runner integration', () => {
 			zoneId: 'shravan',
 		});
 		const result = await executeWorkerTask(prepared, {
+			controllerEpoch: workerControllerEpoch,
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
 			timeoutMs: 2_000,
@@ -299,6 +341,7 @@ describe('worker-task-runner integration', () => {
 			taskId: result.taskId,
 		});
 		expect(startGatewayZoneMock).toHaveBeenCalledTimes(1);
+		expect(vmOwnershipDestroyLiveMock).toHaveBeenCalledOnce();
 		expect(closeVmMock).toHaveBeenCalledTimes(1);
 		expect(receivedTaskBody).toMatchObject({
 			prompt: 'fix login bug',

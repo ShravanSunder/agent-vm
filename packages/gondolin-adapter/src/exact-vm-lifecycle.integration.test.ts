@@ -27,9 +27,19 @@ describe('exact VM lifecycle adapter', () => {
 		const temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'agent-vm-exact-lifecycle-'));
 		temporaryDirectories.push(temporaryDirectory);
 		const identity = randomUUID();
+		const principal = JSON.stringify({
+			configPath: `/${'nested-deployment-path/'.repeat(10)}config/system.jsonc`,
+			controllerPort: 18_800,
+			kind: 'worker-task',
+			projectNamespace: 'agent-vm-integration',
+			taskId: identity,
+			zoneId: 'worker-zone',
+		});
+		expect(principal.length).toBeGreaterThan(256);
 		const created = await createManagedVmOwnershipReservation({
 			controllerEpoch: 'controller-integration',
 			parentGateway: null,
+			principal,
 			reservationId: `reservation-${identity}`,
 			reservationRoot: temporaryDirectory,
 			role: 'standalone',
@@ -42,7 +52,9 @@ describe('exact VM lifecycle adapter', () => {
 		const receipt = await destroyManagedVmExact(target);
 
 		expect(reservation.reservationId).toBe(created.reservation.reservationId);
+		expect(reservation.principal).toBe(principal);
 		expect(target).toEqual(created.target);
+		expect(target.principal).toBe(principal);
 		expect(receipt).toMatchObject({
 			complete: true,
 			contractVersion: 1,

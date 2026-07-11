@@ -41,6 +41,10 @@ import {
 } from '../resources/repo-resource-provider-runner.js';
 import { compileResourceOverlay } from '../resources/resource-compiler.js';
 import { resolveTaskResources } from '../resources/resource-resolver.js';
+import {
+	assertVmDestructionComplete,
+	VmDestructionUnprovenError,
+} from '../shared/vm-destruction-receipt.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import {
@@ -58,6 +62,9 @@ import {
 	type ControlSessionClient,
 	type WorkerControlRpcOperations,
 } from './control-session/index.js';
+import { createStandaloneVmCreationOwnership } from './vm-ownership/vm-creation-ownership.js';
+import { vmOwnershipDeploymentIdentityForSystemConfig } from './vm-ownership/vm-ownership-deployment-identity.js';
+import { standaloneVmOwnershipReservationRoot } from './vm-ownership/vm-ownership-reservation-inventory.js';
 
 type WorkerTaskZoneConfig = LoadedSystemConfig['zones'][number];
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
@@ -850,6 +857,7 @@ export interface PrepareWorkerTaskOptions {
 }
 
 export interface ExecuteWorkerTaskOptions {
+	readonly controllerEpoch: string;
 	readonly secretResolver: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly controlSession?: {
@@ -1016,6 +1024,25 @@ export async function executeWorkerTask(
 
 	try {
 		gateway = await startGatewayZone({
+			createVmOwnership: async (ownershipOptions) => {
+				if (ownershipOptions.kind !== 'standalone') {
+					throw new Error(
+						`Worker task '${prepared.taskId}' cannot reserve Gateway-epoch ownership.`,
+					);
+				}
+				return await createStandaloneVmCreationOwnership({
+					controllerEpoch: options.controllerEpoch,
+					createId: crypto.randomUUID,
+					principal: {
+						...vmOwnershipDeploymentIdentityForSystemConfig(options.systemConfig),
+						kind: 'worker-task',
+						taskId: prepared.taskId,
+						zoneId: prepared.zoneId,
+					},
+					reservationRoot: standaloneVmOwnershipReservationRoot(options.systemConfig.runtimeDir),
+					sessionLabel: ownershipOptions.sessionLabel,
+				});
+			},
 			environmentOverride: {
 				...prepared.preStartResult.environment,
 				...(workerControlMaterial === undefined
@@ -1160,32 +1187,50 @@ export async function executeWorkerTask(
 	}
 
 	const cleanupErrors: Error[] = [];
+	let vmDestructionComplete = gateway === undefined;
 	try {
 		controlSession?.close();
 	} catch (error) {
 		cleanupErrors.push(toError(error));
 	}
 	try {
-		await gateway?.vm.close();
+		if (gateway) {
+			try {
+				const destroyReceipt = await gateway.vmOwnership.destroyLive(
+					async () => await gateway.vm.close(),
+				);
+				assertVmDestructionComplete(destroyReceipt, `Worker VM '${gateway.vm.id}' cleanup`);
+				vmDestructionComplete = true;
+			} catch (error) {
+				throw error instanceof VmDestructionUnprovenError
+					? error
+					: new VmDestructionUnprovenError(
+							`Worker VM '${gateway.vm.id}' cleanup did not prove exact destruction`,
+							{ cause: error },
+						);
+			}
+		}
 	} catch (error) {
 		cleanupErrors.push(toError(error));
 	}
-	try {
-		await postStopGateway(
-			prepared.taskId,
-			prepared.zone,
-			prepared.preStartResult.startedResourceProviders,
-			{
-				runtimeDir: options.systemConfig.runtimeDir,
-			},
-		);
-	} catch (error) {
-		cleanupErrors.push(toError(error));
-	}
-	try {
-		await options.onTaskFinished?.(prepared.zoneId, prepared.taskId);
-	} catch (error) {
-		cleanupErrors.push(toError(error));
+	if (vmDestructionComplete) {
+		try {
+			await postStopGateway(
+				prepared.taskId,
+				prepared.zone,
+				prepared.preStartResult.startedResourceProviders,
+				{
+					runtimeDir: options.systemConfig.runtimeDir,
+				},
+			);
+		} catch (error) {
+			cleanupErrors.push(toError(error));
+		}
+		try {
+			await options.onTaskFinished?.(prepared.zoneId, prepared.taskId);
+		} catch (error) {
+			cleanupErrors.push(toError(error));
+		}
 	}
 
 	if (primaryError) {

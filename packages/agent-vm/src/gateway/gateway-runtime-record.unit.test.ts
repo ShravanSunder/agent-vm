@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	buildGatewayRuntimeRecord,
@@ -37,9 +39,9 @@ async function createStateDirectory(): Promise<string> {
 	return directoryPath;
 }
 
-function createVmInstanceStub(hostPid: number): ManagedVmInstance {
+function createVmInstanceStub(hostPid: number, vmId: string): ManagedVmInstance {
 	return {
-		close: async () => {},
+		close: async () => createCompleteVmDestroyReceipt(vmId),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
 			command: 'ssh ...',
@@ -50,8 +52,9 @@ function createVmInstanceStub(hostPid: number): ManagedVmInstance {
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getDestroyTarget: () => createTestVmDestroyTarget(vmId),
 		getHostPid: () => hostPid,
-		id: 'gateway-vm-123',
+		id: vmId,
 		setIngressRoutes: () => {},
 	};
 }
@@ -61,13 +64,14 @@ function createManagedVmStub(options: {
 	readonly id: string;
 }): ManagedVm {
 	return {
-		close: async () => {},
+		close: async () => createCompleteVmDestroyReceipt(options.id),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({ host: '127.0.0.1', port: 19_000 }),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getDestroyTarget: () => createTestVmDestroyTarget(options.id),
 		getHostPid: () => options.hostPid,
-		getVmInstance: () => createVmInstanceStub(options.hostPid),
+		getVmInstance: () => createVmInstanceStub(options.hostPid, options.id),
 		id: options.id,
 		setIngressRoutes: () => {},
 	};

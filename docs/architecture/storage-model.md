@@ -67,7 +67,35 @@ runtimeDir/zones/<zone>/zone-git/                   per-zone, preserved    NOT w
                                                     by destroy-zone's       destroy-zone --purge
                                                     selective deletion      (see two reasons
                                                     (see note below)        below)
+
+runtimeDir/vm-ownership/controller-ownership.lock   controller lifetime    released by the
+                                                                           controller or offline
+                                                                           cleanup process
+
+runtimeDir/vm-ownership/standalone-reservations/    until exact Worker     exact cleanup after
+  <reservation-id>/reservation-v1.json              VM disposition         controller restart
+
+stateDir/vm-ownership/reservations/                  until exact Gateway/   exact child/parent
+  <reservation-id>/reservation-v1.json              Tool VM disposition    cleanup
+
+stateDir/vm-ownership/gateway-memberships/           durable Gateway        exact child/parent
+                                                    subtree journal         cleanup
 ```
+
+The controller holds `controller-ownership.lock` for its complete process
+lifetime. Offline cleanup acquires the same lock before probing controller
+health or reading destructive evidence. The lock provides deployment-wide
+mutual exclusion; it does not authorize destruction. Authority comes from the
+reservation and Gateway membership records after canonical deployment,
+principal, session, reservation, target, and revision validation.
+
+Gateway membership journals live under the zone `stateDir` because they must
+survive a controller crash and identify the exact Gateway/Tool VM subtree that
+the next controller must destroy before creating a successor. Standalone
+Worker reservations live under the deployment `runtimeDir` because Worker VMs
+are deployment runtime children rather than per-zone durable Gateway state.
+Neither location may be replaced by PID matching, an HTTP health response, or
+telemetry evidence.
 
 Note that `zone-git/` is preserved **implicitly**, not by explicit policy.
 `destroy-zone --purge` enumerates specific subtrees to delete (`worker-tasks/`,

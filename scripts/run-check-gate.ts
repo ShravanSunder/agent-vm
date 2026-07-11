@@ -5,11 +5,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export type CheckGateCommandId =
 	| 'build'
+	| 'lint'
 	| 'package-versions'
 	| 'portal-architecture'
 	| 'portal-exports'
 	| 'zod-version'
 	| 'test-taxonomy'
+	| 'vm-ownership-boundaries'
 	| 'format'
 	| 'type-aware-lint'
 	| 'typecheck';
@@ -102,6 +104,12 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					command: 'pnpm',
 					id: 'portal-exports',
 					label: 'portal package export audit',
+				},
+				{
+					args: ['run', 'test:vm-ownership-boundaries'],
+					command: 'pnpm',
+					id: 'vm-ownership-boundaries',
+					label: 'VM ownership boundary audit',
 				},
 				{
 					args: ['run', 'lint'],

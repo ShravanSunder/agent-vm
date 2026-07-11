@@ -243,16 +243,10 @@ async function verifyZoneAdminAccess(options: {
 export function createStopControllerOperation(options: {
 	readonly clearReaperTimer: () => void;
 	readonly closeControllerServer: () => Promise<void>;
-	readonly getLeases: () => readonly { readonly id: string }[];
-	readonly releaseLease: (leaseId: string, options?: { readonly force?: boolean }) => Promise<void>;
 	readonly stopAllZones: () => Promise<void>;
 }): () => Promise<{ readonly ok: true }> {
 	return async (): Promise<{ readonly ok: true }> => {
 		options.clearReaperTimer();
-		for (const lease of options.getLeases()) {
-			// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
-			await options.releaseLease(lease.id, { force: true });
-		}
 		try {
 			await options.stopAllZones();
 		} finally {

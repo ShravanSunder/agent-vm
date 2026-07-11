@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GatewayOwnershipEvidence } from '../../gateway/gateway-ownership-evidence.js';
+import {
+	createCompleteVmDestroyReceipt,
+	createTestVmOwnershipReservationReference,
+} from '../../testing/managed-vm-test-helpers.js';
+import type { VmCreationOwnership } from '../vm-ownership/vm-creation-ownership.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
 import {
 	classifyGatewayRecoveryAction,
@@ -225,7 +230,7 @@ function createGatewayRuntimeHandle(): Extract<
 			startCommand: 'start',
 		},
 		vm: {
-			close: async (): Promise<void> => {},
+			close: async () => createCompleteVmDestroyReceipt('gateway-vm-1'),
 			enableSsh: (): never => {
 				throw new Error('not used');
 			},
@@ -235,5 +240,14 @@ function createGatewayRuntimeHandle(): Extract<
 			getHostPid: () => 42,
 			id: 'gateway-vm-1',
 		},
+		vmOwnership: createGatewayVmOwnershipStub('gateway-vm-1'),
+	};
+}
+
+function createGatewayVmOwnershipStub(vmId: string): VmCreationOwnership {
+	return {
+		ownershipReservation: createTestVmOwnershipReservationReference(vmId, { role: 'gateway' }),
+		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId, { role: 'gateway' }),
+		destroyLive: async (closeLiveVm) => await closeLiveVm(),
 	};
 }

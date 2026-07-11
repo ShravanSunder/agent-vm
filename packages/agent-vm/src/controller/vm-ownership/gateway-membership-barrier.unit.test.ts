@@ -10,7 +10,14 @@ import {
 	type GatewayEpochIdentity,
 	type ToolVmOwnershipReservationReference,
 } from './gateway-membership-barrier.js';
+import type { VmOwnershipDeploymentIdentity } from './vm-ownership-contracts.js';
 import { createVmOwnershipJournal } from './vm-ownership-journal.js';
+
+const TEST_DEPLOYMENT_IDENTITY = {
+	configPath: '/deployments/sunfam/config/system.jsonc',
+	controllerPort: 18_800,
+	projectNamespace: 'sunfam-test-deployment',
+} satisfies VmOwnershipDeploymentIdentity;
 
 const temporaryDirectories: string[] = [];
 
@@ -55,6 +62,7 @@ function createToolReservation(
 			gatewayVmId: gateway.gatewayVmId,
 		},
 		principal: {
+			...TEST_DEPLOYMENT_IDENTITY,
 			agentId: options.agentId ?? 'main',
 			kind: 'stable-agent',
 			zoneId: gateway.zoneId,
@@ -64,6 +72,7 @@ function createToolReservation(
 			options.reservationPath ??
 			`/var/lib/agent-vm/reservations/${reservationId}/reservation-v1.json`,
 		role: 'tool',
+		sessionLabel: `tool:${reservationId}`,
 		vmId: `vm-${reservationId}`,
 	};
 }
@@ -88,12 +97,14 @@ async function createBarrier(): Promise<{
 			expectedRevision: 1,
 			parentGateway: null,
 			principal: {
+				...TEST_DEPLOYMENT_IDENTITY,
 				kind: 'gateway-zone',
 				zoneId: gatewayIdentity.zoneId,
 			},
 			reservationId: 'gateway-reservation-a',
 			reservationPath: journal.reservationPathFor('gateway-reservation-a'),
 			role: 'gateway',
+			sessionLabel: 'gateway:sunfam',
 			vmId: gatewayIdentity.gatewayVmId,
 		},
 		journal,

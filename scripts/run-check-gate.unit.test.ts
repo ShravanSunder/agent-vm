@@ -58,6 +58,7 @@ describe('check gate plan', () => {
 			'test-taxonomy',
 			'portal-architecture',
 			'portal-exports',
+			'vm-ownership-boundaries',
 			'lint',
 			'format',
 		]);
@@ -99,22 +100,24 @@ describe('check gate runner', () => {
 
 		expect(summary.ok).toBe(true);
 		expect(startedCommandIds.slice(0, 1)).toEqual(['build']);
-		expect(startedCommandIds.slice(1, 8)).toEqual([
+		expect(startedCommandIds.slice(1, 9)).toEqual([
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
 			'portal-architecture',
 			'portal-exports',
+			'vm-ownership-boundaries',
 			'lint',
 			'format',
 		]);
 		expect(completedCommandIds.slice(0, 1)).toEqual(['build']);
-		expect(completedCommandIds.slice(1, 8)).toEqual([
+		expect(completedCommandIds.slice(1, 9)).toEqual([
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
 			'portal-architecture',
 			'portal-exports',
+			'vm-ownership-boundaries',
 			'lint',
 			'format',
 		]);
@@ -145,6 +148,7 @@ describe('check gate runner', () => {
 			'test-taxonomy',
 			'portal-architecture',
 			'portal-exports',
+			'vm-ownership-boundaries',
 			'lint',
 			'format',
 		]);

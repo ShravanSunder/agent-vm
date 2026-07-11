@@ -1,14 +1,20 @@
-import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
 	createGitReadOnlySshEgressOptions,
 	createManagedVm,
+	createManagedVmOwnershipReservation,
 	type ManagedSshEgressOptions,
 	type ManagedVm,
+	type ManagedVmOwnershipReservationReferenceV1,
 } from '@agent-vm/gondolin-adapter';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { assertVmDestructionComplete } from '../shared/vm-destruction-receipt.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
@@ -16,6 +22,32 @@ const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.ski
 const upstreamGitHost = '127.0.0.1.sslip.io';
 const allowedRepository = 'agent-vm/read-only-fixture.git';
 const crossVmSshFixturePort = 19100;
+
+async function createStandaloneOwnershipReservation(
+	testDeploymentRoot: string,
+	vmRoleLabel: string,
+): Promise<ManagedVmOwnershipReservationReferenceV1> {
+	const vmIdentity = `${vmRoleLabel}-${randomUUID()}`;
+	const ownershipReservation = await createManagedVmOwnershipReservation({
+		controllerEpoch: 'live-git-ssh-egress-policy-e2e',
+		parentGateway: null,
+		reservationId: `reservation-${vmIdentity}`,
+		reservationRoot: path.join(testDeploymentRoot, 'state', 'vm-ownership'),
+		role: 'standalone',
+		sessionLabel: `live-git-ssh-egress-${vmRoleLabel}`,
+		vmId: `vm-${vmIdentity}`,
+	});
+	return ownershipReservation.reference;
+}
+
+async function closeVmAndRequireCompleteReceipt(
+	managedVm: ManagedVm | null,
+	context: string,
+): Promise<void> {
+	if (managedVm === null) return;
+	const receipt = await managedVm.close();
+	assertVmDestructionComplete(receipt, context);
+}
 
 async function allocateLocalTcpPort(): Promise<number> {
 	return await new Promise<number>((resolve, reject) => {
@@ -69,20 +101,41 @@ function createGuestGitSshCommand(props: {
 describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 	let upstreamVm: ManagedVm | null = null;
 	let gatewayVm: ManagedVm | null = null;
+	let testDeploymentRoot: string | null = null;
+
+	beforeAll(async () => {
+		testDeploymentRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-git-ssh-egress-e2e-'));
+	});
 
 	afterAll(async () => {
-		if (gatewayVm) {
-			await gatewayVm.close().catch(() => {});
-			gatewayVm = null;
+		const cleanupResults = await Promise.allSettled([
+			closeVmAndRequireCompleteReceipt(gatewayVm, 'gateway VM cleanup'),
+			closeVmAndRequireCompleteReceipt(upstreamVm, 'upstream VM cleanup'),
+		]);
+		const cleanupErrors: unknown[] = [];
+		for (const result of cleanupResults) {
+			if (result.status === 'rejected') {
+				cleanupErrors.push(result.reason as unknown);
+			}
 		}
-		if (upstreamVm) {
-			await upstreamVm.close().catch(() => {});
-			upstreamVm = null;
+		if (cleanupErrors.length > 0) {
+			throw new AggregateError(cleanupErrors, 'SSH Git egress E2E cleanup failed');
+		}
+		gatewayVm = null;
+		upstreamVm = null;
+		if (testDeploymentRoot !== null) {
+			await rm(testDeploymentRoot, { force: true, recursive: true });
+			testDeploymentRoot = null;
 		}
 	});
 
 	it('allows git-upload-pack and denies git-receive-pack at the Gondolin host boundary', async () => {
+		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
 		upstreamVm = await createManagedVm({
+			ownershipReservation: await createStandaloneOwnershipReservation(
+				testDeploymentRoot,
+				'upstream',
+			),
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
@@ -130,6 +183,10 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 		} satisfies ManagedSshEgressOptions;
 
 		gatewayVm = await createManagedVm({
+			ownershipReservation: await createStandaloneOwnershipReservation(
+				testDeploymentRoot,
+				'gateway',
+			),
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,

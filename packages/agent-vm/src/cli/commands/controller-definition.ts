@@ -150,7 +150,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 			}),
 			cleanup: command({
 				name: 'cleanup',
-				description: 'Clean up recorded gateway VM processes without contacting the controller',
+				description: 'Reconcile exact VM ownership without contacting the controller',
 				args: {
 					config: createConfigOption(),
 					force: flag({
@@ -170,18 +170,6 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 						zoneId: selectedZone.id,
 					});
 					io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-					const cleanupWarnings: string[] = [];
-					for (const cleanupResult of result.results) {
-						if (cleanupResult.cleanupWarning !== undefined) {
-							cleanupWarnings.push(cleanupResult.cleanupWarning);
-						}
-						cleanupWarnings.push(...cleanupResult.toolVmCleanup.warnings);
-					}
-					if (cleanupWarnings.length > 0) {
-						throw new Error(
-							`Controller cleanup completed with warnings: ${cleanupWarnings.join('; ')}`,
-						);
-					}
 				},
 			}),
 			status: createControllerOperationSubcommand(io, dependencies, {

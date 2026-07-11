@@ -1,13 +1,22 @@
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../../testing/managed-vm-test-helpers.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
 import { OpenClawRuntimeStatusUnavailableError } from '../openclaw-runtime-status.js';
+import type { GatewayOwnershipCoordinator } from '../vm-ownership/gateway-ownership-coordinator.js';
+import {
+	gatewayIdentitiesEqual,
+	type GatewayEpochIdentity,
+} from '../vm-ownership/vm-ownership-contracts.js';
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
 import { createGatewayControlLeaseRpcOperations } from './gateway-control-lease-rpc.js';
 
@@ -59,6 +68,84 @@ const callerContextPayload = {
 	},
 };
 
+const TEST_GATEWAY_EPOCH = {
+	bootId: callerContext.bootId,
+	controllerEpoch: callerContext.controllerEpoch,
+	gatewayEpochId: 'gateway-epoch-a',
+	gatewayVmId: 'gateway-vm-a',
+	generationId: 'gateway-generation-a',
+	zoneId: callerContext.zoneId,
+} satisfies GatewayEpochIdentity;
+
+function refuseUnexpectedGatewayOwnershipOperation(): never {
+	throw new Error('unexpected Gateway ownership operation in lease RPC test');
+}
+
+function createOwnershipCoordinatorStub(
+	currentGateway: GatewayEpochIdentity = TEST_GATEWAY_EPOCH,
+	observedExpectedGateways: GatewayEpochIdentity[] = [],
+): GatewayOwnershipCoordinator {
+	const ownershipReservation = createTestVmOwnershipReservationReference('tool-vm-1', {
+		controllerEpoch: currentGateway.controllerEpoch,
+		parentGateway: {
+			epoch: currentGateway.gatewayEpochId,
+			vmId: currentGateway.gatewayVmId,
+		},
+		role: 'tool',
+	});
+	return {
+		beginGatewayEpoch: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		admitProvisionalToolVm: vi.fn(
+			(
+				options: Parameters<GatewayOwnershipCoordinator['admitProvisionalToolVm']>[0],
+			): ReturnType<GatewayOwnershipCoordinator['admitProvisionalToolVm']> => {
+				observedExpectedGateways.push(structuredClone(options.expectedGateway));
+				if (!gatewayIdentitiesEqual(currentGateway, options.expectedGateway)) {
+					throw new Error('Tool VM admission refused a stale Gateway VM epoch.');
+				}
+				return {
+					ready: Promise.resolve(ownershipReservation),
+					commitCurrent: async () => {},
+					destroyDetached: async () => createCompleteVmDestroyReceipt('tool-vm-1'),
+					destroyLive: async (closeLiveVm) => await closeLiveVm(),
+				};
+			},
+		),
+		destroyGatewayDetached: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		recordGatewayDestroyReceipt: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		recordGatewayDestroyUnavailable: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		reconcileControllerStartup: async () => {},
+		resolveGatewayEpoch: () => currentGateway,
+		sealGatewayEpoch: () => refuseUnexpectedGatewayOwnershipOperation(),
+	};
+}
+
+const incompleteVmDestroyReceipt = {
+	contractVersion: 1,
+	reservationId: 'reservation-incomplete',
+	vmId: 'tool-vm-incomplete',
+	controllerEpoch: 'controller-epoch-1',
+	parentGateway: { vmId: 'gateway-vm-1', epoch: 'gateway-epoch-1' },
+	role: 'tool',
+	requestedRunner: {
+		backend: 'qemu',
+		executableName: 'qemu-system-aarch64',
+		discoveryIdentity: 'runner-incomplete',
+	},
+	complete: false,
+	completedAt: '2026-07-10T00:00:00.000Z',
+	resources: {
+		exactRunner: { status: 'unproven', reason: 'runner-resistant' },
+		ingressListener: { status: 'already-absent' },
+		ingressSockets: { status: 'already-absent' },
+		sshListener: { status: 'destroyed' },
+		sshSessions: { status: 'destroyed' },
+		sessionIpc: { status: 'already-absent' },
+		qmp: { status: 'destroyed' },
+		disposableStorage: { status: 'destroyed' },
+	},
+} satisfies VmDestroyReceiptV1;
+
 function withCallerContextPayload<TPayload>(
 	payload: TPayload,
 	context: GatewayControlTrustedCallerContext = callerContext,
@@ -75,15 +162,23 @@ function withCallerContextPayload<TPayload>(
 function createManagedVmStub(
 	options: {
 		readonly closeError?: Error;
+		readonly closeReceipts?: readonly VmDestroyReceiptV1[];
 		readonly isLive?: () => boolean;
 	} = {},
 ): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
+		let closeReceiptIndex = 0;
 		const vm = {
 			close: vi.fn(async () => {
 				if (options.closeError !== undefined) {
 					throw options.closeError;
 				}
+				const configuredReceipt = options.closeReceipts?.[closeReceiptIndex];
+				closeReceiptIndex += 1;
+				if (configuredReceipt !== undefined) {
+					return configuredReceipt;
+				}
+				return createCompleteVmDestroyReceipt('tool-vm-1');
 			}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
@@ -98,6 +193,7 @@ function createManagedVmStub(
 					: createManagedExecProcessStub(),
 			),
 			fs: createManagedVmFsStub(),
+			getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1'),
 			getHostPid: () => 12345,
 			getVmInstance: () => vm,
 			id: 'tool-vm-1',
@@ -110,9 +206,13 @@ function createManagedVmStub(
 function createTestLeaseManager(
 	options: {
 		readonly closeError?: Error;
+		readonly closeReceipts?: readonly VmDestroyReceiptV1[];
+		readonly createManagedVm?: Parameters<typeof createLeaseManager>[0]['createManagedVm'];
 		readonly isLive?: () => boolean;
 		readonly leaseIds?: readonly string[];
 		readonly now?: () => number;
+		readonly ownershipCoordinator?: GatewayOwnershipCoordinator;
+		readonly tcpPool?: ReturnType<typeof createTcpPool>;
 	} = {},
 ): ReturnType<typeof createLeaseManager> {
 	let leaseIdIndex = 0;
@@ -123,12 +223,16 @@ function createTestLeaseManager(
 			leaseIdIndex += 1;
 			return leaseId;
 		},
-		createManagedVm: createManagedVmStub({
-			...(options.closeError === undefined ? {} : { closeError: options.closeError }),
-			...(options.isLive === undefined ? {} : { isLive: options.isLive }),
-		}),
+		createManagedVm:
+			options.createManagedVm ??
+			createManagedVmStub({
+				...(options.closeError === undefined ? {} : { closeError: options.closeError }),
+				...(options.closeReceipts === undefined ? {} : { closeReceipts: options.closeReceipts }),
+				...(options.isLive === undefined ? {} : { isLive: options.isLive }),
+			}),
 		deleteToolVmRuntimeRecord: vi.fn(async () => {}),
 		now: options.now ?? (() => 1_000),
+		ownershipCoordinator: options.ownershipCoordinator ?? createOwnershipCoordinatorStub(),
 		projectNamespace: 'gateway-control-lease-rpc-tests',
 		readProcessIdentity: async () => ({
 			command: 'qemu-system-x86_64 -m 1G',
@@ -136,7 +240,7 @@ function createTestLeaseManager(
 		}),
 		stateDirFor: (zoneId) => `/tmp/gateway-control-lease-rpc-tests/${zoneId}`,
 		systemConfigPath: '/etc/agent-vm/system.json',
-		tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		tcpPool: options.tcpPool ?? createTcpPool({ basePort: 19000, size: 2 }),
 		toolVmUsePolicy: {
 			endedUseTombstoneTtlMs: 10_000,
 			heartbeatAfterMs: 1_000,
@@ -152,6 +256,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentId: callerContext.agentId,
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			effectiveIdleTtlMs: 60_000,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -258,6 +363,46 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 	});
 
+	it('forwards the exact expected Gateway and refuses stale-G admission before VM creation', async () => {
+		const staleGateway = {
+			...TEST_GATEWAY_EPOCH,
+			generationId: 'stale-gateway-generation',
+		} satisfies GatewayEpochIdentity;
+		const observedExpectedGateways: GatewayEpochIdentity[] = [];
+		const ownershipCoordinator = createOwnershipCoordinatorStub(
+			TEST_GATEWAY_EPOCH,
+			observedExpectedGateways,
+		);
+		const createManagedVm = createManagedVmStub();
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager: createTestLeaseManager({ createManagedVm, ownershipCoordinator }),
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async () => ({
+				agentId: callerContext.agentId,
+				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: staleGateway,
+				guestWorkdir: '/workspace',
+				hostWorkMountDir: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: callerContext.zoneId,
+			}),
+		});
+
+		await expect(
+			leaseRpc.createLease({
+				callerContext,
+				payload: callerContextPayload,
+			}),
+		).rejects.toThrow('Tool VM admission refused a stale Gateway VM epoch.');
+		expect(observedExpectedGateways).toEqual([staleGateway]);
+		expect(createManagedVm).not.toHaveBeenCalled();
+	});
+
 	it('records sanitized controller-request health evidence when lease create fails after resolution', async () => {
 		const createFailure = new Error('raw ssh credential path /tmp/private-key should not leak');
 		createFailure.name = 'ToolVmCreateFailed';
@@ -272,6 +417,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -324,6 +470,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -402,6 +549,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -457,6 +605,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -529,6 +678,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -596,6 +746,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -663,6 +814,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				resolveLeaseCreateOptions: async () => ({
 					agentId: callerContext.agentId,
 					agentWorkspaceDir: callerContext.agentWorkspaceDir,
+					expectedGateway: TEST_GATEWAY_EPOCH,
 					guestWorkdir: '/workspace',
 					hostWorkMountDir: '/host/validated-work',
 					profile: {
@@ -726,6 +878,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -783,6 +936,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir,
 			profile: {
@@ -854,6 +1008,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
 			agentWorkspaceDir: context.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -907,6 +1062,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
 			agentWorkspaceDir: context.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -980,6 +1136,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
 			agentWorkspaceDir: context.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -1039,6 +1196,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
 			agentWorkspaceDir: context.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -1145,6 +1303,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
 			agentWorkspaceDir: context.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -1188,7 +1347,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		expect(injectedSameAgentCreate).toBe(true);
 	});
 
-	it('continues reacquire when force release already retired the old lease before teardown failed', async () => {
+	it('blocks reacquire when force release cannot prove old lease destruction', async () => {
 		const leaseManager = createTestLeaseManager({
 			closeError: new Error('close failed after logical retirement'),
 			leaseIds: ['lease-old', 'lease-new'],
@@ -1196,6 +1355,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
 			agentWorkspaceDir: context.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -1231,7 +1391,88 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					},
 				},
 			}),
-		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+		).rejects.toThrow('close failed after logical retirement');
+		expect(leaseManager.peekLease('lease-old')?.lease.id).toBe('lease-old');
+		expect(leaseManager.peekLease('lease-new')).toBeUndefined();
+	});
+
+	it('keeps releasing authority fenced until exact retry permits one successor', async () => {
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const leaseManager = createTestLeaseManager({
+			closeReceipts: [incompleteVmDestroyReceipt, createCompleteVmDestroyReceipt('tool-vm-old')],
+			leaseIds: ['lease-old', 'lease-new', 'lease-unexpected'],
+			tcpPool,
+		});
+		const retirementEvents: unknown[] = [];
+		leaseManager.subscribeLeaseRetirement((event) => retirementEvents.push(event));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async ({ callerContext: context }) => ({
+				agentId: context.agentId,
+				agentWorkspaceDir: context.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
+				guestWorkdir: '/workspace',
+				hostWorkMountDir: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: context.zoneId,
+			}),
+		});
+		const oldLease = await leaseRpc.createLease({
+			callerContext,
+			payload: callerContextPayload,
+		});
+		const oldLeasePayload = withCallerContextPayload({
+			...callerContextPayload,
+			leaseId: oldLease.leaseId,
+		});
+
+		await expect(leaseRpc.releaseLease(oldLeasePayload)).rejects.toThrow(/incomplete/u);
+
+		await expect(leaseRpc.renewLease(oldLeasePayload)).rejects.toThrow(/releasing/u);
+		await expect(
+			leaseRpc.startLeaseUse(
+				withCallerContextPayload({
+					...callerContextPayload,
+					leaseId: oldLease.leaseId,
+					useId: '01890f00-0000-7000-8000-000000000001',
+				}),
+			),
+		).rejects.toThrow(/releasing/u);
+		expect(leaseManager.peekLease(oldLease.leaseId)?.lease.id).toBe(oldLease.leaseId);
+		expect(retirementEvents).toEqual([]);
+		expect(tcpPool.isQuarantined(0)).toBe(true);
+
+		const reacquireRequest = {
+			callerContext: refreshedCallerContextIdOnly,
+			payload: {
+				callerContext: {
+					callerContextId: refreshedCallerContext.callerContextId,
+				},
+				oldLeaseId: oldLease.leaseId,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					observedAtMs: 1_100,
+					operation: 'command',
+				},
+			},
+		} satisfies Parameters<typeof leaseRpc.reacquireLease>[0];
+		const replacementLease = await leaseRpc.reacquireLease(reacquireRequest);
+		const repeatedReacquire = await leaseRpc.reacquireLease(reacquireRequest);
+
+		expect(replacementLease).toMatchObject({ leaseId: 'lease-new', tcpSlot: 0 });
+		expect(repeatedReacquire).toMatchObject({ leaseId: 'lease-new', tcpSlot: 0 });
+		expect(leaseManager.peekLease(oldLease.leaseId)).toBeUndefined();
+		expect(leaseManager.listLeases().map((lease) => lease.id)).toEqual(['lease-new']);
+		expect(retirementEvents).toEqual([
+			expect.objectContaining({ leaseId: oldLease.leaseId, reason: 'released' }),
+		]);
+		expect(tcpPool.isQuarantined(0)).toBe(false);
 	});
 
 	it('reacquires from stored authority compatibility when runtime status is temporarily unavailable', async () => {
@@ -1248,6 +1489,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			return {
 				agentId: context.agentId,
 				agentWorkspaceDir: context.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -1331,6 +1573,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -1391,6 +1634,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -1439,6 +1683,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -1480,6 +1725,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {

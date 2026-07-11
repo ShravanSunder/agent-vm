@@ -17,11 +17,19 @@ import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../../testing/managed-vm-test-helpers.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
+import type { GatewayOwnershipCoordinator } from '../vm-ownership/gateway-ownership-coordinator.js';
+import {
+	gatewayIdentitiesEqual,
+	type GatewayEpochIdentity,
+} from '../vm-ownership/vm-ownership-contracts.js';
 import { createControlSessionDispatcher } from './control-session-dispatcher.js';
 import {
 	createGatewayControlCallerContextRegistry,
@@ -43,6 +51,50 @@ const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length'
 const agentAuthorityKeys: Readonly<Record<string, string>> = {
 	main: 'test-main-agent-authority-key-with-enough-length',
 };
+
+const TEST_GATEWAY_EPOCH = {
+	bootId: acceptedSession.bootId,
+	controllerEpoch: acceptedSession.controllerEpoch,
+	gatewayEpochId: 'gateway-epoch-a',
+	gatewayVmId: 'gateway-vm-a',
+	generationId: 'gateway-generation-a',
+	zoneId: acceptedSession.zoneId,
+} satisfies GatewayEpochIdentity;
+
+function refuseUnexpectedGatewayOwnershipOperation(): never {
+	throw new Error('unexpected Gateway ownership operation in lease RPC integration test');
+}
+
+function createOwnershipCoordinatorStub(): GatewayOwnershipCoordinator {
+	const ownershipReservation = createTestVmOwnershipReservationReference('tool-vm-1', {
+		controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+		parentGateway: {
+			epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+			vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+		},
+		role: 'tool',
+	});
+	return {
+		beginGatewayEpoch: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		admitProvisionalToolVm: (options) => {
+			if (!gatewayIdentitiesEqual(TEST_GATEWAY_EPOCH, options.expectedGateway)) {
+				throw new Error('Tool VM admission refused a stale Gateway VM epoch.');
+			}
+			return {
+				ready: Promise.resolve(ownershipReservation),
+				commitCurrent: async () => {},
+				destroyDetached: async () => createCompleteVmDestroyReceipt('tool-vm-1'),
+				destroyLive: async (closeLiveVm) => await closeLiveVm(),
+			};
+		},
+		destroyGatewayDetached: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		recordGatewayDestroyReceipt: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		recordGatewayDestroyUnavailable: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		reconcileControllerStartup: async () => {},
+		resolveGatewayEpoch: () => TEST_GATEWAY_EPOCH,
+		sealGatewayEpoch: () => refuseUnexpectedGatewayOwnershipOperation(),
+	};
+}
 
 function signCallerContextEvidence(
 	evidence: Omit<
@@ -128,7 +180,7 @@ type GatewayControlCommandResultMessage = Extract<
 function createManagedVmStub(): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
 		const vm = {
-			close: vi.fn(async () => {}),
+			close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
 				host: '127.0.0.1',
@@ -138,6 +190,7 @@ function createManagedVmStub(): Parameters<typeof createLeaseManager>[0]['create
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
+			getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1'),
 			getHostPid: () => 12345,
 			getVmInstance: () => vm,
 			id: 'tool-vm-1',
@@ -163,6 +216,7 @@ function createTestLeaseManager(): ReturnType<typeof createLeaseManager> {
 		createManagedVm: createManagedVmStub(),
 		deleteToolVmRuntimeRecord: vi.fn(async () => {}),
 		now: () => 1_000,
+		ownershipCoordinator: createOwnershipCoordinatorStub(),
 		projectNamespace: 'gateway-control-lease-rpc-integration-tests',
 		readProcessIdentity: async () => ({
 			command: 'qemu-system-x86_64 -m 1G',
@@ -195,6 +249,7 @@ function createIntegrationLeaseRpcOptions(
 		resolveLeaseCreateOptions: async ({ callerContext }) => ({
 			agentId: callerContext.agentId,
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
+			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -306,6 +361,7 @@ describe('gateway control lease RPC integration', () => {
 			resolveLeaseCreateOptions: async ({ callerContext }) => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
+				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {

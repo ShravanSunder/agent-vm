@@ -393,10 +393,10 @@ describe('manual templates', () => {
 			'hostWorkMountDir',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'binds the controller port before recovery',
+			'acquires <runtimeDir>/vm-ownership/controller-ownership.lock before secret resolution',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'uses `lsof` to check TCP listener ownership',
+			'persisted pids are diagnostic evidence, not cleanup authority',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'persistent zone files live at /zone',
@@ -451,7 +451,9 @@ describe('manual templates', () => {
 		expect(operationsManual).toContain('unhealthy-unrecoverable');
 		expect(operationsManual).toContain('secret-resolution-failed is a recovery blocker');
 		expect(operationsManual).toContain('<runtimeDir>/controller-health/events.jsonl');
-		expect(operationsManual).toContain('runtime records plus current process/port checks');
+		expect(operationsManual).toContain(
+			'VM ownership membership and reservation journals plus exact destruction receipts',
+		);
 		expect(operationsManual).toContain('controller_final');
 		expect(operationsManual).toContain('stale_to_reacquired');
 		expect(operationsManual).toContain(
@@ -533,6 +535,16 @@ describe('manual templates', () => {
 			'agent-vm controller cleanup --config config/system.jsonc --zone beta',
 		);
 		expect(operations?.content).toContain('--force');
+		expect(operations?.content).toContain(
+			'never bypasses the ownership lock or exact-evidence checks',
+		);
+		expect(operations?.content).toContain('private Gateway membership journal');
+		expect(operations?.content).toContain('complete resource-by-resource destruction receipts');
+		expect(operations?.content).toContain(
+			'Legacy runtime records and PID matching are not cleanup authority',
+		);
+		expect(operations?.content).toContain('at most four child destroys concurrently');
+		expect(operations?.content).toContain('whole subtree has a 300 second deadline');
 		expect(operations?.content).not.toContain('pkill -f qemu-system');
 	});
 });

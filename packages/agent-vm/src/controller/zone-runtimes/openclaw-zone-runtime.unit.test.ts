@@ -2,18 +2,21 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
+import type { BuildImageResult, VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import { GatewayOwnershipUnsafeError } from '../../gateway/gateway-ownership-evidence.js';
 import type { GatewayZone, GatewayZoneStartResult } from '../../gateway/gateway-zone-support.js';
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../../testing/managed-vm-test-helpers.js';
-import type { Lease } from '../leases/lease-manager.js';
+import type { VmCreationOwnership } from '../vm-ownership/vm-creation-ownership.js';
 import type { GatewayLifecycleOperationRecord } from './gateway-lifecycle-operation-record.js';
 import { createOpenClawZoneRuntime as createOpenClawZoneRuntimeImpl } from './openclaw-zone-runtime.js';
 
@@ -27,6 +30,32 @@ const preflightedGatewayImage = {
 	fingerprint: 'preflighted-fingerprint',
 	imagePath: '/tmp/preflighted-gateway-image',
 } satisfies BuildImageResult;
+
+const incompleteVmDestroyReceipt = {
+	contractVersion: 1,
+	reservationId: 'reservation-incomplete',
+	vmId: 'gateway-vm-incomplete',
+	controllerEpoch: 'controller-epoch-1',
+	parentGateway: null,
+	role: 'gateway',
+	requestedRunner: {
+		backend: 'qemu',
+		executableName: 'qemu-system-aarch64',
+		discoveryIdentity: 'runner-incomplete',
+	},
+	complete: false,
+	completedAt: '2026-07-10T00:00:00.000Z',
+	resources: {
+		exactRunner: { status: 'unproven', reason: 'runner-resistant' },
+		ingressListener: { status: 'destroyed' },
+		ingressSockets: { status: 'destroyed' },
+		sshListener: { status: 'already-absent' },
+		sshSessions: { status: 'already-absent' },
+		sessionIpc: { status: 'destroyed' },
+		qmp: { status: 'destroyed' },
+		disposableStorage: { status: 'destroyed' },
+	},
+} satisfies VmDestroyReceiptV1;
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -93,9 +122,43 @@ afterEach(async () => {
 	await rm(openClawZoneRuntimeTestRoot, { force: true, recursive: true });
 });
 
+type OpenClawZoneRuntimeOptions = Parameters<typeof createOpenClawZoneRuntimeImpl>[0];
+type OpenClawRestartGatewayZone = NonNullable<OpenClawZoneRuntimeOptions['restartGatewayZone']>;
+type TestGatewayZoneStartResult = Omit<GatewayZoneStartResult, 'vmOwnership'> & {
+	readonly vmOwnership?: VmCreationOwnership;
+};
+type TestOpenClawZoneRuntimeOptions = Omit<
+	OpenClawZoneRuntimeOptions,
+	'createVmOwnership' | 'restartGatewayZone'
+> & {
+	readonly createVmOwnership?: OpenClawZoneRuntimeOptions['createVmOwnership'];
+	readonly restartGatewayZone?: (
+		...args: Parameters<OpenClawRestartGatewayZone>
+	) => Promise<TestGatewayZoneStartResult>;
+};
+
+function createTestVmOwnership(
+	options: {
+		readonly destroyLive?: VmCreationOwnership['destroyLive'];
+		readonly vmId?: string;
+	} = {},
+): VmCreationOwnership {
+	const vmId = options.vmId ?? 'gateway-vm-test';
+	return {
+		ownershipReservation: createTestVmOwnershipReservationReference(vmId, { role: 'gateway' }),
+		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId, { role: 'gateway' }),
+		destroyLive:
+			options.destroyLive ??
+			(async (closeLiveVm) => {
+				return await closeLiveVm();
+			}),
+	};
+}
+
 function createOpenClawZoneRuntime(
-	options: Parameters<typeof createOpenClawZoneRuntimeImpl>[0],
+	options: TestOpenClawZoneRuntimeOptions,
 ): ReturnType<typeof createOpenClawZoneRuntimeImpl> {
+	const { createVmOwnership, restartGatewayZone, ...runtimeOptions } = options;
 	return createOpenClawZoneRuntimeImpl({
 		preflightGatewayZoneStart: async (startOptions) => {
 			const secretResolver = startOptions.secretResolver ?? options.secretResolver;
@@ -126,44 +189,21 @@ function createOpenClawZoneRuntime(
 				},
 			};
 		},
-		...options,
+		...runtimeOptions,
+		createVmOwnership:
+			createVmOwnership ?? (async () => createTestVmOwnership({ vmId: 'gateway-vm-created' })),
+		...(restartGatewayZone
+			? {
+					restartGatewayZone: async (...args: Parameters<OpenClawRestartGatewayZone>) => {
+						const result = await restartGatewayZone(...args);
+						return {
+							...result,
+							vmOwnership: result.vmOwnership ?? createTestVmOwnership({ vmId: result.vm.id }),
+						};
+					},
+				}
+			: {}),
 	});
-}
-
-function createTestLease(options: { readonly id: string; readonly zoneId: string }): Lease {
-	return {
-		agentId: 'agent-main',
-		agentWorkspaceDir: '/workspace',
-		createdAt: 1_000,
-		effectiveIdleTtlMs: 60_000,
-		guestWorkdir: '/work',
-		hostWorkMountDir: '/tmp/work',
-		id: options.id,
-		lastUsedAt: 2_000,
-		profileId: 'standard',
-		runtimeRecordId: `record-${options.id}`,
-		sshAccess: {
-			host: '127.0.0.1',
-			port: 22,
-		},
-		tcpSlot: 0,
-		vm: {
-			close: vi.fn(async () => {}),
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 19000 })),
-			enableSsh: vi.fn(async () => ({
-				command: 'ssh root@127.0.0.1',
-				host: '127.0.0.1',
-				port: 22,
-			})),
-			exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: () => null,
-			getVmInstance: vi.fn(),
-			id: `tool-vm-${options.id}`,
-			setIngressRoutes: vi.fn(),
-		},
-		zoneId: options.zoneId,
-	};
 }
 
 function createResolvingSecretResolver(): SecretResolver {
@@ -213,7 +253,6 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -226,7 +265,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: vi.fn(async () => {}),
+					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() =>
@@ -237,6 +276,8 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 						}),
 					),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-exec-normalized', { role: 'gateway' }),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-exec-normalized',
@@ -261,7 +302,6 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 	it('does not project a started gateway as running when its host pid is missing', async () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -274,11 +314,13 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: vi.fn(async () => {}),
+					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-missing-pid', { role: 'gateway' }),
 					getHostPid: () => null,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-missing-pid',
@@ -303,7 +345,6 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => false,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -316,11 +357,13 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: vi.fn(async () => {}),
+					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-dead-pid', { role: 'gateway' }),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-dead-pid',
@@ -358,7 +401,6 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 		});
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => {
 				throw ownershipError;
@@ -385,7 +427,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 
 describe('createOpenClawZoneRuntime credentials refresh', () => {
 	it('keeps a running gateway active when refresh secret preflight fails', async () => {
-		const closeGatewayVm = vi.fn(async () => {});
+		const closeGatewayVm = vi.fn(async () => createCompleteVmDestroyReceipt());
 		const runtime = createOpenClawZoneRuntime({
 			createFreshSecretResolver: vi.fn(async () => ({
 				resolve: async () => {
@@ -397,7 +439,6 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			})),
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -415,6 +456,8 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-live-before-refresh', { role: 'gateway' }),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-live-before-refresh',
@@ -474,7 +517,6 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			createFreshSecretResolver: vi.fn(async () => freshResolver),
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async (_zoneId, startOptions) => {
 				if (!startOptions?.secretResolver) {
@@ -499,11 +541,13 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 						startCommand: 'start',
 					},
 					vm: {
-						close: vi.fn(async () => {}),
+						close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget('gateway-vm-fresh-resolver', { role: 'gateway' }),
 						getHostPid: () => 48_284,
 						getVmInstance: vi.fn(),
 						id: 'gateway-vm-fresh-resolver',
@@ -559,7 +603,6 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			}),
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => {
 				throw new Error('start should not run');
@@ -589,14 +632,13 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 	});
 
 	it('keeps a live gateway running when credentials-refresh resolver construction fails', async () => {
-		const closeGatewayVm = vi.fn(async () => {});
+		const closeGatewayVm = vi.fn(async () => createCompleteVmDestroyReceipt());
 		const runtime = createOpenClawZoneRuntime({
 			createFreshSecretResolver: async () => {
 				throw new Error('1Password SDK failed');
 			},
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -614,6 +656,10 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-live-refresh-preflight', {
+							role: 'gateway',
+						}),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-live-refresh-preflight',
@@ -659,7 +705,6 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			})),
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => {
 				throw new Error('start should not run');
@@ -704,7 +749,6 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			})),
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => false,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -717,11 +761,13 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: vi.fn(async () => {}),
+					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-dead-before-refresh', { role: 'gateway' }),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-dead-before-refresh',
@@ -761,9 +807,10 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 		const callOrder: string[] = [];
 		const firstGatewayClose = vi.fn(async () => {
 			callOrder.push('close-gateway-1');
+			return createCompleteVmDestroyReceipt('gateway-vm-1');
 		});
 		let gatewayStartCount = 0;
-		const restartGatewayZone = vi.fn(async (): Promise<GatewayZoneStartResult> => {
+		const restartGatewayZone = vi.fn(async (): Promise<TestGatewayZoneStartResult> => {
 			gatewayStartCount += 1;
 			callOrder.push(`start-gateway-${String(gatewayStartCount)}`);
 			const hostPid = 48_283 + gatewayStartCount;
@@ -778,11 +825,18 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: gatewayStartCount === 1 ? firstGatewayClose : vi.fn(async () => {}),
+					close:
+						gatewayStartCount === 1
+							? firstGatewayClose
+							: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget(`gateway-vm-${String(gatewayStartCount)}`, {
+							role: 'gateway',
+						}),
 					getHostPid: () => hostPid,
 					getVmInstance: vi.fn(),
 					id: `gateway-vm-${String(gatewayStartCount)}`,
@@ -794,7 +848,6 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: (pid) => liveHostPids.has(pid),
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone,
 			secretResolver: createResolvingSecretResolver(),
@@ -835,11 +888,13 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: vi.fn(async () => {}),
+					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-cold-start', { role: 'gateway' }),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-cold-start',
@@ -850,7 +905,6 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord,
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone,
 			secretResolver: createResolvingSecretResolver(),
@@ -873,9 +927,28 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 });
 
 describe('createOpenClawZoneRuntime stop and restart safety', () => {
+	it('does not expose legacy PID cleanup as Gateway successor authority', () => {
+		type RuntimeOptions = Parameters<typeof createOpenClawZoneRuntimeImpl>[0];
+
+		expectTypeOf<RuntimeOptions>().toMatchTypeOf<{
+			readonly createVmOwnership: unknown;
+		}>();
+		expectTypeOf<RuntimeOptions>().not.toMatchTypeOf<{
+			readonly cleanupOrphanedGatewayIfPresent: unknown;
+		}>();
+		expectTypeOf<RuntimeOptions>().not.toMatchTypeOf<{
+			readonly leaseManager: unknown;
+		}>();
+		expectTypeOf<GatewayZoneStartResult>().toMatchTypeOf<{
+			readonly vmOwnership: VmCreationOwnership;
+		}>();
+	});
+
 	it('uses preflighted secret values for replacement start before closing a running gateway', async () => {
-		const closeGateway = vi.fn(async () => {});
-		const releaseLease = vi.fn(async () => {});
+		const closeGateway = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const destroyGatewayOwnership = vi.fn(
+			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>) => await closeLiveVm(),
+		);
 		let startCount = 0;
 		let underlyingResolveAllCount = 0;
 		const replacementStartImages: unknown[] = [];
@@ -894,10 +967,6 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: {
-				listLeases: () => [createTestLease({ id: 'lease-1', zoneId: 'shravan' })],
-				releaseLease,
-			},
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async (_zoneId, startOptions = {}) => {
 				startCount += 1;
@@ -926,11 +995,20 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget(
+								startCount === 1 ? 'gateway-vm-live' : 'gateway-vm-replacement',
+								{ role: 'gateway' },
+							),
 						getHostPid: () => 48_284,
 						getVmInstance: vi.fn(),
 						id: startCount === 1 ? 'gateway-vm-live' : 'gateway-vm-replacement',
 						setIngressRoutes: vi.fn(),
 					},
+					vmOwnership: createTestVmOwnership({
+						destroyLive: destroyGatewayOwnership,
+						vmId: startCount === 1 ? 'gateway-vm-live' : 'gateway-vm-replacement',
+					}),
 					zone: getOpenClawZone(),
 				};
 			},
@@ -945,23 +1023,197 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		expect(underlyingResolveAllCount).toBe(1);
 		expect(replacementStartImages).toEqual([preflightedGatewayImage]);
 		expect(closeGateway).toHaveBeenCalledTimes(1);
-		expect(releaseLease).toHaveBeenCalledTimes(1);
+		expect(destroyGatewayOwnership).toHaveBeenCalledTimes(1);
 		expect(runtime.getSnapshot()).toMatchObject({
 			gateway: { vm: { id: 'gateway-vm-replacement' } },
 			lifecycleState: 'running',
 		});
 	});
 
-	it('preflights gateway secrets before closing a running gateway for restart', async () => {
-		const closeGateway = vi.fn(async () => {});
-		const releaseLease = vi.fn(async () => {});
+	it('blocks Gateway replacement when any child lease disposition is incomplete', async () => {
+		const closeGateway = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const destroyGatewayOwnership = vi.fn(async () => {
+			throw new Error('child lease disposition is incomplete');
+		});
+		let startCount = 0;
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: {
-				listLeases: () => [createTestLease({ id: 'lease-1', zoneId: 'shravan' })],
-				releaseLease,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async () => {
+				startCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget(`gateway-vm-${String(startCount)}`, { role: 'gateway' }),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: `gateway-vm-${String(startCount)}`,
+						setIngressRoutes: vi.fn(),
+					},
+					vmOwnership: createTestVmOwnership({
+						destroyLive: destroyGatewayOwnership,
+						vmId: `gateway-vm-${String(startCount)}`,
+					}),
+					zone: getOpenClawZone(),
+				};
 			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.restart()).rejects.toThrow(/child lease disposition.*incomplete/u);
+
+		expect(destroyGatewayOwnership).toHaveBeenCalledOnce();
+		expect(closeGateway).not.toHaveBeenCalled();
+		expect(startCount).toBe(1);
+		expect(runtime.getLifecycleState()).toMatchObject({
+			coldStartEligible: false,
+			error: { code: 'owner-unsafe' },
+			kind: 'failed',
+		});
+		expect(runtime.getSnapshot()).toMatchObject({ lifecycleState: 'failed' });
+	});
+
+	it('blocks cold-start G2 when stale G1 ownership cannot destroy its retained child', async () => {
+		const destroyGatewayOwnership = vi.fn(async () => {
+			throw new Error('cold-start child destruction incomplete');
+		});
+		let gatewayStartCount = 0;
+		let gatewayProcessAlive = true;
+		const restartGatewayZone = vi.fn(async () => {
+			gatewayStartCount += 1;
+			const gatewayVmId = `gateway-vm-${String(gatewayStartCount)}`;
+			return {
+				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'bootstrap',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http' as const, port: 18789, path: '/readyz' },
+					logPath: '/agent-vm/logs/gateway-boot-latest.log',
+					startCommand: 'start',
+				},
+				vm: {
+					close: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					fs: createManagedVmFsStub(),
+					getDestroyTarget: () => createTestVmDestroyTarget(gatewayVmId, { role: 'gateway' }),
+					getHostPid: () => 48_284,
+					getVmInstance: vi.fn(),
+					id: gatewayVmId,
+					setIngressRoutes: vi.fn(),
+				},
+				vmOwnership: createTestVmOwnership({
+					destroyLive: destroyGatewayOwnership,
+					vmId: gatewayVmId,
+				}),
+				zone: getOpenClawZone(),
+			};
+		});
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => gatewayProcessAlive,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone,
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		gatewayProcessAlive = false;
+		expect(runtime.getSnapshot()).toMatchObject({ lifecycleState: 'failed' });
+		await expect(runtime.coldStart()).rejects.toThrow('cold-start child destruction incomplete');
+
+		expect(destroyGatewayOwnership).toHaveBeenCalledOnce();
+		expect(restartGatewayZone).toHaveBeenCalledOnce();
+		expect(runtime.getLifecycleState()).toMatchObject({
+			coldStartEligible: false,
+			error: { code: 'owner-unsafe' },
+			kind: 'failed',
+		});
+	});
+
+	it('refuses gateway replacement when close resolves with an incomplete receipt', async () => {
+		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
+		const closeGateway = vi.fn(async () => incompleteVmDestroyReceipt);
+		let startCount = 0;
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord,
+			isProcessAlive: () => true,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async () => {
+				startCount += 1;
+				return {
+					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					processSpec: {
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
+						startCommand: 'start',
+					},
+					vm: {
+						close: closeGateway,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget('gateway-vm-incomplete-close', { role: 'gateway' }),
+						getHostPid: () => 48_284,
+						getVmInstance: vi.fn(),
+						id: 'gateway-vm-incomplete-close',
+						setIngressRoutes: vi.fn(),
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+		await expect(runtime.restart()).rejects.toThrow(/incomplete/u);
+
+		expect(closeGateway).toHaveBeenCalledOnce();
+		expect(startCount).toBe(1);
+		expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
+		expect(runtime.getLifecycleState()).toMatchObject({
+			error: { code: 'owner-unsafe' },
+			kind: 'failed',
+		});
+	});
+
+	it('preflights gateway secrets before closing a running gateway for restart', async () => {
+		const closeGateway = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const destroyGatewayOwnership = vi.fn(
+			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>) => await closeLiveVm(),
+		);
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -979,11 +1231,19 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-live-before-preflight-failure', {
+							role: 'gateway',
+						}),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-live-before-preflight-failure',
 					setIngressRoutes: vi.fn(),
 				},
+				vmOwnership: createTestVmOwnership({
+					destroyLive: destroyGatewayOwnership,
+					vmId: 'gateway-vm-live-before-preflight-failure',
+				}),
 				zone: getOpenClawZone(),
 			}),
 			secretResolver: {
@@ -1002,7 +1262,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		});
 
 		expect(closeGateway).not.toHaveBeenCalled();
-		expect(releaseLease).not.toHaveBeenCalled();
+		expect(destroyGatewayOwnership).not.toHaveBeenCalled();
 		expect(runtime.getSnapshot()).toMatchObject({
 			gateway: { vm: { id: 'gateway-vm-live-before-preflight-failure' } },
 			lifecycleState: 'running',
@@ -1011,15 +1271,13 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 	});
 
 	it('preflights replacement image before closing a running gateway for restart', async () => {
-		const closeGateway = vi.fn(async () => {});
-		const releaseLease = vi.fn(async () => {});
+		const closeGateway = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const destroyGatewayOwnership = vi.fn(
+			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>) => await closeLiveVm(),
+		);
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: {
-				listLeases: () => [createTestLease({ id: 'lease-1', zoneId: 'shravan' })],
-				releaseLease,
-			},
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			preflightGatewayZoneStart: async () => {
 				throw new Error('gateway image build failed before replacement close');
@@ -1040,11 +1298,19 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-live-before-image-preflight-failure', {
+							role: 'gateway',
+						}),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-live-before-image-preflight-failure',
 					setIngressRoutes: vi.fn(),
 				},
+				vmOwnership: createTestVmOwnership({
+					destroyLive: destroyGatewayOwnership,
+					vmId: 'gateway-vm-live-before-image-preflight-failure',
+				}),
 				zone: getOpenClawZone(),
 			}),
 			secretResolver: {
@@ -1064,7 +1330,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		);
 
 		expect(closeGateway).not.toHaveBeenCalled();
-		expect(releaseLease).not.toHaveBeenCalled();
+		expect(destroyGatewayOwnership).not.toHaveBeenCalled();
 		expect(runtime.getSnapshot()).toMatchObject({
 			gateway: { vm: { id: 'gateway-vm-live-before-image-preflight-failure' } },
 			lifecycleState: 'running',
@@ -1076,7 +1342,6 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -1090,7 +1355,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: vi.fn(async () => {}),
+					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn((command: string) => {
@@ -1098,6 +1363,8 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						return createManagedExecProcessStub({ stdout: '200' });
 					}),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-liveness', { role: 'gateway' }),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-liveness',
@@ -1132,7 +1399,6 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -1145,11 +1411,16 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: vi.fn(async () => await closeDeferred.promise),
+					close: vi.fn(async () => {
+						await closeDeferred.promise;
+						return createCompleteVmDestroyReceipt();
+					}),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: gatewayExec,
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-stopping', { role: 'gateway' }),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-stopping',
@@ -1190,7 +1461,6 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord,
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -1208,6 +1478,10 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-retained-after-stop-failure', {
+							role: 'gateway',
+						}),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-retained-after-stop-failure',
@@ -1238,34 +1512,14 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		});
 	});
 
-	it('uses identity-fenced runtime-record cleanup when auto-recovery restart close times out', async () => {
-		type RuntimeOptions = Parameters<typeof createOpenClawZoneRuntimeImpl>[0];
-		type CleanupGateway = NonNullable<RuntimeOptions['cleanupOrphanedGatewayIfPresent']>;
+	it('refuses auto-recovery replacement when exact Gateway destruction is unproven', async () => {
 		let gatewayStartCount = 0;
 		const oldGatewayClose = vi.fn(async () => {
 			throw new Error('gateway close timed out');
 		});
-		const cleanupOrphanedGatewayIfPresent = vi.fn(
-			async (
-				cleanupOptions: Parameters<CleanupGateway>[0],
-			): Promise<Awaited<ReturnType<CleanupGateway>>> => {
-				expect(cleanupOptions).toMatchObject({
-					configuredIngressPort: 18_791,
-					expectedConfigPath: loadedSystemConfig.systemConfigPath,
-					expectedControllerPort: loadedSystemConfig.host.controllerPort,
-					mode: 'in-process-recovery',
-					projectNamespace: loadedSystemConfig.host.projectNamespace,
-					stateDir: getOpenClawZone().gateway.stateDir,
-					zoneId: 'shravan',
-				});
-				return { cleanedUp: true, killedPid: 48_285 };
-			},
-		);
 		const runtime = createOpenClawZoneRuntime({
-			cleanupOrphanedGatewayIfPresent,
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
@@ -1281,11 +1535,18 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						startCommand: 'start',
 					},
 					vm: {
-						close: gatewayStartCount === 1 ? oldGatewayClose : vi.fn(async () => {}),
+						close:
+							gatewayStartCount === 1
+								? oldGatewayClose
+								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18_791 })),
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget(`gateway-vm-${String(gatewayStartCount)}`, {
+								role: 'gateway',
+							}),
 						getHostPid: () => hostPid,
 						getVmInstance: vi.fn(),
 						id: `gateway-vm-${String(gatewayStartCount)}`,
@@ -1300,14 +1561,14 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		});
 
 		await runtime.start();
-		const restartResult = await runtime.restart({ operationTrigger: 'auto-recovery' });
+		await expect(runtime.restart({ operationTrigger: 'auto-recovery' })).rejects.toThrow(
+			'gateway close timed out',
+		);
 
-		expect(restartResult).toMatchObject({ leaseReleaseFailureCount: 0 });
 		expect(oldGatewayClose).toHaveBeenCalledOnce();
-		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledOnce();
+		expect(gatewayStartCount).toBe(1);
 		expect(runtime.getSnapshot()).toMatchObject({
-			gateway: { vm: { hostPid: 48_286, id: 'gateway-vm-2' } },
-			lifecycleState: 'running',
+			lifecycleState: 'failed',
 		});
 	});
 
@@ -1322,7 +1583,6 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			}),
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
@@ -1339,8 +1599,11 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					vm: {
 						close:
 							gatewayStartCount === 1
-								? vi.fn(async () => await oldGatewayCloseDeferred.promise)
-								: vi.fn(async () => {}),
+								? vi.fn(async () => {
+										await oldGatewayCloseDeferred.promise;
+										return createCompleteVmDestroyReceipt();
+									})
+								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec:
@@ -1348,6 +1611,10 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 								? oldGatewayExec
 								: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget(`gateway-vm-${String(gatewayStartCount)}`, {
+								role: 'gateway',
+							}),
 						getHostPid: () => 48_284 + gatewayStartCount,
 						getVmInstance: vi.fn(),
 						id: `gateway-vm-${String(gatewayStartCount)}`,
@@ -1390,18 +1657,17 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 
 	it('records stale-generation-closed when a timed-out restart later starts a stale gateway', async () => {
 		let gatewayStartCount = 0;
-		let resolveStaleGatewayStart: ((value: GatewayZoneStartResult) => void) | undefined;
+		let resolveStaleGatewayStart: ((value: TestGatewayZoneStartResult) => void) | undefined;
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
-		const staleGatewayClose = vi.fn(async () => {});
+		const staleGatewayClose = vi.fn(async () => createCompleteVmDestroyReceipt());
 		const restartTimeoutCallbacks: (() => void)[] = [];
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord,
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
-				const gatewayStartResult: GatewayZoneStartResult = {
+				const gatewayStartResult: TestGatewayZoneStartResult = {
 					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
@@ -1412,11 +1678,16 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						startCommand: 'start',
 					},
 					vm: {
-						close: gatewayStartCount === 2 ? staleGatewayClose : vi.fn(async () => {}),
+						close:
+							gatewayStartCount === 2
+								? staleGatewayClose
+								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget(`gateway-vm-${gatewayStartCount}`, { role: 'gateway' }),
 						getHostPid: () => 48_284 + gatewayStartCount,
 						getVmInstance: vi.fn(),
 						id: `gateway-vm-${gatewayStartCount}`,
@@ -1479,6 +1750,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 				fs: createManagedVmFsStub(),
+				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-stale', { role: 'gateway' }),
 				getHostPid: () => 48_286,
 				getVmInstance: vi.fn(),
 				id: 'gateway-vm-stale',
@@ -1497,8 +1769,10 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 
 	it('does not close the live gateway when restart preflight resolves after timeout', async () => {
 		let gatewayStartCount = 0;
-		const closeGateway = vi.fn(async () => {});
-		const releaseLease = vi.fn(async () => {});
+		const closeGateway = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const destroyGatewayOwnership = vi.fn(
+			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>) => await closeLiveVm(),
+		);
 		const operationRecords: GatewayLifecycleOperationRecord[] = [];
 		const restartTimeoutCallbacks: (() => void)[] = [];
 		const preflightDeferred = createDeferredPromise<{
@@ -1511,10 +1785,6 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			}),
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: {
-				listLeases: () => [createTestLease({ id: 'lease-1', zoneId: 'shravan' })],
-				releaseLease,
-			},
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			preflightGatewayZoneStart: async () => await preflightDeferred.promise,
 			restartGatewayZone: async () => {
@@ -1535,11 +1805,19 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget(`gateway-vm-${String(gatewayStartCount)}`, {
+								role: 'gateway',
+							}),
 						getHostPid: () => 48_284,
 						getVmInstance: vi.fn(),
 						id: `gateway-vm-${String(gatewayStartCount)}`,
 						setIngressRoutes: vi.fn(),
 					},
+					vmOwnership: createTestVmOwnership({
+						destroyLive: destroyGatewayOwnership,
+						vmId: `gateway-vm-${String(gatewayStartCount)}`,
+					}),
 					zone: getOpenClawZone(),
 				};
 			},
@@ -1576,7 +1854,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		});
 
 		expect(closeGateway).not.toHaveBeenCalled();
-		expect(releaseLease).not.toHaveBeenCalled();
+		expect(destroyGatewayOwnership).not.toHaveBeenCalled();
 		expect(runtime.getSnapshot()).toMatchObject({
 			gateway: { vm: { id: 'gateway-vm-1' } },
 			lifecycleState: 'running',
@@ -1585,18 +1863,17 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 
 	it('deletes the stale runtime record after closing a timed-out replacement gateway', async () => {
 		let gatewayStartCount = 0;
-		let resolveStaleGatewayStart: ((value: GatewayZoneStartResult) => void) | undefined;
+		let resolveStaleGatewayStart: ((value: TestGatewayZoneStartResult) => void) | undefined;
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
-		const staleGatewayClose = vi.fn(async () => {});
+		const staleGatewayClose = vi.fn(async () => createCompleteVmDestroyReceipt());
 		const restartTimeoutCallbacks: (() => void)[] = [];
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord,
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
-				const gatewayStartResult: GatewayZoneStartResult = {
+				const gatewayStartResult: TestGatewayZoneStartResult = {
 					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
@@ -1607,11 +1884,16 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						startCommand: 'start',
 					},
 					vm: {
-						close: gatewayStartCount === 2 ? staleGatewayClose : vi.fn(async () => {}),
+						close:
+							gatewayStartCount === 2
+								? staleGatewayClose
+								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget(`gateway-vm-${gatewayStartCount}`, { role: 'gateway' }),
 						getHostPid: () => 48_284 + gatewayStartCount,
 						getVmInstance: vi.fn(),
 						id: `gateway-vm-${gatewayStartCount}`,
@@ -1663,6 +1945,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 				fs: createManagedVmFsStub(),
+				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-stale', { role: 'gateway' }),
 				getHostPid: () => 48_286,
 				getVmInstance: vi.fn(),
 				id: 'gateway-vm-stale',
@@ -1679,17 +1962,17 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 
 	it('keeps lifecycle operations serialized until a timed-out replacement gateway settles', async () => {
 		let gatewayStartCount = 0;
-		let resolveStaleGatewayStart: ((value: GatewayZoneStartResult) => void) | undefined;
-		const staleGatewayClose = vi.fn(async () => {});
+		let resolveStaleGatewayStart: ((value: TestGatewayZoneStartResult) => void) | undefined;
+		const staleGatewayClose = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const containPendingCreate = vi.fn(async () => createCompleteVmDestroyReceipt());
 		const restartTimeoutCallbacks: (() => void)[] = [];
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
-			restartGatewayZone: async () => {
+			restartGatewayZone: async (_zoneId, startOptions) => {
 				gatewayStartCount += 1;
-				const gatewayStartResult: GatewayZoneStartResult = {
+				const gatewayStartResult: TestGatewayZoneStartResult = {
 					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
@@ -1700,11 +1983,16 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						startCommand: 'start',
 					},
 					vm: {
-						close: gatewayStartCount === 2 ? staleGatewayClose : vi.fn(async () => {}),
+						close:
+							gatewayStartCount === 2
+								? staleGatewayClose
+								: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () =>
+							createTestVmDestroyTarget(`gateway-vm-${gatewayStartCount}`, { role: 'gateway' }),
 						getHostPid: () => 48_284 + gatewayStartCount,
 						getVmInstance: vi.fn(),
 						id: `gateway-vm-${gatewayStartCount}`,
@@ -1713,6 +2001,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					zone: getOpenClawZone(),
 				};
 				if (gatewayStartCount === 2) {
+					startOptions?.onPendingVmCreation?.({ contain: containPendingCreate });
 					return await new Promise<typeof gatewayStartResult>((resolve) => {
 						resolveStaleGatewayStart = resolve;
 					});
@@ -1737,6 +2026,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		});
 		restartTimeoutCallbacks[0]?.();
 		await expect(restartPromise).rejects.toThrow('restart timed out');
+		expect(containPendingCreate).toHaveBeenCalledOnce();
 
 		let stopSettled = false;
 		const stopPromise = runtime.stop().then(() => {
@@ -1762,6 +2052,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 				fs: createManagedVmFsStub(),
+				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-stale', { role: 'gateway' }),
 				getHostPid: () => 48_286,
 				getVmInstance: vi.fn(),
 				id: 'gateway-vm-stale',
@@ -1773,12 +2064,137 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		expect(stopSettled).toBe(true);
 	});
 
+	it.each([
+		['restart', 'shutdown'],
+		['cold start', 'stop'],
+	] as const)(
+		'releases %s lifecycle serialization after terminal pending-create containment so %s can finish without admitting a successor',
+		async (timedOperationKind, terminalOperationKind) => {
+			// Arrange
+			let gatewayStartCount = 0;
+			const pendingGatewayCreate = createDeferredPromise<TestGatewayZoneStartResult>();
+			const pendingCreateContainment = createDeferredPromise<VmDestroyReceiptV1>();
+			const containPendingCreate = vi.fn(
+				async (): Promise<VmDestroyReceiptV1> => await pendingCreateContainment.promise,
+			);
+			const restartTimeoutCallbacks: (() => void)[] = [];
+			const pendingGatewayStartOrdinal = timedOperationKind === 'restart' ? 2 : 1;
+			const runtime = createOpenClawZoneRuntime({
+				deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+				isProcessAlive: () => true,
+				now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+				restartGatewayZone: async (_zoneId, startOptions) => {
+					gatewayStartCount += 1;
+					if (gatewayStartCount === pendingGatewayStartOrdinal) {
+						startOptions?.onPendingVmCreation?.({ contain: containPendingCreate });
+						return await pendingGatewayCreate.promise;
+					}
+					return {
+						image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+						ingress: { host: '127.0.0.1', port: 18791 },
+						processSpec: {
+							bootstrapCommand: 'bootstrap',
+							guestListenPort: 18789,
+							healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+							logPath: '/agent-vm/logs/gateway-boot-latest.log',
+							startCommand: 'start',
+						},
+						vm: {
+							close: vi.fn(async () => createCompleteVmDestroyReceipt()),
+							enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+							enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
+							exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+							fs: createManagedVmFsStub(),
+							getDestroyTarget: () =>
+								createTestVmDestroyTarget(`gateway-vm-${String(gatewayStartCount)}`, {
+									role: 'gateway',
+								}),
+							getHostPid: () => 48_284 + gatewayStartCount,
+							getVmInstance: vi.fn(),
+							id: `gateway-vm-${String(gatewayStartCount)}`,
+							setIngressRoutes: vi.fn(),
+						},
+						zone: getOpenClawZone(),
+					};
+				},
+				secretResolver: createResolvingSecretResolver(),
+				setTimeoutImpl: (callback, delayMs) => {
+					if (delayMs === 5_000) {
+						restartTimeoutCallbacks.push(callback);
+					}
+					return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+				},
+				systemConfig: loadedSystemConfig,
+				zone: getOpenClawZone(),
+			});
+
+			if (timedOperationKind === 'restart') {
+				await runtime.start();
+			}
+			const timedOperation =
+				timedOperationKind === 'restart'
+					? runtime.restart({ timeoutMs: 5_000 })
+					: runtime.coldStart({ timeoutMs: 5_000 });
+			await vi.waitFor(() => {
+				expect(restartTimeoutCallbacks).toHaveLength(1);
+				expect(containPendingCreate).not.toHaveBeenCalled();
+			});
+
+			// Act
+			restartTimeoutCallbacks[0]?.();
+			await expect(timedOperation).rejects.toThrow('restart timed out');
+			expect(containPendingCreate).toHaveBeenCalledOnce();
+			const terminalOperation =
+				terminalOperationKind === 'shutdown' ? runtime.shutdown() : runtime.stop();
+			const successorStart = runtime.start();
+			let terminalOperationSettled = false;
+			let successorStartSettled = false;
+			const terminalOperationOutcome = terminalOperation.then(
+				() => {
+					terminalOperationSettled = true;
+					return { kind: 'resolved' as const };
+				},
+				(error: unknown) => {
+					terminalOperationSettled = true;
+					return { error, kind: 'rejected' as const };
+				},
+			);
+			const successorStartOutcome = successorStart.then(
+				() => {
+					successorStartSettled = true;
+					return { kind: 'resolved' as const };
+				},
+				(error: unknown) => {
+					successorStartSettled = true;
+					return { error, kind: 'rejected' as const };
+				},
+			);
+			pendingCreateContainment.reject(
+				Object.assign(new Error('Pending Gateway create containment budget expired'), {
+					code: 'GATEWAY_SUBTREE_DESTRUCTION_TIMEOUT' as const,
+				}),
+			);
+			await drainMicrotasks(20);
+
+			// Assert
+			expect(terminalOperationSettled).toBe(true);
+			expect(successorStartSettled).toBe(true);
+			await expect(terminalOperationOutcome).resolves.toEqual({ kind: 'resolved' });
+			await expect(successorStartOutcome).resolves.toMatchObject({ kind: 'rejected' });
+			expect(gatewayStartCount).toBe(pendingGatewayStartOrdinal);
+			expect(runtime.getLifecycleState()).toMatchObject({
+				coldStartEligible: false,
+				error: { code: 'owner-unsafe' },
+				kind: 'failed',
+			});
+		},
+	);
+
 	it('treats restart on a stopped runtime as a cold start without deleting ownership records first', async () => {
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord,
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
 				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
@@ -1791,11 +2207,13 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					startCommand: 'start',
 				},
 				vm: {
-					close: vi.fn(async () => {}),
+					close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 					enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 					fs: createManagedVmFsStub(),
+					getDestroyTarget: () =>
+						createTestVmDestroyTarget('gateway-vm-cold-start-from-restart', { role: 'gateway' }),
 					getHostPid: () => 48_284,
 					getVmInstance: vi.fn(),
 					id: 'gateway-vm-cold-start-from-restart',
@@ -1828,7 +2246,6 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			}),
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			isProcessAlive: () => true,
-			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
@@ -1848,11 +2265,12 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						startCommand: 'start',
 					},
 					vm: {
-						close: vi.fn(async () => {}),
+						close: vi.fn(async () => createCompleteVmDestroyReceipt()),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 22 })),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
 						fs: createManagedVmFsStub(),
+						getDestroyTarget: () => createTestVmDestroyTarget(vmId, { role: 'gateway' }),
 						getHostPid: () => hostPid,
 						getVmInstance: vi.fn(),
 						id: vmId,
@@ -1909,4 +2327,12 @@ function createDeferredPromise<TResult>(): {
 		reject: rejectDeferred,
 		resolve: resolveDeferred,
 	};
+}
+
+async function drainMicrotasks(remainingIterations: number): Promise<void> {
+	if (remainingIterations <= 0) {
+		return;
+	}
+	await Promise.resolve();
+	await drainMicrotasks(remainingIterations - 1);
 }

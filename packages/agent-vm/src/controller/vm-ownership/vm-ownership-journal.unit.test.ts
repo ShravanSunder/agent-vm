@@ -4,11 +4,18 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { VmOwnershipDeploymentIdentity } from './vm-ownership-contracts.js';
 import {
 	VmOwnershipJournalError,
 	createVmOwnershipJournal,
 	type GatewayMembershipRecord,
 } from './vm-ownership-journal.js';
+
+const TEST_DEPLOYMENT_IDENTITY = {
+	configPath: '/deployments/sunfam/config/system.jsonc',
+	controllerPort: 18_800,
+	projectNamespace: 'sunfam-test-deployment',
+} satisfies VmOwnershipDeploymentIdentity;
 
 const temporaryDirectories: string[] = [];
 
@@ -47,10 +54,11 @@ function createMembershipRecord(
 			controllerEpoch: 'controller-epoch-a',
 			expectedRevision: 1,
 			parentGateway: null,
-			principal: { kind: 'gateway-zone', zoneId: 'sunfam' },
+			principal: { ...TEST_DEPLOYMENT_IDENTITY, kind: 'gateway-zone', zoneId: 'sunfam' },
 			reservationId: `reservation-${gatewayEpochId}`,
 			reservationPath,
 			role: 'gateway',
+			sessionLabel: `gateway:${gatewayEpochId}`,
 			vmId: `vm-${gatewayEpochId}`,
 		},
 		revision: 1,
@@ -78,6 +86,7 @@ function createChildMembership(
 			gatewayVmId: parentRecord.gateway.gatewayVmId,
 		},
 		principal: {
+			...TEST_DEPLOYMENT_IDENTITY,
 			agentId: `agent-${reservationId}`,
 			kind: 'stable-agent',
 			zoneId: parentRecord.gateway.zoneId,
@@ -85,6 +94,7 @@ function createChildMembership(
 		reservationId,
 		reservationPath,
 		role: 'tool',
+		sessionLabel: `tool:${reservationId}`,
 		state: 'provisional',
 		vmId: `vm-${reservationId}`,
 		...overrides,
@@ -100,7 +110,7 @@ function moveMembershipRecordToZone(
 		gateway: { ...record.gateway, zoneId },
 		gatewayReservation: {
 			...record.gatewayReservation,
-			principal: { kind: 'gateway-zone', zoneId },
+			principal: { ...record.gatewayReservation.principal, zoneId },
 		},
 	};
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
+import { VmDestructionUnprovenError } from '../../shared/vm-destruction-receipt.js';
 import type { ActiveWorkerTask } from '../active-task-registry.js';
+import type { PreparedWorkerTask } from '../worker-task-runner.js';
 import { createWorkerZoneRuntime } from './worker-zone-runtime.js';
 
 const systemConfig = {
@@ -43,10 +45,19 @@ const loadedSystemConfig = {
 	systemConfigPath: '/tmp/system.json',
 } satisfies LoadedSystemConfig;
 
-const workerZone = systemConfig.zones[0];
-if (!workerZone || workerZone.gateway.type !== 'worker') {
-	throw new Error('Expected worker test zone.');
+function getWorkerZone(): Extract<
+	(typeof systemConfig.zones)[number],
+	{ gateway: { type: 'worker' } }
+> {
+	const configuredZone = systemConfig.zones[0];
+	if (!configuredZone || configuredZone.gateway.type !== 'worker') {
+		throw new Error('Expected worker test zone.');
+	}
+	return configuredZone;
 }
+
+const workerZone = getWorkerZone();
+const workerControllerEpoch = 'worker-controller-epoch-test';
 
 function createActiveWorkerTask(
 	taskId: string,
@@ -63,7 +74,170 @@ function createActiveWorkerTask(
 	};
 }
 
+function createPreparedWorkerTask(taskId: string): PreparedWorkerTask {
+	const input = {
+		context: {},
+		prompt: 'prove Worker VM cleanup ownership',
+		repos: [],
+		requestTaskId: `request-${taskId}`,
+		resources: { externalResources: {} },
+	};
+	return {
+		eventLogPath: `/tmp/${taskId}/events.jsonl`,
+		input,
+		preStartResult: {
+			effectiveConfig: {
+				branchPrefix: `agent-vm/${taskId}`,
+				defaults: {
+					model: 'latest-medium',
+					provider: 'codex',
+				},
+				mcpServers: [],
+				phases: {
+					plan: {
+						agentInstructions: 'plan',
+						agentTurnTimeoutMs: 900_000,
+						cycle: { kind: 'noReview' },
+						reviewerInstructions: null,
+						reviewerTurnTimeoutMs: 900_000,
+						skills: [],
+					},
+					work: {
+						agentInstructions: 'work',
+						agentTurnTimeoutMs: 2_700_000,
+						cycle: { kind: 'review', cycleCount: 1 },
+						reviewerInstructions: null,
+						reviewerTurnTimeoutMs: 900_000,
+						skills: [],
+					},
+					wrapup: {
+						instructions: 'wrapup',
+						skills: [],
+						turnTimeoutMs: 900_000,
+					},
+				},
+				runtimeInstructions: 'runtime instructions',
+				stateDir: '/state',
+				verification: [],
+				verificationTimeoutMs: 300_000,
+			},
+			environment: {},
+			input,
+			repos: [],
+			startedResourceProviders: [],
+			stateDir: `/tmp/${taskId}/state`,
+			taskId,
+			taskRoot: `/tmp/${taskId}`,
+			taskRuntimeRoot: `/tmp/runtime/${taskId}`,
+			tcpHosts: {},
+			vfsMounts: {},
+			workDir: `/tmp/${taskId}/work`,
+		},
+		recordEvent: async () => {},
+		taskId,
+		taskRoot: `/tmp/${taskId}`,
+		taskZoneConfig: workerZone,
+		zone: workerZone,
+		zoneId: 'worker-zone',
+	};
+}
+
+function createActiveTaskRegistryStub(
+	activeTask: ActiveWorkerTask,
+	clear: Parameters<typeof createWorkerZoneRuntime>[0]['activeTaskRegistry']['clear'],
+): Parameters<typeof createWorkerZoneRuntime>[0]['activeTaskRegistry'] {
+	return {
+		activateReservation: vi.fn(),
+		beginZoneDestroy: vi.fn(),
+		clear,
+		countOccupiedForZone: vi.fn(() => 1),
+		endZoneDestroy: vi.fn(),
+		get: vi.fn(() => activeTask),
+		listForZone: vi.fn(() => [activeTask]),
+		releaseReservation: vi.fn(),
+		setWorkerIngress: vi.fn(),
+		tryReserve: vi.fn(() => 'reservation-1'),
+	};
+}
+
 describe('createWorkerZoneRuntime destroy orchestration', () => {
+	it('retains active ownership when Worker execution nests unproven VM destruction', async () => {
+		const prepared = createPreparedWorkerTask('task-owner-unsafe');
+		const activeTask = createActiveWorkerTask(prepared.taskId, {
+			host: '127.0.0.1',
+			port: 18881,
+		});
+		const clear = vi.fn(() => true);
+		const nestedCleanupFailure = new AggregateError(
+			[
+				new Error('worker task failed'),
+				new AggregateError(
+					[new VmDestructionUnprovenError('Worker VM exact destruction is unproven')],
+					'nested cleanup failed',
+				),
+			],
+			'worker execution and cleanup failed',
+		);
+		const executeWorkerTask = vi.fn(async () => {
+			throw nestedCleanupFailure;
+		});
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: createActiveTaskRegistryStub(activeTask, clear),
+			controllerGithubToken: null,
+			controllerEpoch: workerControllerEpoch,
+			executeWorkerTask,
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: workerZone,
+		});
+
+		await expect(runtime.executeWorkerTask(prepared)).rejects.toBe(nestedCleanupFailure);
+
+		expect(clear).not.toHaveBeenCalled();
+		expect(executeWorkerTask).toHaveBeenCalledWith(
+			prepared,
+			expect.objectContaining({
+				controllerEpoch: workerControllerEpoch,
+				controlSession: expect.objectContaining({ controllerEpoch: workerControllerEpoch }),
+			}),
+		);
+		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'running' });
+	});
+
+	it('clears active ownership when Worker execution fails without a destruction error', async () => {
+		const prepared = createPreparedWorkerTask('task-ordinary-failure');
+		const activeTask = createActiveWorkerTask(prepared.taskId, {
+			host: '127.0.0.1',
+			port: 18881,
+		});
+		const clear = vi.fn(() => true);
+		const ordinaryFailure = new Error('worker request rejected');
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: createActiveTaskRegistryStub(activeTask, clear),
+			controllerGithubToken: null,
+			controllerEpoch: workerControllerEpoch,
+			executeWorkerTask: vi.fn(async () => {
+				throw ordinaryFailure;
+			}),
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: workerZone,
+		});
+
+		await expect(runtime.executeWorkerTask(prepared)).rejects.toBe(ordinaryFailure);
+
+		expect(clear).toHaveBeenCalledOnce();
+		expect(clear).toHaveBeenCalledWith('worker-zone', prepared.taskId);
+	});
+
 	it('clears only successfully closed tasks and wraps unexpected close rejections', async () => {
 		const activeTask1 = createActiveWorkerTask('task-1', {
 			host: '127.0.0.1',
@@ -94,6 +268,7 @@ describe('createWorkerZoneRuntime destroy orchestration', () => {
 				tryReserve: vi.fn(() => 'reservation-1'),
 			},
 			controllerGithubToken: null,
+			controllerEpoch: workerControllerEpoch,
 			requestHeartbeatRegistry: {
 				acquire: vi.fn(),
 				release: vi.fn(),
@@ -140,6 +315,7 @@ describe('createWorkerZoneRuntime destroy orchestration', () => {
 				tryReserve: vi.fn(() => 'reservation-1'),
 			},
 			controllerGithubToken: null,
+			controllerEpoch: workerControllerEpoch,
 			requestHeartbeatRegistry: {
 				acquire: vi.fn(),
 				release: vi.fn(),
@@ -184,6 +360,7 @@ describe('createWorkerZoneRuntime destroy orchestration', () => {
 				tryReserve: vi.fn(() => 'reservation-1'),
 			},
 			controllerGithubToken: null,
+			controllerEpoch: workerControllerEpoch,
 			requestHeartbeatRegistry: {
 				acquire: vi.fn(),
 				release: vi.fn(),

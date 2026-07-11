@@ -13,6 +13,7 @@
 		"test:taxonomy": "tsx scripts/audit-test-taxonomy.ts",
 		"test:portal-architecture": "tsx scripts/audit-portal-architecture.ts",
 		"test:portal-exports": "tsx scripts/verify-portal-package-exports.ts",
+		"test:vm-ownership-boundaries": "tsx scripts/audit-vm-ownership-boundaries.ts",
 		"lint": "oxlint .",
 		"lint:fix": "oxlint --fix",
 		"lint:types": "oxlint --type-aware .",
@@ -58,6 +59,9 @@
 	"pnpm": {
 		"onlyBuiltDependencies": [
 			"esbuild"
-		]
+		],
+		"patchedDependencies": {
+			"@earendil-works/gondolin@0.12.0": "patches/@earendil-works__gondolin@0.12.0.patch"
+		}
 	}
 }

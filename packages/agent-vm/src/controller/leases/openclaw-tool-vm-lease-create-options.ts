@@ -2,6 +2,7 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import type { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
+import type { GatewayOwnershipCoordinator } from '../vm-ownership/gateway-ownership-coordinator.js';
 import { type AgentSandboxSeedResult, seedAgentSandboxWorkspace } from './agent-sandbox-seeding.js';
 import {
 	defaultToolVmLeaseIdleTtlMs,
@@ -41,6 +42,7 @@ export interface OpenClawToolVmLeaseCreateOptionsResolverOptions {
 	readonly leaseIdleTtlPolicy?: ToolVmLeaseIdleTtlPolicy;
 	readonly onSandboxSeedResult?: (result: AgentSandboxSeedResult) => void;
 	readonly openClawRuntimeStatusStore: OpenClawRuntimeStatusStore;
+	readonly resolveGatewayEpoch: GatewayOwnershipCoordinator['resolveGatewayEpoch'];
 	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 }
@@ -125,6 +127,11 @@ export function createOpenClawToolVmLeaseCreateOptionsResolver(
 			agentId: authorityContext.agentId,
 			agentWorkspaceDir: authorityContext.agentWorkspaceDir,
 			effectiveIdleTtlMs: effectiveIdleTtl.value,
+			expectedGateway: options.resolveGatewayEpoch({
+				bootId: authorityContext.bootId,
+				controllerEpoch: authorityContext.controllerEpoch,
+				zoneId: authorityContext.zoneId,
+			}),
 			guestWorkdir: resolvedWorkMount.guestWorkdir,
 			hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
 			profile,

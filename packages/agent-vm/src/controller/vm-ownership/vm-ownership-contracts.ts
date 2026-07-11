@@ -1,3 +1,4 @@
+import { MANAGED_VM_OWNERSHIP_PRINCIPAL_MAX_CODE_UNITS } from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
 export const VM_OWNERSHIP_MEMBERSHIP_SCHEMA_VERSION = 1 as const;
@@ -29,18 +30,29 @@ export const gatewayEpochIdentitySchema = z.strictObject({
 
 export type GatewayEpochIdentity = z.infer<typeof gatewayEpochIdentitySchema>;
 
+export const vmOwnershipDeploymentIdentitySchema = z.strictObject({
+	configPath: absoluteOwnedPathSchema,
+	controllerPort: z.number().int().min(1).max(65_535),
+	projectNamespace: boundedTextSchema,
+});
+
+export type VmOwnershipDeploymentIdentity = z.infer<typeof vmOwnershipDeploymentIdentitySchema>;
+
 export const gatewayZonePrincipalSchema = z.strictObject({
+	...vmOwnershipDeploymentIdentitySchema.shape,
 	kind: z.literal('gateway-zone'),
 	zoneId: boundedTextSchema,
 });
 
 export const stableAgentPrincipalSchema = z.strictObject({
+	...vmOwnershipDeploymentIdentitySchema.shape,
 	agentId: boundedTextSchema,
 	kind: z.literal('stable-agent'),
 	zoneId: boundedTextSchema,
 });
 
 export const workerTaskPrincipalSchema = z.strictObject({
+	...vmOwnershipDeploymentIdentitySchema.shape,
 	kind: z.literal('worker-task'),
 	taskId: boundedTextSchema,
 	zoneId: boundedTextSchema,
@@ -54,6 +66,16 @@ export const vmOwnershipPrincipalSchema = z.discriminatedUnion('kind', [
 
 export type VmOwnershipPrincipal = z.infer<typeof vmOwnershipPrincipalSchema>;
 
+export function serializeVmOwnershipPrincipal(principal: VmOwnershipPrincipal): string {
+	const serializedPrincipal = JSON.stringify(vmOwnershipPrincipalSchema.parse(principal));
+	if (serializedPrincipal.length > MANAGED_VM_OWNERSHIP_PRINCIPAL_MAX_CODE_UNITS) {
+		throw new Error(
+			`Serialized VM ownership principal exceeds ${String(MANAGED_VM_OWNERSHIP_PRINCIPAL_MAX_CODE_UNITS)} code units.`,
+		);
+	}
+	return serializedPrincipal;
+}
+
 export const parentGatewayIdentitySchema = gatewayEpochIdentitySchema.pick({
 	gatewayEpochId: true,
 	gatewayVmId: true,
@@ -64,6 +86,7 @@ const baseReservationReferenceShape = {
 	expectedRevision: z.number().int().positive(),
 	reservationId: boundedIdentitySchema,
 	reservationPath: absoluteOwnedPathSchema,
+	sessionLabel: boundedTextSchema,
 	vmId: boundedIdentitySchema,
 };
 

@@ -15,42 +15,51 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
 ```
   startControllerRuntime(options, dependencies)
     |
-    |-- 1. Resolve secrets
+    |-- 1. Acquire the deployment ownership lock
+    |      Holds runtimeDir/vm-ownership/controller-ownership.lock
+    |      for the controller's complete lifetime
+    |
+    |-- 2. Resolve secrets
     |      createSecretResolver(systemConfig, createOpCliSecretResolver)
     |      Resolves 1Password service account token from configured source
     |      Builds composite resolver (1password | environment dispatch)
     |
-    |-- 2. Create TCP pool
+    |-- 3. Create TCP pool
     |      createTcpPool({ basePort, size })
     |      Fixed array of port slots for tool VM SSH forwarding
     |
-    |-- 3. Create zone runtime registry
+    |-- 4. Reconcile exact VM ownership
+    |      Authenticate reservation and Gateway membership evidence
+    |      Destroy proven old Tool VM children before their Gateway
+    |      Refuse ambiguous/incomplete evidence; adopt nothing
+    |
+    |-- 5. Create zone runtime registry
     |      Builds one runtime per selected zone
     |      OpenClaw and Worker zones dispatch by gateway type
     |
-    |-- 4. Create lease manager
+    |-- 6. Create lease manager
     |      createLeaseManager({ tcpPool, createManagedVm, now })
     |      Wires VM creation and TCP slot bookkeeping into the lease lifecycle
     |
-    |-- 5. Start idle reaper
+    |-- 7. Start idle reaper
     |      createIdleReaper({ ttlForLease })
     |      TTL comes from the single leaseIdleTtl policy
     |      Attached to a 60-second interval timer
     |      Runs one immediate reap pass before accepting requests
     |
-    |-- 6. Start selected gateway zones
+    |-- 8. Start selected gateway zones
     |      startGatewayZone({ secretResolver, systemConfig, zoneId })
-    |      Full orchestration: orphan cleanup, image build, VM boot, health check
+    |      Image build, exact reservation, VM boot, health check
     |
-    |-- 7. Wire operations + task runner
+    |-- 9. Wire operations + task runner
     |      OpenClaw zones: zone runtime operations + stopController
     |      Worker zones:   worker task runtime + push/pull/close + stopController
     |
-    |-- 8. Build Hono app
+    |-- 10. Build Hono app
     |      createControllerService({ leaseManager, operations, workerTaskRunner })
     |      Mounts lease routes, zone operation routes, /health
     |
-    |-- 9. Bind HTTP server
+    |-- 11. Bind HTTP server
     |      startControllerHttpServer({ app, port: config.host.controllerPort })
     |
     v
@@ -66,15 +75,22 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |-- 1. Mark runtime stopping
     |-- 2. Clear reaper interval timer
     |-- 3. Stop the gateway-service health monitor and await an in-flight tick
-    |-- 4. Release all leases (sequential to avoid TCP slot races)
-    |-- 5. Stop gateway zone: vm.close() + delete runtime record
-    |-- 6. Close HTTP server
-    |-- If any lease release failed, throw after server close
+    |-- 4. Seal each Gateway epoch and stop admitting Tool VM children
+    |-- 5. Exact-destroy Tool VM children, then exact-destroy their Gateway
+    |-- 6. Close HTTP server and flush controller evidence
+    |-- 7. Release the deployment ownership lock last
+    |-- If any disposition is incomplete, preserve owner-unsafe evidence and fail
 ```
 
 The `stopController` operation (exposed via `POST /stop-controller`) follows the same sequence but triggers the HTTP server close on a 100ms delay so the response can flush before the socket drops.
 
-Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first refuses to run while the configured controller health endpoint is reachable. When the controller is responding but cannot stop the gateway, operators can pass `--force`. Cleanup reads the selected config, loads the zone's `gateway-runtime.json`, validates `projectNamespace`, `zoneId`, `sessionLabel`, and the recorded PID command, then terminates only that recorded gateway VM process. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
+Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first acquires the same deployment-wide ownership lock held for the controller's full lifetime, then refuses to run while the configured controller health endpoint is reachable. `--force` skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence validation. Cleanup scans the selected zone's private Gateway membership journal and the deployment reservation inventory, authenticates canonical config path, controller port, project namespace, zone, principal, session, reservation, and destroy-target identity, destroys Tool VM children before their Gateway parent, and requires complete exact-destruction receipts. Valid standalone Worker reservations are filtered by the selected zone. A missing, malformed, mismatched, duplicate, or incomplete ownership disposition refuses cleanup; legacy runtime records and PID matching are never cleanup authority. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
+
+Gateway subtree destruction runs at most four child dispositions concurrently,
+gives each exact target 60 seconds, and gives the whole subtree 300 seconds.
+When either deadline expires, queued children do not start, the Gateway is not
+closed, and a successor Gateway is refused until the old subtree has a complete
+durable disposition.
 
 ---
 
@@ -134,8 +150,9 @@ Health snapshots and the bounded event history are in-memory controller state
 for fast live reads. Accepted health and recovery events are also appended to
 `<runtimeDir>/controller-health/events.jsonl` as diagnostic evidence. That
 durable JSONL log is not backup state and is not authority for ownership or
-recovery decisions; runtime records plus current process/port checks remain the
-authority.
+recovery decisions. VM ownership membership and reservation journals plus
+exact destruction receipts are the authority; legacy runtime records and
+process/port observations are diagnostic evidence only.
 
 Operators can read the same zone-scoped health evidence through the CLI:
 `agent-vm controller health --config <system-config> --zone <zone>` runs the
@@ -219,8 +236,9 @@ the zone runtime.
 
 `startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in the [gateway zone orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
 
-- **Step 1 (orphan cleanup)** runs `gateway-recovery.ts`: loads a persisted `GatewayRuntimeRecord` from `stateDir`, checks PID liveness via `kill(pid, 0)`, verifies the command matches `/qemu-system|krun/`, then sends SIGTERM (2s grace) and SIGKILL (2s grace). Non-managed PIDs cause a hard error. Record deletion failures produce a warning but do not block startup.
-- **Step 15 (runtime record write)** persists pid, vmId, and zoneId so orphan cleanup works on next startup if the controller crashes.
+- Before an OpenClaw zone reaches `startGatewayZone()`, controller startup reconciles the zone's exact ownership membership and reservation inventory. It adopts nothing: proven old Tool VM children are destroyed before their Gateway parent, while ambiguous or incomplete evidence refuses a successor.
+- OpenClaw startup does not invoke the legacy `gateway-recovery.ts` PID/runtime-record cleanup path. Worker task VMs use exact standalone reservations in the deployment runtime inventory and are reconciled through the same receipt rules.
+- The runtime-record write still persists operational diagnostics such as pid, vmId, and zoneId, but that record is not destructive authority.
 - The controller holds the returned `{ vm, ingress, processSpec }` for the lifetime of the zone and uses `vm.close()` + runtime record deletion during shutdown.
 
 ---

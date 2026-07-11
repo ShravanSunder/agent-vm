@@ -1,6 +1,9 @@
 import type { TaskState } from '@agent-vm/agent-vm-worker';
 import type { GatewayProcessSpec } from '@agent-vm/gateway-interface';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type {
+	ManagedVm,
+	ManagedVmOwnershipReservationReferenceV1,
+} from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
@@ -33,6 +36,7 @@ export interface GatewayZoneRuntimeHandle {
 	readonly ingress: GatewayZoneStartResult['ingress'];
 	readonly processSpec: GatewayProcessSpec;
 	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'getHostPid' | 'id'>;
+	readonly vmOwnership: GatewayZoneStartResult['vmOwnership'];
 }
 
 export type ControllerZoneRuntimeSnapshot = ControllerRuntimeZoneStatus;
@@ -114,6 +118,7 @@ export interface SharedZoneRuntimeDependencies {
 	readonly controllerGithubToken: string | null;
 	readonly createManagedToolVm: (options: {
 		readonly agentId: string;
+		readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;

@@ -12,18 +12,37 @@ import {
 	type ToolVmActiveUseCorrelation,
 	type ToolVmActiveUseOperationReport,
 } from '@agent-vm/gateway-interface';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type {
+	ManagedVm,
+	VmDestroyReceiptV1,
+	VmOwnershipReservationReferenceV1,
+} from '@agent-vm/gondolin-adapter';
 
 import type { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
+import {
+	containsUnprovenVmDestructionError,
+	IncompleteVmDestructionError,
+} from '../../shared/vm-destruction-receipt.js';
+import { settleGatewayChildDestructionTasks } from '../vm-ownership/gateway-child-destruction.js';
+import type { GatewayOwnershipCoordinator } from '../vm-ownership/gateway-ownership-coordinator.js';
+import {
+	gatewayIdentitiesEqual,
+	type GatewayEpochIdentity,
+} from '../vm-ownership/vm-ownership-contracts.js';
 import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
+import { createAgentLeaseOperationLock } from './agent-lease-operation-lock.js';
 import { defaultToolVmLeaseIdleTtlMs } from './lease-idle-policy.js';
+import { createPendingToolVmCleanupRegistry } from './pending-tool-vm-cleanup-registry.js';
 import type { TcpPool } from './tcp-pool.js';
+import { createToolVmCurrentLeaseRegistry } from './tool-vm-current-lease-registry.js';
+import { createToolVmLeaseCreationRegistry } from './tool-vm-lease-creation-registry.js';
 import {
 	classifyToolVmLeaseCloseOutcome,
 	classifyToolVmLeaseReleaseRequest,
 	classifyToolVmLeaseRenewal,
 	isToolVmLeaseExpired,
 } from './tool-vm-lease-lifecycle.js';
+import { isToolVmLeaseVmLive } from './tool-vm-lease-liveness.js';
 import {
 	buildToolVmRuntimeRecord,
 	deleteToolVmRuntimeRecord,
@@ -98,6 +117,7 @@ export interface LeaseManager {
 		readonly agentId: string;
 		readonly agentWorkspaceDir: string;
 		readonly effectiveIdleTtlMs?: number;
+		readonly expectedGateway: GatewayEpochIdentity;
 		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly guestWorkdir: string;
@@ -105,6 +125,10 @@ export interface LeaseManager {
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 	}): Promise<Lease>;
+	destroyGatewayOwnedLeases(
+		expectedGateway: GatewayEpochIdentity,
+		signal?: AbortSignal,
+	): Promise<void>;
 	endActiveUse(
 		leaseId: string,
 		useId: string,
@@ -255,40 +279,6 @@ function zoneGitMountsEqual(
 	);
 }
 
-async function isLeaseVmLive(lease: Lease): Promise<boolean> {
-	const abortController = new AbortController();
-	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-	try {
-		const timeoutResult = new Promise<false>((resolve) => {
-			timeoutHandle = setTimeout(() => {
-				abortController.abort();
-				resolve(false);
-			}, 5_000);
-		});
-		const probeResult = await Promise.race([
-			lease.vm.exec('true', { signal: abortController.signal }),
-			timeoutResult,
-		]);
-		return probeResult !== false && probeResult.exitCode === 0;
-	} catch (error) {
-		writeLeaseManagerWarning(
-			`liveness check failed for lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}`,
-		);
-		return false;
-	} finally {
-		if (timeoutHandle !== undefined) {
-			clearTimeout(timeoutHandle);
-		}
-	}
-}
-
-function agentLeaseIndexKey(agentLease: {
-	readonly agentId: string;
-	readonly zoneId: string;
-}): string {
-	return `${agentLease.zoneId}\0${agentLease.agentId}`;
-}
-
 function activeUseKey(leaseId: string, useId: string): string {
 	return `${leaseId}\0${useId}`;
 }
@@ -306,11 +296,13 @@ export function createLeaseManager(options: {
 		readonly tcpSlot: number;
 		readonly guestWorkdir: string;
 		readonly hostWorkMountDir: string;
+		readonly ownershipReservation: VmOwnershipReservationReferenceV1;
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
 	readonly deleteToolVmRuntimeRecord?: typeof deleteToolVmRuntimeRecord;
 	readonly now: () => number;
+	readonly ownershipCoordinator: GatewayOwnershipCoordinator;
 	readonly projectNamespace: string;
 	// Injected for tests so we don't shell out to `ps` against a fake pid.
 	// Production uses the default real implementation.
@@ -321,23 +313,26 @@ export function createLeaseManager(options: {
 	readonly toolVmUsePolicy?: ToolVmUsePolicy;
 	readonly writeToolVmRuntimeRecord?: typeof writeToolVmRuntimeRecord;
 }): LeaseManager {
-	const leases = new Map<string, Lease>();
 	const activeUses = new Map<string, ToolVmActiveUse>();
 	const endedUseTombstones = new Map<string, EndedToolVmActiveUseTombstone>();
-	const leaseIdsByAgent = new Map<string, string>();
 	const releasingLeaseIds = new Set<string>();
-	const agentLeaseLocks = new Map<string, Promise<void>>();
 	const leaseRetirementListeners = new Set<(event: ToolVmLeaseRetirementEvent) => void>();
+	const agentLeaseOperationLock = createAgentLeaseOperationLock();
+	const currentLeaseRegistry = createToolVmCurrentLeaseRegistry<Lease>();
+	const leaseCreationRegistry = createToolVmLeaseCreationRegistry();
 	const toolVmUsePolicy = options.toolVmUsePolicy ?? defaultToolVmUsePolicy;
 	assertValidToolVmUsePolicy(toolVmUsePolicy);
 
-	function storeLease(lease: Lease): void {
-		leases.set(lease.id, lease);
-		leaseIdsByAgent.set(agentLeaseIndexKey(lease), lease.id);
+	function storeLease(storeOptions: {
+		readonly gatewayIdentity: GatewayEpochIdentity;
+		readonly lease: Lease;
+		readonly ownership: ReturnType<GatewayOwnershipCoordinator['admitProvisionalToolVm']>;
+	}): void {
+		currentLeaseRegistry.recordCurrent(storeOptions);
 	}
 
 	function deleteLease(lease: Lease): void {
-		leases.delete(lease.id);
+		currentLeaseRegistry.forget(lease);
 		releasingLeaseIds.delete(lease.id);
 		for (const [key, activeUse] of activeUses.entries()) {
 			if (activeUse.leaseId === lease.id) {
@@ -349,28 +344,32 @@ export function createLeaseManager(options: {
 				endedUseTombstones.delete(key);
 			}
 		}
-		const indexKey = agentLeaseIndexKey(lease);
-		// Only clear the agent index if it still points at this exact lease.
-		if (leaseIdsByAgent.get(indexKey) === lease.id) {
-			leaseIdsByAgent.delete(indexKey);
-		}
 	}
 
 	function findLeaseForAgent(agentLease: {
 		readonly agentId: string;
 		readonly zoneId: string;
 	}): Lease | undefined {
-		const leaseId = leaseIdsByAgent.get(agentLeaseIndexKey(agentLease));
-		return leaseId ? leases.get(leaseId) : undefined;
+		return currentLeaseRegistry.findByAgent(agentLease);
 	}
 
 	function touchLease(lease: Lease): Lease {
-		const touchedLease = {
-			...lease,
-			lastUsedAt: options.now(),
-		};
-		storeLease(touchedLease);
-		return touchedLease;
+		return currentLeaseRegistry.touch(lease, options.now());
+	}
+
+	function assertLeaseGatewayAdmitting(lease: Lease): void {
+		const expectedGateway = currentLeaseRegistry.resolveGatewayIdentity(lease.id);
+		if (expectedGateway === undefined) {
+			throw new Error(`Tool VM lease '${lease.id}' has no current Gateway VM ownership.`);
+		}
+		const resolvedGateway = options.ownershipCoordinator.resolveGatewayEpoch({
+			bootId: expectedGateway.bootId,
+			controllerEpoch: expectedGateway.controllerEpoch,
+			zoneId: expectedGateway.zoneId,
+		});
+		if (!gatewayIdentitiesEqual(resolvedGateway, expectedGateway)) {
+			throw new Error(`Tool VM lease '${lease.id}' belongs to a stale Gateway VM epoch.`);
+		}
 	}
 
 	function activeUseCountForLease(leaseId: string): number {
@@ -398,182 +397,354 @@ export function createLeaseManager(options: {
 		});
 	}
 
-	async function withAgentLeaseLock<TValue>(
-		agentLease: { readonly agentId: string; readonly zoneId: string },
-		fn: () => Promise<TValue>,
-	): Promise<TValue> {
-		const lockKey = `${agentLease.zoneId}\0${agentLease.agentId}`;
-		const previousLock = agentLeaseLocks.get(lockKey) ?? Promise.resolve();
-		let releaseCurrentLock: (() => void) | undefined;
-		const currentLock = new Promise<void>((resolve) => {
-			releaseCurrentLock = resolve;
-		});
-		agentLeaseLocks.set(lockKey, currentLock);
-		await previousLock.catch(() => {});
-		try {
-			return await fn();
-		} finally {
-			releaseCurrentLock?.();
-			if (agentLeaseLocks.get(lockKey) === currentLock) {
-				agentLeaseLocks.delete(lockKey);
-			}
-		}
-	}
-
 	const writeRuntimeRecord = options.writeToolVmRuntimeRecord ?? writeToolVmRuntimeRecord;
 	const deleteRuntimeRecord = options.deleteToolVmRuntimeRecord ?? deleteToolVmRuntimeRecord;
 	const createLeaseId = options.createLeaseId ?? createToolVmLeaseId;
 	const createRuntimeRecordId = options.createRuntimeRecordId ?? randomUUID;
+	const releaseTcpSlotAfterCompleteDestruction = (tcpSlot: number): void => {
+		options.tcpPool.release(tcpSlot);
+		options.tcpPool.releaseQuarantined(tcpSlot);
+	};
+	const pendingCleanupRegistry = createPendingToolVmCleanupRegistry({
+		deleteRuntimeRecord,
+		releaseTcpSlotAfterCompleteDestruction,
+		writeWarning: writeLeaseManagerWarning,
+	});
 
-	async function evictLease(
-		lease: Lease,
-		reason: Exclude<ToolVmLeaseRetirementReason, 'released'>,
-	): Promise<void> {
-		deleteLease(lease);
-		notifyLeaseRetired({ leaseId: lease.id, reason });
-		let closeSucceeded = true;
+	async function evictLease(lease: Lease, reason: ToolVmLeaseRetirementReason): Promise<void> {
+		const ownership = currentLeaseRegistry.requireOwnership(lease.id);
+		releasingLeaseIds.add(lease.id);
+		let destroyReceipt: VmDestroyReceiptV1;
 		try {
-			await lease.vm.close();
+			destroyReceipt = await ownership.destroyLive(async () => await lease.vm.close());
 		} catch (error) {
-			closeSucceeded = false;
+			options.tcpPool.quarantine(lease.tcpSlot);
 			writeLeaseManagerWarning(
 				`failed to close evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${lease.tcpSlot} and preserving runtime record for next-startup cleanup.`,
 			);
+			throw error;
 		}
-		// Only release the tcp slot when close() succeeded. If close failed the
-		// QEMU may still be holding the host port — quarantine the slot so a
-		// fresh createLease cannot race onto the same port. Next-startup Phase A
-		// will reap the orphan; this controller process will not reuse the slot.
-		const closeOutcome = classifyToolVmLeaseCloseOutcome({ closeSucceeded });
-		if (closeOutcome.kind === 'release-tcp-and-delete-record') {
-			options.tcpPool.release(lease.tcpSlot);
-			try {
-				await deleteRuntimeRecord(options.stateDirFor(lease.zoneId), lease.runtimeRecordId);
-			} catch (deleteError) {
-				writeLeaseManagerWarning(
-					`failed to delete tool VM runtime record for evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(deleteError)}`,
-				);
-			}
-		} else {
+		if (!destroyReceipt.complete) {
 			options.tcpPool.quarantine(lease.tcpSlot);
+			writeLeaseManagerWarning(
+				`evicted lease '${lease.id}' in zone '${lease.zoneId}' returned an incomplete exact VM destruction receipt. Quarantining tcp slot ${lease.tcpSlot} and preserving runtime record for next-startup cleanup.`,
+			);
+			throw new IncompleteVmDestructionError(`Evicted lease '${lease.id}'`, destroyReceipt);
+		}
+		deleteLease(lease);
+		notifyLeaseRetired({ leaseId: lease.id, reason });
+		releaseTcpSlotAfterCompleteDestruction(lease.tcpSlot);
+		try {
+			await deleteRuntimeRecord(options.stateDirFor(lease.zoneId), lease.runtimeRecordId);
+		} catch (deleteError) {
+			writeLeaseManagerWarning(
+				`failed to delete tool VM runtime record for evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(deleteError)}`,
+			);
 		}
 	}
 
 	return {
 		async createLease(leaseOptions) {
-			return await withAgentLeaseLock(leaseOptions, async () => {
-				assertValidLeaseAgentId(leaseOptions.agentId);
-				const existingLease = findLeaseForAgent({
-					agentId: leaseOptions.agentId,
-					zoneId: leaseOptions.zoneId,
-				});
-				if (existingLease) {
-					if (isLeaseExpired(existingLease)) {
-						await evictLease(existingLease, 'expired');
-					} else {
-						assertCompatibleAgentLeaseRequest(existingLease, leaseOptions);
-						if (await isLeaseVmLive(existingLease)) {
-							return touchLease(existingLease);
-						}
-						await evictLease(existingLease, 'dead');
-					}
-				}
-				const tcpSlot = options.tcpPool.allocate();
-				// Tracks whether the slot is safe to release after partial-create
-				// failure. If vm.close() throws or never runs (VM was created but
-				// teardown failed), the host port may still be held — quarantine
-				// the slot instead of releasing it.
-				let vmCreatedButNotClosed = false;
-				try {
-					const vm = await options.createManagedVm({
-						...leaseOptions,
-						tcpSlot,
+			const finishTrackingCreation = leaseCreationRegistry.trackCreation({
+				agentId: leaseOptions.agentId,
+				gatewayIdentity: leaseOptions.expectedGateway,
+				zoneId: leaseOptions.zoneId,
+			});
+			try {
+				return await agentLeaseOperationLock.runExclusive(leaseOptions, async () => {
+					assertValidLeaseAgentId(leaseOptions.agentId);
+					await pendingCleanupRegistry.retry(leaseOptions);
+					const existingLease = findLeaseForAgent({
+						agentId: leaseOptions.agentId,
+						zoneId: leaseOptions.zoneId,
 					});
-					vmCreatedButNotClosed = true;
-					try {
-						const sshAccess = await vm.enableSsh({
-							listenPort: options.tcpPool.portForSlot(tcpSlot),
-						});
-						const createdAt = options.now();
-						const runtimeRecordId = createRuntimeRecordId();
-						const lease: Lease = {
-							agentId: leaseOptions.agentId,
-							agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
-							createdAt,
-							effectiveIdleTtlMs: leaseOptions.effectiveIdleTtlMs ?? defaultToolVmLeaseIdleTtlMs,
-							guestWorkdir: leaseOptions.guestWorkdir,
-							id: createLeaseId(),
-							lastUsedAt: createdAt,
-							profileId: leaseOptions.profileId,
-							runtimeRecordId,
-							sshAccess,
-							tcpSlot,
-							vm,
-							hostWorkMountDir: leaseOptions.hostWorkMountDir,
-							...(leaseOptions.zoneGitMount ? { zoneGitMount: leaseOptions.zoneGitMount } : {}),
-							zoneId: leaseOptions.zoneId,
-						};
-						storeLease(lease);
-						// Persist a runtime record so the next controller startup can
-						// scope-fence and clean up this tool VM's QEMU if we crash
-						// before evictLease/releaseLease runs.
-						try {
-							await writeRuntimeRecord(
-								options.stateDirFor(lease.zoneId),
-								await buildToolVmRuntimeRecord({
-									controllerPort: options.controllerPort,
-									agentId: lease.agentId,
-									leaseId: lease.id,
-									managedVm: vm,
-									projectNamespace: options.projectNamespace,
-									...(options.readProcessIdentity !== undefined
-										? { readProcessIdentity: options.readProcessIdentity }
-										: {}),
-									recordId: lease.runtimeRecordId,
-									systemConfigPath: options.systemConfigPath,
-									tcpSlot: lease.tcpSlot,
-									zoneId: lease.zoneId,
-								}),
+					if (existingLease) {
+						assertLeaseGatewayAdmitting(existingLease);
+						const existingGatewayIdentity = currentLeaseRegistry.resolveGatewayIdentity(
+							existingLease.id,
+						);
+						if (
+							existingGatewayIdentity === undefined ||
+							!gatewayIdentitiesEqual(existingGatewayIdentity, leaseOptions.expectedGateway)
+						) {
+							throw new Error(
+								`Existing lease '${existingLease.id}' belongs to a different Gateway VM epoch.`,
 							);
-						} catch (writeError) {
-							// Undo: remove the in-memory lease + close the VM + release the
-							// TCP slot, then surface the failure to the caller.
-							deleteLease(lease);
-							throw writeError;
 						}
-						vmCreatedButNotClosed = false;
-						return lease;
-					} catch (error) {
+						if (isLeaseExpired(existingLease)) {
+							await evictLease(existingLease, 'expired');
+						} else {
+							assertCompatibleAgentLeaseRequest(existingLease, leaseOptions);
+							if (await isToolVmLeaseVmLive(existingLease)) {
+								return touchLease(existingLease);
+							}
+							await evictLease(existingLease, 'dead');
+						}
+					}
+					const tcpSlot = options.tcpPool.allocate();
+					const toolOwnership = options.ownershipCoordinator.admitProvisionalToolVm({
+						agentId: leaseOptions.agentId,
+						expectedGateway: leaseOptions.expectedGateway,
+						sessionLabel: `tool-vm:${leaseOptions.zoneId}:${leaseOptions.agentId}`,
+					});
+					// Tracks whether the slot is safe to release after partial-create
+					// failure. If vm.close() throws or never runs (VM was created but
+					// teardown failed), the host port may still be held — quarantine
+					// the slot instead of releasing it.
+					let vmCreatedButNotClosed = false;
+					let detachedCleanupComplete = false;
+					let persistedRuntimeRecord:
+						| { readonly recordId: string; readonly stateDirectory: string }
+						| undefined;
+					try {
+						const ownershipReservation = await toolOwnership.ready;
+						let vm: ManagedVm;
 						try {
-							await vm.close();
+							vm = await options.createManagedVm({
+								...leaseOptions,
+								ownershipReservation,
+								tcpSlot,
+							});
+						} catch (createError) {
+							try {
+								await toolOwnership.destroyDetached();
+								detachedCleanupComplete = true;
+							} catch (cleanupError) {
+								vmCreatedButNotClosed = true;
+								pendingCleanupRegistry.recordDetachedCleanup({
+									agentId: leaseOptions.agentId,
+									gatewayIdentity: structuredClone(leaseOptions.expectedGateway),
+									ownership: toolOwnership,
+									tcpSlot,
+									zoneId: leaseOptions.zoneId,
+								});
+								const aggregateError = new AggregateError(
+									[createError, cleanupError],
+									`Tool VM creation failed and detached cleanup was not proven for zone '${leaseOptions.zoneId}' agent '${leaseOptions.agentId}'.`,
+									{ cause: createError },
+								);
+								throw aggregateError;
+							}
+							throw createError;
+						}
+						vmCreatedButNotClosed = true;
+						try {
+							const sshAccess = await vm.enableSsh({
+								listenPort: options.tcpPool.portForSlot(tcpSlot),
+							});
+							const createdAt = options.now();
+							const runtimeRecordId = createRuntimeRecordId();
+							const lease: Lease = {
+								agentId: leaseOptions.agentId,
+								agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
+								createdAt,
+								effectiveIdleTtlMs: leaseOptions.effectiveIdleTtlMs ?? defaultToolVmLeaseIdleTtlMs,
+								guestWorkdir: leaseOptions.guestWorkdir,
+								id: createLeaseId(),
+								lastUsedAt: createdAt,
+								profileId: leaseOptions.profileId,
+								runtimeRecordId,
+								sshAccess,
+								tcpSlot,
+								vm,
+								hostWorkMountDir: leaseOptions.hostWorkMountDir,
+								...(leaseOptions.zoneGitMount ? { zoneGitMount: leaseOptions.zoneGitMount } : {}),
+								zoneId: leaseOptions.zoneId,
+							};
+							// Persist a runtime record so the next controller startup can
+							// scope-fence and clean up this tool VM's QEMU if we crash
+							// before evictLease/releaseLease runs.
+							try {
+								await writeRuntimeRecord(
+									options.stateDirFor(lease.zoneId),
+									await buildToolVmRuntimeRecord({
+										controllerPort: options.controllerPort,
+										agentId: lease.agentId,
+										leaseId: lease.id,
+										managedVm: vm,
+										projectNamespace: options.projectNamespace,
+										...(options.readProcessIdentity !== undefined
+											? { readProcessIdentity: options.readProcessIdentity }
+											: {}),
+										recordId: lease.runtimeRecordId,
+										systemConfigPath: options.systemConfigPath,
+										tcpSlot: lease.tcpSlot,
+										zoneId: lease.zoneId,
+									}),
+								);
+								persistedRuntimeRecord = {
+									recordId: lease.runtimeRecordId,
+									stateDirectory: options.stateDirFor(lease.zoneId),
+								};
+							} catch (writeError) {
+								// Undo: remove the in-memory lease + close the VM + release the
+								// TCP slot, then surface the failure to the caller.
+								deleteLease(lease);
+								throw writeError;
+							}
+							await toolOwnership.commitCurrent();
+							storeLease({
+								gatewayIdentity: leaseOptions.expectedGateway,
+								lease,
+								ownership: toolOwnership,
+							});
 							vmCreatedButNotClosed = false;
-						} catch (closeError) {
-							writeLeaseManagerWarning(
-								`failed to close partially-created lease VM for zone '${leaseOptions.zoneId}' agent '${leaseOptions.agentId}': ${formatLeaseManagerError(closeError)}. Quarantining tcp slot ${tcpSlot}.`,
-							);
+							return lease;
+						} catch (error) {
+							let cleanupError: Error | undefined;
+							try {
+								const destroyReceipt = await toolOwnership.destroyLive(
+									async () => await vm.close(),
+								);
+								if (destroyReceipt.complete) {
+									vmCreatedButNotClosed = false;
+								} else {
+									cleanupError = new IncompleteVmDestructionError(
+										`Partially-created lease VM for zone '${leaseOptions.zoneId}' agent '${leaseOptions.agentId}'`,
+										destroyReceipt,
+									);
+									writeLeaseManagerWarning(
+										`partially-created lease VM for zone '${leaseOptions.zoneId}' agent '${leaseOptions.agentId}' returned an incomplete exact VM destruction receipt. Quarantining tcp slot ${tcpSlot}.`,
+									);
+								}
+							} catch (closeError) {
+								cleanupError =
+									closeError instanceof Error ? closeError : new Error(String(closeError));
+								writeLeaseManagerWarning(
+									`failed to close partially-created lease VM for zone '${leaseOptions.zoneId}' agent '${leaseOptions.agentId}': ${formatLeaseManagerError(closeError)}. Quarantining tcp slot ${tcpSlot}.`,
+								);
+							}
+							if (cleanupError) {
+								pendingCleanupRegistry.recordLiveCleanup({
+									agentId: leaseOptions.agentId,
+									gatewayIdentity: structuredClone(leaseOptions.expectedGateway),
+									ownership: toolOwnership,
+									...(persistedRuntimeRecord === undefined ? {} : { persistedRuntimeRecord }),
+									tcpSlot,
+									vm,
+									zoneId: leaseOptions.zoneId,
+								});
+								const primaryError = error instanceof Error ? error : new Error(String(error));
+								const aggregateError = new AggregateError(
+									[primaryError, cleanupError],
+									`Tool VM lease creation failed and teardown was not proven complete for zone '${leaseOptions.zoneId}' agent '${leaseOptions.agentId}'.`,
+								);
+								aggregateError.cause = primaryError;
+								throw aggregateError;
+							}
+							if (persistedRuntimeRecord !== undefined) {
+								try {
+									await deleteRuntimeRecord(
+										persistedRuntimeRecord.stateDirectory,
+										persistedRuntimeRecord.recordId,
+									);
+								} catch (deleteError) {
+									writeLeaseManagerWarning(
+										`failed to delete rolled-back tool VM runtime record '${persistedRuntimeRecord.recordId}' in zone '${leaseOptions.zoneId}': ${formatLeaseManagerError(deleteError)}`,
+									);
+								}
+							}
+							throw error;
+						}
+					} catch (error) {
+						if (vmCreatedButNotClosed) {
+							// VM may still hold the host port — see comment above.
+							options.tcpPool.quarantine(tcpSlot);
+						} else if (containsUnprovenVmDestructionError(error) && !detachedCleanupComplete) {
+							options.tcpPool.quarantine(tcpSlot);
+							pendingCleanupRegistry.recordDetachedCleanup({
+								agentId: leaseOptions.agentId,
+								gatewayIdentity: structuredClone(leaseOptions.expectedGateway),
+								ownership: toolOwnership,
+								tcpSlot,
+								zoneId: leaseOptions.zoneId,
+							});
+						} else {
+							options.tcpPool.release(tcpSlot);
 						}
 						throw error;
 					}
-				} catch (error) {
-					if (vmCreatedButNotClosed) {
-						// VM may still hold the host port — see comment above.
-						options.tcpPool.quarantine(tcpSlot);
-					} else {
-						options.tcpPool.release(tcpSlot);
-					}
-					throw error;
+				});
+			} finally {
+				finishTrackingCreation();
+			}
+		},
+		async destroyGatewayOwnedLeases(expectedGateway, signal) {
+			const cleanupAgentIdentities = new Map<
+				string,
+				{ readonly agentId: string; readonly zoneId: string }
+			>();
+			const recordCleanupAgentIdentity = (agentIdentity: {
+				readonly agentId: string;
+				readonly zoneId: string;
+			}): void => {
+				cleanupAgentIdentities.set(
+					`${agentIdentity.zoneId}\0${agentIdentity.agentId}`,
+					agentIdentity,
+				);
+			};
+			for (const agentIdentity of pendingCleanupRegistry.pendingCleanupIdentitiesForGateway(
+				expectedGateway,
+			)) {
+				recordCleanupAgentIdentity(agentIdentity);
+			}
+			for (const agentIdentity of leaseCreationRegistry.inFlightAgentIdentitiesForGateway(
+				expectedGateway,
+			)) {
+				recordCleanupAgentIdentity(agentIdentity);
+			}
+			for (const leaseId of currentLeaseRegistry.leaseIdsOwnedByGateway(expectedGateway)) {
+				const lease = currentLeaseRegistry.get(leaseId);
+				if (lease !== undefined) {
+					recordCleanupAgentIdentity(lease);
 				}
-			});
+			}
+			const cleanupTasks = [...cleanupAgentIdentities.values()].map(
+				(agentIdentity) => async () =>
+					await agentLeaseOperationLock.runExclusive(agentIdentity, async () => {
+						await pendingCleanupRegistry.retry(agentIdentity);
+						const currentLease = currentLeaseRegistry.findByAgent(agentIdentity);
+						if (currentLease === undefined) {
+							return;
+						}
+						const currentGatewayIdentity = currentLeaseRegistry.resolveGatewayIdentity(
+							currentLease.id,
+						);
+						if (
+							currentGatewayIdentity !== undefined &&
+							gatewayIdentitiesEqual(currentGatewayIdentity, expectedGateway)
+						) {
+							await evictLease(currentLease, 'released');
+						}
+					}),
+			);
+			const results = await settleGatewayChildDestructionTasks(
+				cleanupTasks,
+				signal === undefined ? {} : { signal },
+			);
+			const failures: unknown[] = [];
+			for (const result of results) {
+				if (result.status === 'rejected') {
+					failures.push(result.reason as unknown);
+				}
+			}
+			if (failures.length > 0) {
+				throw new AggregateError(
+					failures,
+					`Gateway VM epoch '${expectedGateway.gatewayEpochId}' has ${String(failures.length)} incomplete Tool VM disposition${failures.length === 1 ? '' : 's'}.`,
+				);
+			}
 		},
 		endActiveUse(
 			leaseId: string,
 			useId: string,
 			_request: EndToolVmActiveUseRequest,
 		): { readonly kind: 'ended' | 'unknown-use' } | undefined {
-			const lease = leases.get(leaseId);
+			const lease = currentLeaseRegistry.get(leaseId);
 			if (!lease) {
 				return undefined;
 			}
+			assertLeaseGatewayAdmitting(lease);
 			const key = activeUseKey(leaseId, useId);
 			const activeUse = activeUses.get(key);
 			if (activeUse) {
@@ -613,11 +784,12 @@ export function createLeaseManager(options: {
 			useId: string,
 			request: HeartbeatToolVmActiveUseRequest,
 		): HeartbeatToolVmActiveUseResponse | undefined {
-			const lease = leases.get(leaseId);
+			const lease = currentLeaseRegistry.get(leaseId);
 			const activeUse = activeUses.get(activeUseKey(leaseId, useId));
-			if (!lease || !activeUse) {
+			if (!lease || !activeUse || releasingLeaseIds.has(leaseId)) {
 				return undefined;
 			}
+			assertLeaseGatewayAdmitting(lease);
 			if (isLeaseExpired(lease)) {
 				return undefined;
 			}
@@ -636,14 +808,18 @@ export function createLeaseManager(options: {
 			};
 		},
 		async renewLease(leaseId: string): Promise<LeaseRenewal> {
-			const lease = leases.get(leaseId);
+			const lease = currentLeaseRegistry.get(leaseId);
 			if (!lease) {
 				return { kind: 'not-found', reason: 'missing' };
 			}
-			return await withAgentLeaseLock(lease, async () => {
-				const currentLease = leases.get(leaseId);
+			return await agentLeaseOperationLock.runExclusive(lease, async () => {
+				const currentLease = currentLeaseRegistry.get(leaseId);
 				if (!currentLease) {
 					return { kind: 'not-found', reason: 'missing' };
+				}
+				assertLeaseGatewayAdmitting(currentLease);
+				if (releasingLeaseIds.has(leaseId)) {
+					throw new LeaseActiveUseConflictError(`Tool VM lease '${leaseId}' is releasing.`);
 				}
 				const activeUseCount = activeUseCountForLease(currentLease.id);
 				if (
@@ -662,7 +838,7 @@ export function createLeaseManager(options: {
 					effectiveIdleTtlMs: currentLease.effectiveIdleTtlMs,
 					lastUsedAt: currentLease.lastUsedAt,
 					nowMs: options.now(),
-					vmLive: await isLeaseVmLive(currentLease),
+					vmLive: await isToolVmLeaseVmLive(currentLease),
 				});
 				if (renewalDecision.kind === 'evict-dead') {
 					await evictLease(currentLease, 'dead');
@@ -677,21 +853,21 @@ export function createLeaseManager(options: {
 			});
 		},
 		listLeases(): readonly Lease[] {
-			return [...leases.values()];
+			return currentLeaseRegistry.list();
 		},
 		peekLease(leaseId: string): LeaseSnapshot | undefined {
-			const lease = leases.get(leaseId);
+			const lease = currentLeaseRegistry.get(leaseId);
 			return lease ? { kind: 'snapshot', lease } : undefined;
 		},
 		async reapDeadIdleLeases(): Promise<void> {
-			for (const lease of leases.values()) {
+			for (const lease of currentLeaseRegistry.values()) {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- per-agent lock serializes eviction with renew/create/release
-				await withAgentLeaseLock(lease, async () => {
-					const currentLease = leases.get(lease.id);
+				await agentLeaseOperationLock.runExclusive(lease, async () => {
+					const currentLease = currentLeaseRegistry.get(lease.id);
 					if (!currentLease || activeUseCountForLease(currentLease.id) > 0) {
 						return;
 					}
-					if (!(await isLeaseVmLive(currentLease))) {
+					if (!(await isToolVmLeaseVmLive(currentLease))) {
 						await evictLease(currentLease, 'dead');
 					}
 				});
@@ -719,12 +895,12 @@ export function createLeaseManager(options: {
 			leaseId: string,
 			releaseOptions?: { readonly force?: boolean; readonly ifLastUsedAtBeforeOrAt?: number },
 		): Promise<void> {
-			const lease = leases.get(leaseId);
+			const lease = currentLeaseRegistry.get(leaseId);
 			if (!lease) {
 				return;
 			}
-			await withAgentLeaseLock(lease, async () => {
-				const currentLease = leases.get(leaseId);
+			await agentLeaseOperationLock.runExclusive(lease, async () => {
+				const currentLease = currentLeaseRegistry.get(leaseId);
 				if (!currentLease) {
 					return;
 				}
@@ -742,25 +918,32 @@ export function createLeaseManager(options: {
 						`Tool VM lease '${leaseId}' is still in active use.`,
 					);
 				}
+				const ownership = currentLeaseRegistry.requireOwnership(leaseId);
 				releasingLeaseIds.add(leaseId);
 
 				let releaseError: Error | undefined;
+				let destroyReceipt: VmDestroyReceiptV1 | undefined;
 				try {
-					await currentLease.vm.close();
+					destroyReceipt = await ownership.destroyLive(async () => await currentLease.vm.close());
+					if (!destroyReceipt.complete) {
+						releaseError = new IncompleteVmDestructionError(
+							`Released lease '${currentLease.id}'`,
+							destroyReceipt,
+						);
+					}
 				} catch (error) {
 					releaseError = error instanceof Error ? error : new Error(String(error));
 				}
 
-				deleteLease(currentLease);
-				notifyLeaseRetired({ leaseId: currentLease.id, reason: 'released' });
-
 				const closeOutcome = classifyToolVmLeaseCloseOutcome({
-					closeSucceeded: releaseError === undefined,
+					destroyReceipt,
 				});
 				if (closeOutcome.kind === 'release-tcp-and-delete-record') {
+					deleteLease(currentLease);
+					notifyLeaseRetired({ leaseId: currentLease.id, reason: 'released' });
 					// Close succeeded: slot is safe to re-allocate, record is
 					// safe to delete.
-					options.tcpPool.release(currentLease.tcpSlot);
+					releaseTcpSlotAfterCompleteDestruction(currentLease.tcpSlot);
 					try {
 						await deleteRuntimeRecord(
 							options.stateDirFor(currentLease.zoneId),
@@ -791,10 +974,11 @@ export function createLeaseManager(options: {
 			leaseId: string,
 			request: StartToolVmActiveUseRequest,
 		): StartToolVmActiveUseResponse | undefined {
-			const lease = leases.get(leaseId);
+			const lease = currentLeaseRegistry.get(leaseId);
 			if (!lease) {
 				return undefined;
 			}
+			assertLeaseGatewayAdmitting(lease);
 			if (isLeaseExpired(lease)) {
 				return undefined;
 			}

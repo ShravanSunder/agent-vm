@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@earendil-works/gondolin@0.12.0':
-    hash: 91942bf3ab503e81710ed159851164277651c27051ae0b3439a0997f44f0b654
+    hash: 4d9bae4c2ddce9e0435b457d63ceee3140a60acdb89055ff240f17a7a3fa1914
     path: patches/@earendil-works__gondolin@0.12.0.patch
 
 importers:
@@ -274,7 +274,7 @@ importers:
         version: link:../secret-management
       '@earendil-works/gondolin':
         specifier: 0.12.0
-        version: 0.12.0(patch_hash=91942bf3ab503e81710ed159851164277651c27051ae0b3439a0997f44f0b654)
+        version: 0.12.0(patch_hash=4d9bae4c2ddce9e0435b457d63ceee3140a60acdb89055ff240f17a7a3fa1914)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -3352,7 +3352,7 @@ snapshots:
   '@earendil-works/gondolin-krun-runner-linux-x64@0.12.0':
     optional: true
 
-  '@earendil-works/gondolin@0.12.0(patch_hash=91942bf3ab503e81710ed159851164277651c27051ae0b3439a0997f44f0b654)':
+  '@earendil-works/gondolin@0.12.0(patch_hash=4d9bae4c2ddce9e0435b457d63ceee3140a60acdb89055ff240f17a7a3fa1914)':
     dependencies:
       cbor2: 2.3.0
       node-forge: 1.4.0

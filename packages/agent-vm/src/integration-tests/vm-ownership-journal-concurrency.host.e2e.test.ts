@@ -6,10 +6,17 @@ import { pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { VmOwnershipDeploymentIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
 	createVmOwnershipJournal,
 	type GatewayMembershipRecord,
 } from '../controller/vm-ownership/vm-ownership-journal.js';
+
+const TEST_DEPLOYMENT_IDENTITY = {
+	configPath: '/deployments/sunfam/config/system.jsonc',
+	controllerPort: 18_800,
+	projectNamespace: 'sunfam-test-deployment',
+} satisfies VmOwnershipDeploymentIdentity;
 
 interface JournalWorkerSuccess {
 	readonly record: GatewayMembershipRecord;
@@ -167,10 +174,11 @@ function createMembershipRecord(options: {
 			controllerEpoch,
 			expectedRevision: 1,
 			parentGateway: null,
-			principal: { kind: 'gateway-zone', zoneId },
+			principal: { ...TEST_DEPLOYMENT_IDENTITY, kind: 'gateway-zone', zoneId },
 			reservationId: `reservation-${options.gatewayEpochId}`,
 			reservationPath: options.reservationPath,
 			role: 'gateway',
+			sessionLabel: `gateway:${options.gatewayEpochId}`,
 			vmId: gatewayVmId,
 		},
 		revision: 1,

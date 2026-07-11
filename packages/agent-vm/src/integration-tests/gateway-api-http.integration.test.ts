@@ -19,8 +19,10 @@ import type { Lease } from '../controller/leases/lease-manager.js';
 import { OPENCLAW_TOOL_VM_WORKSPACE_MOUNT } from '../controller/leases/lease-work-mount-paths.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
 } from '../testing/managed-vm-test-helpers.js';
 
 type HonoServer = ReturnType<typeof serve>;
@@ -101,7 +103,7 @@ describe('live integration: API client → controller over real HTTP', () => {
 			},
 			tcpSlot: 0,
 			vm: {
-				close: vi.fn(async () => {}),
+				close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-smoke')),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
 					host: '127.0.0.1',
@@ -111,6 +113,7 @@ describe('live integration: API client → controller over real HTTP', () => {
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
+				getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-smoke'),
 				id: 'tool-vm-smoke',
 				setIngressRoutes: vi.fn(),
 				getHostPid: () => null,

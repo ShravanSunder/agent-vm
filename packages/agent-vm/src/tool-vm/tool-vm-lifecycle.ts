@@ -13,6 +13,7 @@ import {
 	createManagedVm as createManagedVmFromCore,
 	pinRealFsRoot as pinRealFsRootDefault,
 	type ManagedVm,
+	type ManagedVmOwnershipReservationReferenceV1,
 	type PinnedRealFsRoot,
 } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
@@ -32,6 +33,10 @@ import {
 	type ZoneGitToolVmMount,
 } from '../controller/zone-git/zone-git-paths.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
+import {
+	assertVmDestructionComplete,
+	VmDestructionUnprovenError,
+} from '../shared/vm-destruction-receipt.js';
 import { selectToolVmMediatedSecretNamesForAgent } from './tool-vm-secret-selection.js';
 
 const TOOL_VM_MEDIATED_ENV_PROFILE_PATH = '/etc/profile.d/agent-vm-mediated-env.sh';
@@ -203,6 +208,7 @@ export async function createToolVm(
 	options: {
 		readonly agentId: string;
 		readonly cacheDir: string;
+		readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
 		readonly profile: ToolVmProfile;
 		readonly systemConfig: LoadedSystemConfig;
 		readonly tcpSlot: number;
@@ -278,6 +284,7 @@ export async function createToolVm(
 		pinnedRoots.push(pinnedRoot);
 		return pinnedRoot;
 	};
+	let pinnedRootsTransferredToManagedVm = false;
 	let toolVm: ManagedVm | undefined;
 	try {
 		let vfsMounts: Parameters<typeof createManagedVm>[0]['vfsMounts'];
@@ -330,6 +337,10 @@ export async function createToolVm(
 				},
 			};
 		}
+		// createManagedVm owns every pinned root in vfsMounts once invoked. It
+		// closes them on construction failure and through ManagedVm.close().
+		// The lifecycle retains ownership only for failures before this boundary.
+		pinnedRootsTransferredToManagedVm = true;
 		toolVm = await createManagedVm({
 			allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
 			cpus: options.profile.cpus,
@@ -338,6 +349,7 @@ export async function createToolVm(
 			},
 			imagePath: toolImage.imagePath,
 			memory: options.profile.memory,
+			ownershipReservation: options.ownershipReservation,
 			rootfsMode: 'cow',
 			...(options.profile.runtimeRootfsSize
 				? { runtimeRootfsSize: options.profile.runtimeRootfsSize }
@@ -360,17 +372,33 @@ export async function createToolVm(
 		}
 		return toolVm;
 	} catch (error) {
+		let closeError: unknown;
 		if (toolVm) {
 			try {
-				await toolVm.close();
-			} catch (closeError) {
-				process.stderr.write(
-					`Failed to close Tool VM after create failure: ${closeError instanceof Error ? closeError.message : String(closeError)}\n`,
-				);
+				const destroyReceipt = await toolVm.close();
+				assertVmDestructionComplete(destroyReceipt, `Tool VM '${toolVm.id}' create rollback`);
+			} catch (caughtCloseError) {
+				closeError =
+					caughtCloseError instanceof VmDestructionUnprovenError
+						? caughtCloseError
+						: new VmDestructionUnprovenError(
+								`Tool VM '${toolVm.id}' create rollback did not prove exact destruction`,
+								{ cause: caughtCloseError },
+							);
 			}
 		}
-		for (const pinnedRoot of pinnedRoots) {
-			closePinnedRealFsRoot(pinnedRoot);
+		if (!pinnedRootsTransferredToManagedVm) {
+			for (const pinnedRoot of pinnedRoots) {
+				closePinnedRealFsRoot(pinnedRoot);
+			}
+		}
+		if (closeError !== undefined) {
+			const aggregateError = new AggregateError(
+				[error, closeError],
+				'Tool VM creation failed and teardown was not proven complete.',
+			);
+			aggregateError.cause = error;
+			throw aggregateError;
 		}
 		throw error;
 	}

@@ -1,6 +1,7 @@
 import type {
 	configureHostNetworkDefaults,
 	HostNetworkDefaultsResult,
+	ManagedVmOwnershipReservationReferenceV1,
 } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
@@ -20,6 +21,8 @@ import type { appendDurableHealthEvent } from './health/durable-health-event-log
 import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
 import type { ObservedControllerLeaseCreateRequest } from './leases/observed-lease-create-request.js';
+import type { acquireControllerOwnershipLock } from './vm-ownership/controller-ownership-lock.js';
+import type { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
 import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
 import type { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
 import type { ZoneGitToolVmMount } from './zone-git/zone-git-paths.js';
@@ -39,11 +42,14 @@ export interface ControllerRuntimeDependencies {
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadiness;
 	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
 	readonly controllerEpoch?: string;
+	readonly acquireControllerOwnershipLock?: typeof acquireControllerOwnershipLock;
 	readonly resolveControllerTelemetryIdentity?: typeof resolveControllerTelemetryIdentity;
 	readonly resolveControllerTelemetryServiceVersion?: () => Promise<string>;
 	readonly startControllerTelemetry?: typeof startControllerTelemetry;
+	readonly createGatewayOwnershipCoordinator?: typeof createGatewayOwnershipCoordinator;
 	readonly createManagedToolVm?: (options: {
 		readonly agentId: string;
+		readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;

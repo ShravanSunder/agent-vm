@@ -18,6 +18,7 @@ const gatewayTypeValues = ['openclaw', 'worker'] as const;
 export const agentIdSchema = z
 	.string()
 	.min(1)
+	.max(1024)
 	.regex(
 		/^[a-z0-9][a-z0-9._-]*$/u,
 		'agent id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens',
@@ -25,6 +26,7 @@ export const agentIdSchema = z
 export const zoneIdSchema = z
 	.string()
 	.min(1)
+	.max(1024)
 	.regex(
 		/^[a-z0-9][a-z0-9._-]*$/u,
 		'zone id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens',
@@ -830,6 +832,7 @@ const systemConfigSchema = z
 			projectNamespace: z
 				.string()
 				.min(1)
+				.max(1024)
 				.regex(
 					/^[a-z0-9][a-z0-9-]*$/u,
 					'projectNamespace must use lowercase letters, numbers, and hyphens only',

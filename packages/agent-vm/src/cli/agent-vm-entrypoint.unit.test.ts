@@ -2861,15 +2861,8 @@ describe('runAgentVmCli', () => {
 		const runControllerOfflineCleanup = vi.fn(async () => ({
 			results: [
 				{
-					cleanedUp: true,
-					killedPid: 48282,
+					ownershipDisposition: 'complete' as const,
 					stateDir: './state/shravan',
-					toolVmCleanup: {
-						cleanedCount: 0,
-						killedPids: [],
-						quarantinedCount: 0,
-						warnings: [],
-					},
 					zoneId: 'shravan',
 				},
 			],
@@ -2907,15 +2900,8 @@ describe('runAgentVmCli', () => {
 		expect(JSON.parse(stdoutChunks.join(''))).toEqual({
 			results: [
 				{
-					cleanedUp: true,
-					killedPid: 48282,
+					ownershipDisposition: 'complete',
 					stateDir: './state/shravan',
-					toolVmCleanup: {
-						cleanedCount: 0,
-						killedPids: [],
-						quarantinedCount: 0,
-						warnings: [],
-					},
 					zoneId: 'shravan',
 				},
 			],
@@ -2949,26 +2935,16 @@ describe('runAgentVmCli', () => {
 		});
 	});
 
-	it('reports controller cleanup warnings as command failures', async () => {
+	it('propagates exact reconciliation failure without writing a success result', async () => {
 		const stderrChunks: string[] = [];
 		const stdoutChunks: string[] = [];
-		const runControllerOfflineCleanup = vi.fn(async () => ({
-			results: [
-				{
-					cleanedUp: false,
-					cleanupWarning: 'failed to remove stale runtime record',
-					killedPid: 48282,
-					stateDir: './state/shravan',
-					toolVmCleanup: {
-						cleanedCount: 1,
-						killedPids: [123],
-						quarantinedCount: 0,
-						warnings: ['failed to remove stale tool VM runtime record'],
-					},
-					zoneId: 'shravan',
-				},
-			],
-		}));
+		const reconciliationError = Object.assign(
+			new Error('exact VM ownership reconciliation failed'),
+			{ code: 'owner-unsafe' as const },
+		);
+		const runControllerOfflineCleanup = vi.fn(async () => {
+			throw reconciliationError;
+		});
 
 		await expect(
 			runAgentVmCli(
@@ -2993,25 +2969,10 @@ describe('runAgentVmCli', () => {
 					runControllerOfflineCleanup,
 				},
 			),
-		).rejects.toThrow(/Controller cleanup completed with warnings/u);
+		).rejects.toBe(reconciliationError);
 
-		expect(JSON.parse(stdoutChunks.join(''))).toEqual({
-			results: [
-				{
-					cleanedUp: false,
-					cleanupWarning: 'failed to remove stale runtime record',
-					killedPid: 48282,
-					stateDir: './state/shravan',
-					toolVmCleanup: {
-						cleanedCount: 1,
-						killedPids: [123],
-						quarantinedCount: 0,
-						warnings: ['failed to remove stale tool VM runtime record'],
-					},
-					zoneId: 'shravan',
-				},
-			],
-		});
+		expect(runControllerOfflineCleanup).toHaveBeenCalledOnce();
+		expect(stdoutChunks.join('')).toBe('');
 		expect(stderrChunks.join('')).toBe('');
 	});
 

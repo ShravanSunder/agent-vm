@@ -4,7 +4,95 @@ import type {
 	ManagedExecProcess,
 	ManagedExecResult,
 	ManagedVmFs,
+	VmDestroyTargetV1,
+	VmDestroyReceiptV1,
+	VmOwnershipReservationReferenceV1,
 } from '@agent-vm/gondolin-adapter';
+
+export interface ManagedVmTestIdentityOptions {
+	readonly controllerEpoch?: string;
+	readonly parentGateway?: VmDestroyTargetV1['parentGateway'];
+	readonly reservationId?: string;
+	readonly role?: VmDestroyTargetV1['role'];
+}
+
+export function createTestVmOwnershipReservationReference(
+	vmId = 'managed-vm-test',
+	options: ManagedVmTestIdentityOptions = {},
+): VmOwnershipReservationReferenceV1 {
+	return {
+		expectedContractVersion: 1,
+		expectedRevision: 1,
+		reservationId: options.reservationId ?? `reservation-${vmId}`,
+		reservationPath: `/tmp/agent-vm-tests/vm-ownership/${options.reservationId ?? `reservation-${vmId}`}/reservation.json`,
+	};
+}
+
+export function createTestVmDestroyTarget(
+	vmId = 'managed-vm-test',
+	options: ManagedVmTestIdentityOptions = {},
+): VmDestroyTargetV1 {
+	const reservationReference = createTestVmOwnershipReservationReference(vmId, options);
+	return {
+		contractVersion: 1,
+		controllerEpoch: options.controllerEpoch ?? 'controller-epoch-test',
+		ownerProcess: {
+			command: 'agent-vm-test',
+			pid: process.pid,
+			startCookie: 'agent-vm-test-process',
+		},
+		parentGateway: options.parentGateway ?? null,
+		reservationId: reservationReference.reservationId,
+		reservationPath: reservationReference.reservationPath,
+		resources: {
+			disposableStoragePaths: [],
+			ingressListener: false,
+			ingressSockets: false,
+			retainedStoragePaths: [],
+			sshListener: false,
+			sshSessions: false,
+		},
+		role: options.role ?? 'standalone',
+		runner: {
+			backend: 'qemu',
+			discoveryIdentity: `agent-vm-test:${vmId}`,
+			executable: '/usr/bin/qemu-system-aarch64',
+		},
+		sessionLabel: `agent-vm-test:${vmId}`,
+		vmId,
+	};
+}
+
+export function createCompleteVmDestroyReceipt(
+	vmId = 'managed-vm-test',
+	options: ManagedVmTestIdentityOptions = {},
+): VmDestroyReceiptV1 {
+	return {
+		contractVersion: 1,
+		reservationId: options.reservationId ?? `reservation-${vmId}`,
+		vmId,
+		controllerEpoch: options.controllerEpoch ?? 'controller-epoch-test',
+		parentGateway: options.parentGateway ?? null,
+		role: options.role ?? 'standalone',
+		requestedRunner: {
+			backend: 'qemu',
+			executableName: 'qemu-system-aarch64',
+			discoveryIdentity: `runner-${vmId}`,
+		},
+		complete: true,
+		completedAt: '2026-07-10T00:00:00.000Z',
+		resources: {
+			exactRunner: { status: 'destroyed' },
+			ingressListener: { status: 'already-absent' },
+			ingressSockets: { status: 'already-absent' },
+			sshListener: { status: 'already-absent' },
+			sshSessions: { status: 'already-absent' },
+			sessionIpc: { status: 'destroyed' },
+			qmp: { status: 'destroyed' },
+			disposableStorage: { status: 'destroyed' },
+		},
+	};
+}
 
 export interface ManagedExecProcessStubOptions {
 	readonly beforeResolve?: () => void;

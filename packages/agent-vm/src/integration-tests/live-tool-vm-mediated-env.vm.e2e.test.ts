@@ -1,9 +1,14 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import {
+	createManagedVmOwnershipReservation,
+	type ManagedVmOwnershipReservationReferenceV1,
+} from '@agent-vm/gondolin-adapter';
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -18,6 +23,26 @@ const rawGithubToken = 'real-github-token-for-mediated-env-live-test';
 
 async function createTemporaryDirectory(): Promise<string> {
 	return await mkdtemp(path.join(os.tmpdir(), 'agent-vm-live-mediated-env-'));
+}
+
+async function createToolVmOwnershipReservation(
+	testDeploymentRoot: string,
+): Promise<ManagedVmOwnershipReservationReferenceV1> {
+	const vmIdentity = randomUUID();
+	const ownershipReservation = await createManagedVmOwnershipReservation({
+		controllerEpoch: 'live-tool-vm-mediated-env-e2e',
+		parentGateway: {
+			epoch: 'gateway-epoch-live-tool-vm-mediated-env-e2e',
+			vmId: 'gateway-vm-live-tool-vm-mediated-env-e2e',
+		},
+		principal: 'shravan',
+		reservationId: `reservation-${vmIdentity}`,
+		reservationRoot: path.join(testDeploymentRoot, 'state', 'vm-ownership'),
+		role: 'tool',
+		sessionLabel: 'agent-vm-live-tool-vm-mediated-env-test',
+		vmId: `tool-vm-${vmIdentity}`,
+	});
+	return ownershipReservation.reference;
 }
 
 async function createMediatedEnvSystemConfig(
@@ -155,11 +180,13 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 
 		const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
 		await mkdir(hostWorkMountDir, { recursive: true });
+		const ownershipReservation = await createToolVmOwnershipReservation(temporaryDirectory);
 		const toolVm = await createToolVm(
 			{
 				agentId: 'shravan',
 				cacheDir: systemConfig.cacheDir,
 				hostWorkMountDir,
+				ownershipReservation,
 				profile,
 				secretResolver: createStaticSecretResolver({}),
 				systemConfig,

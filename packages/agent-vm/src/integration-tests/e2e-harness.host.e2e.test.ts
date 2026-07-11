@@ -11,10 +11,14 @@ import {
 	writePreparedGondolinImage,
 } from '../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
+	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	collectE2eDockerImageTags,
@@ -287,6 +291,7 @@ describe('startE2eControllerRuntime', () => {
 						startCommand: '',
 					},
 					vm: createManagedVmStub(),
+					vmOwnership: createExactVmOwnershipStub('vm-smoke-test'),
 					zone,
 				};
 			},
@@ -348,6 +353,7 @@ describe('startE2eControllerRuntime', () => {
 					startCommand: '',
 				},
 				vm: createManagedVmStub(),
+				vmOwnership: createExactVmOwnershipStub('vm-smoke-test'),
 				zone,
 			}),
 			startHttpServer: async () => ({
@@ -1153,16 +1159,32 @@ describe('prepareLocalWorkerPackageForGatewayImage', () => {
 function createManagedVmStub(): ManagedVm {
 	const managedVm: ManagedVm = {
 		id: 'vm-smoke-test',
-		close: async () => undefined,
+		close: async () => createCompleteVmDestroyReceipt('vm-smoke-test'),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18789 }),
 		enableSsh: async () => ({ host: '127.0.0.1', port: 2222, user: 'root' }),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getDestroyTarget: () => createTestVmDestroyTarget('vm-smoke-test'),
 		getHostPid: () => null,
 		getVmInstance: () => managedVm,
 		setIngressRoutes: () => undefined,
 	};
 	return managedVm;
+}
+
+function createExactVmOwnershipStub(vmId: string): VmCreationOwnership {
+	const ownershipReservation = createTestVmOwnershipReservationReference(vmId);
+	return {
+		ownershipReservation,
+		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId),
+		destroyLive: async (closeLiveVm) => {
+			const receipt = await closeLiveVm();
+			if (receipt.vmId !== vmId || receipt.reservationId !== ownershipReservation.reservationId) {
+				throw new Error(`Expected exact destruction receipt for VM '${vmId}'.`);
+			}
+			return receipt;
+		},
+	};
 }
 
 function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemConfig {

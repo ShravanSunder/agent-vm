@@ -68,6 +68,16 @@ import { createOpenClawToolVmLeaseCreateOptionsResolver } from './leases/opencla
 import { createTcpPool } from './leases/tcp-pool.js';
 import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
+import { acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault } from './vm-ownership/controller-ownership-lock.js';
+import { createGatewayDestructionBudget } from './vm-ownership/gateway-destruction-budget.js';
+import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
+import { containsGatewayOwnershipCoordinatorErrorCode } from './vm-ownership/gateway-ownership-errors.js';
+import {
+	createGatewayVmCreationOwnership,
+	type VmCreationOwnership,
+} from './vm-ownership/vm-creation-ownership.js';
+import { vmOwnershipDeploymentIdentityForSystemConfig } from './vm-ownership/vm-ownership-deployment-identity.js';
+import { standaloneVmOwnershipReservationRoot } from './vm-ownership/vm-ownership-reservation-inventory.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from './worker-task-runner.js';
 import { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
 import {
@@ -355,18 +365,42 @@ function resolveZoneGitOperationConfig(options: {
 	};
 }
 
-export async function startControllerRuntime(
+async function startControllerRuntimeWithOwnershipLock(
 	options: StartControllerRuntimeOptions,
 	dependencies: ControllerRuntimeDependencies,
 ): Promise<ControllerRuntime> {
+	const now = dependencies.now ?? Date.now;
+	const controllerEpoch = dependencies.controllerEpoch ?? randomUUID();
+	const stateDirFor = (zoneId: string): string => {
+		const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
+		if (!zone) {
+			throw new Error(`Unknown zone '${zoneId}' while resolving tool VM state directory.`);
+		}
+		return zone.gateway.stateDir;
+	};
+	const gatewayDestructionBudget = createGatewayDestructionBudget();
+	const ownershipCoordinator = (
+		dependencies.createGatewayOwnershipCoordinator ?? createGatewayOwnershipCoordinator
+	)({
+		controllerEpoch,
+		createId: randomUUID,
+		deploymentIdentity: vmOwnershipDeploymentIdentityForSystemConfig(options.systemConfig),
+		destructionBudget: gatewayDestructionBudget,
+		nowMs: now,
+		standaloneReservationRoot: standaloneVmOwnershipReservationRoot(
+			options.systemConfig.runtimeDir,
+		),
+		stateDirectoryForZone: stateDirFor,
+	});
+	await ownershipCoordinator.reconcileControllerStartup(
+		options.systemConfig.zones.filter(isOpenClawZone).map((zone) => zone.id),
+	);
 	const hostNetworkDefaults = (
 		dependencies.configureHostNetworkDefaults ?? configureHostNetworkDefaults
 	)();
-	const controllerEpoch = dependencies.controllerEpoch ?? randomUUID();
 	writeControllerRuntimeLog(
 		`Host network defaults: dnsResultOrder=${hostNetworkDefaults.dnsResultOrder} autoSelectFamily=${hostNetworkDefaults.autoSelectFamily}`,
 	);
-	const now = dependencies.now ?? Date.now;
 	const runTaskStep =
 		dependencies.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const secretResolver = await runTaskWithResult(
@@ -398,6 +432,7 @@ export async function startControllerRuntime(
 			await createToolVm({
 				agentId: toolVmOptions.agentId,
 				cacheDir: options.systemConfig.cacheDir,
+				ownershipReservation: toolVmOptions.ownershipReservation,
 				profile: toolVmOptions.profile,
 				systemConfig: options.systemConfig,
 				tcpSlot: toolVmOptions.tcpSlot,
@@ -453,18 +488,12 @@ export async function startControllerRuntime(
 		...(controllerTelemetry ? { healthEventSinks: [controllerTelemetry.healthEventSink] } : {}),
 		staleAfterMs: controllerHealthConfig.staleAfterMs,
 	});
-	const stateDirFor = (zoneId: string): string => {
-		const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
-		if (!zone) {
-			throw new Error(`Unknown zone '${zoneId}' while resolving tool VM state directory.`);
-		}
-		return zone.gateway.stateDir;
-	};
 	const leaseManager = createLeaseManager({
 		controllerPort: options.systemConfig.host.controllerPort,
 		createManagedVm: async (leaseOptions) =>
 			await createManagedToolVm({
 				agentId: leaseOptions.agentId,
+				ownershipReservation: leaseOptions.ownershipReservation,
 				profile: leaseOptions.profile,
 				tcpSlot: leaseOptions.tcpSlot,
 				hostWorkMountDir: leaseOptions.hostWorkMountDir,
@@ -473,6 +502,7 @@ export async function startControllerRuntime(
 				secretResolver,
 			}),
 		now,
+		ownershipCoordinator,
 		projectNamespace: options.systemConfig.host.projectNamespace,
 		...(dependencies.readProcessIdentity !== undefined
 			? { readProcessIdentity: dependencies.readProcessIdentity }
@@ -487,6 +517,7 @@ export async function startControllerRuntime(
 			? {}
 			: { leaseIdleTtlPolicy: options.systemConfig.leaseIdleTtl }),
 		openClawRuntimeStatusStore,
+		resolveGatewayEpoch: (expected) => ownershipCoordinator.resolveGatewayEpoch(expected),
 		secretResolver,
 		systemConfig: options.systemConfig,
 	});
@@ -505,6 +536,31 @@ export async function startControllerRuntime(
 				requestedIdleTtlMs: payload.idleTtlHintMs,
 			}),
 	});
+	const createOpenClawGatewayVmOwnership = async (ownershipOptions: {
+		readonly controlIdentity?: { readonly bootId: string; readonly generationId: string };
+		readonly kind: 'gateway-epoch' | 'standalone';
+		readonly sessionLabel: string;
+		readonly zoneId: string;
+	}): Promise<VmCreationOwnership> => {
+		if (
+			ownershipOptions.kind !== 'gateway-epoch' ||
+			ownershipOptions.controlIdentity === undefined
+		) {
+			throw new Error(
+				`OpenClaw zone '${ownershipOptions.zoneId}' requires one Gateway epoch identity before VM creation.`,
+			);
+		}
+		return await createGatewayVmCreationOwnership({
+			bootId: ownershipOptions.controlIdentity.bootId,
+			destructionBudget: gatewayDestructionBudget,
+			destroyGatewayOwnedLeases: async (gatewayIdentity, signal) =>
+				await leaseManager.destroyGatewayOwnedLeases(gatewayIdentity, signal),
+			generationId: ownershipOptions.controlIdentity.generationId,
+			ownershipCoordinator,
+			sessionLabel: ownershipOptions.sessionLabel,
+			zoneId: ownershipOptions.zoneId,
+		});
+	};
 	const pushZoneGitFromController = async (
 		zoneId: string,
 		input: { readonly expectedHead: string },
@@ -595,24 +651,6 @@ export async function startControllerRuntime(
 	);
 	const clearReaperTimer = (): void =>
 		(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
-	const releaseAllLeases = async (): Promise<Error | undefined> => {
-		const releaseErrors: Error[] = [];
-		for (const lease of leaseManager.listLeases()) {
-			try {
-				// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
-				await leaseManager.releaseLease(lease.id, { force: true });
-			} catch (error) {
-				releaseErrors.push(error instanceof Error ? error : new Error(formatUnknownError(error)));
-				writeControllerRuntimeLog(
-					`Failed to release lease '${lease.id}' during controller shutdown: ${formatUnknownError(error)}`,
-				);
-			}
-		}
-		return releaseErrors.length === 0
-			? undefined
-			: new AggregateError(releaseErrors, 'Failed to release one or more leases.');
-	};
-
 	const registry = createZoneRuntimeRegistry({
 		createRuntimeForZone: (zone) =>
 			isOpenClawZone(zone)
@@ -621,8 +659,8 @@ export async function startControllerRuntime(
 							? { deleteGatewayRuntimeRecord: dependencies.deleteGatewayRuntimeRecord }
 							: {}),
 						createFreshSecretResolver,
+						createVmOwnership: createOpenClawGatewayVmOwnership,
 						...(dependencies.isProcessAlive ? { isProcessAlive: dependencies.isProcessAlive } : {}),
-						leaseManager,
 						now,
 						preflightGatewayZoneStart: async (preflightOptions, preflightDependencies) => {
 							const runtimeEnvironment = {
@@ -655,6 +693,10 @@ export async function startControllerRuntime(
 						restartGatewayZone: async (zoneId, startOptions) => {
 							const startGatewayZoneOptions = {
 								controlSession: { controllerEpoch },
+								createVmOwnership: createOpenClawGatewayVmOwnership,
+								...(startOptions?.onPendingVmCreation
+									? { onPendingVmCreation: startOptions.onPendingVmCreation }
+									: {}),
 								...(startOptions?.observabilityStartupCheck
 									? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
 									: {}),
@@ -741,9 +783,6 @@ export async function startControllerRuntime(
 				});
 			}, 100);
 		},
-		getLeases: () => leaseManager.listLeases(),
-		releaseLease: async (leaseId: string, releaseOptions) =>
-			await leaseManager.releaseLease(leaseId, releaseOptions),
 		stopAllZones: async () => await registry.stopAllZones(),
 	});
 	const operations = {
@@ -1037,7 +1076,6 @@ export async function startControllerRuntime(
 			clearReaperTimer();
 			await gatewayServiceHealthMonitor?.stop();
 			requestHeartbeatRegistry.stopAll();
-			const releaseError = await releaseAllLeases();
 			let stopError: Error | undefined;
 			let serverCloseError: Error | undefined;
 			try {
@@ -1055,7 +1093,7 @@ export async function startControllerRuntime(
 				await flushControllerTelemetry(controllerTelemetry);
 				await shutdownControllerTelemetry(controllerTelemetry);
 			}
-			const closeErrors = [releaseError, stopError, serverCloseError].filter(
+			const closeErrors = [stopError, serverCloseError].filter(
 				(error): error is Error => error !== undefined,
 			);
 			if (closeErrors.length === 1) {
@@ -1070,5 +1108,72 @@ export async function startControllerRuntime(
 			const snapshot = snapshotByZone[zoneId] ?? { lifecycleState: 'stopped' as const };
 			return Object.assign({ zoneId }, snapshot);
 		}),
+	};
+}
+
+export async function startControllerRuntime(
+	options: StartControllerRuntimeOptions,
+	dependencies: ControllerRuntimeDependencies,
+): Promise<ControllerRuntime> {
+	const controllerOwnershipLock = await (
+		dependencies.acquireControllerOwnershipLock ?? acquireControllerOwnershipLockDefault
+	)({ runtimeDirectory: options.systemConfig.runtimeDir });
+	let runtime: ControllerRuntime;
+	try {
+		runtime = await startControllerRuntimeWithOwnershipLock(options, dependencies);
+	} catch (startupError) {
+		const retainOwnershipLock = containsGatewayOwnershipCoordinatorErrorCode(
+			startupError,
+			'owner-unsafe',
+		);
+		if (!retainOwnershipLock) {
+			try {
+				await controllerOwnershipLock.release();
+			} catch (releaseError) {
+				// oxlint-disable-next-line preserve-caught-error -- AggregateError.errors preserves releaseError while cause retains the primary startup failure.
+				throw new AggregateError(
+					[startupError, releaseError],
+					'Controller startup and ownership lock release both failed',
+					{ cause: startupError },
+				);
+			}
+		}
+		throw startupError;
+	}
+	return {
+		...runtime,
+		async close(): Promise<void> {
+			let closeError: unknown;
+			try {
+				await runtime.close();
+			} catch (error) {
+				closeError = error;
+			}
+			const retainOwnershipLock = containsGatewayOwnershipCoordinatorErrorCode(
+				closeError,
+				'owner-unsafe',
+			);
+			let releaseError: unknown;
+			if (!retainOwnershipLock) {
+				try {
+					await controllerOwnershipLock.release();
+				} catch (error) {
+					releaseError = error;
+				}
+			}
+			if (closeError !== undefined && releaseError !== undefined) {
+				throw new AggregateError(
+					[closeError, releaseError],
+					'Controller shutdown and ownership lock release both failed',
+					{ cause: closeError },
+				);
+			}
+			if (closeError !== undefined) {
+				throw closeError;
+			}
+			if (releaseError !== undefined) {
+				throw releaseError;
+			}
+		},
 	};
 }

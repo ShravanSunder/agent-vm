@@ -170,6 +170,7 @@ function withoutDispositionReason(
 		reservationId: child.reservationId,
 		reservationPath: child.reservationPath,
 		role: child.role,
+		sessionLabel: child.sessionLabel,
 		state: child.state,
 		vmId: child.vmId,
 	};

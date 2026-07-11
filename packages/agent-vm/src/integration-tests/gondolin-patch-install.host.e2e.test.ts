@@ -10,18 +10,24 @@ import { afterEach, describe, expect, it } from 'vitest';
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, '../../../..');
 const patchRelativePath = 'patches/@earendil-works__gondolin@0.12.0.patch';
-const expectedPatchSha256 = '91942bf3ab503e81710ed159851164277651c27051ae0b3439a0997f44f0b654';
+const expectedPatchSha256 = '4d9bae4c2ddce9e0435b457d63ceee3140a60acdb89055ff240f17a7a3fa1914';
 const expectedInstalledFileSha256 = {
-	'dist/src/index.d.ts': '32e86acfd85cedd2b1e956abc719f4e5fcfadc8fc2943e0b112b3cdcc0fc1be0',
-	'dist/src/index.js': 'd4b6e9c5a2bff324e84a3ef249922496be3a484e8e20caa3e74614f64a78a754',
+	'dist/src/index.d.ts': 'c5aebf60185ee1bebd85f25ae300d0cf0b5511501f0e3953ecf1f697fd6c8dc7',
+	'dist/src/index.js': '611beb906628529eff6518ae99ccf88a87d7591ff9b29655f1a6d84f0df46a1b',
 	'dist/src/vm/exact-lifecycle-contracts.d.ts':
-		'c804f6f51617bd27461e35eb607d45c50ca52d0926784753f589baca37aafc95',
+		'697180ee4660efb0c85f36a08535120d32dee81e8fe9ea081f61cd6eb1e43e7e',
 	'dist/src/vm/exact-lifecycle-contracts.js':
-		'c549c7d9a95b56e85d83152d33d53d75e8327c8eafdfeec7c71d03fcb66d6e76',
+		'3bec4953bef6bfbb3e87e8c6d9349b2ba46ae298fcdd831a1507c201444aa083',
 	'dist/src/vm/exact-lifecycle.d.ts':
 		'5a3859226a1963b686e92679bdd08a599c2ced011359386ef594b8f76acac676',
 	'dist/src/vm/exact-lifecycle.js':
 		'5bfc6e182eebff4e7746187ec966ab8d5a91384d19c532f484ae5cd6de1c06e7',
+	'dist/src/vm/vm-exact-destruction.js':
+		'6d4b54918cad48c93753b607fb5b60fce5a57762b18624e3725816712b695eef',
+	'dist/src/vm/vm-ownership-reservation.d.ts':
+		'212004175dc42017dfbec622640a04fa458a7fea6399eb4bff0ca0fc6ea623fb',
+	'dist/src/vm/vm-ownership-reservation.js':
+		'15ad7e7a8a54d924ae143a0a97ba3d494e71a1b3e57de82fc1deb655b863d2bb',
 } as const;
 
 const temporaryDirectories: string[] = [];
@@ -119,6 +125,7 @@ describe('published Gondolin exact-VM patch installation', () => {
 			path.join(projectDirectory, 'contract-proof.ts'),
 			`import {
   GONDOLIN_EXACT_VM_LIFECYCLE_CONTRACT_VERSION,
+  GONDOLIN_VM_OWNERSHIP_PRINCIPAL_MAX_CODE_UNITS,
   createVmOwnershipReservation,
   destroyVmExact,
   readVmDestroyTarget,
@@ -129,7 +136,9 @@ describe('published Gondolin exact-VM patch installation', () => {
 } from '@earendil-works/gondolin';
 
 const contractVersion: 1 = GONDOLIN_EXACT_VM_LIFECYCLE_CONTRACT_VERSION;
+const principalMaxCodeUnits: 65536 = GONDOLIN_VM_OWNERSHIP_PRINCIPAL_MAX_CODE_UNITS;
 void contractVersion;
+void principalMaxCodeUnits;
 void createVmOwnershipReservation;
 void destroyVmExact;
 void readVmDestroyTarget;
@@ -164,13 +173,23 @@ void reservation;
 			[
 				'--input-type=module',
 				'--eval',
-				`import {
+				`import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import {
   GONDOLIN_EXACT_VM_LIFECYCLE_CONTRACT_VERSION,
   createVmOwnershipReservation,
   destroyVmExact,
   readVmDestroyTarget,
   readVmOwnershipReservation,
 } from '@earendil-works/gondolin';
+const sessionIpcPath = path.resolve('reused-session-ipc.sock');
+const qmpSocketPath = path.resolve('reused-qmp.sock');
+const disposableStoragePath = path.resolve('reused-storage.img');
+await Promise.all([
+  writeFile(sessionIpcPath, 'old-owner'),
+  writeFile(qmpSocketPath, 'old-owner'),
+  writeFile(disposableStoragePath, 'old-owner'),
+]);
 const created = await createVmOwnershipReservation({
   reservationRoot: './ownership',
   reservationId: 'reservation-clean-install',
@@ -179,16 +198,36 @@ const created = await createVmOwnershipReservation({
   parentGateway: null,
   role: 'standalone',
   sessionLabel: 'clean-install',
+  resources: {
+    sessionIpcPath,
+    qmpSocketPath,
+    disposableStoragePaths: [disposableStoragePath],
+  },
 });
 const reservation = await readVmOwnershipReservation(created.reservationPath);
 const target = await readVmDestroyTarget(created.reservationPath);
 const receipt = await destroyVmExact(target);
+const destroyedReservation = await readVmOwnershipReservation(created.reservationPath);
+await Promise.all([
+  writeFile(sessionIpcPath, 'successor-owner'),
+  writeFile(qmpSocketPath, 'successor-owner'),
+  writeFile(disposableStoragePath, 'successor-owner'),
+]);
+const replayReceipt = await destroyVmExact(target);
+const successorContents = await Promise.all([
+  readFile(sessionIpcPath, 'utf8'),
+  readFile(qmpSocketPath, 'utf8'),
+  readFile(disposableStoragePath, 'utf8'),
+]);
 process.stdout.write(JSON.stringify({
   contractVersion: GONDOLIN_EXACT_VM_LIFECYCLE_CONTRACT_VERSION,
   reservationId: reservation.reservationId,
   targetVmId: target.vmId,
   receiptComplete: receipt.complete,
   receiptVersion: receipt.contractVersion,
+  replayComplete: replayReceipt.complete,
+  reservationState: destroyedReservation.state,
+  successorContents,
 }));`,
 			],
 			{ cwd: projectDirectory },
@@ -198,7 +237,10 @@ process.stdout.write(JSON.stringify({
 			contractVersion: 1,
 			receiptComplete: true,
 			receiptVersion: 1,
+			replayComplete: true,
+			reservationState: 'destroyed',
 			reservationId: 'reservation-clean-install',
+			successorContents: ['successor-owner', 'successor-owner', 'successor-owner'],
 			targetVmId: 'vm-clean-install',
 		});
 	}, 60_000);

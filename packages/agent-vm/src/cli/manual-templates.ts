@@ -174,9 +174,11 @@ If the controller HTTP server is broken or gone, use scoped offline cleanup:
 
 agent-vm controller cleanup --config ${options.systemConfigPath} --zone ${options.defaultZoneId}
 
-Offline cleanup first refuses to run while the configured controller health endpoint is reachable. If the controller is responding but cannot stop the gateway, rerun the same command with --force.
+Offline cleanup first acquires the same deployment-wide ownership lock held by a running controller, then refuses to run while the configured controller health endpoint is reachable. --force skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence checks.
 
-It reads the selected deployment config, loads only that zone's gateway-runtime.json, validates projectNamespace, zoneId, sessionLabel, PID, and process command, then signals only the recorded gateway VM process.
+It reads the selected deployment config, scans the zone's private Gateway membership journal and the deployment VM reservation inventory, validates canonical config path, controller port, project namespace, zone, principal, session, reservation identity, and exact destroy targets, destroys Tool VM children before their Gateway parent, and requires complete resource-by-resource destruction receipts. Standalone Worker reservations are filtered to the selected zone. Missing, malformed, mismatched, duplicate, or incomplete ownership evidence refuses cleanup. Legacy runtime records and PID matching are not cleanup authority.
+
+Gateway subtree cleanup runs at most four child destroys concurrently. Each exact target has a 60 second deadline and the whole subtree has a 300 second deadline. A timeout or incomplete receipt leaves the old Gateway owner-unsafe, prevents its close, and refuses a replacement Gateway until cleanup is proven complete.
 
 Do not use broad QEMU process kills as normal deployment workflow. Multiple agent-vm installations can run on one host, and broad process matching can kill the wrong installation.
 
@@ -201,7 +203,7 @@ Health model:
 - tool-vm-ssh means command, file-bridge, finalize, or probe SSH operations on the gateway-to-Tool-VM path.
 - tool-vm-ssh lifecycle events distinguish plugin observations from controller_final decisions. A controller_final stale_to_reacquired event proves the controller accepted one replacement transition for the old lease and records old/replacement lease correlation using redacted public ids.
 
-Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <runtimeDir>/controller-health/events.jsonl as diagnostic evidence; that log is not ownership authority and recovery still uses runtime records plus current process/port checks.
+Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <runtimeDir>/controller-health/events.jsonl as diagnostic evidence; that log is not ownership authority. VM ownership membership and reservation journals plus exact destruction receipts own destructive decisions; legacy runtime records and process/port observations are diagnostic evidence only.
 
 By default, controller.health.gatewayServiceAutoRestart restarts a running OpenClaw gateway VM after 10 consecutive gateway-service or gateway-control-session failures. The same recovery path can cold-start a failed or stopped gateway when current ownership checks prove it is safe. It has a 61 minute cooldown per zone and a 10 minute restart deadline. Restart releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
 
@@ -454,8 +456,8 @@ The controller-owned lease flow is stricter: it accepts only controller-supporte
 workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
 hostWorkMountDir is the host realpath after controller validation.
 OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.
-Controller startup binds the controller port before recovery, so a second controller exits before cleanup instead of killing a running gateway.
-Host recovery uses \`lsof\` to check TCP listener ownership before signaling persisted gateway or Tool VM pids.
+Controller startup acquires <runtimeDir>/vm-ownership/controller-ownership.lock before secret resolution or VM reconciliation and holds it until shutdown completes. A second controller or offline cleanup process cannot enter destructive reconciliation while that lock is held.
+VM destruction is authorized only by authenticated reservation and Gateway membership evidence plus exact resource-by-resource destruction receipts. HTTP health, telemetry, runtime records, ports, and persisted pids are diagnostic evidence, not cleanup authority.
 
 When gateway.zoneGit is configured:
 - Host zone files stay in gateway.zoneFilesDir.
