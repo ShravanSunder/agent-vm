@@ -27,6 +27,7 @@ import {
 import type {
 	GatewayOwnershipCoordinator,
 	ProvisionalToolVmOwnershipHandle,
+	ToolVmProvisionalOwnershipProof,
 } from '../vm-ownership/gateway-ownership-coordinator.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import { createVmOwnershipJournal } from '../vm-ownership/vm-ownership-journal.js';
@@ -59,11 +60,41 @@ const TEST_TOOL_VM_OWNERSHIP_RESERVATION = {
 	reservationPath: '/tmp/lease-manager-tests/shravan/tool-reservation-1/reservation-v1.json',
 } satisfies VmOwnershipReservationReferenceV1;
 
+function createTestToolVmOwnershipProof(
+	options: {
+		readonly ownershipReservation?: VmOwnershipReservationReferenceV1;
+		readonly vmId?: string;
+	} = {},
+): ToolVmProvisionalOwnershipProof {
+	const ownershipReservation = options.ownershipReservation ?? TEST_TOOL_VM_OWNERSHIP_RESERVATION;
+	const verifiedDestroyTarget = {
+		...createTestVmDestroyTarget(options.vmId ?? 'tool-vm-1', {
+			controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+			parentGateway: {
+				epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+				vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+			},
+			reservationId: ownershipReservation.reservationId,
+			role: 'tool',
+		}),
+		reservationPath: ownershipReservation.reservationPath,
+	};
+	return {
+		destructionIdentity: {
+			reservationId: verifiedDestroyTarget.reservationId,
+			reservationPath: verifiedDestroyTarget.reservationPath,
+			vmId: verifiedDestroyTarget.vmId,
+		},
+		ownershipReservation,
+		verifiedDestroyTarget,
+	};
+}
+
 function createProvisionalToolVmOwnershipHandle(
 	overrides: Partial<ProvisionalToolVmOwnershipHandle> = {},
 ): ProvisionalToolVmOwnershipHandle {
 	return {
-		ready: Promise.resolve(TEST_TOOL_VM_OWNERSHIP_RESERVATION),
+		ready: Promise.resolve(createTestToolVmOwnershipProof()),
 		commitCurrent: async () => {},
 		destroyDetached: async () => createCompleteVmDestroyReceipt('tool-vm-1'),
 		destroyLive: async (closeLiveVm) => await closeLiveVm(),
@@ -295,7 +326,7 @@ describe('createLeaseManager', () => {
 				return createProvisionalToolVmOwnershipHandle({
 					ready: Promise.resolve().then(() => {
 						callOrder.push('ownership-ready');
-						return TEST_TOOL_VM_OWNERSHIP_RESERVATION;
+						return createTestToolVmOwnershipProof({ vmId: 'tool-vm-owned' });
 					}),
 					commitCurrent: vi.fn(async () => {
 						expect(leaseManager.listLeases()).toHaveLength(0);
@@ -443,7 +474,12 @@ describe('createLeaseManager', () => {
 					commitCurrent: async () => await admission.commitCurrent(),
 					destroyDetached: async () => createCompleteVmDestroyReceipt(toolReservation.vmId),
 					destroyLive,
-					ready: Promise.resolve(managedReservation),
+					ready: Promise.resolve(
+						createTestToolVmOwnershipProof({
+							ownershipReservation: managedReservation,
+							vmId: toolReservation.vmId,
+						}),
+					),
 				}),
 				recordGatewayDestroyReceipt: async () => {
 					await barrier.recordGatewayDestroyDisposition(TEST_GATEWAY_EPOCH, {

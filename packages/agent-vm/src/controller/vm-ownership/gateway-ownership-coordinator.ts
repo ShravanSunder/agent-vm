@@ -47,12 +47,34 @@ export interface GatewayOwnershipEpochHandle {
 }
 
 export interface ProvisionalToolVmOwnershipHandle {
-	readonly ready: Promise<ManagedVmOwnershipReservationReferenceV1>;
+	readonly ready: Promise<ToolVmProvisionalOwnershipProof>;
 	commitCurrent(): Promise<void>;
 	destroyDetached(): Promise<ManagedVmDestroyReceiptV1>;
 	destroyLive(
 		closeLiveVm: () => Promise<ManagedVmDestroyReceiptV1>,
 	): Promise<ManagedVmDestroyReceiptV1>;
+}
+
+export interface ToolVmProvisionalDestructionIdentity {
+	readonly reservationId: string;
+	readonly reservationPath: string;
+	readonly vmId: string;
+}
+
+export interface ToolVmProvisionalOwnershipProof {
+	readonly destructionIdentity: ToolVmProvisionalDestructionIdentity;
+	readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
+	readonly verifiedDestroyTarget: ManagedVmDestroyTargetV1;
+}
+
+export function buildToolVmProvisionalDestructionIdentity(options: {
+	readonly verifiedDestroyTarget: ManagedVmDestroyTargetV1;
+}): ToolVmProvisionalDestructionIdentity {
+	return {
+		reservationId: options.verifiedDestroyTarget.reservationId,
+		reservationPath: options.verifiedDestroyTarget.reservationPath,
+		vmId: options.verifiedDestroyTarget.vmId,
+	};
 }
 
 export interface PendingGatewayDetachedDestroyAttemptPort {
@@ -580,7 +602,7 @@ export function createGatewayOwnershipCoordinator(
 				return destroyed.reservationRevision;
 			};
 			let preReadyCleanupPending = false;
-			const ready = (async (): Promise<ManagedVmOwnershipReservationReferenceV1> => {
+			const ready = (async (): Promise<ToolVmProvisionalOwnershipProof> => {
 				const [admissionResult, creationResult] = await Promise.allSettled([
 					admission.durable,
 					createdReservation,
@@ -607,7 +629,13 @@ export function createGatewayOwnershipCoordinator(
 						if (persistedTool.reservation.revision !== ownershipReservation.expectedRevision) {
 							throw new GatewayOwnershipCoordinatorError('reservation-identity-mismatch');
 						}
-						return ownershipReservation;
+						return {
+							destructionIdentity: buildToolVmProvisionalDestructionIdentity({
+								verifiedDestroyTarget: persistedTool.target,
+							}),
+							ownershipReservation,
+							verifiedDestroyTarget: structuredClone(persistedTool.target),
+						};
 					} catch (error) {
 						persistedValidationError = error;
 					}

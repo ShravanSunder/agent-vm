@@ -705,6 +705,55 @@ describe('GatewayOwnershipCoordinator', () => {
 		).rejects.toMatchObject({ code: 'owner-unsafe' });
 	});
 
+	it('returns the verified Tool destroy target and stable destruction tuple from ready', async () => {
+		const harness = await createCoordinatorHarness();
+		const gateway = await beginGateway(harness);
+		harness.createReservationMock.mockImplementationOnce(async (reservationOptions) => {
+			const created = createFakeReservation(reservationOptions);
+			const verifiedResources = {
+				...created.reservation.resources,
+				disposableStoragePaths: ['/verified/tool-vm-overlay'],
+				sshListener: true,
+			};
+			return harness.persistCreatedReservation({
+				...created,
+				reservation: { ...created.reservation, resources: verifiedResources },
+				target: { ...created.target, resources: verifiedResources },
+			});
+		});
+		const tool = harness.coordinator.admitProvisionalToolVm({
+			agentId: 'main',
+			expectedGateway: gateway.gatewayIdentity,
+			sessionLabel: 'sunfam-main-tool',
+		});
+
+		const proof = await tool.ready;
+		const createOptions = reservationOptionsAt(harness.createReservationMock, 1);
+		const ownershipReservation = reservationReferenceFromOptions(createOptions);
+		const verifiedDestroyTarget = targetAt(harness, ownershipReservation.reservationPath);
+
+		expect(proof).toEqual({
+			destructionIdentity: {
+				reservationId: verifiedDestroyTarget.reservationId,
+				reservationPath: verifiedDestroyTarget.reservationPath,
+				vmId: verifiedDestroyTarget.vmId,
+			},
+			ownershipReservation,
+			verifiedDestroyTarget,
+		});
+		expect(harness.readDestroyTargetMock).toHaveBeenCalledWith(
+			ownershipReservation.reservationPath,
+		);
+		expect(verifiedDestroyTarget.resources).toMatchObject({
+			disposableStoragePaths: ['/verified/tool-vm-overlay'],
+			sshListener: true,
+		});
+		expect(harness.reservationByPath.get(ownershipReservation.reservationPath)).toMatchObject({
+			reservationId: ownershipReservation.reservationId,
+			vmId: createOptions.vmId,
+		});
+	});
+
 	it('durably admits a Tool reservation parented to the current Gateway', async () => {
 		// Arrange
 		const harness = await createCoordinatorHarness();
@@ -717,7 +766,7 @@ describe('GatewayOwnershipCoordinator', () => {
 			sessionLabel: 'sunfam-main-tool',
 		});
 		expect('ownershipReservation' in tool).toBe(false);
-		const ownershipReservation = await tool.ready;
+		const { ownershipReservation } = await tool.ready;
 		const createOptions = reservationOptionsAt(harness.createReservationMock, 1);
 		const journal = createVmOwnershipJournal({
 			nowMs: () => FIXED_NOW_MS,
@@ -908,7 +957,7 @@ describe('GatewayOwnershipCoordinator', () => {
 		deferredReservation.resolve(
 			harness.persistCreatedReservation(createFakeReservation(deferredReservationOptions)),
 		);
-		const ownershipReservation = await lateTool.ready;
+		const { ownershipReservation } = await lateTool.ready;
 		await expect(lateTool.destroyDetached()).rejects.toMatchObject({ code: 'owner-unsafe' });
 		expect(harness.destroyExactMock).toHaveBeenCalledTimes(1);
 		expect(harness.destroyExactMock.mock.calls[0]?.[0]).toMatchObject({
@@ -1076,7 +1125,7 @@ describe('GatewayOwnershipCoordinator', () => {
 			expectedGateway: gateway.gatewayIdentity,
 			sessionLabel: 'sunfam-latest-target-tool',
 		});
-		const ownershipReservation = await tool.ready;
+		const { ownershipReservation } = await tool.ready;
 		const initialReservation = reservationAt(harness, ownershipReservation.reservationPath);
 		const initialTarget = targetAt(harness, ownershipReservation.reservationPath);
 		const latestReservation = {
@@ -1137,7 +1186,7 @@ describe('GatewayOwnershipCoordinator', () => {
 			expectedGateway: gateway.gatewayIdentity,
 			sessionLabel: 'sunfam-live-latest-target-tool',
 		});
-		const ownershipReservation = await tool.ready;
+		const { ownershipReservation } = await tool.ready;
 		const initialReservation = reservationAt(harness, ownershipReservation.reservationPath);
 		const initialTarget = targetAt(harness, ownershipReservation.reservationPath);
 		const latestReservation = {
@@ -1206,7 +1255,7 @@ describe('GatewayOwnershipCoordinator', () => {
 				expectedGateway: gateway.gatewayIdentity,
 				sessionLabel: 'sunfam-live-receipt-retry-tool',
 			});
-			const ownershipReservation = await tool.ready;
+			const { ownershipReservation } = await tool.ready;
 			const target = targetAt(harness, ownershipReservation.reservationPath);
 			const closeLiveVm = vi
 				.fn<() => Promise<ManagedVmDestroyReceiptV1>>()
@@ -1262,7 +1311,7 @@ describe('GatewayOwnershipCoordinator', () => {
 			expectedGateway: gateway.gatewayIdentity,
 			sessionLabel: 'sunfam-target-timeout-tool',
 		});
-		const ownershipReservation = await tool.ready;
+		const { ownershipReservation } = await tool.ready;
 		const matchingReceipt = createDestroyReceipt(
 			targetAt(harness, ownershipReservation.reservationPath),
 			true,
@@ -1989,14 +2038,14 @@ describe('GatewayOwnershipCoordinator', () => {
 			expectedGateway: oldGateway.gatewayIdentity,
 			sessionLabel: 'sunfam-current-tool',
 		});
-		const currentReservation = await currentTool.ready;
+		const { ownershipReservation: currentReservation } = await currentTool.ready;
 		await currentTool.commitCurrent();
 		const provisionalTool = harness.coordinator.admitProvisionalToolVm({
 			agentId: 'provisional-agent',
 			expectedGateway: oldGateway.gatewayIdentity,
 			sessionLabel: 'sunfam-provisional-tool',
 		});
-		const provisionalReservation = await provisionalTool.ready;
+		const { ownershipReservation: provisionalReservation } = await provisionalTool.ready;
 		const currentTarget = targetAt(harness, currentReservation.reservationPath);
 		const provisionalTarget = targetAt(harness, provisionalReservation.reservationPath);
 		const currentDestroyFailure = new Error('current child exact destroy failed');

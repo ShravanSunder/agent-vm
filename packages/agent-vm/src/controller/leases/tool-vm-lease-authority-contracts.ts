@@ -37,7 +37,6 @@ export interface ToolVmSshBinding {
 export interface ToolVmExactDestructionIdentity {
 	readonly reservationId: string;
 	readonly reservationPath: string;
-	readonly targetIdentity: string;
 	readonly vmId: string;
 }
 
@@ -45,7 +44,6 @@ export interface ToolVmExactDestructionReceipt {
 	readonly complete: boolean;
 	readonly reservationId: string;
 	readonly reservationPath: string;
-	readonly targetIdentity: string;
 	readonly vmId: string;
 }
 

@@ -71,6 +71,14 @@ function createOwnershipCoordinatorStub(): GatewayOwnershipCoordinator {
 		},
 		role: 'tool',
 	});
+	const verifiedDestroyTarget = createTestVmDestroyTarget('tool-vm-1', {
+		controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+		parentGateway: {
+			epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+			vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+		},
+		role: 'tool',
+	});
 	return {
 		beginGatewayEpoch: async () => refuseUnexpectedGatewayOwnershipOperation(),
 		admitProvisionalToolVm: (options) => {
@@ -78,7 +86,15 @@ function createOwnershipCoordinatorStub(): GatewayOwnershipCoordinator {
 				throw new Error('Tool VM admission refused a stale Gateway VM epoch.');
 			}
 			return {
-				ready: Promise.resolve(ownershipReservation),
+				ready: Promise.resolve({
+					destructionIdentity: {
+						reservationId: verifiedDestroyTarget.reservationId,
+						reservationPath: verifiedDestroyTarget.reservationPath,
+						vmId: verifiedDestroyTarget.vmId,
+					},
+					ownershipReservation,
+					verifiedDestroyTarget,
+				}),
 				commitCurrent: async () => {},
 				destroyDetached: async () => createCompleteVmDestroyReceipt('tool-vm-1'),
 				destroyLive: async (closeLiveVm) => await closeLiveVm(),

@@ -84,7 +84,6 @@ function beginProvisioning(
 		destructionIdentity: {
 			reservationId: `reservation-${leafGeneration}`,
 			reservationPath: `/state/reservations/${leafGeneration}.json`,
-			targetIdentity: `target-${leafGeneration}`,
 			vmId: `tool-vm-${leafGeneration}`,
 		},
 		kind: 'begin-provisioning',
@@ -158,7 +157,6 @@ function exactDestructionReceipt(
 		complete: true,
 		reservationId: `reservation-${leafGeneration}`,
 		reservationPath: `/state/reservations/${leafGeneration}.json`,
-		targetIdentity: `target-${leafGeneration}`,
 		vmId: `tool-vm-${leafGeneration}`,
 	};
 }
@@ -474,7 +472,6 @@ describe('Tool VM lease authority reliability boundaries', () => {
 		{ field: 'complete' as const, value: false },
 		{ field: 'reservationId' as const, value: 'reservation-wrong' },
 		{ field: 'reservationPath' as const, value: '/state/reservations/wrong.json' },
-		{ field: 'targetIdentity' as const, value: 'target-wrong' },
 		{ field: 'vmId' as const, value: 'tool-vm-wrong' },
 	])(
 		'refuses destruction receipt mismatch in $field and retains exact retry identity',
@@ -501,7 +498,6 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			expect(destroying.leavesByPrincipal.get('shravan\0main')).toMatchObject({
 				destructionIdentity: {
 					reservationId: 'reservation-leaf-generation-1',
-					targetIdentity: 'target-leaf-generation-1',
 					vmId: 'tool-vm-leaf-generation-1',
 				},
 				kind: 'destroying',
@@ -660,7 +656,6 @@ describe('Tool VM lease authority reliability boundaries', () => {
 				complete: true,
 				reservationId: 'reservation-leaf-generation-1',
 				reservationPath: '/state/reservations/leaf-generation-1.json',
-				targetIdentity: 'target-leaf-generation-1',
 				vmId: 'tool-vm-leaf-generation-1',
 			},
 			reason: 'persistent-ssh-failure',

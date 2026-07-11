@@ -1,8 +1,4 @@
-import type {
-	ManagedVm,
-	VmDestroyReceiptV1,
-	VmOwnershipReservationReferenceV1,
-} from '@agent-vm/gondolin-adapter';
+import type { ManagedVm, VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
@@ -11,6 +7,7 @@ import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
 } from '../../testing/managed-vm-test-helpers.js';
 import type { ProvisionalToolVmOwnershipHandle } from '../vm-ownership/gateway-ownership-coordinator.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
@@ -28,12 +25,23 @@ const TEST_GATEWAY_EPOCH = {
 	zoneId: 'shravan',
 } satisfies GatewayEpochIdentity;
 
-const TEST_TOOL_VM_OWNERSHIP_RESERVATION = {
-	expectedContractVersion: 1,
-	expectedRevision: 1,
-	reservationId: 'tool-reservation-1',
-	reservationPath: '/tmp/pending-tool-vm-cleanup-tests/tool-reservation-1/reservation.json',
-} satisfies VmOwnershipReservationReferenceV1;
+const TEST_TOOL_VM_OWNERSHIP_RESERVATION = createTestVmOwnershipReservationReference('tool-vm-1', {
+	controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+	parentGateway: {
+		epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+		vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+	},
+	role: 'tool',
+});
+
+const TEST_TOOL_VM_DESTROY_TARGET = createTestVmDestroyTarget('tool-vm-1', {
+	controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+	parentGateway: {
+		epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+		vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+	},
+	role: 'tool',
+});
 
 const incompleteVmDestroyReceipt = {
 	...createCompleteVmDestroyReceipt('tool-vm-incomplete', {
@@ -62,7 +70,15 @@ function createOwnershipHandle(
 	overrides: Partial<ProvisionalToolVmOwnershipHandle> = {},
 ): ProvisionalToolVmOwnershipHandle {
 	return {
-		ready: Promise.resolve(TEST_TOOL_VM_OWNERSHIP_RESERVATION),
+		ready: Promise.resolve({
+			destructionIdentity: {
+				reservationId: TEST_TOOL_VM_DESTROY_TARGET.reservationId,
+				reservationPath: TEST_TOOL_VM_DESTROY_TARGET.reservationPath,
+				vmId: TEST_TOOL_VM_DESTROY_TARGET.vmId,
+			},
+			ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
+			verifiedDestroyTarget: TEST_TOOL_VM_DESTROY_TARGET,
+		}),
 		commitCurrent: async () => {},
 		destroyDetached: async () => createCompleteVmDestroyReceipt('tool-vm-detached'),
 		destroyLive: async (closeLiveVm) => await closeLiveVm(),

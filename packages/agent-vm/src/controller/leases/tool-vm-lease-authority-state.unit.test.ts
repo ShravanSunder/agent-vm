@@ -95,7 +95,6 @@ function beginProvisioning(
 		destructionIdentity: {
 			reservationId: `reservation-${leafGeneration}`,
 			reservationPath: `/state/reservations/${leafGeneration}.json`,
-			targetIdentity: `target-${leafGeneration}`,
 			vmId: `tool-vm-${leafGeneration}`,
 		},
 		kind: 'begin-provisioning',

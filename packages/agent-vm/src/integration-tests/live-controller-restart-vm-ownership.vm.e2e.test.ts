@@ -124,7 +124,7 @@ describeLiveVmE2e('live e2e: controller restart exact VM ownership', () => {
 			sessionLabel: 'current-tool-before-controller-restart',
 		});
 		const currentToolVm = await createRealVm(
-			await currentToolOwnership.ready,
+			(await currentToolOwnership.ready).ownershipReservation,
 			'current-tool-before-controller-restart',
 		);
 		managedVmsForHarnessCleanup.push(currentToolVm);
@@ -136,7 +136,7 @@ describeLiveVmE2e('live e2e: controller restart exact VM ownership', () => {
 			sessionLabel: 'provisional-tool-before-controller-restart',
 		});
 		const provisionalToolVm = await createRealVm(
-			await provisionalToolOwnership.ready,
+			(await provisionalToolOwnership.ready).ownershipReservation,
 			'provisional-tool-before-controller-restart',
 		);
 		managedVmsForHarnessCleanup.push(provisionalToolVm);

@@ -1,6 +1,9 @@
-import type { ManagedVmOwnershipReservationReferenceV1 } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+	createTestVmDestroyTarget,
+	createTestVmOwnershipReservationReference,
+} from '../../testing/managed-vm-test-helpers.js';
 import type { ProvisionalToolVmOwnershipHandle } from '../vm-ownership/gateway-ownership-coordinator.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import { createToolVmCurrentLeaseRegistry } from './tool-vm-current-lease-registry.js';
@@ -22,12 +25,23 @@ const TEST_GATEWAY_IDENTITY = {
 	zoneId: 'shravan',
 } satisfies GatewayEpochIdentity;
 
-const TEST_OWNERSHIP_RESERVATION = {
-	expectedContractVersion: 1,
-	expectedRevision: 1,
-	reservationId: 'tool-reservation-1',
-	reservationPath: '/tmp/tool-vm-current-lease-registry/tool-reservation-1/reservation.json',
-} satisfies ManagedVmOwnershipReservationReferenceV1;
+const TEST_OWNERSHIP_RESERVATION = createTestVmOwnershipReservationReference('tool-vm-1', {
+	controllerEpoch: TEST_GATEWAY_IDENTITY.controllerEpoch,
+	parentGateway: {
+		epoch: TEST_GATEWAY_IDENTITY.gatewayEpochId,
+		vmId: TEST_GATEWAY_IDENTITY.gatewayVmId,
+	},
+	role: 'tool',
+});
+
+const TEST_DESTROY_TARGET = createTestVmDestroyTarget('tool-vm-1', {
+	controllerEpoch: TEST_GATEWAY_IDENTITY.controllerEpoch,
+	parentGateway: {
+		epoch: TEST_GATEWAY_IDENTITY.gatewayEpochId,
+		vmId: TEST_GATEWAY_IDENTITY.gatewayVmId,
+	},
+	role: 'tool',
+});
 
 function createGatewayIdentity(
 	overrides: Partial<GatewayEpochIdentity> = {},
@@ -51,7 +65,15 @@ function createLease(overrides: Partial<TestLease> = {}): TestLease {
 
 function createOwnershipHandle(): ProvisionalToolVmOwnershipHandle {
 	return {
-		ready: Promise.resolve(TEST_OWNERSHIP_RESERVATION),
+		ready: Promise.resolve({
+			destructionIdentity: {
+				reservationId: TEST_DESTROY_TARGET.reservationId,
+				reservationPath: TEST_DESTROY_TARGET.reservationPath,
+				vmId: TEST_DESTROY_TARGET.vmId,
+			},
+			ownershipReservation: TEST_OWNERSHIP_RESERVATION,
+			verifiedDestroyTarget: TEST_DESTROY_TARGET,
+		}),
 		commitCurrent: vi.fn(async () => {}),
 		destroyDetached: vi.fn(async () => {
 			throw new Error('not exercised by registry tests');

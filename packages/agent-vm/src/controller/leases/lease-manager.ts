@@ -499,12 +499,12 @@ export function createLeaseManager(options: {
 						| { readonly recordId: string; readonly stateDirectory: string }
 						| undefined;
 					try {
-						const ownershipReservation = await toolOwnership.ready;
+						const ownershipProof = await toolOwnership.ready;
 						let vm: ManagedVm;
 						try {
 							vm = await options.createManagedVm({
 								...leaseOptions,
-								ownershipReservation,
+								ownershipReservation: ownershipProof.ownershipReservation,
 								tcpSlot,
 							});
 						} catch (createError) {

@@ -74,7 +74,6 @@ export function validateExactDestructionReceipt(
 	if (
 		receipt.reservationId !== leaf.destructionIdentity.reservationId ||
 		receipt.reservationPath !== leaf.destructionIdentity.reservationPath ||
-		receipt.targetIdentity !== leaf.destructionIdentity.targetIdentity ||
 		receipt.vmId !== leaf.destructionIdentity.vmId
 	) {
 		return transitionError(
