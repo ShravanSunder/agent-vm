@@ -682,4 +682,5 @@ export function reduceToolVmLeaseAuthorityState(
 			return { ...state, terminalUseTombstones, tombstonesByGeneration };
 		}
 	}
+	throw new Error('unsupported Tool VM lease authority command');
 }
