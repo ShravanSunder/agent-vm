@@ -48,6 +48,7 @@ import {
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	preflightGatewayZoneStart,
+	resolveOpenClawProcessSupervisorStateMount,
 	startGatewayZone as startGatewayZoneProduction,
 	validateGatewayControlCallerContextRegistration,
 	type GatewayManagerDependencies,
@@ -355,43 +356,10 @@ const openClawToolVmSandbox = {
 	workspaceAccess: 'rw',
 } satisfies Record<string, string>;
 
-function shellQuoteForTest(value: string): string {
-	return `'${value.replace(/'/gu, `'\\''`)}'`;
-}
-
-function buildExpectedOpenClawGatewaySupervisorScriptForTest(): string {
-	return [
-		'restart_delay_seconds="${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS:-5}"',
-		'restart_window_seconds="${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS:-60}"',
-		'max_restarts="${AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS:-6}"',
-		'attempt=0',
-		'failure_count=0',
-		'first_failure_at=0',
-		'while true',
-		'do attempt=$((attempt + 1))',
-		'printf "gateway-supervisor: starting openclaw gateway attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'set -a',
-		'if ! . /run/openclaw/secrets.env; then printf "gateway-supervisor: failed to source runtime secrets attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; exit 1; fi',
-		'set +a',
-		'/usr/local/bin/openclaw gateway --port 18789',
-		'exit_code=$?',
-		'now=$(date -u +%s)',
-		'if [ "$first_failure_at" -eq 0 ] || [ $((now - first_failure_at)) -gt "$restart_window_seconds" ]; then first_failure_at=$now; failure_count=1; else failure_count=$((failure_count + 1)); fi',
-		'printf "gateway-supervisor: openclaw gateway exited attempt=%s exit_code=%s failure_count=%s window_seconds=%s at=%s\\n" "$attempt" "$exit_code" "$failure_count" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'if [ "$failure_count" -ge "$max_restarts" ]; then printf "gateway-supervisor: restart limit exceeded failure_count=%s max_restarts=%s window_seconds=%s at=%s\\n" "$failure_count" "$max_restarts" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if [ "$exit_code" -eq 0 ]; then exit 1; fi; exit "$exit_code"; fi',
-		'sleep "$restart_delay_seconds"',
-		'done',
-	].join('; ');
-}
-
 function buildExpectedOpenClawGatewayStartCommandForTest(): string {
 	return [
-		'set -a',
-		'. /run/openclaw/secrets.env',
-		'set +a',
 		'{ printf \'gateway-boot: NODE_OPTIONS=%s\\n\' "$NODE_OPTIONS" > /agent-vm/logs/gateway-boot-latest.log; }',
-		'cd /home/openclaw',
-		`nohup sh -c ${shellQuoteForTest(buildExpectedOpenClawGatewaySupervisorScriptForTest())} >> /agent-vm/logs/gateway-boot-latest.log 2>&1 &`,
+		"printf 'gateway-supervisor: controller-owned helper ready; awaiting typed request\\n' >> /agent-vm/logs/gateway-boot-latest.log",
 	].join(' && ');
 }
 
@@ -802,6 +770,34 @@ function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): 
 }
 
 describe('startGatewayZone', () => {
+	it('scopes OpenClaw process supervisor state to the exact Gateway epoch', () => {
+		const runtimeDirectory = '/runtime';
+		const firstGateway = createTestGatewayEpochIdentity('gateway-vm-first');
+		const secondGateway = createTestGatewayEpochIdentity('gateway-vm-second');
+
+		const firstMount = resolveOpenClawProcessSupervisorStateMount({
+			gatewayIdentity: firstGateway,
+			runtimeDirectory,
+		});
+		const repeatedFirstMount = resolveOpenClawProcessSupervisorStateMount({
+			gatewayIdentity: firstGateway,
+			runtimeDirectory,
+		});
+		const secondMount = resolveOpenClawProcessSupervisorStateMount({
+			gatewayIdentity: secondGateway,
+			runtimeDirectory,
+		});
+
+		expect(repeatedFirstMount).toEqual(firstMount);
+		expect(secondMount.hostPath).not.toBe(firstMount.hostPath);
+		expect(firstMount).toMatchObject({
+			guestPath: '/run/agent-vm/openclaw-process-supervisor',
+			hostPath: expect.stringMatching(
+				/^\/runtime\/zones\/shravan\/openclaw-process-supervisor\/[a-f0-9]{64}$/u,
+			),
+		});
+	});
+
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
 		const taskTitles: string[] = [];
 		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-123'));
@@ -931,6 +927,7 @@ describe('startGatewayZone', () => {
 						}) => unknown;
 					};
 					readonly tcpHosts: Record<string, string>;
+					readonly vfsMounts: Record<string, { readonly hostPath: string; readonly kind: string }>;
 			  }
 			| undefined;
 		if (createdVmOptions === undefined) {
@@ -938,6 +935,22 @@ describe('startGatewayZone', () => {
 		}
 		expect(createdVmOptions.allowedHosts).not.toContain('controller.vm.host');
 		expect(createdVmOptions.sshEgress?.agent).toBe('/tmp/agent-vm-test-agent.sock');
+		const expectedSupervisorMount = resolveOpenClawProcessSupervisorStateMount({
+			gatewayIdentity: {
+				bootId: testGatewayBootId,
+				controllerEpoch: 'controller-epoch-test',
+				gatewayEpochId: 'test-gateway-epoch-shravan',
+				gatewayVmId: 'test-gateway-vm-shravan',
+				generationId: testGatewayGenerationId,
+				zoneId: 'shravan',
+			},
+			runtimeDirectory: systemConfig.runtimeDir,
+		});
+		expect(createdVmOptions.vfsMounts[expectedSupervisorMount.guestPath]).toEqual({
+			hostPath: expectedSupervisorMount.hostPath,
+			kind: 'realfs',
+		});
+		expect((await stat(expectedSupervisorMount.hostPath)).mode & 0o777).toBe(0o700);
 		await expect(
 			Promise.resolve(
 				createdVmOptions.sshEgress?.execPolicy?.({

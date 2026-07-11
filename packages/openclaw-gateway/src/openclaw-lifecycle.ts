@@ -44,9 +44,9 @@ const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
 const openClawCommandVmPath = '/usr/local/bin/openclaw';
 const openClawGatewayGuestPort = 18789;
-const openClawGatewaySupervisorRestartDelaySeconds = 5;
-const openClawGatewaySupervisorRestartWindowSeconds = 60;
-const openClawGatewaySupervisorMaxRestarts = 6;
+const openClawProcessSupervisorHelperVmPath =
+	'/usr/local/libexec/agent-vm-openclaw-process-supervisor';
+const openClawProcessSupervisorStateDirVmPath = '/run/agent-vm/openclaw-process-supervisor';
 const openClawGatewayGuestPath =
 	'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const diagnosticsOtelPluginId = 'diagnostics-otel';
@@ -208,6 +208,14 @@ function buildOpenClawBootstrapCommand(
 		'chmod 600 /root/.ssh/config /home/openclaw/.ssh/config && ';
 	const diagnosticsOtelRegistryCommand =
 		zone.observability?.mode === 'collector' ? 'openclaw plugins registry --refresh && ' : '';
+	const processSupervisorHelperBase64 = Buffer.from(
+		buildOpenClawProcessSupervisorHelperSource(),
+		'utf8',
+	).toString('base64');
+	const processSupervisorInstallCommand =
+		`mkdir -p /usr/local/libexec ${openClawProcessSupervisorStateDirVmPath} && ` +
+		`printf '%s' ${shellQuote(processSupervisorHelperBase64)} | base64 -d > ${openClawProcessSupervisorHelperVmPath} && ` +
+		`chmod 700 ${openClawProcessSupervisorHelperVmPath} ${openClawProcessSupervisorStateDirVmPath} && `;
 
 	return (
 		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
@@ -219,6 +227,7 @@ function buildOpenClawBootstrapCommand(
 		gatewayTokenFileCommand +
 		`chmod 600 ${openClawGatewayTokenEnvFilePath} && ` +
 		sshConfigCommand +
+		processSupervisorInstallCommand +
 		diagnosticsOtelRegistryCommand +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
@@ -385,41 +394,152 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
-function buildOpenClawGatewaySupervisorCommand(): string {
-	return [
-		`restart_delay_seconds="\${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS:-${openClawGatewaySupervisorRestartDelaySeconds}}"`,
-		`restart_window_seconds="\${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS:-${openClawGatewaySupervisorRestartWindowSeconds}}"`,
-		`max_restarts="\${AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS:-${openClawGatewaySupervisorMaxRestarts}}"`,
-		'attempt=0',
-		'failure_count=0',
-		'first_failure_at=0',
-		'while true',
-		'do attempt=$((attempt + 1))',
-		'printf "gateway-supervisor: starting openclaw gateway attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'set -a',
-		`if ! . ${openClawRuntimeSecretsEnvFilePath}; then printf "gateway-supervisor: failed to source runtime secrets attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; exit 1; fi`,
-		'set +a',
-		`${openClawCommandVmPath} gateway --port ${openClawGatewayGuestPort}`,
-		'exit_code=$?',
-		'now=$(date -u +%s)',
-		'if [ "$first_failure_at" -eq 0 ] || [ $((now - first_failure_at)) -gt "$restart_window_seconds" ]; then first_failure_at=$now; failure_count=1; else failure_count=$((failure_count + 1)); fi',
-		'printf "gateway-supervisor: openclaw gateway exited attempt=%s exit_code=%s failure_count=%s window_seconds=%s at=%s\\n" "$attempt" "$exit_code" "$failure_count" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'if [ "$failure_count" -ge "$max_restarts" ]; then printf "gateway-supervisor: restart limit exceeded failure_count=%s max_restarts=%s window_seconds=%s at=%s\\n" "$failure_count" "$max_restarts" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if [ "$exit_code" -eq 0 ]; then exit 1; fi; exit "$exit_code"; fi',
-		'sleep "$restart_delay_seconds"',
-		'done',
-	].join('; ');
+function buildOpenClawProcessSupervisorHelperSource(): string {
+	return `#!/usr/bin/env node
+const { createHash } = require('node:crypto');
+const { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } = require('node:fs');
+const { spawn, spawnSync } = require('node:child_process');
+const path = require('node:path');
+const directory = '${openClawProcessSupervisorStateDirVmPath}';
+const requestPath = path.join(directory, 'request-v1.json');
+const receiptPath = path.join(directory, 'receipt-v1.json');
+const statePath = path.join(directory, 'state-v1.json');
+const lockPath = path.join(directory, 'operation.lock');
+const identifier = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join('\\0') === [...keys].sort().join('\\0');
+const validGateway = (value) => exactKeys(value, ['controllerEpoch', 'gatewayEpochId', 'gatewayVmId']) && identifier.test(value.controllerEpoch) && identifier.test(value.gatewayEpochId) && identifier.test(value.gatewayVmId);
+const parseRequest = (value) => {
+  const common = ['actionId', 'contractVersion', 'expectedProcessEpoch', 'gateway', 'kind'];
+  const keys = value?.kind === 'start' ? [...common, 'selectedProcessEpoch'] : common;
+  if (!exactKeys(value, keys) || value.contractVersion !== 1 || !['contain', 'observe', 'start'].includes(value.kind) || !identifier.test(value.actionId) || !validGateway(value.gateway) || (value.expectedProcessEpoch !== null && !identifier.test(value.expectedProcessEpoch)) || (value.kind === 'start' && !identifier.test(value.selectedProcessEpoch))) throw new Error('invalid-request');
+  return value;
+};
+const atomicWrite = (filePath, value) => {
+  const temporaryPath = filePath + '.' + process.pid + '.tmp';
+  writeFileSync(temporaryPath, JSON.stringify(value) + '\\n', { mode: 0o600 });
+  renameSync(temporaryPath, filePath);
+};
+const sameGateway = (left, right) => left && left.controllerEpoch === right.controllerEpoch && left.gatewayEpochId === right.gatewayEpochId && left.gatewayVmId === right.gatewayVmId;
+const populated = (groupPath) => {
+  const events = readFileSync(path.join(groupPath, 'cgroup.events'), 'utf8');
+  const match = /^populated ([01])$/mu.exec(events);
+  if (!match) throw new Error('cgroup-events-unavailable');
+  return match[1] === '1';
+};
+const waitForPopulation = (groupPath, expected) => {
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (populated(groupPath) === expected) return true;
+    Atomics.wait(sleeper, 0, 0, 10);
+  }
+  return false;
+};
+const ensureCgroup2 = () => {
+  mkdirSync('/sys/fs/cgroup', { recursive: true });
+  const mounts = readFileSync('/proc/mounts', 'utf8');
+  if (!mounts.split('\\n').some((line) => line.split(' ')[1] === '/sys/fs/cgroup' && line.split(' ')[2] === 'cgroup2')) {
+    const mounted = spawnSync('mount', ['-t', 'cgroup2', 'none', '/sys/fs/cgroup']);
+    if (mounted.status !== 0) throw new Error('cgroup-mount-failed');
+  }
+};
+mkdirSync(directory, { recursive: true, mode: 0o700 });
+let lock;
+try { lock = openSync(lockPath, 'wx', 0o600); } catch { process.exit(73); }
+const terminated = Symbol('terminated');
+const terminate = (exitCode) => { process.exitCode = exitCode; throw terminated; };
+try {
+  const request = parseRequest(JSON.parse(readFileSync(requestPath, 'utf8')));
+  const digest = createHash('sha256').update(JSON.stringify(request)).digest('hex');
+  let state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { contractVersion: 1, gateway: request.gateway, currentProcessEpoch: null, cgroupName: null, status: 'absent', actionOrder: [], actions: {} };
+  const writeReceipt = (receipt) => {
+    const actionOrder = [...state.actionOrder.filter((actionId) => actionId !== request.actionId), request.actionId].slice(-128);
+    const actions = { ...state.actions, [request.actionId]: { digest, receipt } };
+    for (const actionId of Object.keys(actions)) if (!actionOrder.includes(actionId)) delete actions[actionId];
+    state = { ...state, actionOrder, actions };
+    atomicWrite(statePath, state); atomicWrite(receiptPath, receipt);
+  };
+  const priorAction = state.actions[request.actionId];
+  if (priorAction) {
+    if (priorAction.digest !== digest) {
+      atomicWrite(receiptPath, { actionId: request.actionId, cgroup: { name: state.cgroupName, populated: state.cgroupName ? populated(path.join('/sys/fs/cgroup', state.cgroupName)) : false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason: 'action-reused', status: 'refused' });
+      terminate(2);
+    }
+    atomicWrite(receiptPath, priorAction.receipt); terminate(0);
+  }
+  const refuse = (reason) => { writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: state.cgroupName ? populated(path.join('/sys/fs/cgroup', state.cgroupName)) : false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason, status: 'refused' }); terminate(2); };
+  if (!sameGateway(state.gateway, request.gateway)) refuse('gateway-fence-mismatch');
+  if (state.currentProcessEpoch !== request.expectedProcessEpoch) refuse('process-fence-mismatch');
+  if (request.kind === 'start') {
+    if (state.currentProcessEpoch !== null || !['absent', 'contained'].includes(state.status)) refuse('process-overlap');
+    ensureCgroup2();
+    const cgroupName = 'agent-vm-' + createHash('sha256').update(request.gateway.gatewayEpochId + '\\0' + request.selectedProcessEpoch).digest('hex').slice(0, 24);
+    const groupPath = path.join('/sys/fs/cgroup', cgroupName);
+    mkdirSync(groupPath, { mode: 0o700 });
+    if (populated(groupPath)) refuse('process-overlap');
+    state = { ...state, currentProcessEpoch: request.selectedProcessEpoch, cgroupName, status: 'starting' };
+    writeReceipt({ actionId: request.actionId, cgroup: { name: cgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: request.selectedProcessEpoch, reason: 'helper-failed', status: 'incomplete' });
+    try {
+      const logFd = openSync('${openClawGatewayBootLogFileVmPath}', 'a', 0o600);
+      const launch = 'echo $$ > ' + JSON.stringify(path.join(groupPath, 'cgroup.procs')) + '; exec su openclaw -s /bin/sh -c ' + JSON.stringify('set -a; . ${openClawRuntimeSecretsEnvFilePath}; set +a; cd /home/openclaw; exec ${openClawCommandVmPath} gateway --port ${openClawGatewayGuestPort}');
+      let child;
+      try {
+        child = spawn('/bin/sh', ['-c', launch], { detached: true, stdio: ['ignore', logFd, logFd] });
+      } finally {
+        closeSync(logFd);
+      }
+      child.unref();
+      if (!waitForPopulation(groupPath, true)) throw new Error('cgroup-membership-unproven');
+      state = { ...state, status: 'running' };
+      writeReceipt({ actionId: request.actionId, cgroup: { name: cgroupName, populated: true }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: request.selectedProcessEpoch, status: 'completed' });
+    } catch (error) {
+      const isPopulated = populated(groupPath);
+      const reason = error instanceof Error && error.message === 'cgroup-membership-unproven' ? 'cgroup-unavailable' : 'helper-failed';
+      state = { ...state, status: isPopulated ? 'starting' : 'exited' };
+      writeReceipt({ actionId: request.actionId, cgroup: { name: cgroupName, populated: isPopulated }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: request.selectedProcessEpoch, reason, status: 'incomplete' });
+      terminate(2);
+    }
+  } else if (request.kind === 'observe') {
+    if (state.currentProcessEpoch === null || state.cgroupName === null) {
+      writeReceipt({ actionId: request.actionId, cgroup: { name: null, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: null, status: 'completed' });
+    } else {
+      const isPopulated = populated(path.join('/sys/fs/cgroup', state.cgroupName));
+      state = { ...state, status: isPopulated ? 'running' : 'exited' };
+      writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: isPopulated }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, status: 'completed' });
+    }
+  } else {
+    if (state.currentProcessEpoch === null || state.cgroupName === null) refuse('process-fence-mismatch');
+    const groupPath = path.join('/sys/fs/cgroup', state.cgroupName);
+    try {
+      if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('cgroup-kill-unavailable');
+      writeFileSync(path.join(groupPath, 'cgroup.kill'), '1\\n');
+      if (!waitForPopulation(groupPath, false)) throw new Error('cgroup-empty-unproven');
+	  const containedProcessEpoch = state.currentProcessEpoch;
+	  const containedCgroupName = state.cgroupName;
+      rmSync(groupPath, { recursive: false });
+      state = { ...state, currentProcessEpoch: null, cgroupName: null, status: 'contained' };
+      writeReceipt({ actionId: request.actionId, cgroup: { emptyObserved: true, name: containedCgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: containedProcessEpoch, status: 'completed' });
+    } catch (error) {
+      const reason = error instanceof Error && error.message === 'cgroup-empty-unproven' ? 'cgroup-empty-unproven' : 'cgroup-unavailable';
+      writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: populated(groupPath) }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason, status: 'incomplete' });
+      terminate(2);
+    }
+  }
+} catch (error) {
+  if (error !== terminated) throw error;
+} finally { closeSync(lock); rmSync(lockPath, { force: true }); }
+`;
 }
 
 function buildOpenClawGatewayStartCommand(): string {
 	return [
-		'set -a',
-		`. ${openClawRuntimeSecretsEnvFilePath}`,
-		'set +a',
 		`{ printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > ${openClawGatewayBootLogFileVmPath}; }`,
-		'cd /home/openclaw',
-		`nohup sh -c ${shellQuote(buildOpenClawGatewaySupervisorCommand())} >> ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
+		`printf 'gateway-supervisor: controller-owned helper ready; awaiting typed request\\n' >> ${openClawGatewayBootLogFileVmPath}`,
 	].join(' && ');
 }
+
+export const processSupervisorHelperTestInternals = {
+	buildOpenClawProcessSupervisorHelperSource,
+};
 
 function includesShellUnsafeControlByte(value: string): boolean {
 	for (const character of value) {

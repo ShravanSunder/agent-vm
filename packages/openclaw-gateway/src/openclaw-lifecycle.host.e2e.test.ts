@@ -1,7 +1,8 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import {
 	access,
-	chmod,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -22,16 +23,11 @@ import {
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { openclawLifecycle } from './openclaw-lifecycle.js';
+import { openclawLifecycle, processSupervisorHelperTestInternals } from './openclaw-lifecycle.js';
 
 const createdDirectories: string[] = [];
 const execFileAsync = promisify(execFile);
 type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
-type ExecFileError = Error & {
-	readonly code?: number | string;
-	readonly killed?: boolean;
-	readonly signal?: NodeJS.Signals | null;
-};
 type InvalidFinalManagedGondolinConfigTestCase =
 	| {
 			readonly error: RegExp;
@@ -68,54 +64,14 @@ async function renderBootstrapFiles(
 		.replaceAll('/root', path.join(rootDirectory, 'root'))
 		.replaceAll('/etc/profile.d', path.join(rootDirectory, 'etc', 'profile.d'))
 		.replaceAll('/run/openclaw', path.join(rootDirectory, 'run', 'openclaw'))
+		.replaceAll('/usr/local/libexec', path.join(rootDirectory, 'usr', 'local', 'libexec'))
 		.replaceAll('/work', path.join(rootDirectory, 'work'))
 		.replace(`chown -R openclaw:openclaw ${path.join(rootDirectory, 'work')} && `, '');
 	await execFileAsync('sh', ['-lc', rootedCommand], { env });
 }
 
-function renderStartCommandForHost(
-	command: string,
-	props: {
-		readonly fakeOpenClawPath: string;
-		readonly rootDirectory: string;
-	},
-): string {
-	return command
-		.replaceAll('/usr/local/bin/openclaw', props.fakeOpenClawPath)
-		.replaceAll('/run/openclaw', path.join(props.rootDirectory, 'run', 'openclaw'))
-		.replaceAll('/agent-vm/logs', path.join(props.rootDirectory, 'agent-vm', 'logs'))
-		.replaceAll('/home/openclaw', path.join(props.rootDirectory, 'home', 'openclaw'))
-		.replace('nohup sh -c', 'sh -c')
-		.replace(/ &$/u, '');
-}
-
 function shellQuoteForTest(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
-}
-
-function buildExpectedOpenClawGatewaySupervisorScriptForTest(): string {
-	return [
-		'restart_delay_seconds="${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS:-5}"',
-		'restart_window_seconds="${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS:-60}"',
-		'max_restarts="${AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS:-6}"',
-		'attempt=0',
-		'failure_count=0',
-		'first_failure_at=0',
-		'while true',
-		'do attempt=$((attempt + 1))',
-		'printf "gateway-supervisor: starting openclaw gateway attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'set -a',
-		'if ! . /run/openclaw/secrets.env; then printf "gateway-supervisor: failed to source runtime secrets attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; exit 1; fi',
-		'set +a',
-		'/usr/local/bin/openclaw gateway --port 18789',
-		'exit_code=$?',
-		'now=$(date -u +%s)',
-		'if [ "$first_failure_at" -eq 0 ] || [ $((now - first_failure_at)) -gt "$restart_window_seconds" ]; then first_failure_at=$now; failure_count=1; else failure_count=$((failure_count + 1)); fi',
-		'printf "gateway-supervisor: openclaw gateway exited attempt=%s exit_code=%s failure_count=%s window_seconds=%s at=%s\\n" "$attempt" "$exit_code" "$failure_count" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'if [ "$failure_count" -ge "$max_restarts" ]; then printf "gateway-supervisor: restart limit exceeded failure_count=%s max_restarts=%s window_seconds=%s at=%s\\n" "$failure_count" "$max_restarts" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if [ "$exit_code" -eq 0 ]; then exit 1; fi; exit "$exit_code"; fi',
-		'sleep "$restart_delay_seconds"',
-		'done',
-	].join('; ');
 }
 
 async function captureThrownError(promise: Promise<unknown> | undefined): Promise<Error> {
@@ -488,6 +444,7 @@ describe('openclawLifecycle', () => {
 				},
 				zone: createZone(),
 			});
+			expect(vmSpec.vfsMounts).not.toHaveProperty('/run/agent-vm/openclaw-process-supervisor');
 
 			expect(vmSpec.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
 			expect(vmSpec.environment.OPENCLAW_GATEWAY_TOKEN).toBe("gateway'token");
@@ -1010,27 +967,17 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).toContain('PNPM_HOME=/pnpm');
 			expect(processSpec.bootstrapCommand).toContain('PATH=/pnpm:$PATH');
 			expect(processSpec.bootstrapCommand).toContain('npm_config_cache=/work/cache/npm');
-			expect(processSpec.startCommand).toContain('. /run/openclaw/secrets.env');
-			expect(processSpec.startCommand).toContain('cd /home/openclaw');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
-			expect(processSpec.startCommand).toContain(
-				`nohup sh -c ${shellQuoteForTest(buildExpectedOpenClawGatewaySupervisorScriptForTest())}`,
+			expect(processSpec.bootstrapCommand).toContain(
+				'/usr/local/libexec/agent-vm-openclaw-process-supervisor',
 			);
 			expect(processSpec.startCommand).toContain(
-				'gateway-supervisor: starting openclaw gateway attempt=',
+				'gateway-supervisor: controller-owned helper ready; awaiting typed request',
 			);
-			expect(processSpec.startCommand).toContain(
-				'gateway-supervisor: openclaw gateway exited attempt=',
-			);
-			expect(processSpec.startCommand).toContain(
-				'gateway-supervisor: restart limit exceeded failure_count=',
-			);
-			expect(processSpec.startCommand).toContain('sleep "$restart_delay_seconds"');
-			expect(processSpec.startCommand).not.toContain(
-				'nohup /usr/local/bin/openclaw gateway --port 18789',
-			);
-			expect(processSpec.startCommand).toContain('> /agent-vm/logs/gateway-boot-latest.log 2>&1');
+			expect(processSpec.startCommand).not.toContain('while true');
+			expect(processSpec.startCommand).not.toContain('nohup');
+			expect(processSpec.startCommand).not.toContain('openclaw gateway --port');
 			expect(processSpec.healthCheck).toEqual({
 				type: 'http',
 				port: 18789,
@@ -1039,61 +986,399 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
 		});
 
-		it('fails hard after a bounded fast crash loop so controller recovery can escalate', async () => {
+		it('installs a fixed non-network helper without autonomously launching a process', async () => {
 			const tempDirectory = await mkdtemp(
-				path.join(os.tmpdir(), 'openclaw-lifecycle-supervisor-crash-loop-'),
+				path.join(os.tmpdir(), 'openclaw-lifecycle-process-supervisor-helper-'),
 			);
 			createdDirectories.push(tempDirectory);
-			await mkdir(path.join(tempDirectory, 'run', 'openclaw'), { recursive: true });
-			await mkdir(path.join(tempDirectory, 'agent-vm', 'logs'), { recursive: true });
-			await mkdir(path.join(tempDirectory, 'home', 'openclaw'), { recursive: true });
-			const fakeOpenClawPath = path.join(tempDirectory, 'fake-openclaw');
-			const attemptsLogPath = path.join(tempDirectory, 'fake-openclaw-attempts.log');
-			await writeFile(
-				fakeOpenClawPath,
-				['#!/bin/sh', 'printf "attempt\\n" >> "$FAKE_OPENCLAW_ATTEMPTS_LOG"', 'exit 42'].join('\n'),
-				'utf8',
-			);
-			await chmod(fakeOpenClawPath, 0o700);
-			await writeFile(
-				path.join(tempDirectory, 'run', 'openclaw', 'secrets.env'),
-				['NODE_OPTIONS=--dns-result-order=ipv4first', 'OPENCLAW_GATEWAY_TOKEN=test-token'].join(
-					'\n',
-				),
-				'utf8',
-			);
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
-			const foregroundStartCommand = renderStartCommandForHost(processSpec.startCommand, {
-				fakeOpenClawPath,
-				rootDirectory: tempDirectory,
-			});
-
-			const supervisorExit = (await captureThrownError(
-				execFileAsync('sh', ['-lc', foregroundStartCommand], {
-					env: {
-						...process.env,
-						AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS: '3',
-						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS: '0',
-						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS: '60',
-						FAKE_OPENCLAW_ATTEMPTS_LOG: attemptsLogPath,
-					},
-					timeout: 5_000,
-				}),
-			)) as ExecFileError;
-			expect(supervisorExit.code).toBe(42);
-			expect(supervisorExit.killed).not.toBe(true);
-			expect(supervisorExit.signal).toBeNull();
-
-			const attemptsLog = await readFile(attemptsLogPath, 'utf8');
-			expect(attemptsLog.trim().split('\n')).toHaveLength(3);
-			const bootLog = await readFile(
-				path.join(tempDirectory, 'agent-vm', 'logs', 'gateway-boot-latest.log'),
-				'utf8',
+			const encodedHelper =
+				/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > \/usr\/local\/libexec\/agent-vm-openclaw-process-supervisor/u.exec(
+					processSpec.bootstrapCommand,
+				);
+			expect(encodedHelper?.[1]).toBeDefined();
+			const helperPath = path.join(tempDirectory, 'agent-vm-openclaw-process-supervisor');
+			const helperSource = Buffer.from(encodedHelper?.[1] ?? '', 'base64').toString('utf8');
+			await writeFile(helperPath, helperSource, 'utf8');
+			await expect(execFileAsync(process.execPath, ['--check', helperPath])).resolves.toMatchObject(
+				{
+					stderr: '',
+				},
 			);
-			expect(bootLog).toContain(
-				'gateway-supervisor: restart limit exceeded failure_count=3 max_restarts=3',
+			expect(helperSource).toContain("refuse('process-overlap')");
+			expect(helperSource).toContain("path.join(groupPath, 'cgroup.kill')");
+			expect(helperSource).toContain("path.join(groupPath, 'cgroup.events')");
+			expect(helperSource).toContain('emptyObserved: true');
+			expect(processSpec.startCommand).not.toMatch(
+				/(?:openclaw gateway|while true|restart_delay_seconds|nohup)/u,
 			);
 		});
+
+		it('executes the generated helper through start, replay, collision, observe, and positive containment', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-process-supervisor-behavior-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			const cgroupRoot = path.join(tempDirectory, 'cgroup');
+			const mountsPath = path.join(tempDirectory, 'mounts');
+			const helperPath = path.join(tempDirectory, 'helper');
+			const watcherPath = path.join(tempDirectory, 'fixture-cgroup-watcher.mjs');
+			const watcherModePath = path.join(tempDirectory, 'fixture-cgroup-mode');
+			const bootLogPath = path.join(tempDirectory, 'gateway.log');
+			const gateway = {
+				controllerEpoch: 'controller-1',
+				gatewayEpochId: 'gateway-epoch-1',
+				gatewayVmId: 'gateway-vm-1',
+			} as const;
+			const processEpoch = 'process-1';
+			const cgroupName = `agent-vm-${createHash('sha256')
+				.update(`${gateway.gatewayEpochId}\0${processEpoch}`)
+				.digest('hex')
+				.slice(0, 24)}`;
+			const cgroupPath = path.join(cgroupRoot, cgroupName);
+			await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+			await mkdir(cgroupPath, { recursive: true, mode: 0o700 });
+			await writeFile(path.join(cgroupPath, 'cgroup.events'), 'populated 0\n', 'utf8');
+			await writeFile(path.join(cgroupPath, 'cgroup.kill'), '', 'utf8');
+			await writeFile(path.join(cgroupPath, 'cgroup.procs'), '', 'utf8');
+			await writeFile(watcherModePath, 'normal', 'utf8');
+			await writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8');
+			const helperSource = processSupervisorHelperTestInternals
+				.buildOpenClawProcessSupervisorHelperSource()
+				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
+				.replaceAll('/sys/fs/cgroup', cgroupRoot)
+				.replaceAll('/proc/mounts', mountsPath)
+				.replaceAll('/agent-vm/logs/gateway-boot-latest.log', bootLogPath)
+				.replace(
+					'mkdirSync(groupPath, { mode: 0o700 });',
+					'mkdirSync(groupPath, { mode: 0o700, recursive: true });',
+				)
+				.replace(
+					'rmSync(groupPath, { recursive: false });',
+					"writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');",
+				);
+			await writeFile(
+				watcherPath,
+				`import { existsSync, readFileSync, watch, writeFileSync } from 'node:fs';
+const groupPath = ${JSON.stringify(cgroupPath)};
+const processPath = groupPath + '/cgroup.procs';
+const killPath = groupPath + '/cgroup.kill';
+const eventsPath = groupPath + '/cgroup.events';
+const modePath = ${JSON.stringify(watcherModePath)};
+const processEvents = watch(processPath, () => {
+  if (readFileSync(modePath, 'utf8').trim() === 'ignore-membership') return;
+  const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
+  if (Number.isInteger(pid)) writeFileSync(eventsPath, 'populated 1\\n');
+});
+const killEvents = watch(killPath, () => {
+  if (readFileSync(modePath, 'utf8').trim() === 'ignore-kill') return;
+  if (!existsSync(killPath) || readFileSync(killPath, 'utf8').trim() !== '1') return;
+  const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
+  if (Number.isInteger(pid)) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
+  writeFileSync(eventsPath, 'populated 0\\n');
+});
+process.stdout.write('ready\\n');
+await new Promise((resolve) => process.once('SIGTERM', resolve));
+processEvents.close();
+killEvents.close();
+`,
+				'utf8',
+			);
+			const watcher = spawn(process.execPath, [watcherPath], {
+				stdio: ['ignore', 'pipe', 'pipe'],
+			});
+			try {
+				await once(watcher.stdout, 'data');
+				const invoke = async (
+					request: Record<string, unknown>,
+				): Promise<{
+					readonly outcome: {
+						readonly exitCode: number;
+						readonly stderr: string;
+						readonly stdout: string;
+					};
+					readonly receipt: unknown;
+				}> => {
+					await rm(path.join(stateDirectory, 'receipt-v1.json'), { force: true });
+					await writeFile(
+						path.join(stateDirectory, 'request-v1.json'),
+						`${JSON.stringify(request)}\n`,
+						'utf8',
+					);
+					const outcome = await execFileAsync(process.execPath, [helperPath]).then(
+						(result) => ({ exitCode: 0, stderr: result.stderr, stdout: result.stdout }),
+						(error: unknown) => ({
+							exitCode:
+								typeof error === 'object' && error !== null && 'code' in error
+									? Number(error.code)
+									: -1,
+							stderr:
+								typeof error === 'object' && error !== null && 'stderr' in error
+									? String(error.stderr)
+									: '',
+							stdout:
+								typeof error === 'object' && error !== null && 'stdout' in error
+									? String(error.stdout)
+									: '',
+						}),
+					);
+					const receiptContent = await readFile(
+						path.join(stateDirectory, 'receipt-v1.json'),
+						'utf8',
+					).catch((error: unknown) => {
+						throw new Error(`Helper produced no receipt: ${JSON.stringify(outcome)}`, {
+							cause: error,
+						});
+					});
+					return {
+						outcome,
+						receipt: JSON.parse(receiptContent) as unknown,
+					};
+				};
+				const startRequest = {
+					actionId: 'action-a',
+					contractVersion: 1,
+					expectedProcessEpoch: null,
+					gateway,
+					kind: 'start',
+					selectedProcessEpoch: processEpoch,
+				};
+				const interruptedHelperSource = helperSource.replace(
+					"if (!waitForPopulation(groupPath, true)) throw new Error('cgroup-membership-unproven');",
+					"if (!waitForPopulation(groupPath, true)) throw new Error('cgroup-membership-unproven'); throw new Error('injected-after-launch-interruption');",
+				);
+				expect(interruptedHelperSource).not.toBe(helperSource);
+				await writeFile(helperPath, interruptedHelperSource, 'utf8');
+				const interruptedStart = await invoke({
+					...startRequest,
+					actionId: 'action-interrupted-start',
+				});
+				expect(interruptedStart).toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-interrupted-start',
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						reason: 'helper-failed',
+						status: 'incomplete',
+					},
+				});
+				await writeFile(helperPath, helperSource, 'utf8');
+				await expect(
+					invoke({
+						actionId: 'action-interrupted-observe',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'observe',
+					}),
+				).resolves.toMatchObject({
+					receipt: {
+						cgroup: { name: cgroupName },
+						observedProcessEpoch: processEpoch,
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-interrupted-contain',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					receipt: {
+						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				await writeFile(watcherModePath, 'ignore-membership', 'utf8');
+				const membershipFailed = await invoke({
+					...startRequest,
+					actionId: 'action-membership-failed-start',
+				});
+				expect(membershipFailed).toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-membership-failed-start',
+						cgroup: { name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						reason: 'cgroup-unavailable',
+						status: 'incomplete',
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-membership-failed-observe',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'observe',
+					}),
+				).resolves.toMatchObject({
+					receipt: {
+						cgroup: { name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-membership-failed-contain',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					receipt: {
+						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				await writeFile(watcherModePath, 'normal', 'utf8');
+				const started = await invoke(startRequest);
+				expect(started).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						actionId: 'action-a',
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				await expect(invoke(startRequest)).resolves.toEqual(started);
+				await expect(
+					invoke({
+						...startRequest,
+						actionId: 'action-interrupted-start',
+						selectedProcessEpoch: 'process-changed-after-interruption',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-interrupted-start',
+						reason: 'action-reused',
+						status: 'refused',
+					},
+				});
+				const changedActionA = await invoke({
+					...startRequest,
+					selectedProcessEpoch: 'process-changed',
+				});
+				expect(changedActionA).toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: { actionId: 'action-a', reason: 'action-reused', status: 'refused' },
+				});
+				const observed = await invoke({
+					actionId: 'action-b',
+					contractVersion: 1,
+					expectedProcessEpoch: processEpoch,
+					gateway,
+					kind: 'observe',
+				});
+				expect(observed).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: { observedProcessEpoch: processEpoch, status: 'completed' },
+				});
+				await expect(
+					invoke({ ...startRequest, selectedProcessEpoch: 'process-changed-after-b' }),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: { actionId: 'action-a', reason: 'action-reused' },
+				});
+				const unavailableContainHelperSource = helperSource.replace(
+					"if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('cgroup-kill-unavailable');",
+					"throw new Error('cgroup-kill-unavailable');",
+				);
+				expect(unavailableContainHelperSource).not.toBe(helperSource);
+				await writeFile(helperPath, unavailableContainHelperSource, 'utf8');
+				await expect(
+					invoke({
+						actionId: 'action-contain-unavailable',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-contain-unavailable',
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						reason: 'cgroup-unavailable',
+						status: 'incomplete',
+					},
+				});
+				await writeFile(helperPath, helperSource, 'utf8');
+				await writeFile(watcherModePath, 'ignore-kill', 'utf8');
+				await expect(
+					invoke({
+						actionId: 'action-contain-still-populated',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-contain-still-populated',
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						reason: 'cgroup-empty-unproven',
+						status: 'incomplete',
+					},
+				});
+				await writeFile(path.join(cgroupPath, 'cgroup.kill'), '', 'utf8');
+				await writeFile(watcherModePath, 'normal', 'utf8');
+				await writeFile(path.join(stateDirectory, 'operation.lock'), 'stale', 'utf8');
+				await expect(execFileAsync(process.execPath, [helperPath])).rejects.toMatchObject({
+					code: 73,
+				});
+				await rm(path.join(stateDirectory, 'operation.lock'), { force: true });
+				const contained = await invoke({
+					actionId: 'action-c',
+					contractVersion: 1,
+					expectedProcessEpoch: processEpoch,
+					gateway,
+					kind: 'contain',
+				});
+				expect(contained).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				const state = JSON.parse(
+					await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8'),
+				) as { actionOrder: string[]; actions: Record<string, unknown> };
+				expect(state.actionOrder).toEqual([
+					'action-interrupted-start',
+					'action-interrupted-observe',
+					'action-interrupted-contain',
+					'action-membership-failed-start',
+					'action-membership-failed-observe',
+					'action-membership-failed-contain',
+					'action-a',
+					'action-b',
+					'action-contain-unavailable',
+					'action-contain-still-populated',
+					'action-c',
+				]);
+				expect(Object.keys(state.actions)).toEqual(state.actionOrder);
+			} finally {
+				if (watcher.exitCode === null && watcher.signalCode === null) {
+					watcher.kill('SIGKILL');
+					await once(watcher, 'exit').catch(() => undefined);
+				}
+			}
+		}, 20_000);
 
 		it('refreshes the managed diagnostics-otel registry before observable gateway startup', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(

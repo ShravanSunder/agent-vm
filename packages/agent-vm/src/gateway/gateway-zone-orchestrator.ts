@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -40,6 +40,8 @@ import {
 import { findOpenClawLeaseWorkMountAgentMismatch } from '../controller/leases/lease-work-mount-paths.js';
 import { assertCanonicalOpenClawAgentWorkspaceDir } from '../controller/leases/openclaw-agent-workspace-paths.js';
 import { createOpenClawGatewayLeasePathMapping } from '../controller/leases/openclaw-gateway-lease-path-mapping.js';
+import { OPENCLAW_PROCESS_SUPERVISOR_GUEST_STATE_DIRECTORY } from '../controller/process-supervisor/openclaw-process-supervisor-contracts.js';
+import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
 	createObservabilityRuntimeConfig,
 	type ObservabilityRuntimeConfig,
@@ -82,6 +84,29 @@ const defaultGatewayReadinessTimeoutMs = 60_000;
 const defaultGatewayReadinessMaxAttempts = Math.ceil(
 	defaultGatewayReadinessTimeoutMs / defaultGatewayReadinessRetryDelayMs,
 );
+
+export function resolveOpenClawProcessSupervisorStateMount(options: {
+	readonly gatewayIdentity: GatewayEpochIdentity;
+	readonly runtimeDirectory: string;
+}): { readonly guestPath: string; readonly hostPath: string } {
+	const exactGatewayDigest = createHash('sha256')
+		.update(options.gatewayIdentity.controllerEpoch, 'utf8')
+		.update('\0')
+		.update(options.gatewayIdentity.gatewayEpochId, 'utf8')
+		.update('\0')
+		.update(options.gatewayIdentity.gatewayVmId, 'utf8')
+		.digest('hex');
+	return {
+		guestPath: OPENCLAW_PROCESS_SUPERVISOR_GUEST_STATE_DIRECTORY,
+		hostPath: path.join(
+			options.runtimeDirectory,
+			'zones',
+			options.gatewayIdentity.zoneId,
+			'openclaw-process-supervisor',
+			exactGatewayDigest,
+		),
+	};
+}
 
 interface RequestInitWithDuplex extends RequestInit {
 	readonly duplex?: 'half';
@@ -1122,6 +1147,28 @@ export async function startGatewayZone(
 		vmOwnership,
 		zone,
 	});
+	let exactGatewayVfsMounts = vfsMounts;
+	if (zone.gateway.type === 'openclaw') {
+		const gatewayIdentity = vmOwnership.gatewayIdentity;
+		if (gatewayIdentity === undefined) {
+			throw new Error(
+				`OpenClaw zone '${zone.id}' cannot scope process supervisor state without a Gateway identity.`,
+			);
+		}
+		const supervisorStateMount = resolveOpenClawProcessSupervisorStateMount({
+			gatewayIdentity,
+			runtimeDirectory: options.systemConfig.runtimeDir,
+		});
+		await fs.mkdir(supervisorStateMount.hostPath, { mode: 0o700, recursive: true });
+		await fs.chmod(supervisorStateMount.hostPath, 0o700);
+		exactGatewayVfsMounts = {
+			...vfsMounts,
+			[supervisorStateMount.guestPath]: {
+				hostPath: supervisorStateMount.hostPath,
+				kind: 'realfs',
+			},
+		};
+	}
 	let pendingCreateContainment: Promise<ManagedVmDestroyReceiptV1> | undefined;
 	const createManagedVmPromise = runTaskWithResult(
 		runTaskStep,
@@ -1141,7 +1188,7 @@ export async function startGatewayZone(
 				sessionLabel: vmSpec.sessionLabel,
 				...(vmSpec.sshEgress ? { sshEgress: vmSpec.sshEgress } : {}),
 				tcpHosts,
-				vfsMounts,
+				vfsMounts: exactGatewayVfsMounts,
 			}),
 	);
 	if (options.onPendingVmCreation !== undefined) {
