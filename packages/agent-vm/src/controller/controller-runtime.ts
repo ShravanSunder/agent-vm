@@ -28,7 +28,10 @@ import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 import { ActiveTaskRegistry } from './active-task-registry.js';
 import { authorizeGatewayControlControllerHostAction } from './control-session/gateway-control-controller-host-action-authorization.js';
 import type { GatewayControlControllerHostActionOperations } from './control-session/gateway-control-domain-handler.js';
-import { createGatewayControlLeaseRpcOperations } from './control-session/index.js';
+import {
+	createGatewayControlLeaseRpcOperations,
+	createGatewayControlProcessAdmissionCoordinator,
+} from './control-session/index.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
@@ -371,6 +374,8 @@ async function startControllerRuntimeWithOwnershipLock(
 ): Promise<ControllerRuntime> {
 	const now = dependencies.now ?? Date.now;
 	const controllerEpoch = dependencies.controllerEpoch ?? randomUUID();
+	const gatewayControlProcessAdmissionCoordinator =
+		createGatewayControlProcessAdmissionCoordinator();
 	const stateDirFor = (zoneId: string): string => {
 		const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
 		if (!zone) {
@@ -706,6 +711,7 @@ async function startControllerRuntimeWithOwnershipLock(
 								runTask: runTaskStep,
 								gatewayControlControllerHostActions,
 								gatewayControlLeaseRpc,
+								gatewayControlProcessAdmissionCoordinator,
 								healthEventStore,
 								openClawRuntimeStatusStore,
 								runtimeEnvironment: {

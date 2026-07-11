@@ -5,8 +5,6 @@ import {
 	CONTROL_SESSION_TIMING_MS,
 	CONTROL_PROTOCOL_VERSION,
 	ControlEnvelopeSchema,
-	ControlHelloResponseSchema,
-	ControlHelloSchema,
 	assertControlMessageReceiptAccepted,
 	assertControlEnvelopeMatchesDomainMessage,
 	assertDerivedControlDeliveryPolicy,
@@ -18,8 +16,6 @@ import {
 	type ControlDeliveryPolicy,
 	type ControlDomain,
 	type ControlEnvelope,
-	type ControlHello,
-	type ControlHelloResponse,
 	type ControlMessageAcknowledge,
 	type ControlSequenceContinuityDecision,
 	type ControlSessionControllerToPeerEvents,
@@ -27,6 +23,13 @@ import {
 	type ControlSessionPeerToControllerEvents,
 	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
+import type { GatewayControlHelloResponse } from '@agent-vm/gateway-control-contracts';
+import {
+	WorkerControlHelloResponseSchema,
+	WorkerControlHelloSchema,
+	type WorkerControlHello,
+	type WorkerControlHelloResponse,
+} from '@agent-vm/worker-control-contracts';
 import { io, type Socket } from 'socket.io-client';
 
 import type { ControlSessionDispatcher } from './control-session-dispatcher.js';
@@ -48,7 +51,7 @@ export interface ControlSessionEndpoint {
 
 export interface ControlSessionIdentity {
 	readonly bootId: string;
-	readonly controllerEpoch?: string;
+	readonly controllerEpoch: string;
 	readonly domain: ControlDomain;
 	readonly lastSeenControllerSequence?: number;
 	readonly lastSeenPeerSequence?: number;
@@ -63,7 +66,7 @@ export interface ControlSessionClientOptions {
 	readonly endpoint: ControlSessionEndpoint;
 	readonly extraHeaders?: Readonly<Record<string, string>>;
 	readonly identity: ControlSessionIdentity;
-	readonly onHelloResponse?: (response: ControlHelloResponse) => void;
+	readonly onHelloResponse?: (response: WorkerControlHelloResponse) => void;
 	readonly policyByKind?: Partial<Record<ControlEnvelope['kind'], ControlDeliveryPolicy>>;
 	readonly policyByOperation: Readonly<Record<string, ControlDeliveryPolicy>>;
 	readonly refreshExtraHeaders?: (() => Promise<Readonly<Record<string, string>>>) | undefined;
@@ -81,11 +84,15 @@ export interface CreateControlSessionSocketOptions {
 
 export type ControlSessionSocket = Socket<
 	ControlSessionPeerToControllerEvents<unknown>,
-	ControlSessionControllerToPeerEvents<unknown>
+	ControlSessionControllerToPeerEvents<unknown, WorkerControlHello, WorkerControlHelloResponse>
 >;
 
-export interface ControlSessionClient {
-	readonly ready: Promise<ControlHelloResponse>;
+export type ControlSessionHelloResponse = GatewayControlHelloResponse | WorkerControlHelloResponse;
+
+export interface ControlSessionClient<
+	TControlHelloResponse extends ControlSessionHelloResponse = ControlSessionHelloResponse,
+> {
+	readonly ready: Promise<TControlHelloResponse>;
 	close(): void;
 	emitApplicationMessage(
 		envelope: ControlEnvelope,
@@ -93,19 +100,21 @@ export interface ControlSessionClient {
 		payload: unknown,
 		options?: ControlSessionEmitApplicationMessageOptions,
 	): Promise<unknown>;
-	getDiagnostics(): ControlSessionDiagnostics;
+	getDiagnostics(): ControlSessionDiagnostics<TControlHelloResponse>;
 }
 
 export interface ControlSessionEmitApplicationMessageOptions {
 	readonly commandResultTimeoutMs?: number;
 }
 
-export interface ControlSessionDiagnostics {
+export interface ControlSessionDiagnostics<
+	TControlHelloResponse extends ControlSessionHelloResponse = ControlSessionHelloResponse,
+> {
 	readonly accepted: boolean;
 	readonly connected: boolean;
 	readonly endpointPath: string;
 	readonly helloCount: number;
-	readonly lastHelloResponse?: ControlHelloResponse | undefined;
+	readonly lastHelloResponse?: TControlHelloResponse | undefined;
 	readonly ready: boolean;
 	readonly transportName?: string | undefined;
 }
@@ -132,13 +141,11 @@ export function clearControlSessionSendBuffer(socket: ControlSessionSocket): voi
 	socket.sendBuffer.splice(0, socket.sendBuffer.length);
 }
 
-export function buildControlHello(identity: ControlSessionIdentity): ControlHello {
-	return ControlHelloSchema.parse({
+export function buildWorkerControlHello(identity: ControlSessionIdentity): WorkerControlHello {
+	return WorkerControlHelloSchema.parse({
 		bootId: identity.bootId,
-		...(identity.controllerEpoch === undefined
-			? {}
-			: { controllerEpoch: identity.controllerEpoch }),
-		domain: identity.domain,
+		controllerEpoch: identity.controllerEpoch,
+		domain: 'worker_control',
 		...(identity.lastSeenControllerSequence === undefined
 			? {}
 			: { lastSeenControllerSequence: identity.lastSeenControllerSequence }),
@@ -208,7 +215,7 @@ interface PendingControlSessionCommandResult {
 }
 
 function staleReasonForHelloOutcome(
-	response: ControlHelloResponse,
+	response: WorkerControlHelloResponse,
 ): Pick<StaleControlSessionState, 'reason' | 'safeMessage'> | undefined {
 	if (response.outcome === 'accepted') {
 		return undefined;
@@ -356,7 +363,7 @@ function waitForControlSessionCommandResult(options: {
 
 export function createControlSessionClient(
 	options: ControlSessionClientOptions,
-): ControlSessionClient {
+): ControlSessionClient<WorkerControlHelloResponse> {
 	const commandAckTimeoutMs =
 		options.commandAckTimeoutMs ?? CONTROL_SESSION_TIMING_MS.commandAckTimeout;
 	const connectTimeoutMs = options.connectTimeoutMs ?? CONTROL_SESSION_TIMING_MS.connectTimeout;
@@ -384,8 +391,8 @@ export function createControlSessionClient(
 	let nextControllerSequenceValue = lastSeenControllerSequence + 1;
 	let initialHelloCompleted = false;
 	let helloCount = 0;
-	let lastHelloResponse: ControlHelloResponse | undefined;
-	let latestHelloPromise: Promise<ControlHelloResponse> | undefined;
+	let lastHelloResponse: WorkerControlHelloResponse | undefined;
+	let latestHelloPromise: Promise<WorkerControlHelloResponse> | undefined;
 	let closeRequested = false;
 	let manualReconnectTimer: NodeJS.Timeout | undefined;
 	let manualReconnectInFlight = false;
@@ -394,8 +401,8 @@ export function createControlSessionClient(
 	let outboundResponseQueueGeneration = 0;
 	let priorityAckFailureCount = 0;
 
-	function buildNextHello(): ControlHello {
-		return buildControlHello({
+	function buildNextHello(): WorkerControlHello {
+		return buildWorkerControlHello({
 			...options.identity,
 			...(hasAcceptedHello
 				? {
@@ -425,12 +432,12 @@ export function createControlSessionClient(
 
 	function sendControlSessionHello(optionsForHello: {
 		readonly allowResyncRetry: boolean;
-	}): Promise<ControlHelloResponse> {
+	}): Promise<WorkerControlHelloResponse> {
 		const helloPromise = socket
 			.timeout(connectTimeoutMs)
 			.emitWithAck(CONTROL_SESSION_EVENT_NAMES.hello, buildNextHello())
 			.then((responsePayload: unknown) => {
-				const parsedResponse = ControlHelloResponseSchema.parse(responsePayload);
+				const parsedResponse = WorkerControlHelloResponseSchema.parse(responsePayload);
 				helloCount += 1;
 				lastHelloResponse = parsedResponse;
 				options.onHelloResponse?.(parsedResponse);
@@ -612,7 +619,7 @@ export function createControlSessionClient(
 		queueManualReconnect();
 	}
 
-	const ready = new Promise<ControlHelloResponse>((resolve, reject) => {
+	const ready = new Promise<WorkerControlHelloResponse>((resolve, reject) => {
 		socket.once('connect', () => {
 			currentConnectionAccepted = false;
 			clearControlSessionSendBuffer(socket);

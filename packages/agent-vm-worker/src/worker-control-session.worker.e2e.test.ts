@@ -13,12 +13,14 @@ import {
 	ControlEnvelopeSchema,
 	type ControlHandshakeCredential,
 	type ControlHandshakeProof,
-	type ControlHello,
 	type ControlReadyRequestProof,
 	buildControlMessageReceipt,
 	buildControlReadyRequestSignaturePayload,
 } from '@agent-vm/control-protocol-contracts';
-import { WorkerControlRpcMessageSchema } from '@agent-vm/worker-control-contracts';
+import {
+	WorkerControlRpcMessageSchema,
+	type WorkerControlHello as ControlHello,
+} from '@agent-vm/worker-control-contracts';
 import { execa } from 'execa';
 import { io as createSocketIoClient, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';

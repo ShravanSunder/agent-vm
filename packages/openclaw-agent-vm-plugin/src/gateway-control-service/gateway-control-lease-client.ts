@@ -37,7 +37,11 @@ import {
 	signGatewayControlCallerContextProof,
 } from './gateway-control-caller-context-proof.js';
 import type { GatewayControlCallerContextStore } from './gateway-control-caller-context-store.js';
-import type { GatewayControlIdentity, GatewayControlService } from './gateway-control-service.js';
+import {
+	GatewayControlSessionUnavailableError,
+	type GatewayControlIdentity,
+	type GatewayControlService,
+} from './gateway-control-service.js';
 
 type GatewayControlCommandResultMessage = Extract<
 	GatewayControlRpcMessage,
@@ -47,12 +51,16 @@ type GatewayControlCommandResultMessage = Extract<
 type CreateGatewayControlId = () => string;
 
 interface RegisteredCallerContextRef {
+	readonly admissionPrincipal: string;
+	readonly attachmentKey: string;
 	readonly cacheKey: string;
 	readonly callerContextId: string;
 	readonly fromCache: boolean;
 }
 
 interface LeaseCallerContextRef {
+	readonly admissionPrincipal: string;
+	readonly attachmentKey: string;
 	readonly cacheKey: string;
 	readonly callerContextId: string;
 	readonly request: OpenClawGondolinLeaseRequest;
@@ -376,41 +384,29 @@ export function createGatewayControlLeaseClient(
 	const now = options.now ?? (() => Date.now());
 	const retiredLeaseReacquireRequestTtlMs =
 		options.retiredLeaseReacquireRequestTtlMs ?? defaultToolVmLeaseAuthorityTombstoneTtlMs;
-	const callerContextIdByCacheKey = new Map<string, string>();
+	const callerContextByCacheKey = new Map<
+		string,
+		{ readonly admissionPrincipal: string; readonly callerContextId: string }
+	>();
+	let callerContextCacheAttachmentKey: string | undefined;
 	const callerContextByLeaseId = new Map<string, LeaseCallerContextRef>();
 	const reacquireRequestByRetiredLeaseId = new Map<string, RetiredLeaseReacquireEntry>();
 
 	const sendCommandUnchecked = async (
 		operation: GatewayControlRpcOperation,
 		payload: unknown,
-		commandOptions: { readonly retryIdentity?: GatewayControlCommandRetryIdentity } = {},
+		commandOptions: {
+			readonly admissionPrincipal?: string;
+			readonly retryIdentity?: GatewayControlCommandRetryIdentity;
+		} = {},
 	): Promise<GatewayControlCommandResultResponse> => {
 		const message = GatewayControlRpcMessageSchema.parse({
 			kind: 'command',
 			operation,
 			payload,
 		});
-		const acceptedSession = await options.controlService.getAcceptedSession();
 		const retryIdentity = commandOptions.retryIdentity ?? createCommandRetryIdentity(operation);
 		const messageId = retryIdentity.messageId;
-		const envelope = {
-			bootId: options.identity.bootId,
-			commandId: retryIdentity.commandId,
-			connectionId: acceptedSession.connectionId,
-			controllerEpoch: options.identity.controllerEpoch,
-			createdAtMs: Math.max(1, now()),
-			deliveryPolicy: gatewayControlDeliveryPolicyByOperation[operation] as ControlDeliveryPolicy,
-			domain: 'gateway_control',
-			idempotencyKey: retryIdentity.idempotencyKey,
-			kind: 'command',
-			messageId,
-			operation,
-			peerId: options.identity.peerId,
-			protocolVersion: CONTROL_PROTOCOL_VERSION,
-			sequence: options.controlService.nextPeerSequence(),
-			sessionId: acceptedSession.sessionId,
-			zoneId: options.identity.zoneId,
-		} satisfies ControlEnvelope;
 		const domainMessage = {
 			kind: 'command',
 			operation,
@@ -418,7 +414,36 @@ export function createGatewayControlLeaseClient(
 		return {
 			messageId,
 			response: GatewayControlRpcCommandResultMessageSchema.parse(
-				await options.controlService.emitApplicationMessage(envelope, domainMessage, message),
+				await options.controlService.emitApplicationMessage(
+					{
+						buildEnvelope: ({ acceptedSession, sequence }) =>
+							({
+								bootId: acceptedSession.bootId,
+								commandId: retryIdentity.commandId,
+								connectionId: acceptedSession.connectionId,
+								controllerEpoch: options.identity.controllerEpoch,
+								createdAtMs: Math.max(1, now()),
+								deliveryPolicy: gatewayControlDeliveryPolicyByOperation[
+									operation
+								] as ControlDeliveryPolicy,
+								domain: 'gateway_control',
+								idempotencyKey: retryIdentity.idempotencyKey,
+								kind: 'command',
+								messageId,
+								operation,
+								peerId: options.identity.peerId,
+								protocolVersion: CONTROL_PROTOCOL_VERSION,
+								sequence,
+								sessionId: acceptedSession.sessionId,
+								zoneId: options.identity.zoneId,
+							}) satisfies ControlEnvelope,
+						domainMessage,
+						payload: message,
+					},
+					commandOptions.admissionPrincipal === undefined
+						? undefined
+						: { admissionPrincipal: commandOptions.admissionPrincipal },
+				),
 			),
 		};
 	};
@@ -452,11 +477,18 @@ export function createGatewayControlLeaseClient(
 		operation: GatewayControlRpcOperation,
 		payload: unknown,
 		retryIdentity: GatewayControlCommandRetryIdentity,
+		admissionPrincipal: string,
 	): Promise<GatewayControlCommandResultResponse> => {
 		try {
-			return await sendCommandUnchecked(operation, payload, { retryIdentity });
+			return await sendCommandUnchecked(operation, payload, {
+				admissionPrincipal,
+				retryIdentity,
+			});
 		} catch {
-			return await sendCommandUnchecked(operation, payload, { retryIdentity });
+			return await sendCommandUnchecked(operation, payload, {
+				admissionPrincipal,
+				retryIdentity,
+			});
 		}
 	};
 
@@ -464,17 +496,30 @@ export function createGatewayControlLeaseClient(
 		request: OpenClawGondolinLeaseRequest,
 		cacheOptions: { readonly forceRefresh?: boolean } = {},
 	): Promise<RegisteredCallerContextRef> => {
-		const cacheKey = buildGatewayControlCallerContextCacheKey(request);
-		if (cacheOptions.forceRefresh === true) {
-			callerContextIdByCacheKey.delete(cacheKey);
+		const acceptedSession = options.controlService.getCurrentAcceptedSession();
+		if (acceptedSession === undefined) {
+			throw new GatewayControlSessionUnavailableError();
 		}
-		const cachedCallerContextId = callerContextIdByCacheKey.get(cacheKey);
-		if (cachedCallerContextId !== undefined) {
+		const attachmentKey = JSON.stringify([
+			acceptedSession.processEpoch,
+			acceptedSession.sessionId,
+			acceptedSession.connectionId,
+		]);
+		if (callerContextCacheAttachmentKey !== attachmentKey) {
+			callerContextByCacheKey.clear();
+			callerContextCacheAttachmentKey = attachmentKey;
+		}
+		const cacheKey = `${buildGatewayControlCallerContextCacheKey(request)}\u0000${attachmentKey}`;
+		if (cacheOptions.forceRefresh === true) {
+			callerContextByCacheKey.delete(cacheKey);
+		}
+		const cachedCallerContext = callerContextByCacheKey.get(cacheKey);
+		if (cachedCallerContext !== undefined) {
 			options.callerContextStore?.rememberCallerContextForAgent({
-				callerContextId: cachedCallerContextId,
+				callerContextId: cachedCallerContext.callerContextId,
 				...callerContextScopeForLeaseRequest(request),
 			});
-			return { cacheKey, callerContextId: cachedCallerContextId, fromCache: true };
+			return { ...cachedCallerContext, attachmentKey, cacheKey, fromCache: true };
 		}
 		const response = await sendCommand('caller_context_register', {
 			adapterEvidence: {
@@ -510,19 +555,26 @@ export function createGatewayControlLeaseClient(
 			},
 		});
 		const callerContextId = response.payload.callerContext?.callerContextId;
-		if (callerContextId === undefined) {
+		const admissionPrincipal = response.payload.callerContext?.admissionPrincipal;
+		if (callerContextId === undefined || admissionPrincipal === undefined) {
 			throw createGatewayControlError({
 				context: 'Gateway control caller_context_register',
 				message: 'gateway control caller_context_register returned no callerContextId',
 				status: 502,
 			});
 		}
-		callerContextIdByCacheKey.set(cacheKey, callerContextId);
+		callerContextByCacheKey.set(cacheKey, { admissionPrincipal, callerContextId });
 		options.callerContextStore?.rememberCallerContextForAgent({
 			callerContextId,
 			...callerContextScopeForLeaseRequest(request),
 		});
-		return { cacheKey, callerContextId, fromCache: false };
+		return {
+			admissionPrincipal,
+			attachmentKey,
+			cacheKey,
+			callerContextId,
+			fromCache: false,
+		};
 	};
 
 	const resolveCallerContextForLease = (leaseId: string): LeaseCallerContextRef | undefined =>
@@ -551,6 +603,8 @@ export function createGatewayControlLeaseClient(
 	}): void => {
 		reacquireRequestByRetiredLeaseId.delete(leaseContext.leaseId);
 		callerContextByLeaseId.set(leaseContext.leaseId, {
+			admissionPrincipal: leaseContext.registeredCallerContext.admissionPrincipal,
+			attachmentKey: leaseContext.registeredCallerContext.attachmentKey,
 			cacheKey: leaseContext.registeredCallerContext.cacheKey,
 			callerContextId: leaseContext.registeredCallerContext.callerContextId,
 			request: leaseContext.request,
@@ -561,7 +615,7 @@ export function createGatewayControlLeaseClient(
 		request: OpenClawGondolinLeaseRequest,
 		callerContext: RegisteredCallerContextRef | LeaseCallerContextRef,
 	): void => {
-		callerContextIdByCacheKey.delete(callerContext.cacheKey);
+		callerContextByCacheKey.delete(callerContext.cacheKey);
 		options.callerContextStore?.forgetCallerContextForAgent(
 			callerContextScopeForLeaseRequest(request),
 		);
@@ -637,6 +691,36 @@ export function createGatewayControlLeaseClient(
 		}
 	};
 
+	const requireCurrentAttachmentCallerContextForLease = async (
+		leaseId: string,
+		context: string,
+	): Promise<LeaseCallerContextRef> => {
+		let leaseCallerContext = requireCallerContextForLease(leaseId, context);
+		const acceptedSession = options.controlService.getCurrentAcceptedSession();
+		if (acceptedSession === undefined) {
+			throw new GatewayControlSessionUnavailableError();
+		}
+		const currentAttachmentKey = JSON.stringify([
+			acceptedSession.processEpoch,
+			acceptedSession.sessionId,
+			acceptedSession.connectionId,
+		]);
+		if (leaseCallerContext.attachmentKey === currentAttachmentKey) {
+			return leaseCallerContext;
+		}
+		forgetRegisteredCallerContext(leaseCallerContext.request, leaseCallerContext);
+		const refreshedCallerContext = await registerCallerContext(leaseCallerContext.request, {
+			forceRefresh: true,
+		});
+		rememberCallerContextForLease({
+			leaseId,
+			registeredCallerContext: refreshedCallerContext,
+			request: leaseCallerContext.request,
+		});
+		leaseCallerContext = requireCallerContextForLease(leaseId, context);
+		return leaseCallerContext;
+	};
+
 	const sendLeaseCommandWithCallerContextRefresh = async (commandOptions: {
 		readonly buildPayload: (
 			callerContextPayload: ReturnType<typeof callerContextPayloadForContext>,
@@ -645,7 +729,7 @@ export function createGatewayControlLeaseClient(
 		readonly leaseId: string;
 		readonly operation: GatewayControlRpcOperation;
 	}): Promise<GatewayControlCommandResultMessage> => {
-		let leaseCallerContext = requireCallerContextForLease(
+		let leaseCallerContext = await requireCurrentAttachmentCallerContextForLease(
 			commandOptions.leaseId,
 			commandOptions.context,
 		);
@@ -654,6 +738,7 @@ export function createGatewayControlLeaseClient(
 			commandOptions.buildPayload(
 				callerContextPayloadForContext(leaseCallerContext.callerContextId),
 			),
+			{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
 		);
 		if (
 			result.response.payload.result !== 'ok' &&
@@ -677,6 +762,7 @@ export function createGatewayControlLeaseClient(
 				commandOptions.buildPayload(
 					callerContextPayloadForContext(leaseCallerContext.callerContextId),
 				),
+				{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
 			);
 			if (
 				result.response.payload.result !== 'ok' &&
@@ -700,7 +786,7 @@ export function createGatewayControlLeaseClient(
 	): Promise<LeaseCallerContextRef> => {
 		const liveCallerContext = resolveCallerContextForLease(oldLeaseId);
 		if (liveCallerContext !== undefined) {
-			return liveCallerContext;
+			return await requireCurrentAttachmentCallerContextForLease(oldLeaseId, context);
 		}
 		const reacquireEntry = getRetiredLeaseReacquireEntry(oldLeaseId);
 		if (reacquireEntry === undefined) {
@@ -710,6 +796,8 @@ export function createGatewayControlLeaseClient(
 			forceRefresh: true,
 		});
 		return {
+			admissionPrincipal: registeredCallerContext.admissionPrincipal,
+			attachmentKey: registeredCallerContext.attachmentKey,
 			cacheKey: registeredCallerContext.cacheKey,
 			callerContextId: registeredCallerContext.callerContextId,
 			request: reacquireEntry.request,
@@ -727,12 +815,16 @@ export function createGatewayControlLeaseClient(
 			oldLeaseId,
 			'Gateway control lease_reacquire',
 		);
-		let result = await sendCommandUnchecked('lease_reacquire', {
-			callerContext: { callerContextId: leaseCallerContext.callerContextId },
-			...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
-			oldLeaseId,
-			staleEvidence: staleEvidencePayloadForReacquireRequest(request),
-		});
+		let result = await sendCommandUnchecked(
+			'lease_reacquire',
+			{
+				callerContext: { callerContextId: leaseCallerContext.callerContextId },
+				...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
+				oldLeaseId,
+				staleEvidence: staleEvidencePayloadForReacquireRequest(request),
+			},
+			{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
+		);
 		if (
 			result.response.payload.result !== 'ok' &&
 			shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
@@ -742,16 +834,22 @@ export function createGatewayControlLeaseClient(
 				forceRefresh: true,
 			});
 			leaseCallerContext = {
+				admissionPrincipal: refreshedCallerContext.admissionPrincipal,
+				attachmentKey: refreshedCallerContext.attachmentKey,
 				cacheKey: refreshedCallerContext.cacheKey,
 				callerContextId: refreshedCallerContext.callerContextId,
 				request: leaseCallerContext.request,
 			};
-			result = await sendCommandUnchecked('lease_reacquire', {
-				callerContext: { callerContextId: leaseCallerContext.callerContextId },
-				...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
-				oldLeaseId,
-				staleEvidence: staleEvidencePayloadForReacquireRequest(request),
-			});
+			result = await sendCommandUnchecked(
+				'lease_reacquire',
+				{
+					callerContext: { callerContextId: leaseCallerContext.callerContextId },
+					...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
+					oldLeaseId,
+					staleEvidence: staleEvidencePayloadForReacquireRequest(request),
+				},
+				{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
+			);
 			if (
 				result.response.payload.result !== 'ok' &&
 				shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
@@ -779,6 +877,10 @@ export function createGatewayControlLeaseClient(
 		if (leaseCallerContext === undefined) {
 			return;
 		}
+		leaseCallerContext = await requireCurrentAttachmentCallerContextForLease(
+			leaseId,
+			'Gateway control lease_release',
+		);
 		const buildReleasePayload = (
 			callerContext: LeaseCallerContextRef,
 		): {
@@ -793,6 +895,7 @@ export function createGatewayControlLeaseClient(
 		let result = await sendCommandUnchecked(
 			'lease_release',
 			buildReleasePayload(leaseCallerContext),
+			{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
 		);
 		if (
 			result.response.payload.result !== 'ok' &&
@@ -808,7 +911,11 @@ export function createGatewayControlLeaseClient(
 				request: leaseCallerContext.request,
 			});
 			leaseCallerContext = requireCallerContextForLease(leaseId, 'Gateway control lease_release');
-			result = await sendCommandUnchecked('lease_release', buildReleasePayload(leaseCallerContext));
+			result = await sendCommandUnchecked(
+				'lease_release',
+				buildReleasePayload(leaseCallerContext),
+				{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
+			);
 		}
 		const reacquireRequest =
 			releaseOptions?.staleEvidence === undefined
@@ -921,6 +1028,8 @@ export function createGatewayControlLeaseClient(
 			rememberCallerContextForLease({
 				leaseId: leaseSnapshot.leaseId,
 				registeredCallerContext: {
+					admissionPrincipal: leaseCallerContext.admissionPrincipal,
+					attachmentKey: leaseCallerContext.attachmentKey,
 					cacheKey: leaseCallerContext.cacheKey,
 					callerContextId: leaseCallerContext.callerContextId,
 					fromCache: true,
@@ -974,6 +1083,7 @@ export function createGatewayControlLeaseClient(
 					...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
 				},
 				leaseCreateRetryIdentity,
+				registeredCallerContext.admissionPrincipal,
 			);
 			if (
 				result.response.payload.result !== 'ok' &&
@@ -991,6 +1101,7 @@ export function createGatewayControlLeaseClient(
 						...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
 					},
 					createCommandRetryIdentity('lease_create'),
+					registeredCallerContext.admissionPrincipal,
 				);
 				if (
 					result.response.payload.result !== 'ok' &&

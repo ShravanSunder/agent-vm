@@ -130,29 +130,6 @@ export const ControlCorrelationSchema = z
 	})
 	.strict();
 
-export const ControlHelloSchema = z
-	.object({
-		bootId: z.string().min(1),
-		controllerEpoch: z.string().min(1).optional(),
-		domain: ControlDomainSchema,
-		lastSeenControllerSequence: z.number().int().nonnegative().optional(),
-		lastSeenPeerSequence: z.number().int().nonnegative().optional(),
-		peerId: z.string().min(1),
-		previousSessionId: z.string().uuid().optional(),
-		protocolVersion: z.literal(CONTROL_PROTOCOL_VERSION),
-	})
-	.strict();
-
-export const ControlHelloResponseSchema = z
-	.object({
-		connectionId: z.string().uuid(),
-		controllerEpoch: z.string().min(1),
-		fences: z.record(z.string(), z.string()).optional(),
-		outcome: z.enum(['accepted', 'rejected', 'resync_required', 'generation_mismatch']),
-		sessionId: z.string().uuid(),
-	})
-	.strict();
-
 export const ControlCloseSchema = z
 	.object({
 		reason: ControlSessionCloseReasonSchema,
@@ -281,8 +258,6 @@ export type KnownControlDomain = z.infer<typeof KnownControlDomainSchema>;
 export type ControlMessageKind = z.infer<typeof ControlMessageKindSchema>;
 export type ControlDeliveryPolicy = z.infer<typeof ControlDeliveryPolicySchema>;
 export type ControlEnvelope = z.infer<typeof ControlEnvelopeSchema>;
-export type ControlHello = z.infer<typeof ControlHelloSchema>;
-export type ControlHelloResponse = z.infer<typeof ControlHelloResponseSchema>;
 export type ControlMessageReceipt = z.infer<typeof ControlMessageReceiptSchema>;
 export type ControlClose = z.infer<typeof ControlCloseSchema>;
 export type ControlSessionCloseReason = z.infer<typeof ControlSessionCloseReasonSchema>;
@@ -291,13 +266,22 @@ export type ControlHandshakeProof = z.infer<typeof ControlHandshakeProofSchema>;
 export type ControlReadyRequestCredential = z.infer<typeof ControlReadyRequestCredentialSchema>;
 export type ControlReadyRequestProof = z.infer<typeof ControlReadyRequestProofSchema>;
 
-export type ControlHelloAcknowledge = (response: ControlHelloResponse) => void;
+export type ControlHelloAcknowledge<TControlHelloResponse> = (
+	response: TControlHelloResponse,
+) => void;
 export type ControlMessageAcknowledge = (receipt: ControlMessageReceipt) => void;
 export type ControlCloseAcknowledge = (receipt: ControlMessageReceipt) => void;
 
-export interface ControlSessionControllerToPeerEvents<TDomainMessage> {
+export interface ControlSessionControllerToPeerEvents<
+	TDomainMessage,
+	TControlHello,
+	TControlHelloResponse,
+> {
 	'control:close': (payload: ControlClose, acknowledge: ControlCloseAcknowledge) => void;
-	'control:hello': (payload: ControlHello, acknowledge: ControlHelloAcknowledge) => void;
+	'control:hello': (
+		payload: TControlHello,
+		acknowledge: ControlHelloAcknowledge<TControlHelloResponse>,
+	) => void;
 	'control:message': (
 		envelope: ControlEnvelope,
 		payload: TDomainMessage,
@@ -462,6 +446,7 @@ export function shouldReplayControlEnvelope(envelope: ControlEnvelope): boolean 
 }
 
 export interface ControlSequenceContinuityProps {
+	readonly advisorySequenceMode?: 'contiguous' | 'lossy';
 	readonly envelope: ControlEnvelope;
 	readonly lastSeenSequence: number;
 }
@@ -500,6 +485,7 @@ export type ControlSequenceContinuityDecision =
 export function evaluateControlSequenceContinuity(
 	props: ControlSequenceContinuityProps,
 ): ControlSequenceContinuityDecision {
+	const advisorySequenceMode = props.advisorySequenceMode ?? 'lossy';
 	if (props.envelope.sequence <= props.lastSeenSequence) {
 		return {
 			action: 'drop',
@@ -508,8 +494,9 @@ export function evaluateControlSequenceContinuity(
 		};
 	}
 	if (
-		props.envelope.deliveryPolicy === 'droppable' ||
-		props.envelope.deliveryPolicy === 'latest_wins'
+		advisorySequenceMode === 'lossy' &&
+		(props.envelope.deliveryPolicy === 'droppable' ||
+			props.envelope.deliveryPolicy === 'latest_wins')
 	) {
 		return {
 			action: 'accept',
@@ -537,8 +524,6 @@ export function buildControlProtocolJsonSchemas(): Readonly<Record<string, unkno
 		envelope: z.toJSONSchema(ControlEnvelopeSchema, { io: 'input' }),
 		handshakeCredential: z.toJSONSchema(ControlHandshakeCredentialSchema, { io: 'input' }),
 		handshakeProof: z.toJSONSchema(ControlHandshakeProofSchema, { io: 'input' }),
-		hello: z.toJSONSchema(ControlHelloSchema, { io: 'input' }),
-		helloResponse: z.toJSONSchema(ControlHelloResponseSchema, { io: 'input' }),
 		readyRequestCredential: z.toJSONSchema(ControlReadyRequestCredentialSchema, {
 			io: 'input',
 		}),

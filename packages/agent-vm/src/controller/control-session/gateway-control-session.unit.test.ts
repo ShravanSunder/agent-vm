@@ -7,6 +7,7 @@ import {
 	createGatewayControlSessionMaterial,
 	deserializeGatewayControlSessionMaterial,
 	fetchGatewayControlCredential,
+	nextGatewayControlAttachmentGeneration,
 	serializeGatewayControlSessionMaterial,
 } from './gateway-control-session.js';
 
@@ -17,6 +18,7 @@ describe('gateway control session material', () => {
 			bootId: 'gateway-boot-a',
 			controllerEpoch: 'controller-epoch-a',
 			generationId: 'gateway-generation-a',
+			processEpoch: 'process-epoch-a',
 			zoneId: 'zone-a',
 		});
 
@@ -25,6 +27,7 @@ describe('gateway control session material', () => {
 			controllerEpoch: 'controller-epoch-a',
 			generationId: 'gateway-generation-a',
 			peerId: 'gateway-zone-a',
+			processEpoch: 'process-epoch-a',
 			zoneId: 'zone-a',
 		});
 		expect(material.agentAuthorityKeys['agent-a']).toHaveLength(43);
@@ -45,8 +48,39 @@ describe('gateway control session material', () => {
 
 		expect(firstMaterial.bootId).not.toBe('');
 		expect(firstMaterial.generationId).not.toBe('');
+		expect(firstMaterial.processEpoch).not.toBe('');
+		expect(firstMaterial.processEpoch).not.toBe(firstMaterial.bootId);
 		expect(secondMaterial.bootId).not.toBe(firstMaterial.bootId);
 		expect(secondMaterial.generationId).not.toBe(firstMaterial.generationId);
+		expect(secondMaterial.processEpoch).not.toBe(firstMaterial.processEpoch);
+	});
+
+	it('keeps attachment generation monotonic across process material in one Gateway epoch', () => {
+		const firstProcessMaterial = createGatewayControlSessionMaterial({
+			bootId: 'gateway-boot-monotonic',
+			controllerEpoch: 'controller-epoch-monotonic',
+			generationId: 'gateway-epoch-monotonic',
+			processEpoch: 'process-epoch-1',
+			zoneId: 'zone-monotonic',
+		});
+		const secondProcessMaterial = createGatewayControlSessionMaterial({
+			bootId: 'gateway-boot-monotonic',
+			controllerEpoch: 'controller-epoch-monotonic',
+			generationId: 'gateway-epoch-monotonic',
+			processEpoch: 'process-epoch-2',
+			zoneId: 'zone-monotonic',
+		});
+		const successorGatewayMaterial = createGatewayControlSessionMaterial({
+			bootId: 'gateway-boot-successor',
+			controllerEpoch: 'controller-epoch-monotonic',
+			generationId: 'gateway-epoch-successor',
+			processEpoch: 'process-epoch-successor',
+			zoneId: 'zone-monotonic',
+		});
+
+		expect(nextGatewayControlAttachmentGeneration(firstProcessMaterial)).toBe(1);
+		expect(nextGatewayControlAttachmentGeneration(secondProcessMaterial)).toBe(2);
+		expect(nextGatewayControlAttachmentGeneration(successorGatewayMaterial)).toBe(1);
 	});
 
 	it('serializes and restores the controller signing material for host-only persistence', () => {
@@ -64,6 +98,7 @@ describe('gateway control session material', () => {
 			controllerEpoch: material.controllerEpoch,
 			generationId: material.generationId,
 			peerId: material.peerId,
+			processEpoch: material.processEpoch,
 			verifierPublicKeyPem: material.verifierPublicKeyPem,
 			zoneId: material.zoneId,
 		});

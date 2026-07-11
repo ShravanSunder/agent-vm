@@ -430,6 +430,7 @@ function runtimeStatusFromPayload(options: {
 
 function commandResultPayload(options: {
 	readonly activeOperationId?: string;
+	readonly admissionPrincipal?: string;
 	readonly callerContextId?: string;
 	readonly controllerHostAction?: GatewayControlToolPortalControllerHostActionResult;
 	readonly error?: {
@@ -449,7 +450,14 @@ function commandResultPayload(options: {
 			: { activeOperationId: options.activeOperationId }),
 		...(options.callerContextId === undefined
 			? {}
-			: { callerContext: { callerContextId: options.callerContextId } }),
+			: {
+					callerContext: {
+						...(options.admissionPrincipal === undefined
+							? {}
+							: { admissionPrincipal: options.admissionPrincipal }),
+						callerContextId: options.callerContextId,
+					},
+				}),
 		...(options.controllerHostAction === undefined
 			? {}
 			: { controllerHostAction: options.controllerHostAction }),
@@ -750,6 +758,7 @@ export function createGatewayControlDomainHandler(
 						kind: 'command_result',
 						operation: 'caller_context_register',
 						payload: commandResultPayload({
+							admissionPrincipal: callerContext.stablePrincipal,
 							callerContextId: callerContext.callerContextId,
 							responseToMessageId: envelope.messageId,
 							result: 'ok',

@@ -13,6 +13,7 @@ import type {
 	ControlSessionFenceRegistry,
 	GatewayControlControllerHostActionOperations,
 	GatewayControlLeaseRpcOperations,
+	GatewayControlProcessAdmissionCoordinator,
 	GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
 import type { GatewayVmRecoverySourceKey } from '../controller/health/gateway-vm-recovery-policy.js';
@@ -43,6 +44,7 @@ export interface StartGatewayZoneOptions {
 	readonly environmentOverride?: Record<string, string>;
 	readonly gatewayControlControllerHostActions?: GatewayControlControllerHostActionOperations;
 	readonly gatewayControlLeaseRpc?: GatewayControlLeaseRpcOperations;
+	readonly gatewayControlProcessAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly gitReadAllowlistRepos?: readonly string[];
 	readonly healthEventStore?: HealthEventStore;
 	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
@@ -90,6 +92,7 @@ export type GatewayControlSessionConnector = (options: {
 		readonly port: number;
 	};
 	readonly material: GatewayControlSessionMaterial;
+	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
 }) => Promise<ControlSessionClient>;
 

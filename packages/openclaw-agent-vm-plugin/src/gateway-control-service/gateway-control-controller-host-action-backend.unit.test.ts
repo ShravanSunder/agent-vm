@@ -19,6 +19,7 @@ const identity = {
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'generation-a',
 	peerId: 'gateway-zone-a',
+	processEpoch: 'process-epoch-a',
 	zoneId: 'zone-a',
 } satisfies GatewayControlIdentity;
 
@@ -51,34 +52,106 @@ function createFakeGatewayControlService(
 		readonly envelope: ControlEnvelope;
 		readonly payload: GatewayControlRpcMessage;
 	}) => GatewayControlRpcMessage | Promise<GatewayControlRpcMessage>,
+	passRegistrationToHandler = false,
 ): GatewayControlService {
 	let sequence = 0;
+	const acceptedSession = {
+		...identity,
+		bootId: identity.processEpoch,
+		attachmentGeneration: 1,
+		connectionId: '55555555-5555-4555-8555-555555555555',
+		gatewayEpoch: identity.generationId,
+		processEpoch: identity.processEpoch,
+		sessionId: '33333333-3333-4333-8333-333333333333',
+	};
 	return {
 		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(
-			async (envelope, domainMessage, payload) =>
-				await handleMessage({
-					domainMessage,
-					envelope,
-					payload: payload as GatewayControlRpcMessage,
-				}),
-		),
-		getAcceptedSession: vi.fn(async () => ({
-			...identity,
-			connectionId: '55555555-5555-4555-8555-555555555555',
-			sessionId: '33333333-3333-4333-8333-333333333333',
-		})),
+		emitApplicationMessage: vi.fn(async (intent) => {
+			sequence += 1;
+			const envelope = intent.buildEnvelope({ acceptedSession, sequence });
+			if (!passRegistrationToHandler && intent.payload.operation === 'caller_context_register') {
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId: '44444444-4444-4444-8444-444444444444',
+						},
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			return await handleMessage({
+				domainMessage: intent.domainMessage,
+				envelope,
+				payload: intent.payload,
+			});
+		}),
+		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
+		waitForAcceptedSession: vi.fn(async () => acceptedSession),
 		getCredentialState: vi.fn(() => undefined),
 		handleReadyRequest: vi.fn(() => false),
 		handleUpgrade: vi.fn(() => false),
-		nextPeerSequence: vi.fn(() => {
-			sequence += 1;
-			return sequence;
-		}),
 	};
 }
 
 describe('createGatewayControlControllerHostActionBackend', () => {
+	it('refuses a disconnected host-action flood without waiting for session readiness', async () => {
+		const connectedService = createFakeGatewayControlService(() => {
+			throw new Error('disconnected host-action producer must not emit');
+		});
+		const waitForAcceptedSession = vi.fn(async () => {
+			throw new Error('disconnected host-action producer must not await readiness');
+		});
+		const controlService = {
+			...connectedService,
+			getCurrentAcceptedSession: vi.fn(() => undefined),
+			waitForAcceptedSession,
+		} satisfies GatewayControlService;
+		const backend = createGatewayControlControllerHostActionBackend({
+			callerContextScope,
+			callerContextStore: createGatewayControlCallerContextStore(),
+			controlService,
+			identity,
+			projection,
+		});
+		const floodCount = 512;
+		let settledCount = 0;
+		const submissions = Array.from({ length: floodCount }, (_unused, index) =>
+			backend
+				.call({
+					calls: [
+						{
+							arguments: { expectedHead: 'abc123' },
+							id: `push-zone-${String(index)}`,
+							name: 'zone_git_push',
+							namespace: 'controller_host_action',
+						},
+					],
+				})
+				.then((result) => {
+					settledCount += 1;
+					return result;
+				}),
+		);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(settledCount).toBe(floodCount);
+		const results = await Promise.all(submissions);
+		expect(
+			results.every(
+				(result) =>
+					!result.ok &&
+					result.items[0]?.status === 'error' &&
+					result.items[0].error.message === 'gateway control session is not connected',
+			),
+		).toBe(true);
+		expect(waitForAcceptedSession).not.toHaveBeenCalled();
+		expect(controlService.emitApplicationMessage).not.toHaveBeenCalled();
+	});
+
 	it('lists and calls zone_git_push through gateway control without git pack data', async () => {
 		const observedMessages: GatewayControlRpcMessage[] = [];
 		const callerContextStore = createGatewayControlCallerContextStore();
@@ -145,6 +218,8 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					'11111111-1111-4111-8111-111111111111',
 					'22222222-2222-4222-8222-222222222222',
 					'33333333-3333-4333-8333-333333333333',
+					'55555555-5555-4555-8555-555555555555',
+					'66666666-6666-4666-8666-666666666666',
 				];
 				let index = 0;
 				return () => {
@@ -258,6 +333,8 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					'11111111-1111-4111-8111-111111111111',
 					'22222222-2222-4222-8222-222222222222',
 					'33333333-3333-4333-8333-333333333333',
+					'55555555-5555-4555-8555-555555555555',
+					'66666666-6666-4666-8666-666666666666',
 				];
 				let index = 0;
 				return () => {
@@ -317,6 +394,8 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					operation: 'caller_context_register',
 					payload: {
 						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 							callerContextId:
 								registerCount === 1
 									? '44444444-4444-4444-8444-444444444444'
@@ -345,7 +424,7 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					result: 'ok',
 				},
 			};
-		});
+		}, true);
 		const backend = createGatewayControlControllerHostActionBackend({
 			callerContextStore,
 			callerContextScope,
@@ -475,6 +554,10 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					'11111111-1111-4111-8111-111111111111',
 					'22222222-2222-4222-8222-222222222222',
 					'33333333-3333-4333-8333-333333333333',
+					'55555555-5555-4555-8555-555555555555',
+					'66666666-6666-4666-8666-666666666666',
+					'77777777-7777-4777-8777-777777777777',
+					'88888888-8888-4888-8888-888888888888',
 				];
 				let index = 0;
 				return () => {
@@ -539,6 +622,8 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					operation: 'caller_context_register',
 					payload: {
 						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 							callerContextId: '99999999-9999-4999-8999-999999999999',
 						},
 						responseToMessageId: envelope.messageId,
@@ -583,7 +668,7 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					result: 'ok',
 				},
 			};
-		});
+		}, true);
 		const backend = createGatewayControlControllerHostActionBackend({
 			callerContextStore,
 			callerContextScope,
@@ -598,6 +683,9 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 					'88888888-8888-4888-8888-888888888888',
 					'99999999-9999-4999-8999-999999999999',
 					'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+					'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+					'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
 				];
 				let index = 0;
 				return () => {
@@ -630,7 +718,7 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 			ok: true,
 		});
 
-		expect(observedRegisterEnvelopes).toHaveLength(1);
+		expect(observedRegisterEnvelopes).toHaveLength(2);
 		expect(observedPushEnvelopes).toHaveLength(2);
 		const firstPushEnvelope = observedPushEnvelopes[0];
 		const secondPushEnvelope = observedPushEnvelopes[1];
@@ -642,7 +730,7 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 				'zone_git_push',
 				'controller_host_action',
 				'abc123',
-				'77777777-7777-4777-8777-777777777777',
+				'99999999-9999-4999-8999-999999999999',
 			].join('\u0000'),
 		});
 		expect(secondPushEnvelope.commandId).not.toBe(firstPushEnvelope.commandId);

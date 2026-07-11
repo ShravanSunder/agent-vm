@@ -4,7 +4,6 @@ import {
 	CONTROL_SESSION_TIMING_MS,
 	CONTROL_PROTOCOL_VERSION,
 	type ControlDeliveryPolicy,
-	type ControlEnvelope,
 	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
 import {
@@ -176,38 +175,34 @@ export function createGatewayControlEventPublisher(
 			operation,
 			payload,
 		});
-		const acceptedSession = await options.controlService.getAcceptedSession();
 		const deliveryPolicy = gatewayControlDeliveryPolicyByOperation[
 			operation
 		] as ControlDeliveryPolicy;
-		const envelope = {
-			bootId: options.identity.bootId,
-			connectionId: acceptedSession.connectionId,
-			controllerEpoch: options.identity.controllerEpoch,
-			createdAtMs: Math.max(1, now()),
-			deliveryPolicy,
-			domain: 'gateway_control',
-			kind: 'event',
-			messageId: createId(),
-			operation,
-			peerId: options.identity.peerId,
-			protocolVersion: CONTROL_PROTOCOL_VERSION,
-			sequence: options.controlService.nextPeerSequence({ deliveryPolicy }),
-			sessionId: acceptedSession.sessionId,
-			zoneId: options.identity.zoneId,
-		} satisfies ControlEnvelope;
 		const domainMessage = {
 			kind: 'event',
 			operation,
 		} satisfies DomainControlMessageIdentity;
-		if (emitOptions === undefined) {
-			await options.controlService.emitApplicationMessage(envelope, domainMessage, message);
-			return;
-		}
 		await options.controlService.emitApplicationMessage(
-			envelope,
-			domainMessage,
-			message,
+			{
+				buildEnvelope: ({ acceptedSession, sequence }) => ({
+					bootId: acceptedSession.bootId,
+					connectionId: acceptedSession.connectionId,
+					controllerEpoch: options.identity.controllerEpoch,
+					createdAtMs: Math.max(1, now()),
+					deliveryPolicy,
+					domain: 'gateway_control',
+					kind: 'event',
+					messageId: createId(),
+					operation,
+					peerId: options.identity.peerId,
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence,
+					sessionId: acceptedSession.sessionId,
+					zoneId: options.identity.zoneId,
+				}),
+				domainMessage,
+				payload: message,
+			},
 			emitOptions,
 		);
 	};
@@ -218,26 +213,28 @@ export function createGatewayControlEventPublisher(
 				kind: 'heartbeat',
 				payload,
 			});
-			const acceptedSession = await options.controlService.getAcceptedSession();
-			const envelope = {
-				bootId: options.identity.bootId,
-				connectionId: acceptedSession.connectionId,
-				controllerEpoch: options.identity.controllerEpoch,
-				createdAtMs: Math.max(1, now()),
-				deliveryPolicy: gatewayControlDeliveryPolicyByKind.heartbeat,
-				domain: 'gateway_control',
-				kind: 'heartbeat',
-				messageId: createId(),
-				peerId: options.identity.peerId,
-				protocolVersion: CONTROL_PROTOCOL_VERSION,
-				sequence: options.controlService.nextPeerSequence(),
-				sessionId: acceptedSession.sessionId,
-				zoneId: options.identity.zoneId,
-			} satisfies ControlEnvelope;
 			const domainMessage = {
 				kind: 'heartbeat',
 			} satisfies DomainControlMessageIdentity;
-			await options.controlService.emitApplicationMessage(envelope, domainMessage, message);
+			await options.controlService.emitApplicationMessage({
+				buildEnvelope: ({ acceptedSession, sequence }) => ({
+					bootId: acceptedSession.bootId,
+					connectionId: acceptedSession.connectionId,
+					controllerEpoch: options.identity.controllerEpoch,
+					createdAtMs: Math.max(1, now()),
+					deliveryPolicy: gatewayControlDeliveryPolicyByKind.heartbeat,
+					domain: 'gateway_control',
+					kind: 'heartbeat',
+					messageId: createId(),
+					peerId: options.identity.peerId,
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence,
+					sessionId: acceptedSession.sessionId,
+					zoneId: options.identity.zoneId,
+				}),
+				domainMessage,
+				payload: message,
+			});
 		},
 		publishHealthEvent: async (event) => {
 			assertPluginPublishableHealthEvent(event);

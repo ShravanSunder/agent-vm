@@ -11,7 +11,11 @@ import {
 	buildGatewayControlCallerContextCacheKey,
 	createGatewayControlLeaseClient,
 } from './gateway-control-lease-client.js';
-import type { GatewayControlIdentity, GatewayControlService } from './gateway-control-service.js';
+import {
+	GatewayControlSessionUnavailableError,
+	type GatewayControlIdentity,
+	type GatewayControlService,
+} from './gateway-control-service.js';
 
 const identity = {
 	bootId: 'gateway-boot-a',
@@ -22,6 +26,7 @@ const identity = {
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'generation-a',
 	peerId: 'gateway-zone-a',
+	processEpoch: 'process-epoch-a',
 	zoneId: 'zone-a',
 } satisfies GatewayControlIdentity;
 
@@ -33,27 +38,30 @@ function createFakeGatewayControlService(
 	}) => GatewayControlRpcMessage,
 ): GatewayControlService {
 	let sequence = 0;
+	const acceptedSession = {
+		...identity,
+		bootId: identity.processEpoch,
+		attachmentGeneration: 1,
+		connectionId: '55555555-5555-4555-8555-555555555555',
+		gatewayEpoch: identity.generationId,
+		processEpoch: identity.processEpoch,
+		sessionId: '33333333-3333-4333-8333-333333333333',
+	};
 	return {
 		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(async (envelope, domainMessage, payload) =>
-			handleMessage({
-				envelope,
-				domainMessage,
-				payload: payload as GatewayControlRpcMessage,
-			}),
-		),
-		getAcceptedSession: vi.fn(async () => ({
-			...identity,
-			connectionId: '55555555-5555-4555-8555-555555555555',
-			sessionId: '33333333-3333-4333-8333-333333333333',
-		})),
+		emitApplicationMessage: vi.fn(async (intent) => {
+			sequence += 1;
+			return handleMessage({
+				domainMessage: intent.domainMessage,
+				envelope: intent.buildEnvelope({ acceptedSession, sequence }),
+				payload: intent.payload,
+			});
+		}),
+		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
+		waitForAcceptedSession: vi.fn(async () => acceptedSession),
 		getCredentialState: vi.fn(() => undefined),
 		handleReadyRequest: vi.fn(() => false),
 		handleUpgrade: vi.fn(() => false),
-		nextPeerSequence: vi.fn(() => {
-			sequence += 1;
-			return sequence;
-		}),
 	};
 }
 
@@ -73,6 +81,58 @@ describe('createGatewayControlLeaseClient', () => {
 		expect(cacheKey).toContain('sessionKeyDigest');
 	});
 
+	it('refuses a disconnected lease-request flood without waiting for session readiness', async () => {
+		const connectedService = createFakeGatewayControlService(() => {
+			throw new Error('disconnected lease producer must not emit');
+		});
+		const waitForAcceptedSession = vi.fn(async () => {
+			throw new Error('disconnected lease producer must not await readiness');
+		});
+		const controlService = {
+			...connectedService,
+			getCurrentAcceptedSession: vi.fn(() => undefined),
+			waitForAcceptedSession,
+		} satisfies GatewayControlService;
+		const leaseClient = createGatewayControlLeaseClient({
+			controlService,
+			identity,
+			now: () => 1,
+		});
+		const floodCount = 512;
+		let settledCount = 0;
+		const errors: unknown[] = [];
+		const submissions = Array.from({ length: floodCount }, () =>
+			leaseClient
+				.requestLease({
+					agentId: 'main',
+					agentWorkspaceDir: '/home/openclaw/workspace',
+					idleTtlMs: 120_000,
+					profileId: 'standard',
+					sessionKey: 'agent:main:test-session',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+					zoneId: 'zone-a',
+				})
+				.then(
+					() => {
+						settledCount += 1;
+					},
+					(error: unknown) => {
+						errors.push(error);
+						settledCount += 1;
+					},
+				),
+		);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(settledCount).toBe(floodCount);
+		await Promise.all(submissions);
+		expect(errors).toHaveLength(floodCount);
+		expect(errors.every((error) => error instanceof GatewayControlSessionUnavailableError)).toBe(
+			true,
+		);
+		expect(waitForAcceptedSession).not.toHaveBeenCalled();
+		expect(controlService.emitApplicationMessage).not.toHaveBeenCalled();
+	});
+
 	it('registers caller context and requests a lease over gateway_control without raw authority in lease_create', async () => {
 		const observedMessages: GatewayControlRpcMessage[] = [];
 		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
@@ -83,6 +143,8 @@ describe('createGatewayControlLeaseClient', () => {
 					operation: 'caller_context_register',
 					payload: {
 						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 							callerContextId: '44444444-4444-4444-8444-444444444444',
 						},
 						responseToMessageId: envelope.messageId,
@@ -196,6 +258,8 @@ describe('createGatewayControlLeaseClient', () => {
 					operation: 'caller_context_register',
 					payload: {
 						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 							callerContextId: '44444444-4444-4444-8444-444444444444',
 						},
 						responseToMessageId: envelope.messageId,
@@ -308,7 +372,11 @@ describe('createGatewayControlLeaseClient', () => {
 					kind: 'command_result',
 					operation: 'caller_context_register',
 					payload: {
-						callerContext: { callerContextId },
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId,
+						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
@@ -447,7 +515,11 @@ describe('createGatewayControlLeaseClient', () => {
 					kind: 'command_result',
 					operation: 'caller_context_register',
 					payload: {
-						callerContext: { callerContextId },
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId,
+						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
@@ -602,7 +674,11 @@ describe('createGatewayControlLeaseClient', () => {
 					kind: 'command_result',
 					operation: 'caller_context_register',
 					payload: {
-						callerContext: { callerContextId },
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId,
+						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},

@@ -81,6 +81,7 @@ function runtimeCacheKey(options: GetOrCreateGatewayControlServiceRuntimeOptions
 		options.identity.zoneId,
 		options.identity.peerId,
 		options.identity.bootId,
+		options.identity.processEpoch,
 		options.identity.generationId,
 		options.identity.controllerEpoch,
 		options.verifierPublicKeyPem,

@@ -44,6 +44,7 @@ function createControlSessionPluginConfig(): {
 	readonly controllerEpoch: string;
 	readonly generationId: string;
 	readonly peerId: string;
+	readonly processEpoch: string;
 	readonly verifierPublicKeyPem: string;
 } {
 	const { publicKey } = generateKeyPairSync('ed25519');
@@ -52,6 +53,7 @@ function createControlSessionPluginConfig(): {
 		controllerEpoch: 'controller-epoch-a',
 		generationId: 'gateway-generation-a',
 		peerId: 'gateway-zone-a',
+		processEpoch: 'process-epoch-a',
 		verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
 	};
 }
@@ -276,7 +278,14 @@ describe('createGondolinPlugin', () => {
 		});
 		expect(manifest.configSchema?.properties?.controlSession).toMatchObject({
 			additionalProperties: false,
-			required: ['bootId', 'controllerEpoch', 'generationId', 'peerId', 'verifierPublicKeyPem'],
+			required: [
+				'bootId',
+				'controllerEpoch',
+				'generationId',
+				'peerId',
+				'processEpoch',
+				'verifierPublicKeyPem',
+			],
 			type: 'object',
 		});
 	});

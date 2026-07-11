@@ -70,6 +70,7 @@ const gondolinControlSessionConfigFields = new Set([
 	'controllerEpoch',
 	'generationId',
 	'peerId',
+	'processEpoch',
 	'verifierPublicKeyPem',
 ]);
 const gondolinToolPortalConfigFields = new Set(['configDir']);
@@ -869,6 +870,7 @@ function assertManagedGondolinPluginConfig(options: {
 			'controllerEpoch',
 			'generationId',
 			'peerId',
+			'processEpoch',
 			'verifierPublicKeyPem',
 		] as const) {
 			assertOptionalGondolinStringField({
@@ -883,6 +885,7 @@ function assertManagedGondolinPluginConfig(options: {
 				'controllerEpoch',
 				'generationId',
 				'peerId',
+				'processEpoch',
 				'verifierPublicKeyPem',
 			] as const) {
 				assertRequiredGondolinStringField({

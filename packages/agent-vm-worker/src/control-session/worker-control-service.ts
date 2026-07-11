@@ -12,7 +12,6 @@ import {
 	ControlDeliveryPolicySchema,
 	ControlEnvelopeSchema,
 	ControlHandshakeProofSchema,
-	ControlHelloSchema,
 	ControlReadyRequestProofSchema,
 	assertControlMessageReceiptAccepted,
 	assertControlEnvelopeMatchesDomainMessage,
@@ -28,14 +27,15 @@ import {
 	type ControlEnvelope,
 	type ControlHandshakeCredential,
 	type ControlHandshakeProof,
-	type ControlHello,
-	type ControlHelloResponse,
 	type ControlReadyRequestProof,
 	type ControlSequenceContinuityDecision,
 	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	WorkerControlHelloSchema,
 	WorkerControlRpcMessageSchema,
+	type WorkerControlHello,
+	type WorkerControlHelloResponse,
 	workerControlCommandExecutionTimeoutMsByOperation,
 	workerControlDeliveryPolicyByOperation,
 	type WorkerControlControllerToWorkerEvents,
@@ -97,13 +97,13 @@ export interface WorkerControlApplicationMessageContext {
 	readonly payload: unknown;
 }
 
-type ControlHelloWithSequenceContinuity = ControlHello & {
+type ControlHelloWithSequenceContinuity = WorkerControlHello & {
 	readonly lastSeenControllerSequence: number;
 	readonly lastSeenPeerSequence: number;
 };
 
 function helloHasSequenceContinuity(
-	hello: ControlHello,
+	hello: WorkerControlHello,
 ): hello is ControlHelloWithSequenceContinuity {
 	return hello.lastSeenControllerSequence !== undefined && hello.lastSeenPeerSequence !== undefined;
 }
@@ -679,7 +679,7 @@ export function createWorkerControlService(
 
 	function acceptHelloSequenceContinuity(
 		hello: ControlHelloWithSequenceContinuity,
-	): ControlHelloResponse['outcome'] {
+	): WorkerControlHelloResponse['outcome'] {
 		if (
 			hello.lastSeenControllerSequence < lastSeenControllerSequence ||
 			hello.lastSeenPeerSequence < lastSeenPeerSequence
@@ -697,8 +697,8 @@ export function createWorkerControlService(
 
 	function helloContinuityOutcome(
 		socket: Socket<WorkerControlControllerToWorkerEvents, WorkerControlWorkerToControllerEvents>,
-		hello: ControlHello,
-	): ControlHelloResponse['outcome'] {
+		hello: WorkerControlHello,
+	): WorkerControlHelloResponse['outcome'] {
 		if (pendingFullResyncSockets.has(socket) && hello.previousSessionId === undefined) {
 			return 'accepted';
 		}
@@ -739,8 +739,11 @@ export function createWorkerControlService(
 		});
 		socket.on(
 			'control:hello',
-			(payload: ControlHello, acknowledge: (response: ControlHelloResponse) => void) => {
-				const parsedHello = ControlHelloSchema.safeParse(payload);
+			(
+				payload: WorkerControlHello,
+				acknowledge: (response: WorkerControlHelloResponse) => void,
+			) => {
+				const parsedHello = WorkerControlHelloSchema.safeParse(payload);
 				if (
 					!parsedHello.success ||
 					parsedHello.data.bootId !== options.identity.bootId ||
@@ -754,7 +757,7 @@ export function createWorkerControlService(
 						controllerEpoch: options.identity.controllerEpoch,
 						outcome: 'rejected',
 						sessionId: randomUUID(),
-					} satisfies ControlHelloResponse;
+					} satisfies WorkerControlHelloResponse;
 					acknowledge(response);
 					socket.disconnect(true);
 					return;
@@ -765,7 +768,7 @@ export function createWorkerControlService(
 					controllerEpoch: options.identity.controllerEpoch,
 					outcome,
 					sessionId: randomUUID(),
-				} satisfies ControlHelloResponse;
+				} satisfies WorkerControlHelloResponse;
 				if (outcome !== 'accepted') {
 					if (outcome === 'resync_required') {
 						resetWorkerControlSessionForFullResync(socket);

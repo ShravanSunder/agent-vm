@@ -18,6 +18,7 @@ function createIdentity(overrides: Partial<GatewayControlIdentity> = {}): Gatewa
 		controllerEpoch: 'controller-epoch-a',
 		generationId: 'generation-a',
 		peerId: 'gateway-zone-a',
+		processEpoch: 'process-epoch-a',
 		zoneId: 'zone-a',
 		...overrides,
 	};

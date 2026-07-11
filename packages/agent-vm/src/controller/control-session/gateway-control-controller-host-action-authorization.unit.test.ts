@@ -48,6 +48,7 @@ const trustedCallerContext = {
 	purpose: 'tool_portal_controller_host_action',
 	sessionId: '33333333-3333-4333-8333-333333333333',
 	sessionKeyDigest: 'digestdigestdigestdigestdigestdigestdigestdigest',
+	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 	zoneId: acceptedSession.zoneId,
 } satisfies GatewayControlTrustedCallerContext;

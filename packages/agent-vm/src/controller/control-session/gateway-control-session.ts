@@ -23,6 +23,7 @@ import {
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
+	type GatewayControlHelloResponse,
 } from '@agent-vm/gateway-control-contracts';
 import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
@@ -32,14 +33,18 @@ import { z } from 'zod';
 
 import {
 	DEFAULT_GATEWAY_CONTROL_PATH,
-	type ControlSessionClient,
 	type ControlSessionEndpoint,
-	createControlSessionClient,
 } from './control-session-client.js';
 import type {
 	ControlSessionDispatcher,
 	ControlSessionFenceRegistry,
 } from './control-session-dispatcher.js';
+import type { GatewayControlProcessAdmissionCoordinator } from './gateway-control-process-admission-coordinator.js';
+import {
+	createGatewayDisposableControlSessionClient,
+	type GatewayDisposableControlSessionClient,
+	type GatewayDisposableControlSessionClientOptions,
+} from './gateway-disposable-control-session-client.js';
 
 export const GATEWAY_CONTROL_READY_PATH = '/__agent-vm/ready';
 
@@ -50,6 +55,7 @@ export interface GatewayControlSessionMaterial {
 	readonly controllerEpoch: string;
 	readonly generationId: string;
 	readonly peerId: string;
+	readonly processEpoch: string;
 	readonly privateKey: KeyObject;
 	readonly verifierPublicKeyPem: string;
 	readonly zoneId: string;
@@ -62,6 +68,7 @@ export const serializedGatewayControlSessionMaterialSchema = z.strictObject({
 	controllerEpoch: z.string().min(1),
 	generationId: z.string().min(1),
 	peerId: z.string().min(1),
+	processEpoch: z.string().min(1),
 	privateKeyPkcs8Pem: z.string().min(1),
 	verifierPublicKeyPem: z.string().min(1),
 	zoneId: z.string().min(1),
@@ -76,6 +83,7 @@ export interface CreateGatewayControlSessionMaterialOptions {
 	readonly bootId?: string;
 	readonly controllerEpoch: string;
 	readonly generationId?: string;
+	readonly processEpoch?: string;
 	readonly zoneId: string;
 }
 
@@ -84,7 +92,28 @@ export interface ConnectGatewayControlSessionOptions {
 	readonly endpoint: ControlSessionEndpoint;
 	readonly fetchImpl?: typeof fetch;
 	readonly material: GatewayControlSessionMaterial;
+	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
+	readonly resolveInboundStablePrincipal?: GatewayDisposableControlSessionClientOptions['resolveInboundStablePrincipal'];
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
+}
+
+const attachmentGenerationByGatewayEpoch = new Map<string, number>();
+
+export function nextGatewayControlAttachmentGeneration(
+	material: Pick<
+		GatewayControlSessionMaterial,
+		'controllerEpoch' | 'generationId' | 'peerId' | 'zoneId'
+	>,
+): number {
+	const gatewayEpochKey = [
+		material.controllerEpoch,
+		material.zoneId,
+		material.peerId,
+		material.generationId,
+	].join('\u0000');
+	const nextGeneration = (attachmentGenerationByGatewayEpoch.get(gatewayEpochKey) ?? 0) + 1;
+	attachmentGenerationByGatewayEpoch.set(gatewayEpochKey, nextGeneration);
+	return nextGeneration;
 }
 
 export function createGatewayControlSessionMaterial(
@@ -104,6 +133,7 @@ export function createGatewayControlSessionMaterial(
 		controllerEpoch: options.controllerEpoch,
 		generationId: options.generationId ?? randomUUID(),
 		peerId: `gateway-${options.zoneId}`,
+		processEpoch: options.processEpoch ?? randomUUID(),
 		privateKey,
 		verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
 		zoneId: options.zoneId,
@@ -127,6 +157,7 @@ export function serializeGatewayControlSessionMaterial(
 		controllerEpoch: material.controllerEpoch,
 		generationId: material.generationId,
 		peerId: material.peerId,
+		processEpoch: material.processEpoch,
 		privateKeyPkcs8Pem,
 		verifierPublicKeyPem: material.verifierPublicKeyPem,
 		zoneId: material.zoneId,
@@ -144,6 +175,7 @@ export function deserializeGatewayControlSessionMaterial(
 		controllerEpoch: parsedMaterial.controllerEpoch,
 		generationId: parsedMaterial.generationId,
 		peerId: parsedMaterial.peerId,
+		processEpoch: parsedMaterial.processEpoch,
 		privateKey: createPrivateKey(parsedMaterial.privateKeyPkcs8Pem),
 		verifierPublicKeyPem: parsedMaterial.verifierPublicKeyPem,
 		zoneId: parsedMaterial.zoneId,
@@ -158,6 +190,7 @@ export function buildGatewayControlRuntimePluginConfig(
 		controllerEpoch: material.controllerEpoch,
 		generationId: material.generationId,
 		peerId: material.peerId,
+		processEpoch: material.processEpoch,
 		verifierPublicKeyPem: material.verifierPublicKeyPem,
 	};
 }
@@ -332,7 +365,7 @@ export async function fetchGatewayControlCredential(
 
 export async function connectGatewayControlSession(
 	options: ConnectGatewayControlSessionOptions,
-): Promise<ControlSessionClient> {
+): Promise<GatewayDisposableControlSessionClient> {
 	const buildHeaders = async (): Promise<Readonly<Record<string, string>>> => {
 		const credential = await fetchGatewayControlCredential(options);
 		assertCredentialMatchesMaterial(credential, options.material);
@@ -342,29 +375,31 @@ export async function connectGatewayControlSession(
 		});
 	};
 	const extraHeaders = await buildHeaders();
-	const client = createControlSessionClient({
+	const client = createGatewayDisposableControlSessionClient({
 		endpoint: {
 			host: options.endpoint.host,
 			path: options.endpoint.path,
 			port: options.endpoint.port,
 		},
 		...(options.dispatcher === undefined ? {} : { dispatcher: options.dispatcher }),
-		extraHeaders,
+		initialExtraHeaders: extraHeaders,
 		identity: {
-			bootId: options.material.bootId,
 			controllerEpoch: options.material.controllerEpoch,
-			domain: 'gateway_control',
+			gatewayEpoch: options.material.generationId,
 			peerId: options.material.peerId,
+			processEpoch: options.material.processEpoch,
+			zoneId: options.material.zoneId,
 		},
+		nextAttachmentGeneration: () => nextGatewayControlAttachmentGeneration(options.material),
 		...(options.sessionFenceRegistry === undefined
 			? {}
 			: {
-					onHelloResponse: (response) => {
+					onHelloResponse: (response: GatewayControlHelloResponse) => {
 						if (response.outcome !== 'accepted') {
 							return;
 						}
 						options.sessionFenceRegistry?.acceptSession({
-							bootId: options.material.bootId,
+							bootId: options.material.processEpoch,
 							connectionId: response.connectionId,
 							controllerEpoch: response.controllerEpoch,
 							domain: 'gateway_control',
@@ -379,10 +414,21 @@ export async function connectGatewayControlSession(
 		connectTimeoutMs: CONTROL_SESSION_TIMING_MS.connectTimeout,
 		policyByKind: gatewayControlDeliveryPolicyByKind,
 		policyByOperation: gatewayControlDeliveryPolicyByOperation,
+		...(options.processAdmissionCoordinator === undefined
+			? {}
+			: { processAdmissionCoordinator: options.processAdmissionCoordinator }),
+		...(options.resolveInboundStablePrincipal === undefined
+			? {}
+			: { resolveInboundStablePrincipal: options.resolveInboundStablePrincipal }),
 		refreshExtraHeaders: buildHeaders,
 	});
-	await client.ready;
-	return client;
+	try {
+		await client.ready;
+		return client;
+	} catch (error) {
+		client.close();
+		throw error;
+	}
 }
 
 export function buildGatewayControlEndpoint(options: {

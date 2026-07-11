@@ -1,4 +1,5 @@
 import {
+	CONTROL_PROTOCOL_VERSION,
 	ControlCorrelationSchema,
 	ControlRpcErrorSchema,
 	ControlRpcResultBaseSchema,
@@ -11,6 +12,28 @@ import {
 import { z } from 'zod/v4';
 
 export const WorkerControlDomainSchema = z.literal('worker_control');
+
+export const WorkerControlHelloSchema = z
+	.object({
+		bootId: z.string().min(1),
+		controllerEpoch: z.string().min(1),
+		domain: WorkerControlDomainSchema,
+		lastSeenControllerSequence: z.number().int().nonnegative().optional(),
+		lastSeenPeerSequence: z.number().int().nonnegative().optional(),
+		peerId: z.string().min(1),
+		previousSessionId: z.string().uuid().optional(),
+		protocolVersion: z.literal(CONTROL_PROTOCOL_VERSION),
+	})
+	.strict();
+
+export const WorkerControlHelloResponseSchema = z
+	.object({
+		connectionId: z.string().uuid(),
+		controllerEpoch: z.string().min(1),
+		outcome: z.enum(['accepted', 'rejected', 'resync_required', 'generation_mismatch']),
+		sessionId: z.string().uuid(),
+	})
+	.strict();
 
 export const WorkerControlRpcOperationSchema = z.enum([
 	'control_ping',
@@ -520,8 +543,13 @@ export type WorkerControlRuntimeObservationPayload = z.infer<
 export type WorkerControlRuntimeStatusPayload = z.infer<
 	typeof WorkerControlRuntimeStatusPayloadSchema
 >;
-export type WorkerControlControllerToWorkerEvents =
-	ControlSessionControllerToPeerEvents<WorkerControlRpcMessage>;
+export type WorkerControlHello = z.infer<typeof WorkerControlHelloSchema>;
+export type WorkerControlHelloResponse = z.infer<typeof WorkerControlHelloResponseSchema>;
+export type WorkerControlControllerToWorkerEvents = ControlSessionControllerToPeerEvents<
+	WorkerControlRpcMessage,
+	WorkerControlHello,
+	WorkerControlHelloResponse
+>;
 export type WorkerControlWorkerToControllerEvents =
 	ControlSessionPeerToControllerEvents<WorkerControlRpcMessage>;
 export type WorkerControlGitPushResultPayload = z.infer<
@@ -534,6 +562,14 @@ export type WorkerControlPullDefaultResultPayload = z.infer<
 export function buildWorkerControlJsonSchemas(): Readonly<Record<string, unknown>> {
 	return {
 		domain: z.toJSONSchema(WorkerControlDomainSchema, {
+			io: 'input',
+			unrepresentable: 'any',
+		}),
+		hello: z.toJSONSchema(WorkerControlHelloSchema, {
+			io: 'input',
+			unrepresentable: 'any',
+		}),
+		helloResponse: z.toJSONSchema(WorkerControlHelloResponseSchema, {
 			io: 'input',
 			unrepresentable: 'any',
 		}),

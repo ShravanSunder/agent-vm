@@ -43,7 +43,11 @@ import type {
 	GatewayControlCallerContextCacheScope,
 	GatewayControlCallerContextStore,
 } from './gateway-control-caller-context-store.js';
-import type { GatewayControlIdentity, GatewayControlService } from './gateway-control-service.js';
+import {
+	GatewayControlSessionUnavailableError,
+	type GatewayControlIdentity,
+	type GatewayControlService,
+} from './gateway-control-service.js';
 
 const controllerHostActionToolNames = ['zone_git_push', 'controller_host_probe'] as const;
 
@@ -362,6 +366,14 @@ export function createGatewayControlControllerHostActionBackend(
 		string,
 		GatewayControlCommandRetryIdentity
 	>();
+	let registeredCallerContext:
+		| {
+				readonly admissionPrincipal: string;
+				readonly callerContextId: string;
+				readonly connectionId: string;
+				readonly sessionId: string;
+		  }
+		| undefined;
 
 	const pendingControllerHostActionIdentityFor = (
 		idempotencyKey: string,
@@ -384,14 +396,19 @@ export function createGatewayControlControllerHostActionBackend(
 		pendingControllerHostActionIdentityByIdempotencyKey.delete(idempotencyKey);
 	};
 
-	const registerControllerHostActionCallerContext = async (): Promise<string> => {
-		const cachedCallerContextId = options.callerContextStore.resolveCallerContextIdForAgent({
-			...options.callerContextScope,
-		});
-		if (cachedCallerContextId !== undefined) {
-			return cachedCallerContextId;
+	const registerControllerHostActionCallerContext = async (): Promise<
+		NonNullable<typeof registeredCallerContext>
+	> => {
+		const acceptedSession = options.controlService.getCurrentAcceptedSession();
+		if (acceptedSession === undefined) {
+			throw new GatewayControlSessionUnavailableError();
 		}
-		const acceptedSession = await options.controlService.getAcceptedSession();
+		if (
+			registeredCallerContext?.connectionId === acceptedSession.connectionId &&
+			registeredCallerContext.sessionId === acceptedSession.sessionId
+		) {
+			return registeredCallerContext;
+		}
 		const messageId = createId();
 		const message = GatewayControlRpcMessageSchema.parse({
 			kind: 'command',
@@ -433,38 +450,44 @@ export function createGatewayControlControllerHostActionBackend(
 				},
 			},
 		});
-		const envelope = {
-			bootId: options.identity.bootId,
-			commandId: createId(),
-			connectionId: acceptedSession.connectionId,
-			controllerEpoch: options.identity.controllerEpoch,
-			createdAtMs: Math.max(1, now()),
-			deliveryPolicy:
-				gatewayControlDeliveryPolicyByOperation.caller_context_register as ControlDeliveryPolicy,
-			domain: 'gateway_control',
-			idempotencyKey: `tool_portal_controller_host_action_context:${options.callerContextScope.agentId}:${messageId}`,
-			kind: 'command',
-			messageId,
-			operation: 'caller_context_register',
-			peerId: options.identity.peerId,
-			protocolVersion: CONTROL_PROTOCOL_VERSION,
-			sequence: options.controlService.nextPeerSequence(),
-			sessionId: acceptedSession.sessionId,
-			zoneId: options.identity.zoneId,
-		} satisfies ControlEnvelope;
 		const domainMessage = {
 			kind: 'command',
 			operation: 'caller_context_register',
 		} satisfies DomainControlMessageIdentity;
 		const response = GatewayControlRpcCommandResultMessageSchema.parse(
-			await options.controlService.emitApplicationMessage(envelope, domainMessage, message),
+			await options.controlService.emitApplicationMessage({
+				buildEnvelope: ({ acceptedSession: currentSession, sequence }) =>
+					({
+						bootId: currentSession.bootId,
+						commandId: createId(),
+						connectionId: currentSession.connectionId,
+						controllerEpoch: options.identity.controllerEpoch,
+						createdAtMs: Math.max(1, now()),
+						deliveryPolicy:
+							gatewayControlDeliveryPolicyByOperation.caller_context_register as ControlDeliveryPolicy,
+						domain: 'gateway_control',
+						idempotencyKey: `tool_portal_controller_host_action_context:${options.callerContextScope.agentId}:${messageId}`,
+						kind: 'command',
+						messageId,
+						operation: 'caller_context_register',
+						peerId: options.identity.peerId,
+						protocolVersion: CONTROL_PROTOCOL_VERSION,
+						sequence,
+						sessionId: currentSession.sessionId,
+						zoneId: options.identity.zoneId,
+					}) satisfies ControlEnvelope,
+				domainMessage,
+				payload: message,
+			}),
 		);
 		const callerContextId = response.payload.callerContext?.callerContextId;
+		const admissionPrincipal = response.payload.callerContext?.admissionPrincipal;
 		if (
 			response.operation !== 'caller_context_register' ||
 			response.payload.responseToMessageId !== messageId ||
 			response.payload.result !== 'ok' ||
-			callerContextId === undefined
+			callerContextId === undefined ||
+			admissionPrincipal === undefined
 		) {
 			throw new Error(
 				response.payload.error?.safeMessage ??
@@ -475,7 +498,13 @@ export function createGatewayControlControllerHostActionBackend(
 			callerContextId,
 			...options.callerContextScope,
 		});
-		return callerContextId;
+		registeredCallerContext = {
+			admissionPrincipal,
+			callerContextId,
+			connectionId: acceptedSession.connectionId,
+			sessionId: acceptedSession.sessionId,
+		};
+		return registeredCallerContext;
 	};
 
 	const sendControllerHostAction = async (params: {
@@ -484,7 +513,7 @@ export function createGatewayControlControllerHostActionBackend(
 		readonly payload: ControllerHostActionPayloadWithoutContext;
 	}): Promise<PortalCallOkItem['value']> => {
 		const emitControllerHostAction = async (
-			callerContextId: string,
+			callerContext: NonNullable<typeof registeredCallerContext>,
 			commandIdentity: GatewayControlCommandRetryIdentity,
 		): Promise<{
 			readonly result: ReturnType<typeof GatewayControlRpcCommandResultMessageSchema.parse>;
@@ -493,7 +522,7 @@ export function createGatewayControlControllerHostActionBackend(
 			const payload = GatewayControlToolPortalControllerHostActionPayloadSchema.parse({
 				...params.payload,
 				callerContext: {
-					callerContextId,
+					callerContextId: callerContext.callerContextId,
 				},
 				correlation: {
 					capability: {
@@ -507,26 +536,6 @@ export function createGatewayControlControllerHostActionBackend(
 				operation: 'tool_portal_controller_host_action',
 				payload,
 			});
-			const acceptedSession = await options.controlService.getAcceptedSession();
-			const envelope = {
-				bootId: options.identity.bootId,
-				commandId: commandIdentity.commandId,
-				connectionId: acceptedSession.connectionId,
-				controllerEpoch: options.identity.controllerEpoch,
-				createdAtMs: Math.max(1, now()),
-				deliveryPolicy:
-					gatewayControlDeliveryPolicyByOperation.tool_portal_controller_host_action as ControlDeliveryPolicy,
-				domain: 'gateway_control',
-				idempotencyKey: commandIdentity.idempotencyKey,
-				kind: 'command',
-				messageId: commandIdentity.messageId,
-				operation: 'tool_portal_controller_host_action',
-				peerId: options.identity.peerId,
-				protocolVersion: CONTROL_PROTOCOL_VERSION,
-				sequence: options.controlService.nextPeerSequence(),
-				sessionId: acceptedSession.sessionId,
-				zoneId: options.identity.zoneId,
-			} satisfies ControlEnvelope;
 			const domainMessage = {
 				kind: 'command',
 				operation: 'tool_portal_controller_host_action',
@@ -534,16 +543,42 @@ export function createGatewayControlControllerHostActionBackend(
 			return {
 				messageId: commandIdentity.messageId,
 				result: GatewayControlRpcCommandResultMessageSchema.parse(
-					await options.controlService.emitApplicationMessage(envelope, domainMessage, message),
+					await options.controlService.emitApplicationMessage(
+						{
+							buildEnvelope: ({ acceptedSession, sequence }) =>
+								({
+									bootId: acceptedSession.bootId,
+									commandId: commandIdentity.commandId,
+									connectionId: acceptedSession.connectionId,
+									controllerEpoch: options.identity.controllerEpoch,
+									createdAtMs: Math.max(1, now()),
+									deliveryPolicy:
+										gatewayControlDeliveryPolicyByOperation.tool_portal_controller_host_action as ControlDeliveryPolicy,
+									domain: 'gateway_control',
+									idempotencyKey: commandIdentity.idempotencyKey,
+									kind: 'command',
+									messageId: commandIdentity.messageId,
+									operation: 'tool_portal_controller_host_action',
+									peerId: options.identity.peerId,
+									protocolVersion: CONTROL_PROTOCOL_VERSION,
+									sequence,
+									sessionId: acceptedSession.sessionId,
+									zoneId: options.identity.zoneId,
+								}) satisfies ControlEnvelope,
+							domainMessage,
+							payload: message,
+						},
+						{ admissionPrincipal: callerContext.admissionPrincipal },
+					),
 				),
 			};
 		};
 
 		let commandIdentity = pendingControllerHostActionIdentityFor(params.idempotencyKey);
-		let callerContextId = await registerControllerHostActionCallerContext();
+		let callerContext = await registerControllerHostActionCallerContext();
 		try {
 			let { messageId, result: response } = await emitControllerHostAction(
-				callerContextId,
+				callerContext,
 				commandIdentity,
 			);
 			if (isControllerHostActionCallerContextError(response.payload.error?.errorClass)) {
@@ -551,10 +586,11 @@ export function createGatewayControlControllerHostActionBackend(
 				options.callerContextStore.forgetCallerContextForAgent({
 					...options.callerContextScope,
 				});
+				registeredCallerContext = undefined;
 				commandIdentity = pendingControllerHostActionIdentityFor(params.idempotencyKey);
-				callerContextId = await registerControllerHostActionCallerContext();
+				callerContext = await registerControllerHostActionCallerContext();
 				({ messageId, result: response } = await emitControllerHostAction(
-					callerContextId,
+					callerContext,
 					commandIdentity,
 				));
 			}
@@ -577,6 +613,7 @@ export function createGatewayControlControllerHostActionBackend(
 			forgetPendingControllerHostActionIdentity(params.idempotencyKey);
 			return response.payload.controllerHostAction;
 		} finally {
+			registeredCallerContext = undefined;
 			options.callerContextStore.forgetCallerContextForAgent({
 				...options.callerContextScope,
 			});

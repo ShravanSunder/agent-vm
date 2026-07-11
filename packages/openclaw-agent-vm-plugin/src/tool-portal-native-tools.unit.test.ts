@@ -2,10 +2,6 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type {
-	ControlEnvelope,
-	DomainControlMessageIdentity,
-} from '@agent-vm/control-protocol-contracts';
 import {
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
@@ -34,6 +30,7 @@ const identity = {
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'generation-a',
 	peerId: 'gateway-zone-a',
+	processEpoch: 'process-epoch-a',
 	zoneId: 'zone-a',
 } satisfies GatewayControlIdentity;
 
@@ -97,93 +94,94 @@ function createFakeGatewayControlService(
 	observedMessages: GatewayControlRpcMessage[],
 ): GatewayControlService {
 	let sequence = 0;
+	const acceptedSession = {
+		...identity,
+		bootId: identity.processEpoch,
+		attachmentGeneration: 1,
+		connectionId: '55555555-5555-4555-8555-555555555555',
+		gatewayEpoch: identity.generationId,
+		processEpoch: identity.processEpoch,
+		sessionId: '33333333-3333-4333-8333-333333333333',
+	};
 	return {
 		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(
-			async (
-				envelope: ControlEnvelope,
-				domainMessage: DomainControlMessageIdentity,
-				payload: unknown,
-			) => {
-				const message = GatewayControlRpcMessageSchema.parse(payload);
-				observedMessages.push(message);
-				if (message.kind === 'command' && message.operation === 'caller_context_register') {
-					expect(domainMessage).toEqual({
-						kind: 'command',
-						operation: 'caller_context_register',
-					});
-					expect(message.payload.adapterEvidence).toEqual(
-						expect.objectContaining({
-							agentId: 'agent-a',
-							agentWorkspaceDir: '/zone/agents/agent-a',
-							proof: expect.objectContaining({
-								algorithm: 'hmac-sha256',
-							}),
-							purpose: 'tool_portal_controller_host_action',
-							sessionKey: 'agent:agent-a:discord:channel:123',
-							workMountDir: '/zone/agents/agent-a',
-							zoneId: identity.zoneId,
-						}),
-					);
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'caller_context_register',
-						payload: {
-							callerContext: {
-								callerContextId: '44444444-4444-4444-8444-444444444444',
-							},
-							responseToMessageId: envelope.messageId,
-							result: 'ok',
-						},
-					});
-				}
+		emitApplicationMessage: vi.fn(async (intent) => {
+			sequence += 1;
+			const envelope = intent.buildEnvelope({ acceptedSession, sequence });
+			const domainMessage = intent.domainMessage;
+			const message = GatewayControlRpcMessageSchema.parse(intent.payload);
+			observedMessages.push(message);
+			if (message.kind === 'command' && message.operation === 'caller_context_register') {
 				expect(domainMessage).toEqual({
 					kind: 'command',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'caller_context_register',
 				});
-				if (
-					message.kind !== 'command' ||
-					message.operation !== 'tool_portal_controller_host_action'
-				) {
-					throw new Error(`Unexpected gateway control message ${message.operation}.`);
-				}
-				expect(message.payload).toMatchObject({
-					callerContext: {
-						callerContextId: '44444444-4444-4444-8444-444444444444',
-					},
-					expectedHead: 'abc123',
-				});
+				expect(message.payload.adapterEvidence).toEqual(
+					expect.objectContaining({
+						agentId: 'agent-a',
+						agentWorkspaceDir: '/zone/agents/agent-a',
+						proof: expect.objectContaining({
+							algorithm: 'hmac-sha256',
+						}),
+						purpose: 'tool_portal_controller_host_action',
+						sessionKey: 'agent:agent-a:discord:channel:123',
+						workMountDir: '/zone/agents/agent-a',
+						zoneId: identity.zoneId,
+					}),
+				);
 				return GatewayControlRpcCommandResultMessageSchema.parse({
 					kind: 'command_result',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'caller_context_register',
 					payload: {
-						controllerHostAction: {
-							actionId: 'zone_git_push',
-							result: {
-								branch: 'main',
-								localHead: 'abc123',
-								pushedCommits: [],
-								remoteHead: 'abc123',
-							},
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId: '44444444-4444-4444-8444-444444444444',
 						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
 				});
-			},
-		),
-		getAcceptedSession: vi.fn(async () => ({
-			...identity,
-			connectionId: '55555555-5555-4555-8555-555555555555',
-			sessionId: '33333333-3333-4333-8333-333333333333',
-		})),
+			}
+			expect(domainMessage).toEqual({
+				kind: 'command',
+				operation: 'tool_portal_controller_host_action',
+			});
+			if (
+				message.kind !== 'command' ||
+				message.operation !== 'tool_portal_controller_host_action'
+			) {
+				throw new Error(`Unexpected gateway control message ${message.operation}.`);
+			}
+			expect(message.payload).toMatchObject({
+				callerContext: {
+					callerContextId: '44444444-4444-4444-8444-444444444444',
+				},
+				expectedHead: 'abc123',
+			});
+			return GatewayControlRpcCommandResultMessageSchema.parse({
+				kind: 'command_result',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					controllerHostAction: {
+						actionId: 'zone_git_push',
+						result: {
+							branch: 'main',
+							localHead: 'abc123',
+							pushedCommits: [],
+							remoteHead: 'abc123',
+						},
+					},
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			});
+		}),
+		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
+		waitForAcceptedSession: vi.fn(async () => acceptedSession),
 		getCredentialState: vi.fn(() => undefined),
 		handleReadyRequest: vi.fn(() => false),
 		handleUpgrade: vi.fn(() => false),
-		nextPeerSequence: vi.fn(() => {
-			sequence += 1;
-			return sequence;
-		}),
 	};
 }
 
@@ -417,11 +415,10 @@ describe('registerToolPortalNativeTools', () => {
 
 		expect(result.content).toContain('"status":"ok"');
 		expect(observedMessages.map((message) => message.operation)).toEqual([
-			'tool_portal_controller_host_action',
 			'caller_context_register',
 			'tool_portal_controller_host_action',
 		]);
-		expect(controlService.emitApplicationMessage).toHaveBeenCalledTimes(3);
+		expect(controlService.emitApplicationMessage).toHaveBeenCalledTimes(2);
 	});
 });
 
@@ -429,97 +426,98 @@ function createFakeGatewayControlServiceForStaleRefresh(
 	observedMessages: GatewayControlRpcMessage[],
 ): GatewayControlService {
 	let sequence = 0;
+	const acceptedSession = {
+		...identity,
+		bootId: identity.processEpoch,
+		attachmentGeneration: 1,
+		connectionId: '55555555-5555-4555-8555-555555555555',
+		gatewayEpoch: identity.generationId,
+		processEpoch: identity.processEpoch,
+		sessionId: '33333333-3333-4333-8333-333333333333',
+	};
 	return {
 		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(
-			async (
-				envelope: ControlEnvelope,
-				domainMessage: DomainControlMessageIdentity,
-				payload: unknown,
-			) => {
-				const message = GatewayControlRpcMessageSchema.parse(payload);
-				observedMessages.push(message);
-				if (message.kind === 'command' && message.operation === 'caller_context_register') {
-					expect(domainMessage).toEqual({
-						kind: 'command',
-						operation: 'caller_context_register',
-					});
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'caller_context_register',
-						payload: {
-							callerContext: {
-								callerContextId: '55555555-5555-4555-8555-555555555555',
-							},
-							responseToMessageId: envelope.messageId,
-							result: 'ok',
-						},
-					});
-				}
+		emitApplicationMessage: vi.fn(async (intent) => {
+			sequence += 1;
+			const envelope = intent.buildEnvelope({ acceptedSession, sequence });
+			const domainMessage = intent.domainMessage;
+			const message = GatewayControlRpcMessageSchema.parse(intent.payload);
+			observedMessages.push(message);
+			if (message.kind === 'command' && message.operation === 'caller_context_register') {
 				expect(domainMessage).toEqual({
 					kind: 'command',
-					operation: 'tool_portal_controller_host_action',
-				});
-				if (
-					message.kind !== 'command' ||
-					message.operation !== 'tool_portal_controller_host_action'
-				) {
-					throw new Error(`Unexpected gateway control message ${message.operation}.`);
-				}
-				if (
-					message.payload.callerContext.callerContextId === '44444444-4444-4444-8444-444444444444'
-				) {
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'tool_portal_controller_host_action',
-						payload: {
-							error: {
-								errorClass: 'controller_host_action_caller_context_stale',
-								retryable: false,
-								safeMessage: 'controller host action caller context does not match session',
-							},
-							responseToMessageId: envelope.messageId,
-							result: 'rejected',
-						},
-					});
-				}
-				expect(message.payload).toMatchObject({
-					callerContext: {
-						callerContextId: '55555555-5555-4555-8555-555555555555',
-					},
-					expectedHead: 'abc123',
+					operation: 'caller_context_register',
 				});
 				return GatewayControlRpcCommandResultMessageSchema.parse({
 					kind: 'command_result',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'caller_context_register',
 					payload: {
-						controllerHostAction: {
-							actionId: 'zone_git_push',
-							result: {
-								branch: 'main',
-								localHead: 'abc123',
-								pushedCommits: [],
-								remoteHead: 'abc123',
-							},
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId: '55555555-5555-4555-8555-555555555555',
 						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
 				});
-			},
-		),
-		getAcceptedSession: vi.fn(async () => ({
-			...identity,
-			connectionId: '55555555-5555-4555-8555-555555555555',
-			sessionId: '33333333-3333-4333-8333-333333333333',
-		})),
+			}
+			expect(domainMessage).toEqual({
+				kind: 'command',
+				operation: 'tool_portal_controller_host_action',
+			});
+			if (
+				message.kind !== 'command' ||
+				message.operation !== 'tool_portal_controller_host_action'
+			) {
+				throw new Error(`Unexpected gateway control message ${message.operation}.`);
+			}
+			if (
+				message.payload.callerContext.callerContextId === '44444444-4444-4444-8444-444444444444'
+			) {
+				return GatewayControlRpcCommandResultMessageSchema.parse({
+					kind: 'command_result',
+					operation: 'tool_portal_controller_host_action',
+					payload: {
+						error: {
+							errorClass: 'controller_host_action_caller_context_stale',
+							retryable: false,
+							safeMessage: 'controller host action caller context does not match session',
+						},
+						responseToMessageId: envelope.messageId,
+						result: 'rejected',
+					},
+				});
+			}
+			expect(message.payload).toMatchObject({
+				callerContext: {
+					callerContextId: '55555555-5555-4555-8555-555555555555',
+				},
+				expectedHead: 'abc123',
+			});
+			return GatewayControlRpcCommandResultMessageSchema.parse({
+				kind: 'command_result',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					controllerHostAction: {
+						actionId: 'zone_git_push',
+						result: {
+							branch: 'main',
+							localHead: 'abc123',
+							pushedCommits: [],
+							remoteHead: 'abc123',
+						},
+					},
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			});
+		}),
+		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
+		waitForAcceptedSession: vi.fn(async () => acceptedSession),
 		getCredentialState: vi.fn(() => undefined),
 		handleReadyRequest: vi.fn(() => false),
 		handleUpgrade: vi.fn(() => false),
-		nextPeerSequence: vi.fn(() => {
-			sequence += 1;
-			return sequence;
-		}),
 	};
 }
 
@@ -527,75 +525,78 @@ function createFakeGatewayControlServiceForDistinctSessionContexts(
 	observedMessages: GatewayControlRpcMessage[],
 ): GatewayControlService {
 	let sequence = 0;
+	const acceptedSession = {
+		...identity,
+		bootId: identity.processEpoch,
+		attachmentGeneration: 1,
+		connectionId: '55555555-5555-4555-8555-555555555555',
+		gatewayEpoch: identity.generationId,
+		processEpoch: identity.processEpoch,
+		sessionId: '33333333-3333-4333-8333-333333333333',
+	};
 	return {
 		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(
-			async (
-				envelope: ControlEnvelope,
-				domainMessage: DomainControlMessageIdentity,
-				payload: unknown,
-			) => {
-				const message = GatewayControlRpcMessageSchema.parse(payload);
-				observedMessages.push(message);
-				if (message.kind === 'command' && message.operation === 'caller_context_register') {
-					expect(domainMessage).toEqual({
-						kind: 'command',
-						operation: 'caller_context_register',
-					});
-					const callerContextId =
-						message.payload.adapterEvidence.sessionKey === 'agent:agent-a:discord:channel:123'
-							? '44444444-4444-4444-8444-444444444444'
-							: '55555555-5555-4555-8555-555555555555';
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'caller_context_register',
-						payload: {
-							callerContext: { callerContextId },
-							responseToMessageId: envelope.messageId,
-							result: 'ok',
-						},
-					});
-				}
+		emitApplicationMessage: vi.fn(async (intent) => {
+			sequence += 1;
+			const envelope = intent.buildEnvelope({ acceptedSession, sequence });
+			const domainMessage = intent.domainMessage;
+			const message = GatewayControlRpcMessageSchema.parse(intent.payload);
+			observedMessages.push(message);
+			if (message.kind === 'command' && message.operation === 'caller_context_register') {
 				expect(domainMessage).toEqual({
 					kind: 'command',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'caller_context_register',
 				});
-				if (
-					message.kind !== 'command' ||
-					message.operation !== 'tool_portal_controller_host_action'
-				) {
-					throw new Error(`Unexpected gateway control message ${message.operation}.`);
-				}
+				const callerContextId =
+					message.payload.adapterEvidence.sessionKey === 'agent:agent-a:discord:channel:123'
+						? '44444444-4444-4444-8444-444444444444'
+						: '55555555-5555-4555-8555-555555555555';
 				return GatewayControlRpcCommandResultMessageSchema.parse({
 					kind: 'command_result',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'caller_context_register',
 					payload: {
-						controllerHostAction: {
-							actionId: 'zone_git_push',
-							result: {
-								branch: 'main',
-								localHead: 'abc123',
-								pushedCommits: [],
-								remoteHead: 'abc123',
-							},
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId,
 						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
 				});
-			},
-		),
-		getAcceptedSession: vi.fn(async () => ({
-			...identity,
-			connectionId: '55555555-5555-4555-8555-555555555555',
-			sessionId: '33333333-3333-4333-8333-333333333333',
-		})),
+			}
+			expect(domainMessage).toEqual({
+				kind: 'command',
+				operation: 'tool_portal_controller_host_action',
+			});
+			if (
+				message.kind !== 'command' ||
+				message.operation !== 'tool_portal_controller_host_action'
+			) {
+				throw new Error(`Unexpected gateway control message ${message.operation}.`);
+			}
+			return GatewayControlRpcCommandResultMessageSchema.parse({
+				kind: 'command_result',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					controllerHostAction: {
+						actionId: 'zone_git_push',
+						result: {
+							branch: 'main',
+							localHead: 'abc123',
+							pushedCommits: [],
+							remoteHead: 'abc123',
+						},
+					},
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			});
+		}),
+		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
+		waitForAcceptedSession: vi.fn(async () => acceptedSession),
 		getCredentialState: vi.fn(() => undefined),
 		handleReadyRequest: vi.fn(() => false),
 		handleUpgrade: vi.fn(() => false),
-		nextPeerSequence: vi.fn(() => {
-			sequence += 1;
-			return sequence;
-		}),
 	};
 }

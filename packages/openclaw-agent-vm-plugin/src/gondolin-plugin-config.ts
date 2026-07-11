@@ -4,6 +4,7 @@ export interface ResolvedGondolinPluginConfig {
 		readonly controllerEpoch: string;
 		readonly generationId: string;
 		readonly peerId: string;
+		readonly processEpoch: string;
 		readonly verifierPublicKeyPem: string;
 	};
 	readonly profileId?: string;
@@ -89,6 +90,7 @@ const controlSessionConfigFields = new Set([
 	'controllerEpoch',
 	'generationId',
 	'peerId',
+	'processEpoch',
 	'verifierPublicKeyPem',
 ]);
 
@@ -132,6 +134,11 @@ function resolveControlSessionConfig(
 		label: 'controlSession',
 		value: rawControlSession.peerId,
 	});
+	const processEpoch = requireNonEmptyString({
+		fieldName: 'processEpoch',
+		label: 'controlSession',
+		value: rawControlSession.processEpoch,
+	});
 	const verifierPublicKeyPem = requireNonEmptyString({
 		fieldName: 'verifierPublicKeyPem',
 		label: 'controlSession',
@@ -142,6 +149,7 @@ function resolveControlSessionConfig(
 		controllerEpoch,
 		generationId,
 		peerId,
+		processEpoch,
 		verifierPublicKeyPem,
 	};
 }

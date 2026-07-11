@@ -34,6 +34,7 @@ import type {
 	GatewayControlLeaseRpcOperations,
 } from '../controller/control-session/index.js';
 import {
+	createGatewayControlProcessAdmissionCoordinator,
 	createGatewayControlSessionMaterial,
 	resolveGatewayControlSessionMaterialPath,
 } from '../controller/control-session/index.js';
@@ -3912,6 +3913,8 @@ describe('startGatewayZone', () => {
 				return controlSessionClient;
 			},
 		);
+		const gatewayControlProcessAdmissionCoordinator =
+			createGatewayControlProcessAdmissionCoordinator();
 
 		const result = await startGatewayZone(
 			{
@@ -3925,6 +3928,7 @@ describe('startGatewayZone', () => {
 					})),
 				},
 				gatewayControlLeaseRpc,
+				gatewayControlProcessAdmissionCoordinator,
 				runTask: async (title, fn) => {
 					taskTitles.push(title);
 					await fn();
@@ -3964,6 +3968,7 @@ describe('startGatewayZone', () => {
 				peerId: 'gateway-shravan',
 				zoneId: 'shravan',
 			}),
+			processAdmissionCoordinator: gatewayControlProcessAdmissionCoordinator,
 			sessionFenceRegistry: expect.objectContaining({
 				acceptSession: expect.any(Function),
 				assertEnvelopeAccepted: expect.any(Function),

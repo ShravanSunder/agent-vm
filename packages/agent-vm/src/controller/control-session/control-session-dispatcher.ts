@@ -6,6 +6,12 @@ import type {
 import { CONTROL_QUEUE_LIMITS } from '@agent-vm/control-protocol-contracts';
 
 import { assertControlSessionDispatchAllowed } from './control-session-client.js';
+import type {
+	GatewaySemanticJsonValue,
+	GatewaySemanticLedgerDecision,
+	GatewaySemanticOperationIdentity,
+	GatewaySemanticResultLedger,
+} from './gateway-semantic-result-ledger.js';
 
 export interface ControlSessionDispatchContext {
 	readonly envelope: ControlEnvelope;
@@ -17,12 +23,22 @@ export interface ControlSessionDomainHandler {
 		typeof assertControlSessionDispatchAllowed
 	>[0]['assertEnvelopeDeliveryPolicy'];
 	buildHandlerFailureResult?(context: ControlSessionDispatchContext, error: unknown): unknown;
+	buildSemanticFailureResult?(
+		context: ControlSessionDispatchContext,
+		decision: Exclude<GatewaySemanticLedgerDecision<unknown>, { readonly kind: 'completed' }>,
+	): unknown;
 	readonly policyByKind?: Parameters<typeof assertControlSessionDispatchAllowed>[0]['policyByKind'];
 	readonly policyByOperation: Parameters<
 		typeof assertControlSessionDispatchAllowed
 	>[0]['policyByOperation'];
 	handle(context: ControlSessionDispatchContext): Promise<unknown>;
 	messageIdentity(context: ControlSessionDispatchContext): DomainControlMessageIdentity;
+	semanticMutation?(context: ControlSessionDispatchContext):
+		| {
+				readonly identity: GatewaySemanticOperationIdentity;
+				readonly payload: GatewaySemanticJsonValue;
+		  }
+		| undefined;
 }
 
 export interface ControlSessionFence {
@@ -36,6 +52,7 @@ export interface ControlSessionFence {
 }
 
 export interface ControlSessionDispatcherOptions {
+	readonly semanticLedger?: GatewaySemanticResultLedger;
 	readonly sessionFence?: ControlSessionFence;
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
 }
@@ -228,6 +245,24 @@ export function createControlSessionDispatcher(
 					? {}
 					: { sessionFenceRegistry: options.sessionFenceRegistry }),
 			});
+			const semanticMutation = handler.semanticMutation?.(context);
+			if (semanticMutation !== undefined) {
+				if (options.semanticLedger === undefined) {
+					throw new Error('gateway semantic mutation has no configured semantic ledger');
+				}
+				const semanticDecision = await options.semanticLedger.executeMutating({
+					handler: async () => await handleControlSessionDispatch({ context, handler }),
+					identity: semanticMutation.identity,
+					payload: semanticMutation.payload,
+				});
+				if (semanticDecision.kind === 'completed') {
+					return semanticDecision.value;
+				}
+				if (handler.buildSemanticFailureResult !== undefined) {
+					return handler.buildSemanticFailureResult(context, semanticDecision);
+				}
+				throw new Error(`gateway semantic mutation refused: ${semanticDecision.kind}`);
+			}
 			const commandDedupeKey = buildControlCommandDedupeKey(context.envelope);
 			if (commandDedupeKey === undefined) {
 				return await handleControlSessionDispatch({ context, handler });

@@ -135,6 +135,7 @@ export function registerGondolinPlugin(
 		controllerEpoch: pluginConfig.controlSession.controllerEpoch,
 		generationId: pluginConfig.controlSession.generationId,
 		peerId: pluginConfig.controlSession.peerId,
+		processEpoch: pluginConfig.controlSession.processEpoch,
 		zoneId: pluginConfig.zoneId,
 	};
 	const gatewayControlRuntime = getOrCreateGatewayControlServiceRuntime({

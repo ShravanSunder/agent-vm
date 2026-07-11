@@ -4,6 +4,82 @@
 		"type": "string",
 		"const": "gateway_control"
 	},
+	"hello": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"attachmentGeneration": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"domain": {
+				"type": "string",
+				"const": "gateway_control"
+			},
+			"gatewayEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"peerId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"processEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"protocolVersion": {
+				"type": "number",
+				"const": 1
+			}
+		},
+		"required": [
+			"attachmentGeneration",
+			"controllerEpoch",
+			"domain",
+			"gatewayEpoch",
+			"peerId",
+			"processEpoch",
+			"protocolVersion"
+		],
+		"additionalProperties": false
+	},
+	"helloResponse": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"attachmentGeneration": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"connectionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"outcome": {
+				"type": "string",
+				"enum": ["accepted", "rejected", "generation_mismatch", "stale_attachment"]
+			},
+			"sessionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			}
+		},
+		"required": ["attachmentGeneration", "connectionId", "controllerEpoch", "outcome", "sessionId"],
+		"additionalProperties": false
+	},
 	"message": {
 		"$schema": "https://json-schema.org/draft/2020-12/schema",
 		"anyOf": [
@@ -2411,9 +2487,13 @@
 														"type": "string",
 														"format": "uuid",
 														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"admissionPrincipal": {
+														"type": "string",
+														"pattern": "^[a-f0-9]{64}$"
 													}
 												},
-												"required": ["callerContextId"],
+												"required": ["callerContextId", "admissionPrincipal"],
 												"additionalProperties": false
 											},
 											"controllerHostAction": {

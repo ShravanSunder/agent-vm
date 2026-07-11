@@ -304,8 +304,11 @@ state.
 
 The implementation never relies on Socket.IO's disconnected send buffer.
 Every attempt constructs a fresh client/Manager, disables built-in reconnect,
-does not emit when disconnected, uses volatile emission for droppable traffic,
-and destroys the old client object on fencing.
+does not emit when disconnected, coalesces or drops advisory traffic before
+sequence allocation, requires a bounded receipt for every allocated sequence,
+and destroys the old client object on fencing. A receipt failure fences that
+attempt so a numbered frame can never disappear while later sequence traffic
+continues.
 
 Before application traffic, accepting a Gateway session atomically reserves its
 32-message / 512-KiB safety allocation from the process budget. Existing

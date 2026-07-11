@@ -9,40 +9,45 @@ import {
 	CONTROL_HANDSHAKE_PROTOCOL_HEADER_VALUE,
 	CONTROL_QUEUE_LIMITS,
 	CONTROL_SESSION_TIMING_MS,
-	ControlDeliveryPolicySchema,
 	ControlHandshakeProofSchema,
 	ControlReadyRequestProofSchema,
-	ControlEnvelopeSchema,
-	ControlHelloSchema,
-	assertControlMessageReceiptAccepted,
-	assertControlEnvelopeMatchesDomainMessage,
-	buildControlMessageExceptionRejectionReceipt,
-	buildControlMessageReceipt,
-	evaluateControlSequenceContinuity,
-	extractDomainCommandResultResponseToMessageId,
-	orderControlMessagesByEnvelopeSequence,
-	type ControlDeliveryPolicy,
-	type ControlHandshakeCredential,
 	type ControlEnvelope,
 	type ControlHandshakeProof,
-	type ControlHello,
-	type ControlHelloResponse,
 	type ControlReadyRequestProof,
-	type ControlSequenceContinuityDecision,
-	type DomainControlMessageIdentity,
 	buildControlHandshakeSignaturePayload,
 	buildControlReadyRequestSignaturePayload,
 } from '@agent-vm/control-protocol-contracts';
 import {
-	GatewayControlRpcMessageSchema,
-	assertGatewayControlEnvelopeDeliveryPolicy,
+	GatewayControlHelloSchema,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	type GatewayControlControllerToGatewayEvents,
 	type GatewayControlGatewayToControllerEvents,
+	type GatewayControlHello,
+	type GatewayControlHelloResponse,
 } from '@agent-vm/gateway-control-contracts';
 import { Server as EngineIoServer } from 'engine.io';
 import type { Socket } from 'socket.io';
 import { Server as SocketIoServer } from 'socket.io';
+
+import { createGatewayControlApplicationMessageRuntime } from './gateway-control-application-message-runtime.js';
+import {
+	GatewayControlSessionUnavailableError,
+	GatewayControlSessionWaiterOverflowError,
+} from './gateway-control-service-contracts.js';
+import type {
+	ConsumedReadyRequest,
+	FailedUpgradeAttemptWindow,
+	GatewayControlAcceptedSession,
+	GatewayControlEmitApplicationMessageOptions,
+	GatewayControlIdentity,
+	GatewayControlIssuedCredential,
+	GatewayControlPublicIdentity,
+	GatewayControlService,
+	GatewayControlServiceOptions,
+	PendingGatewayControlCommandResult,
+	ReadyProofConsumptionResult,
+	StoredGatewayControlCredential,
+} from './gateway-control-service-contracts.js';
 
 export const GATEWAY_CONTROL_READY_PATH = '/__agent-vm/ready';
 export const GATEWAY_CONTROL_SOCKET_PATH = '/__agent-vm/gateway-control';
@@ -52,67 +57,25 @@ export {
 	CONTROL_HANDSHAKE_PROTOCOL_HEADER_VALUE,
 	buildControlHandshakeSignaturePayload as buildGatewayControlSignaturePayload,
 } from '@agent-vm/control-protocol-contracts';
-
-export type GatewayControlNonceState = 'issued' | 'consuming' | 'accepted' | 'failed' | 'expired';
-export type GatewayControlReadyRejectionReason =
-	| 'expired_ready_request'
-	| 'future_ready_request'
-	| 'identity_mismatch'
-	| 'invalid_ready_proof'
-	| 'replayed_ready_request'
-	| 'signature_mismatch';
-
-export interface GatewayControlIdentity {
-	readonly bootId: string;
-	readonly callerContextAgentAuthorityKeys: Readonly<Record<string, string>>;
-	readonly callerContextProofKey: string;
-	readonly controllerEpoch: string;
-	readonly generationId: string;
-	readonly peerId: string;
-	readonly zoneId: string;
-}
-
-export interface GatewayControlPublicIdentity {
-	readonly bootId: string;
-	readonly controllerEpoch: string;
-	readonly generationId: string;
-	readonly peerId: string;
-	readonly zoneId: string;
-}
-
-export interface GatewayControlServiceOptions {
-	readonly applicationMessageHandler?: GatewayControlApplicationMessageHandler;
-	readonly handleEngineUpgrade?: (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
-	readonly identity: GatewayControlIdentity;
-	readonly nonceTtlMs?: number;
-	readonly now?: () => number;
-	readonly verifierPublicKeyPem: string;
-}
-
-export interface GatewayControlApplicationMessageHandler {
-	buildHandlerFailureResult?(
-		context: GatewayControlApplicationMessageContext,
-		error: unknown,
-	): unknown;
-	handle(context: GatewayControlApplicationMessageContext): Promise<unknown>;
-	messageIdentity(context: GatewayControlApplicationMessageContext): DomainControlMessageIdentity;
-}
-
-export interface GatewayControlApplicationMessageContext {
-	readonly envelope: ControlEnvelope;
-	readonly payload: unknown;
-}
-
-type ControlHelloWithSequenceContinuity = ControlHello & {
-	readonly lastSeenControllerSequence: number;
-	readonly lastSeenPeerSequence: number;
-};
-
-function helloHasSequenceContinuity(
-	hello: ControlHello,
-): hello is ControlHelloWithSequenceContinuity {
-	return hello.lastSeenControllerSequence !== undefined && hello.lastSeenPeerSequence !== undefined;
-}
+export { GATEWAY_CONTROL_BOOTSTRAP_AUTHORITY_KEY } from './gateway-control-admission-runtime.js';
+export {
+	GatewayControlSessionUnavailableError,
+	GatewayControlSessionWaiterOverflowError,
+} from './gateway-control-service-contracts.js';
+export type {
+	GatewayControlAcceptedSession,
+	GatewayControlApplicationMessageContext,
+	GatewayControlApplicationMessageHandler,
+	GatewayControlApplicationMessageIntent,
+	GatewayControlEmitApplicationMessageOptions,
+	GatewayControlIdentity,
+	GatewayControlIssuedCredential,
+	GatewayControlNonceState,
+	GatewayControlPublicIdentity,
+	GatewayControlReadyRejectionReason,
+	GatewayControlService,
+	GatewayControlServiceOptions,
+} from './gateway-control-service-contracts.js';
 
 function gatewayControlPublicIdentityFor(
 	identity: GatewayControlIdentity,
@@ -126,70 +89,6 @@ function gatewayControlPublicIdentityFor(
 	};
 }
 
-export type GatewayControlIssuedCredential = GatewayControlPublicIdentity &
-	ControlHandshakeCredential;
-
-export interface GatewayControlAcceptedSession extends GatewayControlPublicIdentity {
-	readonly connectionId: string;
-	readonly sessionId: string;
-}
-
-interface StoredGatewayControlCredential {
-	readonly credential: GatewayControlIssuedCredential;
-	terminalAtMs?: number | undefined;
-	state: GatewayControlNonceState;
-}
-
-interface FailedUpgradeAttemptWindow {
-	count: number;
-	readonly windowStartedAtMs: number;
-}
-
-interface ConsumedReadyRequest {
-	readonly consumedAtMs: number;
-}
-
-interface PendingGatewayControlCommandResult {
-	readonly promise: Promise<unknown>;
-	readonly reject: (error: Error) => void;
-	readonly resolve: (payload: unknown) => void;
-	timeout: ReturnType<typeof setTimeout>;
-}
-
-interface LatestWinsGatewayControlMessage {
-	readonly envelope: ControlEnvelope;
-	readonly payload: ReturnType<typeof GatewayControlRpcMessageSchema.parse>;
-}
-
-export interface GatewayControlEmitApplicationMessageOptions {
-	readonly commandResultTimeoutMs?: number;
-	readonly waitForReceipt?: boolean;
-}
-
-type ReadyProofConsumptionResult =
-	| { readonly accepted: true }
-	| {
-			readonly accepted: false;
-			readonly reason: GatewayControlReadyRejectionReason;
-	  };
-
-export interface GatewayControlService {
-	readonly handleReadyRequest: (req: IncomingMessage, res: ServerResponse) => boolean;
-	readonly handleUpgrade: (req: IncomingMessage, socket: Duplex, head: Buffer) => boolean;
-	readonly getCredentialState: (credentialId: string) => GatewayControlNonceState | undefined;
-	readonly nextPeerSequence: (options?: {
-		readonly deliveryPolicy?: ControlDeliveryPolicy;
-	}) => number;
-	readonly emitApplicationMessage: (
-		envelope: ControlEnvelope,
-		domainMessage: DomainControlMessageIdentity,
-		payload: unknown,
-		options?: GatewayControlEmitApplicationMessageOptions,
-	) => Promise<unknown>;
-	readonly getAcceptedSession: () => Promise<GatewayControlAcceptedSession>;
-	readonly close: () => Promise<void>;
-}
-
 function writeTextResponse(res: ServerResponse, statusCode: number, body: string): void {
 	res.statusCode = statusCode;
 	res.setHeader('cache-control', 'no-store');
@@ -200,16 +99,6 @@ function writeTextResponse(res: ServerResponse, statusCode: number, body: string
 function writeUpgradeFailure(socket: Duplex): void {
 	socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
 	socket.destroy();
-}
-
-function buildLatestWinsGatewayControlKey(envelope: ControlEnvelope): string {
-	return [
-		envelope.domain,
-		envelope.zoneId,
-		envelope.peerId,
-		envelope.kind,
-		envelope.operation ?? '<none>',
-	].join('\u0000');
 }
 
 function firstHeader(req: IncomingMessage, name: string): string | undefined {
@@ -370,65 +259,6 @@ function verifyGatewayControlReadyProofSignature(
 	);
 }
 
-function buildGatewayControlResponseEnvelope(options: {
-	readonly requestEnvelope: ControlEnvelope;
-	readonly sequence: number;
-}): ControlEnvelope {
-	return ControlEnvelopeSchema.parse({
-		...options.requestEnvelope,
-		createdAtMs: Date.now(),
-		kind: 'command_result',
-		messageId: randomUUID(),
-		sequence: options.sequence,
-	});
-}
-
-function isPriorityGatewayControlMessage(envelope: ControlEnvelope): boolean {
-	return envelope.kind === 'heartbeat' || envelope.operation === 'operation_cancel';
-}
-
-function waitForGatewayControlCommandResult(options: {
-	readonly messageId: string;
-	readonly pendingCommandResults: Map<string, PendingGatewayControlCommandResult>;
-	readonly timeoutMs: number;
-}): Promise<unknown> {
-	const existingPendingResult = options.pendingCommandResults.get(options.messageId);
-	if (existingPendingResult !== undefined) {
-		clearTimeout(existingPendingResult.timeout);
-		existingPendingResult.timeout = setTimeout(() => {
-			if (options.pendingCommandResults.get(options.messageId) === existingPendingResult) {
-				options.pendingCommandResults.delete(options.messageId);
-			}
-			existingPendingResult.reject(
-				new Error(`gateway control command result timed out: ${options.messageId}`),
-			);
-		}, options.timeoutMs);
-		existingPendingResult.timeout.unref?.();
-		return existingPendingResult.promise;
-	}
-
-	let resolvePromise!: (payload: unknown) => void;
-	let rejectPromise!: (error: Error) => void;
-	const promise = new Promise<unknown>((resolve, reject) => {
-		resolvePromise = resolve;
-		rejectPromise = reject;
-	});
-	const pendingResult: PendingGatewayControlCommandResult = {
-		promise,
-		reject: rejectPromise,
-		resolve: resolvePromise,
-		timeout: setTimeout(() => {
-			if (options.pendingCommandResults.get(options.messageId) === pendingResult) {
-				options.pendingCommandResults.delete(options.messageId);
-			}
-			rejectPromise(new Error(`gateway control command result timed out: ${options.messageId}`));
-		}, options.timeoutMs),
-	};
-	pendingResult.timeout.unref?.();
-	options.pendingCommandResults.set(options.messageId, pendingResult);
-	return promise;
-}
-
 export function createGatewayControlService(
 	options: GatewayControlServiceOptions,
 ): GatewayControlService {
@@ -440,7 +270,6 @@ export function createGatewayControlService(
 	const consumedReadyRequestIds = new Map<string, ConsumedReadyRequest>();
 	const failedUpgradeAttemptsBySource = new Map<string, FailedUpgradeAttemptWindow>();
 	const pendingCommandResults = new Map<string, PendingGatewayControlCommandResult>();
-	const latestWinsQueue = new Map<string, LatestWinsGatewayControlMessage>();
 	const handleEngineUpgrade =
 		options.handleEngineUpgrade ??
 		((req: IncomingMessage, socket: Duplex, head: Buffer): void => {
@@ -450,18 +279,30 @@ export function createGatewayControlService(
 		| Socket<GatewayControlControllerToGatewayEvents, GatewayControlGatewayToControllerEvents>
 		| undefined;
 	let acceptedSession: GatewayControlAcceptedSession | undefined;
-	const pendingFullResyncSockets = new Set<
-		Socket<GatewayControlControllerToGatewayEvents, GatewayControlGatewayToControllerEvents>
-	>();
+	let highestAcceptedAttachmentGeneration = 0;
 	let lastSeenControllerSequence = 0;
 	let lastSeenPeerSequence = 0;
 	let nextPeerSequenceValue = 1;
-	let fullResyncPending = false;
-	let latestWinsFlushScheduled = false;
-	let outboundResponseQueue: Promise<void> = Promise.resolve();
-	let outboundResponseQueueGeneration = 0;
 	const acceptedSessionWaiters: ((session: GatewayControlAcceptedSession | undefined) => void)[] =
 		[];
+	const applicationMessageRuntime = createGatewayControlApplicationMessageRuntime({
+		...(options.applicationMessageHandler === undefined
+			? {}
+			: { applicationMessageHandler: options.applicationMessageHandler }),
+		assertInboundEnvelopeMatchesAcceptedSession,
+		closeForProtocolFailure: closeGatewayControlSessionForSequenceGap,
+		closeForResponseFailure: closeGatewayControlSessionForReservedResponseFailure,
+		commandResultTimeoutMsFor,
+		getAcceptedSession: () => acceptedSession,
+		getAcceptedSocket: () => acceptedSocket,
+		getLastSeenControllerSequence: () => lastSeenControllerSequence,
+		pendingCommandResults,
+		recordLastSeenControllerSequence: (sequence) => {
+			lastSeenControllerSequence = sequence;
+		},
+		recordLastSeenPeerSequence,
+		reservePeerSequence,
+	});
 
 	function reservePeerSequence(): number {
 		const sequence = Math.max(nextPeerSequenceValue, lastSeenPeerSequence + 1);
@@ -469,64 +310,9 @@ export function createGatewayControlService(
 		return sequence;
 	}
 
-	function nextPeerSequence(
-		sequenceRequest: { readonly deliveryPolicy?: ControlDeliveryPolicy } = {},
-	): number {
-		if (
-			sequenceRequest.deliveryPolicy === 'droppable' ||
-			sequenceRequest.deliveryPolicy === 'latest_wins'
-		) {
-			return lastSeenPeerSequence + 1;
-		}
-		return reservePeerSequence();
-	}
-
 	function recordLastSeenPeerSequence(sequence: number): void {
 		lastSeenPeerSequence = Math.max(lastSeenPeerSequence, sequence);
 		nextPeerSequenceValue = Math.max(nextPeerSequenceValue, lastSeenPeerSequence + 1);
-	}
-
-	function releaseUnreceiptedPriorityPeerSequence(sequence: number): void {
-		if (lastSeenPeerSequence >= sequence) {
-			return;
-		}
-		if (nextPeerSequenceValue !== sequence + 1) {
-			return;
-		}
-		nextPeerSequenceValue = sequence;
-	}
-
-	function evaluateReservedOutboundPeerSequence(
-		envelope: ControlEnvelope,
-	): ControlSequenceContinuityDecision {
-		const deliveryPolicy: ControlDeliveryPolicy = ControlDeliveryPolicySchema.parse(
-			envelope.deliveryPolicy,
-		);
-		if (deliveryPolicy === 'droppable' || deliveryPolicy === 'latest_wins') {
-			return evaluateControlSequenceContinuity({
-				envelope,
-				lastSeenSequence: lastSeenPeerSequence,
-			});
-		}
-		if (envelope.sequence <= lastSeenPeerSequence) {
-			return evaluateControlSequenceContinuity({
-				envelope,
-				lastSeenSequence: lastSeenPeerSequence,
-			});
-		}
-		const reservedPeerSequenceFrontier = nextPeerSequenceValue - 1;
-		if (envelope.sequence <= reservedPeerSequenceFrontier) {
-			return {
-				action: 'accept',
-				nextLastSeenSequence: envelope.sequence,
-			};
-		}
-		return {
-			action: 'stale',
-			closeReason: 'sequence_gap',
-			nextLastSeenSequence: lastSeenPeerSequence,
-			safeMessage: `control sequence was not reserved: last=${String(lastSeenPeerSequence)} reserved=${String(reservedPeerSequenceFrontier)} received=${String(envelope.sequence)} kind=${envelope.kind} operation=${envelope.operation ?? '<none>'} delivery=${envelope.deliveryPolicy} sessionId=${envelope.sessionId}`,
-		};
 	}
 
 	function resolveAcceptedSessionWaiters(session: GatewayControlAcceptedSession | undefined): void {
@@ -553,10 +339,7 @@ export function createGatewayControlService(
 		if (acceptedSocket === socket) {
 			acceptedSocket = undefined;
 			acceptedSession = undefined;
-			fullResyncPending = false;
-			latestWinsQueue.clear();
-			outboundResponseQueueGeneration += 1;
-			outboundResponseQueue = Promise.resolve();
+			applicationMessageRuntime.close(`sequence_gap: ${safeMessage}`);
 			resolveAcceptedSessionWaiters(undefined);
 		}
 		rejectPendingGatewayControlCommandResults(new Error(`sequence_gap: ${safeMessage}`));
@@ -576,50 +359,13 @@ export function createGatewayControlService(
 		);
 	}
 
-	function resetGatewayControlSessionForFullResync(
-		socket: Socket<
-			GatewayControlControllerToGatewayEvents,
-			GatewayControlGatewayToControllerEvents
-		>,
-	): void {
-		fullResyncPending = true;
-		pendingFullResyncSockets.add(socket);
-	}
-
-	function refreshGatewayFullResyncPending(): void {
-		fullResyncPending = pendingFullResyncSockets.size > 0;
-	}
-
-	function pruneDisconnectedFullResyncSockets(): void {
-		for (const pendingSocket of pendingFullResyncSockets) {
-			if (!pendingSocket.connected) {
-				pendingFullResyncSockets.delete(pendingSocket);
-			}
-		}
-		refreshGatewayFullResyncPending();
-	}
-
-	function resetGatewayControlStateAfterAcceptedFullResync(
-		winningSocket: Socket<
-			GatewayControlControllerToGatewayEvents,
-			GatewayControlGatewayToControllerEvents
-		>,
-	): void {
-		for (const pendingSocket of pendingFullResyncSockets) {
-			if (pendingSocket !== winningSocket) {
-				pendingSocket.disconnect(true);
-			}
-		}
-		pendingFullResyncSockets.clear();
-		fullResyncPending = false;
-		latestWinsQueue.clear();
+	function resetGatewayControlStateForAcceptedAttachment(): void {
+		applicationMessageRuntime.reset('gateway control attachment replaced');
 		lastSeenControllerSequence = 0;
 		lastSeenPeerSequence = 0;
 		nextPeerSequenceValue = 1;
-		outboundResponseQueueGeneration += 1;
-		outboundResponseQueue = Promise.resolve();
 		rejectPendingGatewayControlCommandResults(
-			new Error('resync_required: gateway control session requires full hello resync'),
+			new Error('stale_attachment: gateway control session was superseded'),
 		);
 	}
 
@@ -642,248 +388,94 @@ export function createGatewayControlService(
 	const commandExecutionTimeoutMsByOperation: Readonly<Record<string, number>> =
 		gatewayControlCommandExecutionTimeoutMsByOperation;
 
-	function acceptHelloSequenceContinuity(
-		hello: ControlHelloWithSequenceContinuity,
-	): ControlHelloResponse['outcome'] {
-		if (
-			hello.lastSeenControllerSequence < lastSeenControllerSequence ||
-			hello.lastSeenPeerSequence < lastSeenPeerSequence
-		) {
-			return 'resync_required';
-		}
-		lastSeenControllerSequence = Math.max(
-			lastSeenControllerSequence,
-			hello.lastSeenControllerSequence,
-		);
-		lastSeenPeerSequence = Math.max(lastSeenPeerSequence, hello.lastSeenPeerSequence);
-		nextPeerSequenceValue = lastSeenPeerSequence + 1;
-		return 'accepted';
-	}
-
-	function helloContinuityOutcome(
-		socket: Socket<
-			GatewayControlControllerToGatewayEvents,
-			GatewayControlGatewayToControllerEvents
-		>,
-		hello: ControlHello,
-	): ControlHelloResponse['outcome'] {
-		if (pendingFullResyncSockets.has(socket) && hello.previousSessionId === undefined) {
-			return 'accepted';
-		}
-		const previousSession = acceptedSession;
-		if (previousSession === undefined) {
-			if (hello.previousSessionId === undefined) {
-				return 'accepted';
-			}
-			if (!helloHasSequenceContinuity(hello)) {
-				return 'resync_required';
-			}
-			return acceptHelloSequenceContinuity(hello);
-		}
-		if (
-			hello.previousSessionId !== previousSession.sessionId ||
-			!helloHasSequenceContinuity(hello)
-		) {
-			return 'resync_required';
-		}
-		return acceptHelloSequenceContinuity(hello);
-	}
-
 	socketServer.on('connection', (socket) => {
 		socket.once('disconnect', () => {
-			pendingFullResyncSockets.delete(socket);
-			refreshGatewayFullResyncPending();
 			if (acceptedSocket === socket) {
 				acceptedSocket = undefined;
 				acceptedSession = undefined;
-				latestWinsQueue.clear();
-				outboundResponseQueueGeneration += 1;
-				outboundResponseQueue = Promise.resolve();
+				applicationMessageRuntime.close(
+					'control_session_disconnect: gateway control session disconnected',
+				);
 				resolveAcceptedSessionWaiters(undefined);
 				rejectPendingGatewayControlCommandResults(
 					new Error('control_session_disconnect: gateway control session disconnected'),
 				);
 			}
 		});
-		socket.on('control:hello', (payload: ControlHello, acknowledge) => {
-			const parsedHello = ControlHelloSchema.safeParse(payload);
+		socket.on('control:hello', (payload: GatewayControlHello, acknowledge) => {
+			const parsedHello = GatewayControlHelloSchema.safeParse(payload);
+			const responseAttachmentGeneration = parsedHello.success
+				? parsedHello.data.attachmentGeneration
+				: Math.max(1, highestAcceptedAttachmentGeneration);
 			if (
 				!parsedHello.success ||
-				parsedHello.data.bootId !== options.identity.bootId ||
 				parsedHello.data.controllerEpoch !== options.identity.controllerEpoch ||
 				parsedHello.data.domain !== 'gateway_control' ||
+				parsedHello.data.gatewayEpoch !== options.identity.generationId ||
 				parsedHello.data.peerId !== options.identity.peerId ||
+				parsedHello.data.processEpoch !== options.identity.processEpoch ||
 				parsedHello.data.protocolVersion !== CONTROL_PROTOCOL_VERSION
 			) {
 				const response = {
+					attachmentGeneration: responseAttachmentGeneration,
 					connectionId: randomUUID(),
 					controllerEpoch: options.identity.controllerEpoch,
-					outcome: 'rejected',
+					outcome: parsedHello.success ? 'generation_mismatch' : 'rejected',
 					sessionId: randomUUID(),
-				} satisfies ControlHelloResponse;
+				} satisfies GatewayControlHelloResponse;
 				acknowledge(response);
 				socket.disconnect(true);
 				return;
 			}
-			const outcome = helloContinuityOutcome(socket, parsedHello.data);
+			if (parsedHello.data.attachmentGeneration <= highestAcceptedAttachmentGeneration) {
+				const response = {
+					attachmentGeneration: parsedHello.data.attachmentGeneration,
+					connectionId: randomUUID(),
+					controllerEpoch: options.identity.controllerEpoch,
+					outcome: 'stale_attachment',
+					sessionId: randomUUID(),
+				} satisfies GatewayControlHelloResponse;
+				acknowledge(response);
+				socket.disconnect(true);
+				return;
+			}
 			const response = {
+				attachmentGeneration: parsedHello.data.attachmentGeneration,
 				connectionId: randomUUID(),
 				controllerEpoch: options.identity.controllerEpoch,
-				outcome,
+				outcome: 'accepted',
 				sessionId: randomUUID(),
-			} satisfies ControlHelloResponse;
-			if (outcome !== 'accepted') {
-				if (outcome === 'resync_required') {
-					resetGatewayControlSessionForFullResync(socket);
-					acknowledge(response);
-					return;
-				}
-				acknowledge(response);
-				socket.disconnect(true);
-				return;
-			}
-			const acceptedAfterFullResync = pendingFullResyncSockets.delete(socket);
-			if (acceptedAfterFullResync) {
-				resetGatewayControlStateAfterAcceptedFullResync(socket);
-			}
-			if (acceptedSocket !== undefined && acceptedSocket !== socket) {
-				acceptedSocket.disconnect(true);
-			}
+			} satisfies GatewayControlHelloResponse;
+			const supersededSocket = acceptedSocket;
+			highestAcceptedAttachmentGeneration = parsedHello.data.attachmentGeneration;
+			resetGatewayControlStateForAcceptedAttachment();
 			acceptedSocket = socket;
 			acceptedSession = {
 				...gatewayControlPublicIdentityFor(options.identity),
+				bootId: options.identity.processEpoch,
+				attachmentGeneration: parsedHello.data.attachmentGeneration,
 				connectionId: response.connectionId,
+				gatewayEpoch: parsedHello.data.gatewayEpoch,
+				processEpoch: parsedHello.data.processEpoch,
 				sessionId: response.sessionId,
 			};
 			acknowledge(response);
 			resolveAcceptedSessionWaiters(acceptedSession);
+			if (supersededSocket !== undefined && supersededSocket !== socket) {
+				supersededSocket.disconnect(true);
+			}
 		});
-		socket.on('control:message', (envelopePayload, payload, acknowledge) => {
-			void (async () => {
-				try {
-					const envelope = ControlEnvelopeSchema.parse(envelopePayload);
-					const gatewayPayload = GatewayControlRpcMessageSchema.parse(payload);
-					if (envelope.deliveryPolicy === 'forbidden_bulk') {
-						throw new Error('forbidden bulk message cannot be sent on the gateway control session');
-					}
-					assertInboundEnvelopeMatchesAcceptedSession(socket, envelope);
-					const responseToMessageId = extractDomainCommandResultResponseToMessageId(gatewayPayload);
-					const sequenceDecision = evaluateControlSequenceContinuity({
-						envelope,
-						lastSeenSequence: lastSeenControllerSequence,
-					});
-					if (sequenceDecision.action === 'drop') {
-						acknowledge?.(buildControlMessageReceipt());
-						return;
-					}
-					if (sequenceDecision.action === 'stale') {
-						closeGatewayControlSessionForSequenceGap(socket, sequenceDecision.safeMessage);
-						return;
-					}
-					lastSeenControllerSequence = sequenceDecision.nextLastSeenSequence;
-					if (envelope.kind === 'command_result' && responseToMessageId !== undefined) {
-						acknowledge?.(buildControlMessageReceipt());
-						const pendingResult = pendingCommandResults.get(responseToMessageId);
-						if (pendingResult !== undefined) {
-							clearTimeout(pendingResult.timeout);
-							pendingCommandResults.delete(responseToMessageId);
-							pendingResult.resolve(payload);
-						}
-						return;
-					}
-					if (options.applicationMessageHandler === undefined) {
-						throw new Error('no gateway control application message handler configured');
-					}
-					const applicationMessageHandler = options.applicationMessageHandler;
-					assertControlEnvelopeMatchesDomainMessage(
-						envelope,
-						applicationMessageHandler.messageIdentity({
-							envelope,
-							payload: gatewayPayload,
-						}),
-					);
-					assertGatewayControlEnvelopeDeliveryPolicy(envelope);
-					acknowledge?.(buildControlMessageReceipt());
-					const responsePayloadPromise = (async (): Promise<unknown> => {
-						try {
-							return await applicationMessageHandler.handle({
-								envelope,
-								payload: gatewayPayload,
-							});
-						} catch (error) {
-							if (
-								envelope.kind !== 'command' ||
-								applicationMessageHandler.buildHandlerFailureResult === undefined
-							) {
-								throw error;
-							}
-							return await applicationMessageHandler.buildHandlerFailureResult(
-								{ envelope, payload: gatewayPayload },
-								error,
-							);
-						}
-					})();
-					if (envelope.kind !== 'command') {
-						void responsePayloadPromise.catch((error: unknown) => {
-							closeGatewayControlSessionForReservedResponseFailure(socket, error);
-						});
-						return;
-					}
-					const responseQueueGeneration = outboundResponseQueueGeneration;
-					outboundResponseQueue = outboundResponseQueue
-						.catch(() => undefined)
-						.then(async () => {
-							const responsePayload = await responsePayloadPromise;
-							if (
-								responsePayload === undefined ||
-								responseQueueGeneration !== outboundResponseQueueGeneration ||
-								socket !== acceptedSocket
-							) {
-								return;
-							}
-							const parsedResponsePayload = GatewayControlRpcMessageSchema.parse(responsePayload);
-							const responseSequence = reservePeerSequence();
-							const responseEnvelope = buildGatewayControlResponseEnvelope({
-								requestEnvelope: envelope,
-								sequence: responseSequence,
-							});
-							const receiptPayload = await socket
-								.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
-								.emitWithAck('control:message', responseEnvelope, parsedResponsePayload);
-							assertControlMessageReceiptAccepted(receiptPayload);
-							recordLastSeenPeerSequence(responseSequence);
-						})
-						.catch((error: unknown) => {
-							if (
-								responseQueueGeneration !== outboundResponseQueueGeneration ||
-								socket !== acceptedSocket
-							) {
-								return;
-							}
-							closeGatewayControlSessionForReservedResponseFailure(socket, error);
-						});
-				} catch (error: unknown) {
-					acknowledge?.(
-						buildControlMessageExceptionRejectionReceipt({
-							error,
-							processingErrorClass: 'gateway_control_message_processing_failed',
-							safeMessage: 'gateway control message was rejected',
-						}),
-					);
-				}
-			})();
-		});
+		applicationMessageRuntime.bindSocket(socket);
 	});
 
 	async function waitForAcceptedSession(): Promise<GatewayControlAcceptedSession | undefined> {
-		pruneDisconnectedFullResyncSockets();
 		const session = acceptedSession;
 		const socket = acceptedSocket;
 		if (session !== undefined && socket !== undefined && socket.connected) {
 			return session;
 		}
-		if (fullResyncPending) {
-			return undefined;
+		if (acceptedSessionWaiters.length >= CONTROL_QUEUE_LIMITS.queueMessageCap) {
+			throw new GatewayControlSessionWaiterOverflowError(CONTROL_QUEUE_LIMITS.queueMessageCap);
 		}
 		return await new Promise<GatewayControlAcceptedSession | undefined>((resolve) => {
 			const timeout = setTimeout(() => {
@@ -899,112 +491,6 @@ export function createGatewayControlService(
 			};
 			timeout.unref?.();
 			acceptedSessionWaiters.push(finish);
-		});
-	}
-
-	async function emitApplicationMessage(
-		envelope: ControlEnvelope,
-		domainMessage: DomainControlMessageIdentity,
-		payload: unknown,
-		emitOptions?: GatewayControlEmitApplicationMessageOptions,
-	): Promise<unknown> {
-		ControlEnvelopeSchema.parse(envelope);
-		assertControlEnvelopeMatchesDomainMessage(envelope, domainMessage);
-		assertGatewayControlEnvelopeDeliveryPolicy(envelope);
-		if (envelope.deliveryPolicy === 'forbidden_bulk') {
-			throw new Error('forbidden bulk message cannot be sent on the gateway control session');
-		}
-		const session = await waitForAcceptedSession();
-		const socket = acceptedSocket;
-		if (session === undefined || socket === undefined || !socket.connected) {
-			throw new Error('gateway control session is not connected');
-		}
-		if (
-			envelope.sessionId !== session.sessionId ||
-			envelope.connectionId !== session.connectionId
-		) {
-			throw new Error('gateway control envelope session identity does not match accepted session');
-		}
-		const sequenceDecision = evaluateReservedOutboundPeerSequence(envelope);
-		if (sequenceDecision.action === 'drop') {
-			throw new Error(sequenceDecision.safeMessage);
-		}
-		if (sequenceDecision.action === 'stale') {
-			closeGatewayControlSessionForSequenceGap(socket, sequenceDecision.safeMessage);
-			throw new Error(sequenceDecision.safeMessage);
-		}
-		const gatewayPayload = GatewayControlRpcMessageSchema.parse(payload);
-		if (envelope.deliveryPolicy === 'latest_wins') {
-			const latestWinsKey = buildLatestWinsGatewayControlKey(envelope);
-			if (emitOptions?.waitForReceipt === true) {
-				latestWinsQueue.delete(latestWinsKey);
-				const receiptPayload = await socket
-					.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
-					.emitWithAck('control:message', envelope, gatewayPayload);
-				assertControlMessageReceiptAccepted(receiptPayload);
-				recordLastSeenPeerSequence(sequenceDecision.nextLastSeenSequence);
-				return receiptPayload;
-			}
-			latestWinsQueue.set(latestWinsKey, {
-				envelope,
-				payload: gatewayPayload,
-			});
-			recordLastSeenPeerSequence(sequenceDecision.nextLastSeenSequence);
-			scheduleLatestWinsFlush();
-			return undefined;
-		}
-		if (envelope.deliveryPolicy === 'droppable') {
-			socket.volatile.emit('control:message', envelope, gatewayPayload, () => undefined);
-			recordLastSeenPeerSequence(sequenceDecision.nextLastSeenSequence);
-			return undefined;
-		}
-		const commandResultPromise =
-			envelope.kind === 'command'
-				? waitForGatewayControlCommandResult({
-						messageId: envelope.messageId,
-						pendingCommandResults,
-						timeoutMs: commandResultTimeoutMsFor(envelope, emitOptions),
-					})
-				: undefined;
-		commandResultPromise?.catch(() => undefined);
-		try {
-			const receiptPayload = await socket
-				.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
-				.emitWithAck('control:message', envelope, gatewayPayload);
-			assertControlMessageReceiptAccepted(receiptPayload);
-			recordLastSeenPeerSequence(sequenceDecision.nextLastSeenSequence);
-			if (commandResultPromise === undefined) {
-				return receiptPayload;
-			}
-		} catch (error) {
-			if (isPriorityGatewayControlMessage(envelope)) {
-				releaseUnreceiptedPriorityPeerSequence(sequenceDecision.nextLastSeenSequence);
-			}
-			throw error;
-		}
-		if (commandResultPromise !== undefined) {
-			return await commandResultPromise;
-		}
-		return undefined;
-	}
-
-	function scheduleLatestWinsFlush(): void {
-		if (latestWinsFlushScheduled) {
-			return;
-		}
-		latestWinsFlushScheduled = true;
-		setImmediate(() => {
-			latestWinsFlushScheduled = false;
-			const socket = acceptedSocket;
-			if (socket === undefined || !socket.connected) {
-				latestWinsQueue.clear();
-				return;
-			}
-			const messages = [...latestWinsQueue.values()];
-			latestWinsQueue.clear();
-			for (const message of orderControlMessagesByEnvelopeSequence(messages)) {
-				socket.volatile.emit('control:message', message.envelope, message.payload, () => undefined);
-			}
 		});
 	}
 
@@ -1177,15 +663,17 @@ export function createGatewayControlService(
 
 	return {
 		close: async () => {
-			latestWinsQueue.clear();
+			applicationMessageRuntime.close('gateway control service closed');
+			resolveAcceptedSessionWaiters(undefined);
 			await socketServer.close();
 		},
-		emitApplicationMessage,
-		nextPeerSequence,
-		getAcceptedSession: async () => {
+		emitApplicationMessage: (intent, emitOptions) =>
+			applicationMessageRuntime.emitApplicationMessage(intent, emitOptions),
+		getCurrentAcceptedSession: () => acceptedSession,
+		waitForAcceptedSession: async () => {
 			const session = await waitForAcceptedSession();
 			if (session === undefined) {
-				throw new Error('gateway control session is not connected');
+				throw new GatewayControlSessionUnavailableError();
 			}
 			return session;
 		},

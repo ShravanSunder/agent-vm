@@ -12,6 +12,7 @@ import {
 	WorkerControlDomainSchema,
 	WorkerControlPullDefaultResultPayloadSchema,
 	WorkerControlGitPushPayloadSchema,
+	WorkerControlHelloSchema,
 	buildWorkerControlJsonSchemas,
 	WorkerControlRpcCommandResultMessageSchema,
 	WorkerControlRpcMessageSchema,
@@ -48,6 +49,21 @@ const workerCommandEnvelope = ControlEnvelopeSchema.parse({
 });
 
 describe('worker control contract shell', () => {
+	it('owns its Worker-specific hello and rejects Gateway attachment fields', () => {
+		const hello = {
+			bootId: 'worker-boot-a',
+			controllerEpoch: 'controller-epoch-a',
+			domain: 'worker_control',
+			peerId: 'worker-zone-a',
+			protocolVersion: 1,
+		} as const;
+
+		expect(WorkerControlHelloSchema.parse(hello)).toEqual(hello);
+		expect(WorkerControlHelloSchema.safeParse({ ...hello, attachmentGeneration: 1 }).success).toBe(
+			false,
+		);
+	});
+
 	it('reserves the worker_control domain', () => {
 		expect(WorkerControlDomainSchema.parse('worker_control')).toBe('worker_control');
 		expect(assertWorkerControlDomainRegistered()).toBe('worker_control');

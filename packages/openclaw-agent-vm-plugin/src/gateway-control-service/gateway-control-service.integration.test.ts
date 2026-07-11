@@ -7,15 +7,18 @@ import {
 	CONTROL_QUEUE_LIMITS,
 	CONTROL_PROTOCOL_VERSION,
 	CONTROL_READY_HEADER_NAMES,
-	ControlHelloResponseSchema,
 	buildControlReadyRequestSignaturePayload,
 	type ControlEnvelope,
 	type ControlHandshakeProof,
-	type ControlHello,
 	type ControlReadyRequestProof,
 	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
-import { GatewayControlRpcMessageSchema } from '@agent-vm/gateway-control-contracts';
+import {
+	GatewayControlHelloResponseSchema as ControlHelloResponseSchema,
+	GatewayControlRpcMessageSchema,
+	type GatewayControlHello as ControlHello,
+	type GatewayControlRpcMessage,
+} from '@agent-vm/gateway-control-contracts';
 import { io as createSocketIoClient, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -25,11 +28,14 @@ import {
 	GATEWAY_CONTROL_FAILED_UPGRADE_ATTEMPT_LIMIT,
 	GATEWAY_CONTROL_READY_PATH,
 	GATEWAY_CONTROL_SOCKET_PATH,
+	GatewayControlSessionUnavailableError,
+	GatewayControlSessionWaiterOverflowError,
 	buildGatewayControlSignaturePayload,
 	createGatewayControlService,
 	type GatewayControlAcceptedSession,
 	type GatewayControlIdentity,
 	type GatewayControlIssuedCredential,
+	type GatewayControlEmitApplicationMessageOptions,
 	type GatewayControlService,
 } from './gateway-control-service.js';
 
@@ -45,6 +51,7 @@ interface ControlServiceFixture {
 
 const activeSockets: Socket[] = [];
 const activeServers: HttpServer[] = [];
+let testAttachmentGeneration = 0;
 const identity = {
 	bootId: 'gateway-boot-a',
 	callerContextAgentAuthorityKeys: {},
@@ -52,15 +59,53 @@ const identity = {
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'gateway-generation-a',
 	peerId: 'gateway-zone-a',
+	processEpoch: 'process-epoch-a',
 	zoneId: 'zone-a',
 } satisfies GatewayControlIdentity;
+
+function nextTestAttachmentGeneration(): number {
+	testAttachmentGeneration += 1;
+	return testAttachmentGeneration;
+}
+
+const testPeerSequenceByService = new WeakMap<GatewayControlService, number>();
+
+function nextTestPeerSequence(service: GatewayControlService): number {
+	const sequence = (testPeerSequenceByService.get(service) ?? 0) + 1;
+	testPeerSequenceByService.set(service, sequence);
+	return sequence;
+}
+
+async function emitTestApplicationMessage(
+	service: GatewayControlService,
+	envelope: ControlEnvelope,
+	domainMessage: DomainControlMessageIdentity,
+	payload: unknown,
+	options?: GatewayControlEmitApplicationMessageOptions,
+): Promise<unknown> {
+	const effectiveOptions =
+		envelope.kind === 'command' && envelope.operation !== 'caller_context_register'
+			? {
+					admissionPrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+					...options,
+				}
+			: options;
+	return await service.emitApplicationMessage(
+		{
+			buildEnvelope: ({ sequence }) => ({ ...envelope, sequence }),
+			domainMessage,
+			payload: GatewayControlRpcMessageSchema.parse(payload),
+		},
+		effectiveOptions,
+	);
+}
 
 function gatewayLeaseCreateEnvelopeFor(
 	session: GatewayControlAcceptedSession,
 	sequence = 1,
 ): ControlEnvelope {
 	return {
-		bootId: identity.bootId,
+		bootId: session.bootId,
 		commandId: '44444444-4444-4444-8444-444444444444',
 		connectionId: session.connectionId,
 		controllerEpoch: identity.controllerEpoch,
@@ -77,6 +122,37 @@ function gatewayLeaseCreateEnvelopeFor(
 		sessionId: session.sessionId,
 		zoneId: identity.zoneId,
 	};
+}
+
+function gatewayControlPingEnvelopeFor(
+	session: GatewayControlAcceptedSession,
+	sequence = 1,
+): ControlEnvelope {
+	return {
+		...gatewayLeaseCreateEnvelopeFor(session, sequence),
+		deliveryPolicy: 'acked_idempotent',
+		idempotencyKey: `control-ping-${String(sequence)}`,
+		operation: 'control_ping',
+	};
+}
+
+function gatewayControlPingMessage(): GatewayControlRpcMessage {
+	return GatewayControlRpcMessageSchema.parse({
+		kind: 'command',
+		operation: 'control_ping',
+		payload: {},
+	});
+}
+
+function gatewayControlPingResultFor(messageId: string): GatewayControlRpcMessage {
+	return GatewayControlRpcMessageSchema.parse({
+		kind: 'command_result',
+		operation: 'control_ping',
+		payload: {
+			responseToMessageId: messageId,
+			result: 'ok',
+		},
+	});
 }
 
 function gatewayCommandResultEnvelopeFor(
@@ -129,7 +205,7 @@ function gatewayRuntimeStatusEnvelopeFor(
 	messageId: string,
 ): ControlEnvelope {
 	return {
-		bootId: identity.bootId,
+		bootId: session.bootId,
 		connectionId: session.connectionId,
 		controllerEpoch: identity.controllerEpoch,
 		createdAtMs: 1,
@@ -147,6 +223,7 @@ function gatewayRuntimeStatusEnvelopeFor(
 }
 
 afterEach(async () => {
+	testAttachmentGeneration = 0;
 	for (const socket of activeSockets.splice(0)) {
 		socket.close();
 	}
@@ -348,15 +425,15 @@ async function waitForSocketDisconnect(socket: Socket): Promise<void> {
 async function waitForGatewayAcceptedSession(
 	service: ReturnType<typeof createGatewayControlService>,
 ): Promise<
-	Awaited<ReturnType<ReturnType<typeof createGatewayControlService>['getAcceptedSession']>>
+	Awaited<ReturnType<ReturnType<typeof createGatewayControlService>['waitForAcceptedSession']>>
 > {
 	const attemptRead = async (
 		attempt: number,
 	): Promise<
-		Awaited<ReturnType<ReturnType<typeof createGatewayControlService>['getAcceptedSession']>>
+		Awaited<ReturnType<ReturnType<typeof createGatewayControlService>['waitForAcceptedSession']>>
 	> => {
 		try {
-			return await service.getAcceptedSession();
+			return await service.waitForAcceptedSession();
 		} catch (error) {
 			if (attempt >= 20) {
 				throw error;
@@ -485,10 +562,12 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await expect(
@@ -506,7 +585,7 @@ describe('gateway control service', () => {
 		expect(client.connected).toBe(true);
 	});
 
-	it('requires full resync before accepting a replacement socket without continuity', async () => {
+	it('atomically accepts a higher attachment and fences the incumbent', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
 		const firstCredential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
@@ -523,10 +602,12 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(firstClient);
 		const firstHelloResponse = ControlHelloResponseSchema.parse(
 			await firstClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: nextTestAttachmentGeneration(),
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
@@ -550,37 +631,26 @@ describe('gateway control service', () => {
 
 		const secondHelloResponse = ControlHelloResponseSchema.parse(
 			await secondClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: nextTestAttachmentGeneration(),
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
 
-		expect(secondHelloResponse.outcome).toBe('resync_required');
-		expect(firstClient.connected).toBe(true);
-		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
-			sessionId: firstHelloResponse.sessionId,
-		});
-		const freshHelloResponse = ControlHelloResponseSchema.parse(
-			await secondClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
-				controllerEpoch: identity.controllerEpoch,
-				domain: 'gateway_control',
-				peerId: identity.peerId,
-				protocolVersion: CONTROL_PROTOCOL_VERSION,
-			} satisfies ControlHello),
-		);
-		expect(freshHelloResponse.outcome).toBe('accepted');
-		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
-			sessionId: freshHelloResponse.sessionId,
+		expect(secondHelloResponse.outcome).toBe('accepted');
+		await expect(fixture.service.waitForAcceptedSession()).resolves.toMatchObject({
+			attachmentGeneration: secondHelloResponse.attachmentGeneration,
+			sessionId: secondHelloResponse.sessionId,
 		});
 		await waitForSocketDisconnect(firstClient);
 		expect(firstClient.connected).toBe(false);
 	});
 
-	it('invalidates older full-resync challengers after one replacement is accepted', async () => {
+	it('rejects an older attachment after a higher challenger wins', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
 		const firstCredential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
@@ -597,10 +667,12 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(firstClient);
 		const firstHelloResponse = ControlHelloResponseSchema.parse(
 			await firstClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: nextTestAttachmentGeneration(),
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
@@ -636,53 +708,41 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(secondClient);
 		await waitForSocketConnect(thirdClient);
 
-		const challengerResponses = await Promise.all(
-			[secondClient, thirdClient].map(async (challenger) =>
-				ControlHelloResponseSchema.parse(
-					await challenger.timeout(1_000).emitWithAck('control:hello', {
-						bootId: identity.bootId,
-						controllerEpoch: identity.controllerEpoch,
-						domain: 'gateway_control',
-						peerId: identity.peerId,
-						protocolVersion: CONTROL_PROTOCOL_VERSION,
-					} satisfies ControlHello),
-				),
-			),
-		);
-		for (const response of challengerResponses) {
-			expect(response.outcome).toBe('resync_required');
-		}
-
-		const secondFreshHelloResponse = ControlHelloResponseSchema.parse(
+		const winningResponse = ControlHelloResponseSchema.parse(
 			await secondClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: 4,
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
 
-		expect(secondFreshHelloResponse.outcome).toBe('accepted');
-		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
-			sessionId: secondFreshHelloResponse.sessionId,
+		expect(winningResponse.outcome).toBe('accepted');
+		await expect(fixture.service.waitForAcceptedSession()).resolves.toMatchObject({
+			sessionId: winningResponse.sessionId,
 		});
-		await waitForSocketDisconnect(thirdClient);
-		await expect(
-			thirdClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+		const staleResponse = ControlHelloResponseSchema.parse(
+			await thirdClient.timeout(1_000).emitWithAck('control:hello', {
+				attachmentGeneration: 3,
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
-		).rejects.toThrow(/disconnected|timed out/u);
-		await expect(fixture.service.getAcceptedSession()).resolves.toMatchObject({
-			sessionId: secondFreshHelloResponse.sessionId,
+		);
+		expect(staleResponse.outcome).toBe('stale_attachment');
+		await waitForSocketDisconnect(thirdClient);
+		await expect(fixture.service.waitForAcceptedSession()).resolves.toMatchObject({
+			sessionId: winningResponse.sessionId,
 		});
 	});
 
-	it('keeps the incumbent usable after an abandoned full-resync challenger disconnects', async () => {
+	it('keeps the incumbent usable after a stale challenger is rejected', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
 		const firstCredential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
@@ -699,10 +759,12 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(firstClient);
 		const firstHelloResponse = ControlHelloResponseSchema.parse(
 			await firstClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: 4,
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
@@ -726,16 +788,17 @@ describe('gateway control service', () => {
 
 		const secondHelloResponse = ControlHelloResponseSchema.parse(
 			await secondClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: 3,
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
-		expect(secondHelloResponse.outcome).toBe('resync_required');
+		expect(secondHelloResponse.outcome).toBe('stale_attachment');
 
-		secondClient.disconnect();
 		await waitForSocketDisconnect(secondClient);
 		await expect(waitForGatewayAcceptedSession(fixture.service)).resolves.toMatchObject({
 			sessionId: firstHelloResponse.sessionId,
@@ -761,24 +824,23 @@ describe('gateway control service', () => {
 
 		const helloResponse = ControlHelloResponseSchema.parse(
 			await client.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: nextTestAttachmentGeneration(),
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
-				lastSeenControllerSequence: 9,
-				lastSeenPeerSequence: 4,
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
-				previousSessionId: '33333333-3333-4333-8333-333333333333',
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
 
 		expect(helloResponse.outcome).toBe('accepted');
-		expect(await fixture.service.getAcceptedSession()).toMatchObject({
+		expect(await fixture.service.waitForAcceptedSession()).toMatchObject({
 			sessionId: helloResponse.sessionId,
 		});
 	});
 
-	it('resets unobserved peer sequence allocations to the reconnect hello continuity point', async () => {
+	it('starts a replacement attachment at peer sequence one', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
 		const firstCredential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
@@ -796,17 +858,16 @@ describe('gateway control service', () => {
 
 		const firstHelloResponse = ControlHelloResponseSchema.parse(
 			await firstClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: nextTestAttachmentGeneration(),
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
 		expect(firstHelloResponse.outcome).toBe('accepted');
-
-		expect(fixture.service.nextPeerSequence()).toBe(1);
-		expect(fixture.service.nextPeerSequence()).toBe(2);
 
 		const secondCredential = await fetchIssuedCredential(
 			port,
@@ -822,26 +883,51 @@ describe('gateway control service', () => {
 			transports: ['websocket'],
 		});
 		activeSockets.push(secondClient);
+		let observedPeerSequence: number | undefined;
+		secondClient.on('control:message', (envelope: unknown, _payload: unknown, acknowledge) => {
+			observedPeerSequence = (envelope as ControlEnvelope).sequence;
+			acknowledge({ received: true });
+		});
 		await waitForSocketConnect(secondClient);
 
 		const secondHelloResponse = ControlHelloResponseSchema.parse(
 			await secondClient.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: nextTestAttachmentGeneration(),
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
-				lastSeenControllerSequence: 0,
-				lastSeenPeerSequence: 0,
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
-				previousSessionId: firstHelloResponse.sessionId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
 
 		expect(secondHelloResponse.outcome).toBe('accepted');
-		expect(fixture.service.nextPeerSequence()).toBe(1);
+		const replacementSession = await fixture.service.waitForAcceptedSession();
+		await emitTestApplicationMessage(
+			fixture.service,
+			{
+				bootId: replacementSession.bootId,
+				connectionId: replacementSession.connectionId,
+				controllerEpoch: identity.controllerEpoch,
+				createdAtMs: 1,
+				deliveryPolicy: 'critical_idempotent',
+				domain: 'gateway_control',
+				kind: 'heartbeat',
+				messageId: '10000000-0000-4000-8000-000000000001',
+				peerId: identity.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+				sequence: 99,
+				sessionId: replacementSession.sessionId,
+				zoneId: identity.zoneId,
+			},
+			{ kind: 'heartbeat' },
+			{ kind: 'heartbeat', payload: { observedAtMs: 1 } },
+		);
+		expect(observedPeerSequence).toBe(1);
 	});
 
-	it('does not reserve hard peer sequence slots for latest-wins advisory sends', async () => {
+	it('does not allocate peer sequence for refused egress', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
 		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
@@ -855,23 +941,64 @@ describe('gateway control service', () => {
 			transports: ['websocket'],
 		});
 		activeSockets.push(client);
+		let observedPeerSequence: number | undefined;
+		client.on('control:message', (envelope: unknown, _payload: unknown, acknowledge) => {
+			observedPeerSequence = (envelope as ControlEnvelope).sequence;
+			acknowledge({ received: true });
+		});
 		await waitForSocketConnect(client);
 
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
 
-		expect(fixture.service.nextPeerSequence({ deliveryPolicy: 'latest_wins' })).toBe(1);
-		expect(fixture.service.nextPeerSequence({ deliveryPolicy: 'latest_wins' })).toBe(1);
-		expect(fixture.service.nextPeerSequence()).toBe(1);
-		expect(fixture.service.nextPeerSequence()).toBe(2);
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		const refusedEnvelope = gatewayLeaseCreateEnvelopeFor(acceptedSession, 99);
+		await expect(
+			fixture.service.emitApplicationMessage({
+				buildEnvelope: ({ sequence }) => ({ ...refusedEnvelope, sequence }),
+				domainMessage: { kind: 'command', operation: 'lease_create' },
+				payload: GatewayControlRpcMessageSchema.parse({
+					kind: 'command',
+					operation: 'lease_create',
+					payload: {
+						callerContext: {
+							callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+						},
+					},
+				}),
+			}),
+		).rejects.toThrow(/stable_principal_required/u);
+		await emitTestApplicationMessage(
+			fixture.service,
+			{
+				bootId: acceptedSession.bootId,
+				connectionId: acceptedSession.connectionId,
+				controllerEpoch: identity.controllerEpoch,
+				createdAtMs: 1,
+				deliveryPolicy: 'critical_idempotent',
+				domain: 'gateway_control',
+				kind: 'heartbeat',
+				messageId: '10000000-0000-4000-8000-000000000001',
+				peerId: identity.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+				sequence: 99,
+				sessionId: acceptedSession.sessionId,
+				zoneId: identity.zoneId,
+			},
+			{ kind: 'heartbeat' },
+			{ kind: 'heartbeat', payload: { observedAtMs: 1 } },
+		);
+		expect(observedPeerSequence).toBe(1);
 	});
 
-	it('releases an unreceipted priority peer sequence for retry', async () => {
+	it('fences the attachment after an allocated frame receipt is rejected', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
 		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
@@ -900,15 +1027,17 @@ describe('gateway control service', () => {
 		});
 		await waitForSocketConnect(client);
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const heartbeatEnvelope = {
-			bootId: identity.bootId,
+			bootId: acceptedSession.bootId,
 			connectionId: acceptedSession.connectionId,
 			controllerEpoch: identity.controllerEpoch,
 			createdAtMs: 1,
@@ -918,13 +1047,15 @@ describe('gateway control service', () => {
 			messageId: '10000000-0000-4000-8000-000000000001',
 			peerId: identity.peerId,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
-			sequence: fixture.service.nextPeerSequence(),
+			sequence: nextTestPeerSequence(fixture.service),
 			sessionId: acceptedSession.sessionId,
 			zoneId: identity.zoneId,
 		} satisfies ControlEnvelope;
 
+		const disconnected = waitForSocketDisconnect(client);
 		await expect(
-			fixture.service.emitApplicationMessage(
+			emitTestApplicationMessage(
+				fixture.service,
 				heartbeatEnvelope,
 				{ kind: 'heartbeat' },
 				{
@@ -933,25 +1064,11 @@ describe('gateway control service', () => {
 				},
 			),
 		).rejects.toThrow(/test priority receipt rejected/u);
-		expect(fixture.service.nextPeerSequence()).toBe(1);
-		await expect(
-			fixture.service.emitApplicationMessage(
-				{
-					...heartbeatEnvelope,
-					messageId: '10000000-0000-4000-8000-000000000002',
-					sequence: fixture.service.nextPeerSequence(),
-				},
-				{ kind: 'heartbeat' },
-				{
-					kind: 'heartbeat',
-					payload: { observedAtMs: 2 },
-				},
-			),
-		).resolves.toEqual({ received: true });
-		expect(observedHeartbeatCount).toBe(2);
+		await disconnected;
+		expect(observedHeartbeatCount).toBe(1);
 	});
 
-	it('keeps the socket open for a fresh hello after resync_required', async () => {
+	it('accepts a higher attachment generation without resync continuity', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
 		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
@@ -969,53 +1086,46 @@ describe('gateway control service', () => {
 
 		const firstHelloResponse = ControlHelloResponseSchema.parse(
 			await client.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+				attachmentGeneration: nextTestAttachmentGeneration(),
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
-		const acceptedSession = await fixture.service.getAcceptedSession();
-		await expect(
-			client
-				.timeout(1_000)
-				.emitWithAck(
-					'control:message',
-					gatewayCommandResultEnvelopeFor(gatewayLeaseCreateEnvelopeFor(acceptedSession)),
-					{
-						kind: 'command_result',
-						operation: 'lease_create',
-						payload: gatewayLeaseOkResponsePayloadFor('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
-					},
-				),
-		).resolves.toEqual({ received: true });
-
-		const resyncResponse = ControlHelloResponseSchema.parse(
-			await client.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
+		expect(firstHelloResponse.outcome).toBe('accepted');
+		const replacementCredential = await fetchIssuedCredential(
+			port,
+			fixture.readyHeadersFor({ requestId: '77777777-7777-4777-8777-777777777777' }),
+		);
+		const replacementClient = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(replacementCredential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(replacementClient);
+		await waitForSocketConnect(replacementClient);
+		const incumbentDisconnected = waitForSocketDisconnect(client);
+		const replacementResponse = ControlHelloResponseSchema.parse(
+			await replacementClient.timeout(1_000).emitWithAck('control:hello', {
+				attachmentGeneration: nextTestAttachmentGeneration(),
 				controllerEpoch: identity.controllerEpoch,
 				domain: 'gateway_control',
-				lastSeenControllerSequence: 0,
-				lastSeenPeerSequence: 0,
+				gatewayEpoch: identity.generationId,
 				peerId: identity.peerId,
-				previousSessionId: firstHelloResponse.sessionId,
+				processEpoch: identity.processEpoch,
 				protocolVersion: CONTROL_PROTOCOL_VERSION,
 			} satisfies ControlHello),
 		);
-		expect(resyncResponse.outcome).toBe('resync_required');
-		expect(client.connected).toBe(true);
-
-		const freshHelloResponse = ControlHelloResponseSchema.parse(
-			await client.timeout(1_000).emitWithAck('control:hello', {
-				bootId: identity.bootId,
-				controllerEpoch: identity.controllerEpoch,
-				domain: 'gateway_control',
-				peerId: identity.peerId,
-				protocolVersion: CONTROL_PROTOCOL_VERSION,
-			} satisfies ControlHello),
-		);
-		expect(freshHelloResponse.outcome).toBe('accepted');
+		expect(replacementResponse.outcome).toBe('accepted');
+		await incumbentDisconnected;
+		expect(replacementClient.connected).toBe(true);
 	});
 
 	it('rejects expired credentials and query-string credential material before 101', async () => {
@@ -1089,10 +1199,12 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await expect(
@@ -1157,17 +1269,19 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const gatewayLeaseCreateEnvelope = gatewayLeaseCreateEnvelopeFor(
 			acceptedSession,
-			fixture.service.nextPeerSequence(),
+			nextTestPeerSequence(fixture.service),
 		);
 
 		const serviceWithRpc = fixture.service as GatewayControlService & {
@@ -1188,7 +1302,8 @@ describe('gateway control service', () => {
 		};
 
 		await expect(
-			serviceWithRpc.emitApplicationMessage(
+			emitTestApplicationMessage(
+				serviceWithRpc,
 				gatewayLeaseCreateEnvelope,
 				{ kind: 'command', operation: 'lease_create' },
 				gatewayMessage,
@@ -1247,38 +1362,39 @@ describe('gateway control service', () => {
 		});
 		await waitForSocketConnect(client);
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const gatewayLeaseCreateEnvelope = gatewayLeaseCreateEnvelopeFor(
 			acceptedSession,
-			fixture.service.nextPeerSequence(),
+			nextTestPeerSequence(fixture.service),
 		);
 
 		let commandResolvedBeforeRelease = false;
-		const commandResultPromise = fixture.service
-			.emitApplicationMessage(
-				gatewayLeaseCreateEnvelope,
-				{ kind: 'command', operation: 'lease_create' },
-				{
-					kind: 'command',
-					operation: 'lease_create',
-					payload: {
-						callerContext: {
-							callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-						},
+		const commandResultPromise = emitTestApplicationMessage(
+			fixture.service,
+			gatewayLeaseCreateEnvelope,
+			{ kind: 'command', operation: 'lease_create' },
+			{
+				kind: 'command',
+				operation: 'lease_create',
+				payload: {
+					callerContext: {
+						callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
 					},
 				},
-				{ commandResultTimeoutMs: 500 },
-			)
-			.then((result) => {
-				commandResolvedBeforeRelease = true;
-				return result;
-			});
+			},
+			{ commandResultTimeoutMs: 500 },
+		).then((result) => {
+			commandResolvedBeforeRelease = true;
+			return result;
+		});
 		await transportReceiptObserved;
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		expect(commandResolvedBeforeRelease).toBe(false);
@@ -1290,6 +1406,159 @@ describe('gateway control service', () => {
 			kind: 'command_result',
 			operation: 'lease_create',
 		});
+	});
+
+	it('fences the accepted session when a receipted command result times out', async () => {
+		const fixture = createFixture();
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		client.on('control:message', (_envelope: unknown, _payload: unknown, acknowledge) => {
+			acknowledge({ received: true });
+		});
+		await waitForSocketConnect(client);
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			attachmentGeneration: nextTestAttachmentGeneration(),
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
+			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		const disconnected = waitForSocketDisconnect(client);
+		await expect(
+			emitTestApplicationMessage(
+				fixture.service,
+				gatewayLeaseCreateEnvelopeFor(acceptedSession),
+				{ kind: 'command', operation: 'lease_create' },
+				{
+					kind: 'command',
+					operation: 'lease_create',
+					payload: {
+						callerContext: {
+							callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+						},
+					},
+				},
+				{ commandResultTimeoutMs: 20 },
+			),
+		).rejects.toThrow(/gateway control command result timed out/u);
+		await disconnected;
+	});
+
+	it('refuses disconnected egress immediately without accumulating session waiters', async () => {
+		const fixture = createFixture();
+		const disconnectedSession = {
+			...identity,
+			attachmentGeneration: 1,
+			bootId: identity.processEpoch,
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			gatewayEpoch: identity.generationId,
+			sessionId: '33333333-3333-4333-8333-333333333333',
+		} satisfies GatewayControlAcceptedSession;
+		const floodCount = CONTROL_QUEUE_LIMITS.queueMessageCap * 2;
+		let settledCount = 0;
+		const disconnectedErrors: unknown[] = [];
+		const disconnectedSubmissions = Array.from({ length: floodCount }, (_unused, index) =>
+			emitTestApplicationMessage(
+				fixture.service,
+				{
+					...gatewayLeaseCreateEnvelopeFor(disconnectedSession),
+					commandId: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+					idempotencyKey: `disconnected-${String(index)}`,
+					messageId: `20000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+				},
+				{ kind: 'command', operation: 'lease_create' },
+				{
+					kind: 'command',
+					operation: 'lease_create',
+					payload: {
+						callerContext: {
+							callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+						},
+					},
+				},
+			).then(
+				() => {
+					settledCount += 1;
+				},
+				(error: unknown) => {
+					disconnectedErrors.push(error);
+					settledCount += 1;
+				},
+			),
+		);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(settledCount).toBe(floodCount);
+		await Promise.all(disconnectedSubmissions);
+		expect(disconnectedErrors).toHaveLength(floodCount);
+		expect(
+			disconnectedErrors.every(
+				(error) =>
+					error instanceof GatewayControlSessionUnavailableError &&
+					error.code === 'gateway_control_not_connected',
+			),
+		).toBe(true);
+
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		client.on('control:message', (_envelope: unknown, _payload: unknown, acknowledge) => {
+			acknowledge({ received: true });
+		});
+		await waitForSocketConnect(client);
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			attachmentGeneration: nextTestAttachmentGeneration(),
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
+			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		await expect(
+			emitTestApplicationMessage(
+				fixture.service,
+				{
+					bootId: acceptedSession.bootId,
+					connectionId: acceptedSession.connectionId,
+					controllerEpoch: identity.controllerEpoch,
+					createdAtMs: 1,
+					deliveryPolicy: 'critical_idempotent',
+					domain: 'gateway_control',
+					kind: 'heartbeat',
+					messageId: '30000000-0000-4000-8000-000000000001',
+					peerId: identity.peerId,
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence: 99,
+					sessionId: acceptedSession.sessionId,
+					zoneId: identity.zoneId,
+				},
+				{ kind: 'heartbeat' },
+				{ kind: 'heartbeat', payload: { observedAtMs: 1 } },
+			),
+		).resolves.toEqual({ received: true });
 	});
 
 	it('does not resolve gateway command waiters from stale-session command_result frames', async () => {
@@ -1327,20 +1596,24 @@ describe('gateway control service', () => {
 		});
 		await waitForSocketConnect(client);
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const gatewayLeaseCreateEnvelope = gatewayLeaseCreateEnvelopeFor(
 			acceptedSession,
-			fixture.service.nextPeerSequence(),
+			nextTestPeerSequence(fixture.service),
 		);
+		const disconnected = waitForSocketDisconnect(client);
 
 		await expect(
-			fixture.service.emitApplicationMessage(
+			emitTestApplicationMessage(
+				fixture.service,
 				gatewayLeaseCreateEnvelope,
 				{ kind: 'command', operation: 'lease_create' },
 				{
@@ -1355,6 +1628,7 @@ describe('gateway control service', () => {
 				{ commandResultTimeoutMs: 50 },
 			),
 		).rejects.toThrow(/gateway control command result timed out/u);
+		await disconnected;
 	});
 
 	it('rejects outbound command promises promptly when the accepted socket disconnects', async () => {
@@ -1384,18 +1658,21 @@ describe('gateway control service', () => {
 		);
 		await waitForSocketConnect(client);
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const gatewayLeaseCreateEnvelope = gatewayLeaseCreateEnvelopeFor(
 			acceptedSession,
-			fixture.service.nextPeerSequence(),
+			nextTestPeerSequence(fixture.service),
 		);
-		const commandResult = fixture.service.emitApplicationMessage(
+		const commandResult = emitTestApplicationMessage(
+			fixture.service,
 			gatewayLeaseCreateEnvelope,
 			{ kind: 'command', operation: 'lease_create' },
 			{
@@ -1422,11 +1699,7 @@ describe('gateway control service', () => {
 			applicationMessageHandler: {
 				handle: async ({ envelope, payload }) => {
 					handledPayloads.push(payload);
-					return {
-						kind: 'command_result',
-						operation: 'lease_create',
-						payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
-					};
+					return gatewayControlPingResultFor(envelope.messageId);
 				},
 				messageIdentity: ({ payload }) => {
 					const message = payload as { readonly kind: 'command'; readonly operation: string };
@@ -1465,40 +1738,28 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
-		const acceptedSession = await fixture.service.getAcceptedSession();
-		const envelope = gatewayLeaseCreateEnvelopeFor(acceptedSession);
-		const gatewayMessage = {
-			kind: 'command',
-			operation: 'lease_create',
-			payload: {
-				callerContext: {
-					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-				},
-			},
-		};
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		const envelope = gatewayControlPingEnvelopeFor(acceptedSession);
+		const gatewayMessage = gatewayControlPingMessage();
 
 		await expect(
 			client.timeout(1_000).emitWithAck('control:message', envelope, gatewayMessage),
 		).resolves.toEqual({ received: true });
 		await commandResultObserved;
 		expect(handledPayloads).toEqual([gatewayMessage]);
-		expect(observedCommandResults).toEqual([
-			{
-				kind: 'command_result',
-				operation: 'lease_create',
-				payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
-			},
-		]);
+		expect(observedCommandResults).toEqual([gatewayControlPingResultFor(envelope.messageId)]);
 	});
 
-	it('emits controller-originated gateway command_result replies in inbound sequence order', async () => {
+	it('allocates contiguous result sequences in handler completion order', async () => {
 		let releaseFirstHandler: (() => void) | undefined;
 		const firstHandlerReleased = new Promise<void>((resolve) => {
 			releaseFirstHandler = resolve;
@@ -1517,11 +1778,7 @@ describe('gateway control service', () => {
 					} else {
 						resolveSecondHandlerStarted?.();
 					}
-					return {
-						kind: 'command_result',
-						operation: 'lease_create',
-						payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
-					};
+					return gatewayControlPingResultFor(envelope.messageId);
 				},
 				messageIdentity: ({ payload }) => {
 					const message = payload as { readonly kind: 'command'; readonly operation: string };
@@ -1564,29 +1821,23 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
-		const firstEnvelope = gatewayLeaseCreateEnvelopeFor(acceptedSession, 1);
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		const firstEnvelope = gatewayControlPingEnvelopeFor(acceptedSession, 1);
 		const secondEnvelope = {
-			...gatewayLeaseCreateEnvelopeFor(acceptedSession, 2),
+			...gatewayControlPingEnvelopeFor(acceptedSession, 2),
 			commandId: '55555555-5555-4555-8555-555555555555',
 			idempotencyKey: 'lease-create-command-key-2',
 			messageId: '33333333-3333-4333-8333-333333333333',
 		} satisfies ControlEnvelope;
-		const gatewayMessage = {
-			kind: 'command',
-			operation: 'lease_create',
-			payload: {
-				callerContext: {
-					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-				},
-			},
-		};
+		const gatewayMessage = gatewayControlPingMessage();
 
 		await client.timeout(1_000).emitWithAck('control:message', firstEnvelope, gatewayMessage);
 		await client.timeout(1_000).emitWithAck('control:message', secondEnvelope, gatewayMessage);
@@ -1600,37 +1851,19 @@ describe('gateway control service', () => {
 
 		expect(observedEnvelopes.map((envelope) => envelope.sequence)).toEqual([1, 2]);
 		expect(observedCommandResults).toEqual([
-			{
-				kind: 'command_result',
-				operation: 'lease_create',
-				payload: gatewayLeaseOkResponsePayloadFor(firstEnvelope.messageId),
-			},
-			{
-				kind: 'command_result',
-				operation: 'lease_create',
-				payload: gatewayLeaseOkResponsePayloadFor(secondEnvelope.messageId),
-			},
+			gatewayControlPingResultFor(secondEnvelope.messageId),
+			gatewayControlPingResultFor(firstEnvelope.messageId),
 		]);
 		expect(client.connected).toBe(true);
 	});
 
-	it('does not let no-reply gateway events block later command_result replies', async () => {
-		let releaseEventHandler: (() => void) | undefined;
-		const eventHandlerReleased = new Promise<void>((resolve) => {
-			releaseEventHandler = resolve;
-		});
+	it('fences controller-originated gateway-only events before handler execution', async () => {
+		const handledPayloads: unknown[] = [];
 		const fixture = createFixture(() => 1_000, {
 			applicationMessageHandler: {
-				handle: async ({ envelope }) => {
-					if (envelope.kind === 'event') {
-						await eventHandlerReleased;
-						return undefined;
-					}
-					return {
-						kind: 'command_result',
-						operation: 'lease_create',
-						payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
-					};
+				handle: async ({ payload }) => {
+					handledPayloads.push(payload);
+					return undefined;
 				},
 				messageIdentity: ({ payload }) => {
 					const message = payload as {
@@ -1653,39 +1886,25 @@ describe('gateway control service', () => {
 			transports: ['websocket'],
 		});
 		activeSockets.push(client);
-		const observedCommandResults: unknown[] = [];
-		let resolveCommandResultObserved: (() => void) | undefined;
-		const commandResultObserved = new Promise<void>((resolve) => {
-			resolveCommandResultObserved = resolve;
-		});
-		client.on(
-			'control:message',
-			(envelope: unknown, payload: unknown, acknowledge: (response: unknown) => void) => {
-				if ((envelope as ControlEnvelope).kind === 'command_result') {
-					observedCommandResults.push(payload);
-					resolveCommandResultObserved?.();
-				}
-				acknowledge({ received: true });
-			},
-		);
 		await waitForSocketConnect(client);
 
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const eventEnvelope = gatewayRuntimeStatusEnvelopeFor(
 			acceptedSession,
 			1,
 			'10000000-0000-4000-8000-000000000001',
 		);
-		const commandEnvelope = gatewayLeaseCreateEnvelopeFor(acceptedSession, 1);
-
-		await client.timeout(1_000).emitWithAck('control:message', eventEnvelope, {
+		const disconnected = waitForSocketDisconnect(client);
+		client.emit('control:message', eventEnvelope, {
 			kind: 'event',
 			operation: 'runtime_status',
 			payload: {
@@ -1694,25 +1913,8 @@ describe('gateway control service', () => {
 				statusKind: 'openclaw-runtime',
 			},
 		});
-		await client.timeout(1_000).emitWithAck('control:message', commandEnvelope, {
-			kind: 'command',
-			operation: 'lease_create',
-			payload: {
-				callerContext: {
-					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-				},
-			},
-		});
-
-		await commandResultObserved;
-		expect(observedCommandResults).toEqual([
-			{
-				kind: 'command_result',
-				operation: 'lease_create',
-				payload: gatewayLeaseOkResponsePayloadFor(commandEnvelope.messageId),
-			},
-		]);
-		releaseEventHandler?.();
+		await disconnected;
+		expect(handledPayloads).toEqual([]);
 	});
 
 	it('returns a failed command_result when the gateway handler throws after ack', async () => {
@@ -1773,25 +1975,18 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
-		const acceptedSession = await fixture.service.getAcceptedSession();
-		const envelope = gatewayLeaseCreateEnvelopeFor(acceptedSession);
-		const gatewayMessage = {
-			kind: 'command',
-			operation: 'lease_create',
-			payload: {
-				callerContext: {
-					callerContextId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-				},
-				gatewayWorkspaceDir: '/workspace',
-			},
-		};
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		const envelope = gatewayControlPingEnvelopeFor(acceptedSession);
+		const gatewayMessage = gatewayControlPingMessage();
 
 		await expect(
 			client.timeout(1_000).emitWithAck('control:message', envelope, gatewayMessage),
@@ -1800,7 +1995,7 @@ describe('gateway control service', () => {
 		expect(observedCommandResults).toEqual([
 			{
 				kind: 'command_result',
-				operation: 'lease_create',
+				operation: 'control_ping',
 				payload: {
 					error: {
 						errorClass: 'test_gateway_handler_failed',
@@ -1817,11 +2012,7 @@ describe('gateway control service', () => {
 	it('closes when a reserved handler response receipt is rejected', async () => {
 		const fixture = createFixture(() => 1_000, {
 			applicationMessageHandler: {
-				handle: async ({ envelope }) => ({
-					kind: 'command_result',
-					operation: 'lease_create',
-					payload: gatewayLeaseOkResponsePayloadFor(envelope.messageId),
-				}),
+				handle: async ({ envelope }) => gatewayControlPingResultFor(envelope.messageId),
 				messageIdentity: ({ payload }) => {
 					const message = payload as { readonly kind: 'command'; readonly operation: string };
 					return { kind: message.kind, operation: message.operation };
@@ -1860,30 +2051,24 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
-		const acceptedSession = await fixture.service.getAcceptedSession();
-		const gatewayMessage = {
-			kind: 'command',
-			operation: 'lease_create',
-			payload: {
-				callerContext: {
-					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-				},
-			},
-		};
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		const gatewayMessage = gatewayControlPingMessage();
 
 		await expect(
 			client
 				.timeout(1_000)
 				.emitWithAck(
 					'control:message',
-					gatewayLeaseCreateEnvelopeFor(acceptedSession),
+					gatewayControlPingEnvelopeFor(acceptedSession),
 					gatewayMessage,
 				),
 		).resolves.toEqual({ received: true });
@@ -1893,7 +2078,7 @@ describe('gateway control service', () => {
 				.timeout(100)
 				.emitWithAck(
 					'control:message',
-					gatewayLeaseCreateEnvelopeFor(acceptedSession, 2),
+					gatewayControlPingEnvelopeFor(acceptedSession, 2),
 					gatewayMessage,
 				),
 		).rejects.toThrow();
@@ -1963,19 +2148,21 @@ describe('gateway control service', () => {
 		);
 		await waitForSocketConnect(client);
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const firstEnvelope = gatewayLeaseCreateEnvelopeFor(
 			acceptedSession,
-			fixture.service.nextPeerSequence(),
+			nextTestPeerSequence(fixture.service),
 		);
 		const secondEnvelope = {
-			...gatewayLeaseCreateEnvelopeFor(acceptedSession, fixture.service.nextPeerSequence()),
+			...gatewayLeaseCreateEnvelopeFor(acceptedSession, nextTestPeerSequence(fixture.service)),
 			commandId: '55555555-5555-4555-8555-555555555555',
 			idempotencyKey: 'lease-create-command-key-2',
 			messageId: '33333333-3333-4333-8333-333333333333',
@@ -1990,12 +2177,14 @@ describe('gateway control service', () => {
 			},
 		};
 
-		const firstSend = fixture.service.emitApplicationMessage(
+		const firstSend = emitTestApplicationMessage(
+			fixture.service,
 			firstEnvelope,
 			{ kind: 'command', operation: 'lease_create' },
 			gatewayMessage,
 		);
-		const secondSend = fixture.service.emitApplicationMessage(
+		const secondSend = emitTestApplicationMessage(
+			fixture.service,
 			secondEnvelope,
 			{ kind: 'command', operation: 'lease_create' },
 			gatewayMessage,
@@ -2046,30 +2235,36 @@ describe('gateway control service', () => {
 			transports: ['websocket'],
 		});
 		activeSockets.push(client);
+		const observedSequences: number[] = [];
 		const observedPayloads: unknown[] = [];
 		const observedMessage = new Promise<void>((resolve) => {
-			client.on('control:message', (_envelope: unknown, payload: unknown) => {
+			client.on('control:message', (envelope: unknown, payload: unknown, acknowledge) => {
+				observedSequences.push((envelope as ControlEnvelope).sequence);
 				observedPayloads.push(payload);
+				acknowledge({ received: true });
 				resolve();
 			});
 		});
 		await waitForSocketConnect(client);
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const floodCount = CONTROL_QUEUE_LIMITS.queueMessageCap * 2;
 
-		await Promise.all(
+		const submissionResults = await Promise.allSettled(
 			Array.from({ length: floodCount }, (_unused, eventIndex) =>
-				fixture.service.emitApplicationMessage(
+				emitTestApplicationMessage(
+					fixture.service,
 					gatewayRuntimeStatusEnvelopeFor(
 						acceptedSession,
-						fixture.service.nextPeerSequence(),
+						nextTestPeerSequence(fixture.service),
 						`10000000-0000-4000-8000-${String(eventIndex + 1).padStart(12, '0')}`,
 					),
 					{ kind: 'event', operation: 'runtime_status' },
@@ -2086,6 +2281,31 @@ describe('gateway control service', () => {
 			),
 		);
 		await observedMessage;
+		expect(submissionResults.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+		expect(submissionResults.filter((result) => result.status === 'rejected')).toHaveLength(
+			floodCount - 1,
+		);
+		await emitTestApplicationMessage(
+			fixture.service,
+			{
+				bootId: acceptedSession.bootId,
+				connectionId: acceptedSession.connectionId,
+				controllerEpoch: identity.controllerEpoch,
+				createdAtMs: floodCount + 1,
+				deliveryPolicy: 'critical_idempotent',
+				domain: 'gateway_control',
+				kind: 'heartbeat',
+				messageId: '30000000-0000-4000-8000-000000000001',
+				peerId: identity.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+				sequence: 999,
+				sessionId: acceptedSession.sessionId,
+				zoneId: identity.zoneId,
+			},
+			{ kind: 'heartbeat' },
+			{ kind: 'heartbeat', payload: { observedAtMs: floodCount + 1 } },
+		);
+		expect(observedSequences).toEqual([1, 2]);
 
 		expect(observedPayloads).toEqual([
 			{
@@ -2097,6 +2317,7 @@ describe('gateway control service', () => {
 					statusKind: 'openclaw-runtime',
 				},
 			},
+			{ kind: 'heartbeat', payload: { observedAtMs: floodCount + 1 } },
 		]);
 	});
 
@@ -2126,38 +2347,39 @@ describe('gateway control service', () => {
 		});
 		await waitForSocketConnect(client);
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		let publishResolved = false;
 
-		const publishPromise = fixture.service
-			.emitApplicationMessage(
-				gatewayRuntimeStatusEnvelopeFor(
-					acceptedSession,
-					fixture.service.nextPeerSequence({ deliveryPolicy: 'latest_wins' }),
-					'10000000-0000-4000-8000-000000000101',
-				),
-				{ kind: 'event', operation: 'runtime_status' },
-				{
-					kind: 'event',
-					operation: 'runtime_status',
-					payload: {
-						findings: [{ id: 'runtime-ready', ok: true }],
-						observedAtMs: 1,
-						statusKind: 'openclaw-runtime',
-					},
+		const publishPromise = emitTestApplicationMessage(
+			fixture.service,
+			gatewayRuntimeStatusEnvelopeFor(
+				acceptedSession,
+				nextTestPeerSequence(fixture.service),
+				'10000000-0000-4000-8000-000000000101',
+			),
+			{ kind: 'event', operation: 'runtime_status' },
+			{
+				kind: 'event',
+				operation: 'runtime_status',
+				payload: {
+					findings: [{ id: 'runtime-ready', ok: true }],
+					observedAtMs: 1,
+					statusKind: 'openclaw-runtime',
 				},
-				{ waitForReceipt: true },
-			)
-			.then((receipt) => {
-				publishResolved = true;
-				return receipt;
-			});
+			},
+			{ waitForReceipt: true },
+		).then((receipt) => {
+			publishResolved = true;
+			return receipt;
+		});
 
 		await observedRuntimeStatus;
 		expect(publishResolved).toBe(false);
@@ -2166,7 +2388,7 @@ describe('gateway control service', () => {
 		expect(publishResolved).toBe(true);
 	});
 
-	it('keeps critical controller messages admissible after lossy advisory sequence gaps', async () => {
+	it('fences advisory sequence gaps in contiguous mode before handler execution', async () => {
 		const handledPayloads: unknown[] = [];
 		const fixture = createFixture(() => 1_000, {
 			applicationMessageHandler: {
@@ -2198,13 +2420,15 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		await client.timeout(1_000).emitWithAck('control:hello', {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const lossyEnvelope = gatewayRuntimeStatusEnvelopeFor(
 			acceptedSession,
 			3,
@@ -2220,35 +2444,140 @@ describe('gateway control service', () => {
 			},
 		};
 
-		await expect(
-			client.timeout(1_000).emitWithAck('control:message', lossyEnvelope, lossyPayload),
-		).resolves.toEqual({ received: true });
+		const disconnected = waitForSocketDisconnect(client);
+		client.emit('control:message', lossyEnvelope, lossyPayload);
+		await disconnected;
+		expect(handledPayloads).toEqual([]);
+	});
+
+	it('advances contiguous advisory sequence before the next critical command', async () => {
+		const handledPayloads: unknown[] = [];
+		const fixture = createFixture(() => 1_000, {
+			applicationMessageHandler: {
+				handle: async ({ envelope, payload }) => {
+					handledPayloads.push(payload);
+					return {
+						kind: 'command_result',
+						operation: 'recovery_command',
+						payload: {
+							responseToMessageId: envelope.messageId,
+							result: 'ok',
+						},
+					};
+				},
+				messageIdentity: ({ payload }) => {
+					const message = payload as { readonly kind: 'command'; readonly operation: string };
+					return { kind: message.kind, operation: message.operation };
+				},
+			},
+		});
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		let resolveCommandResultObserved: (() => void) | undefined;
+		const commandResultObserved = new Promise<void>((resolve) => {
+			resolveCommandResultObserved = resolve;
+		});
+		client.on('control:message', (envelope: unknown, _payload: unknown, acknowledge) => {
+			if ((envelope as ControlEnvelope).kind === 'command_result') {
+				resolveCommandResultObserved?.();
+			}
+			acknowledge({ received: true });
+		});
+		await waitForSocketConnect(client);
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			attachmentGeneration: nextTestAttachmentGeneration(),
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
+			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		const advisoryEnvelope = {
+			...gatewayControlPingEnvelopeFor(acceptedSession, 1),
+			deliveryPolicy: 'latest_wins',
+		} satisfies ControlEnvelope;
 		await expect(
 			client
 				.timeout(1_000)
-				.emitWithAck('control:message', gatewayLeaseCreateEnvelopeFor(acceptedSession, 1), {
-					kind: 'command',
-					operation: 'lease_create',
-					payload: {
-						callerContext: {
-							callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-						},
-					},
-				}),
+				.emitWithAck('control:message', advisoryEnvelope, gatewayControlPingMessage()),
+		).resolves.toMatchObject({ received: false });
+
+		const recoveryEnvelope = {
+			...gatewayControlPingEnvelopeFor(acceptedSession, 2),
+			deliveryPolicy: 'critical_idempotent',
+			idempotencyKey: 'recovery-command-key',
+			operation: 'recovery_command',
+		} satisfies ControlEnvelope;
+		const recoveryMessage = {
+			kind: 'command',
+			operation: 'recovery_command',
+			payload: { action: 'refresh_runtime_status' },
+		};
+		await expect(
+			client.timeout(1_000).emitWithAck('control:message', recoveryEnvelope, recoveryMessage),
 		).resolves.toEqual({ received: true });
+		await commandResultObserved;
 		expect(client.connected).toBe(true);
-		expect(handledPayloads).toEqual([
-			lossyPayload,
-			{
-				kind: 'command',
-				operation: 'lease_create',
-				payload: {
-					callerContext: {
-						callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-					},
+		expect(handledPayloads).toEqual([recoveryMessage]);
+	});
+
+	it('fences an inbound frame that omits the mandatory receipt callback', async () => {
+		const handledPayloads: unknown[] = [];
+		const fixture = createFixture(() => 1_000, {
+			applicationMessageHandler: {
+				handle: async ({ payload }) => {
+					handledPayloads.push(payload);
+					return undefined;
+				},
+				messageIdentity: ({ payload }) => {
+					const message = payload as { readonly kind: 'command'; readonly operation: string };
+					return { kind: message.kind, operation: message.operation };
 				},
 			},
-		]);
+		});
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		await waitForSocketConnect(client);
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			attachmentGeneration: nextTestAttachmentGeneration(),
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
+			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
+		const disconnected = waitForSocketDisconnect(client);
+		client.emit(
+			'control:message',
+			gatewayControlPingEnvelopeFor(acceptedSession),
+			gatewayControlPingMessage(),
+		);
+		await disconnected;
+		expect(handledPayloads).toEqual([]);
 	});
 
 	it('rejects malformed gateway control messages without a positive receipt', async () => {
@@ -2280,14 +2609,16 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const envelope = gatewayLeaseCreateEnvelopeFor(acceptedSession);
 
 		await expect(
@@ -2321,14 +2652,16 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const envelope = gatewayLeaseCreateEnvelopeFor(acceptedSession);
 		const gatewayMessage = GatewayControlRpcMessageSchema.parse({
 			kind: 'command',
@@ -2378,14 +2711,16 @@ describe('gateway control service', () => {
 		await waitForSocketConnect(client);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
-		const acceptedSession = await fixture.service.getAcceptedSession();
+		const acceptedSession = await fixture.service.waitForAcceptedSession();
 		const envelope = gatewayLeaseCreateEnvelopeFor(acceptedSession, 2);
 		const gatewayMessage = {
 			kind: 'command',
@@ -2403,6 +2738,64 @@ describe('gateway control service', () => {
 		expect(handledPayloads).toEqual([]);
 	});
 
+	it('bounds accepted-session waiters and resolves admitted waiters after connection', async () => {
+		const fixture = createFixture();
+		const waiterLimit = CONTROL_QUEUE_LIMITS.queueMessageCap;
+		const admittedWaiters = Array.from({ length: waiterLimit }, () =>
+			fixture.service.waitForAcceptedSession(),
+		);
+		let overflowError: unknown;
+		const overflowSettlement = fixture.service.waitForAcceptedSession().catch((error: unknown) => {
+			overflowError = error;
+		});
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(overflowError).toBeInstanceOf(GatewayControlSessionWaiterOverflowError);
+		expect(overflowError).toMatchObject({
+			code: 'gateway_control_session_waiter_overflow',
+			limit: waiterLimit,
+		});
+		await overflowSettlement;
+
+		const port = await listenWithService(fixture.service);
+		const credential = await fetchIssuedCredential(port, fixture.readyHeadersFor());
+		const client = createSocketIoClient(`ws://127.0.0.1:${String(port)}`, {
+			addTrailingSlash: false,
+			extraHeaders: fixture.clientHeadersFor(credential),
+			forceNew: true,
+			path: GATEWAY_CONTROL_SOCKET_PATH,
+			reconnection: false,
+			timeout: 2_000,
+			transports: ['websocket'],
+		});
+		activeSockets.push(client);
+		await waitForSocketConnect(client);
+		await client.timeout(1_000).emitWithAck('control:hello', {
+			attachmentGeneration: nextTestAttachmentGeneration(),
+			controllerEpoch: identity.controllerEpoch,
+			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
+			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+		} satisfies ControlHello);
+		const acceptedSessions = await Promise.all(admittedWaiters);
+		expect(acceptedSessions).toHaveLength(waiterLimit);
+		expect(
+			acceptedSessions.every(
+				(session) => session.connectionId === acceptedSessions[0]?.connectionId,
+			),
+		).toBe(true);
+	});
+
+	it('settles accepted-session waiters when the service closes before connection', async () => {
+		const fixture = createFixture();
+		const acceptedSessionPromise = fixture.service.waitForAcceptedSession();
+		await fixture.service.close();
+		await expect(acceptedSessionPromise).rejects.toBeInstanceOf(
+			GatewayControlSessionUnavailableError,
+		);
+	});
+
 	it('does not expose an accepted control session before validated hello completes', async () => {
 		const fixture = createFixture();
 		const port = await listenWithService(fixture.service);
@@ -2414,7 +2807,7 @@ describe('gateway control service', () => {
 			): Promise<unknown>;
 		};
 		let acceptedSessionResolved = false;
-		const acceptedSessionPromise = fixture.service.getAcceptedSession().then((session) => {
+		const acceptedSessionPromise = fixture.service.waitForAcceptedSession().then((session) => {
 			acceptedSessionResolved = true;
 			return session;
 		});
@@ -2453,17 +2846,19 @@ describe('gateway control service', () => {
 		expect(acceptedSessionResolved).toBe(false);
 
 		const helloPayload = {
-			bootId: identity.bootId,
+			attachmentGeneration: nextTestAttachmentGeneration(),
 			controllerEpoch: identity.controllerEpoch,
 			domain: 'gateway_control',
+			gatewayEpoch: identity.generationId,
 			peerId: identity.peerId,
+			processEpoch: identity.processEpoch,
 			protocolVersion: CONTROL_PROTOCOL_VERSION,
 		} satisfies ControlHello;
 		await client.timeout(1_000).emitWithAck('control:hello', helloPayload);
 		const acceptedSession = await acceptedSessionPromise;
 		const gatewayLeaseCreateEnvelope = gatewayLeaseCreateEnvelopeFor(
 			acceptedSession,
-			fixture.service.nextPeerSequence(),
+			nextTestPeerSequence(fixture.service),
 		);
 		const gatewayMessage = {
 			kind: 'command',
@@ -2476,7 +2871,8 @@ describe('gateway control service', () => {
 		};
 
 		await expect(
-			serviceWithRpc.emitApplicationMessage(
+			emitTestApplicationMessage(
+				serviceWithRpc,
 				gatewayLeaseCreateEnvelope,
 				{ kind: 'command', operation: 'lease_create' },
 				gatewayMessage,

@@ -14,6 +14,7 @@ import {
 	GatewayControlCallerContextRegisterPayloadSchema,
 	GatewayControlControllerRequestHealthOperationSchema,
 	GatewayControlHealthEventPayloadSchema,
+	GatewayControlHelloSchema,
 	GatewayControlLeaseCreateIntentPayloadSchema,
 	GatewayControlLeaseRejectionReasonSchema,
 	GatewayControlLeaseSnapshotSchema,
@@ -57,6 +58,29 @@ const gatewayCommandEnvelope = ControlEnvelopeSchema.parse({
 });
 
 describe('gateway control contract', () => {
+	it('binds hello to C/G/P and a positive attachment generation without resync fields', () => {
+		const hello = {
+			attachmentGeneration: 7,
+			controllerEpoch: 'controller-epoch-a',
+			domain: 'gateway_control',
+			gatewayEpoch: 'gateway-epoch-a',
+			peerId: 'gateway-zone-a',
+			processEpoch: 'process-epoch-a',
+			protocolVersion: 1,
+		} as const;
+
+		expect(GatewayControlHelloSchema.parse(hello)).toEqual(hello);
+		expect(GatewayControlHelloSchema.safeParse({ ...hello, attachmentGeneration: 0 }).success).toBe(
+			false,
+		);
+		expect(
+			GatewayControlHelloSchema.safeParse({
+				...hello,
+				previousSessionId: '33333333-3333-4333-8333-333333333333',
+			}).success,
+		).toBe(false);
+	});
+
 	it('reserves the generic gateway_control domain', () => {
 		expect(GatewayControlDomainSchema.parse('gateway_control')).toBe('gateway_control');
 		expect(assertGatewayControlDomainRegistered()).toBe('gateway_control');
@@ -164,6 +188,7 @@ describe('gateway control contract', () => {
 			'control:hello': (payload, acknowledge) => {
 				expect(payload.domain).toBe('gateway_control');
 				acknowledge({
+					attachmentGeneration: payload.attachmentGeneration,
 					connectionId: gatewayCommandEnvelope.connectionId,
 					controllerEpoch: gatewayCommandEnvelope.controllerEpoch,
 					outcome: 'accepted',
@@ -184,10 +209,12 @@ describe('gateway control contract', () => {
 
 		controllerToGatewayEvents['control:hello'](
 			{
-				bootId: gatewayCommandEnvelope.bootId,
+				attachmentGeneration: 1,
 				controllerEpoch: gatewayCommandEnvelope.controllerEpoch,
 				domain: 'gateway_control',
+				gatewayEpoch: 'gateway-epoch-1',
 				peerId: gatewayCommandEnvelope.peerId,
+				processEpoch: gatewayCommandEnvelope.bootId,
 				protocolVersion: 1,
 			},
 			(response) => {
@@ -271,6 +298,7 @@ describe('gateway control contract', () => {
 				operation: 'caller_context_register',
 				payload: {
 					callerContext: {
+						admissionPrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 						callerContextId: '44444444-4444-4444-8444-444444444444',
 					},
 					responseToMessageId: '22222222-2222-4222-8222-222222222222',
@@ -278,6 +306,7 @@ describe('gateway control contract', () => {
 				},
 			}).payload.callerContext,
 		).toEqual({
+			admissionPrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 			callerContextId: '44444444-4444-4444-8444-444444444444',
 		});
 	});

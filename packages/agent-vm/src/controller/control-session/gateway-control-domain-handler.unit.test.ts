@@ -18,7 +18,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import { createControlSessionDispatcher } from './control-session-dispatcher.js';
-import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
+import {
+	createGatewayControlCallerContextRegistry,
+	deriveGatewayControlStablePrincipal,
+} from './gateway-control-caller-context.js';
 import {
 	createGatewayControlDomainHandler,
 	type GatewayControlControllerHostActionOperations,
@@ -253,6 +256,10 @@ describe('gateway control domain handler', () => {
 			operation: 'caller_context_register',
 			payload: {
 				callerContext: {
+					admissionPrincipal: deriveGatewayControlStablePrincipal({
+						agentId: 'main',
+						zoneId: 'zone-a',
+					}),
 					callerContextId: '44444444-4444-4444-8444-444444444444',
 				},
 				responseToMessageId: '22222222-2222-4222-8222-222222222222',

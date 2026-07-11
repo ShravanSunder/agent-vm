@@ -69,6 +69,8 @@ describe('control protocol contracts', () => {
 	});
 
 	it('exports JSON Schemas matching the reviewed static artifact', async () => {
+		expect(buildControlProtocolJsonSchemas()).not.toHaveProperty('hello');
+		expect(buildControlProtocolJsonSchemas()).not.toHaveProperty('helloResponse');
 		await expect(
 			readJsonSchemaArtifact('./control-protocol-json-schema.snapshot.json'),
 		).resolves.toEqual(buildControlProtocolJsonSchemas());
@@ -266,7 +268,7 @@ describe('control protocol contracts', () => {
 		]);
 	});
 
-	it('fails closed on critical sequence gaps without advancing lossy delivery gaps', () => {
+	it('fails closed on critical sequence gaps without advancing default lossy delivery gaps', () => {
 		expect(
 			evaluateControlSequenceContinuity({
 				envelope: validEnvelope,
@@ -332,6 +334,57 @@ describe('control protocol contracts', () => {
 		).toEqual({
 			action: 'accept',
 			nextLastSeenSequence: 1,
+		});
+	});
+
+	it('advances receipted advisory sequences in contiguous mode without creating allocation gaps', () => {
+		const receiptedLatestWins = evaluateControlSequenceContinuity({
+			advisorySequenceMode: 'contiguous',
+			envelope: {
+				...validEnvelope,
+				commandId: undefined,
+				deliveryPolicy: 'latest_wins',
+				idempotencyKey: undefined,
+				kind: 'event',
+				operation: 'runtime_status',
+				sequence: 2,
+			},
+			lastSeenSequence: 1,
+		});
+		expect(receiptedLatestWins).toEqual({
+			action: 'accept',
+			nextLastSeenSequence: 2,
+		});
+
+		expect(
+			evaluateControlSequenceContinuity({
+				advisorySequenceMode: 'contiguous',
+				envelope: { ...validEnvelope, sequence: 3 },
+				lastSeenSequence: receiptedLatestWins.nextLastSeenSequence,
+			}),
+		).toEqual({
+			action: 'accept',
+			nextLastSeenSequence: 3,
+		});
+
+		expect(
+			evaluateControlSequenceContinuity({
+				advisorySequenceMode: 'contiguous',
+				envelope: {
+					...validEnvelope,
+					commandId: undefined,
+					deliveryPolicy: 'droppable',
+					idempotencyKey: undefined,
+					kind: 'event',
+					operation: undefined,
+					sequence: 4,
+				},
+				lastSeenSequence: 2,
+			}),
+		).toMatchObject({
+			action: 'stale',
+			closeReason: 'sequence_gap',
+			nextLastSeenSequence: 2,
 		});
 	});
 

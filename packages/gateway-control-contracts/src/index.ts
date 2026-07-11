@@ -1,4 +1,5 @@
 import {
+	CONTROL_PROTOCOL_VERSION,
 	ControlCorrelationSchema,
 	ControlRpcErrorSchema,
 	ControlRpcResultBaseSchema,
@@ -12,7 +13,33 @@ import {
 } from '@agent-vm/control-protocol-contracts';
 import { z } from 'zod/v4';
 
+export * from './gateway-control-admission.js';
+export * from './gateway-control-admission-executor.js';
+export * from './gateway-control-admission-classification.js';
+
 export const GatewayControlDomainSchema = z.literal('gateway_control');
+
+export const GatewayControlHelloSchema = z
+	.object({
+		attachmentGeneration: z.number().int().positive(),
+		controllerEpoch: z.string().min(1),
+		domain: GatewayControlDomainSchema,
+		gatewayEpoch: z.string().min(1),
+		peerId: z.string().min(1),
+		processEpoch: z.string().min(1),
+		protocolVersion: z.literal(CONTROL_PROTOCOL_VERSION),
+	})
+	.strict();
+
+export const GatewayControlHelloResponseSchema = z
+	.object({
+		attachmentGeneration: z.number().int().positive(),
+		connectionId: z.string().uuid(),
+		controllerEpoch: z.string().min(1),
+		outcome: z.enum(['accepted', 'rejected', 'generation_mismatch', 'stale_attachment']),
+		sessionId: z.string().uuid(),
+	})
+	.strict();
 
 export const GatewayControlRpcOperationSchema = z.enum([
 	'control_ping',
@@ -73,6 +100,7 @@ export const GatewayControlToolCallCorrelationSchema = ControlCorrelationSchema.
 }).strict();
 
 export const GatewayControlTrustedCallerContextIdSchema = z.string().uuid();
+export const GatewayControlAdmissionPrincipalSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 
 export const GatewayControlTrustedLeaseContextSchema = z
 	.object({
@@ -94,6 +122,11 @@ export const GatewayControlCallerContextRefSchema = z
 		callerContextId: GatewayControlTrustedCallerContextIdSchema,
 	})
 	.strict();
+
+export const GatewayControlRegisteredCallerContextRefSchema =
+	GatewayControlCallerContextRefSchema.extend({
+		admissionPrincipal: GatewayControlAdmissionPrincipalSchema,
+	}).strict();
 
 export const GatewayControlCallerContextProofAlgorithmSchema = z.literal('hmac-sha256');
 
@@ -632,7 +665,7 @@ export const GatewayControlRpcBareResponsePayloadSchema = z.discriminatedUnion('
 export const GatewayControlRpcCallerContextResponsePayloadSchema = z.discriminatedUnion('result', [
 	GatewayControlRpcResponseCorrelationSchema.extend({
 		...GatewayControlRpcForbiddenResponseFieldsSchema,
-		callerContext: GatewayControlCallerContextRefSchema,
+		callerContext: GatewayControlRegisteredCallerContextRefSchema,
 		result: z.literal('ok'),
 	}).strict(),
 	GatewayControlRpcResponseCorrelationSchema.extend({
@@ -986,8 +1019,13 @@ export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 
 export type GatewayControlRpcOperation = z.infer<typeof GatewayControlRpcOperationSchema>;
 export type GatewayControlRpcMessage = z.infer<typeof GatewayControlRpcMessageSchema>;
-export type GatewayControlControllerToGatewayEvents =
-	ControlSessionControllerToPeerEvents<GatewayControlRpcMessage>;
+export type GatewayControlHello = z.infer<typeof GatewayControlHelloSchema>;
+export type GatewayControlHelloResponse = z.infer<typeof GatewayControlHelloResponseSchema>;
+export type GatewayControlControllerToGatewayEvents = ControlSessionControllerToPeerEvents<
+	GatewayControlRpcMessage,
+	GatewayControlHello,
+	GatewayControlHelloResponse
+>;
 export type GatewayControlGatewayToControllerEvents =
 	ControlSessionPeerToControllerEvents<GatewayControlRpcMessage>;
 export type GatewayControlCallerContextRef = z.infer<typeof GatewayControlCallerContextRefSchema>;
@@ -1048,6 +1086,14 @@ export type GatewayControlZoneGitPushResult = z.infer<typeof GatewayControlZoneG
 export function buildGatewayControlJsonSchemas(): Readonly<Record<string, unknown>> {
 	return {
 		domain: z.toJSONSchema(GatewayControlDomainSchema, {
+			io: 'input',
+			unrepresentable: 'any',
+		}),
+		hello: z.toJSONSchema(GatewayControlHelloSchema, {
+			io: 'input',
+			unrepresentable: 'any',
+		}),
+		helloResponse: z.toJSONSchema(GatewayControlHelloResponseSchema, {
 			io: 'input',
 			unrepresentable: 'any',
 		}),

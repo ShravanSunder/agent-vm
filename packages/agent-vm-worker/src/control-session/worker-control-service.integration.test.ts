@@ -7,15 +7,17 @@ import {
 	CONTROL_QUEUE_LIMITS,
 	CONTROL_PROTOCOL_VERSION,
 	CONTROL_READY_HEADER_NAMES,
-	ControlHelloResponseSchema,
 	buildControlReadyRequestSignaturePayload,
 	type ControlEnvelope,
 	type ControlHandshakeProof,
-	type ControlHello,
 	type ControlReadyRequestProof,
 	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
-import { WorkerControlRpcMessageSchema } from '@agent-vm/worker-control-contracts';
+import {
+	WorkerControlHelloResponseSchema as ControlHelloResponseSchema,
+	WorkerControlRpcMessageSchema,
+	type WorkerControlHello as ControlHello,
+} from '@agent-vm/worker-control-contracts';
 import { io as createSocketIoClient, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 

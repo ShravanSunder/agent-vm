@@ -30,6 +30,7 @@ const identity = {
 	controllerEpoch: 'controller-epoch-a',
 	generationId: 'generation-a',
 	peerId: 'gateway-zone-a',
+	processEpoch: 'process-epoch-a',
 	zoneId: 'zone-a',
 } satisfies GatewayControlIdentity;
 
@@ -103,27 +104,30 @@ function createFakeGatewayControlService(
 	}) => GatewayControlRpcMessage,
 ): GatewayControlService {
 	let sequence = 0;
+	const acceptedSession = {
+		...identity,
+		bootId: identity.processEpoch,
+		attachmentGeneration: 1,
+		connectionId: '55555555-5555-4555-8555-555555555555',
+		gatewayEpoch: identity.generationId,
+		processEpoch: identity.processEpoch,
+		sessionId: '33333333-3333-4333-8333-333333333333',
+	};
 	return {
 		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(async (envelope, domainMessage, payload) =>
-			handleMessage({
-				envelope,
-				domainMessage,
-				payload: payload as GatewayControlRpcMessage,
-			}),
-		),
-		getAcceptedSession: vi.fn(async () => ({
-			...identity,
-			connectionId: '55555555-5555-4555-8555-555555555555',
-			sessionId: '33333333-3333-4333-8333-333333333333',
-		})),
+		emitApplicationMessage: vi.fn(async (intent) => {
+			sequence += 1;
+			return handleMessage({
+				domainMessage: intent.domainMessage,
+				envelope: intent.buildEnvelope({ acceptedSession, sequence }),
+				payload: intent.payload,
+			});
+		}),
+		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
+		waitForAcceptedSession: vi.fn(async () => acceptedSession),
 		getCredentialState: vi.fn(() => undefined),
 		handleReadyRequest: vi.fn(() => false),
 		handleUpgrade: vi.fn(() => false),
-		nextPeerSequence: vi.fn(() => {
-			sequence += 1;
-			return sequence;
-		}),
 	};
 }
 
@@ -183,6 +187,8 @@ describe('gateway control lease client recovery behavior', () => {
 						operation: 'caller_context_register',
 						payload: {
 							callerContext: {
+								admissionPrincipal:
+									'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 								callerContextId: '44444444-4444-4444-8444-444444444444',
 							},
 							responseToMessageId: envelope.messageId,
@@ -278,7 +284,11 @@ describe('gateway control lease client recovery behavior', () => {
 					kind: 'command_result',
 					operation: 'caller_context_register',
 					payload: {
-						callerContext: { callerContextId },
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId,
+						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
@@ -361,6 +371,8 @@ describe('gateway control lease client recovery behavior', () => {
 					operation: 'caller_context_register',
 					payload: {
 						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 							callerContextId: '44444444-4444-4444-8444-444444444444',
 						},
 						responseToMessageId: envelope.messageId,
@@ -449,7 +461,11 @@ describe('gateway control lease client recovery behavior', () => {
 					kind: 'command_result',
 					operation: 'caller_context_register',
 					payload: {
-						callerContext: { callerContextId },
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId,
+						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
@@ -538,6 +554,8 @@ describe('gateway control lease client recovery behavior', () => {
 					operation: 'caller_context_register',
 					payload: {
 						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 							callerContextId: '44444444-4444-4444-8444-444444444444',
 						},
 						responseToMessageId: envelope.messageId,
@@ -611,7 +629,11 @@ describe('gateway control lease client recovery behavior', () => {
 					kind: 'command_result',
 					operation: 'caller_context_register',
 					payload: {
-						callerContext: { callerContextId },
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId,
+						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
@@ -700,7 +722,11 @@ describe('gateway control lease client recovery behavior', () => {
 					kind: 'command_result',
 					operation: 'caller_context_register',
 					payload: {
-						callerContext: { callerContextId },
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId,
+						},
 						responseToMessageId: envelope.messageId,
 						result: 'ok',
 					},
@@ -783,6 +809,8 @@ describe('gateway control lease client recovery behavior', () => {
 					operation: 'caller_context_register',
 					payload: {
 						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 							callerContextId: '44444444-4444-4444-8444-444444444444',
 						},
 						responseToMessageId: envelope.messageId,
@@ -856,6 +884,8 @@ describe('gateway control lease client recovery behavior', () => {
 					operation: 'caller_context_register',
 					payload: {
 						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 							callerContextId: '44444444-4444-4444-8444-444444444444',
 						},
 						responseToMessageId: envelope.messageId,

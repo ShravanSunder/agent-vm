@@ -5,12 +5,12 @@ import {
 	CONTROL_PROTOCOL_VERSION,
 	CONTROL_SESSION_TIMING_MS,
 	type ControlEnvelope,
-	type ControlHello,
 } from '@agent-vm/control-protocol-contracts';
 import {
 	GatewayControlRpcMessageSchema,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
+	type GatewayControlHello,
 	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
@@ -20,11 +20,15 @@ import {
 	createGatewayControlService,
 	createGatewayControlEventPublisher,
 } from '@agent-vm/openclaw-agent-vm-plugin';
+import type { WorkerControlHello as ControlHello } from '@agent-vm/worker-control-contracts';
 import { Server as SocketIoServer, type Socket as SocketIoServerSocket } from 'socket.io';
 import { io as createSocketIoClient } from 'socket.io-client';
 import { describe, expect, it, vi } from 'vitest';
 
-import { waitForProtocolRetryInterval } from '../../integration-tests/e2e-protocol-wait.js';
+import {
+	waitForProtocolRetryInterval,
+	withProtocolDeadline,
+} from '../../integration-tests/e2e-protocol-wait.js';
 import {
 	CONTROL_SESSION_EVENT_NAMES,
 	type ControlSessionClient,
@@ -35,15 +39,18 @@ import {
 import {
 	createControlSessionDispatcher,
 	createControlSessionFenceRegistry,
+	type ControlSessionDispatcher,
 } from './control-session-dispatcher.js';
 import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
 import { createGatewayControlDomainHandler } from './gateway-control-domain-handler.js';
+import { createGatewayControlProcessAdmissionCoordinator } from './gateway-control-process-admission-coordinator.js';
 import {
 	buildGatewayControlEndpoint,
 	connectGatewayControlSession,
 	createGatewayControlSessionMaterial,
 	fetchGatewayControlCredential,
 } from './gateway-control-session.js';
+import { createGatewayDisposableControlSessionClient } from './gateway-disposable-control-session-client.js';
 
 const controlPath = '/__agent-vm/gateway-control';
 
@@ -83,6 +90,14 @@ function waitForProtocolEvent<TValue>(
 	return new Promise((resolve) => {
 		register(resolve);
 	});
+}
+
+function deferredProtocolWork(): { readonly promise: Promise<void>; resolve(): void } {
+	let resolvePromise!: () => void;
+	const promise = new Promise<void>((resolve) => {
+		resolvePromise = resolve;
+	});
+	return { promise, resolve: resolvePromise };
 }
 
 async function waitForClientHelloCount(options: {
@@ -294,7 +309,7 @@ describe('control session client', () => {
 				{
 					bootId: 'gateway-boot-a',
 					controllerEpoch: 'epoch-a',
-					domain: 'gateway_control',
+					domain: 'worker_control',
 					peerId: 'gateway-zone-a',
 					protocolVersion: CONTROL_PROTOCOL_VERSION,
 				},
@@ -319,6 +334,7 @@ describe('control session client', () => {
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
+				processEpoch: material.processEpoch,
 				zoneId: material.zoneId,
 			},
 			verifierPublicKeyPem: material.verifierPublicKeyPem,
@@ -355,7 +371,7 @@ describe('control session client', () => {
 					recordedHealthEvents.push(event);
 				},
 				session: {
-					bootId: material.bootId,
+					bootId: material.processEpoch,
 					controllerEpoch: material.controllerEpoch,
 					peerId: material.peerId,
 					zoneId: material.zoneId,
@@ -371,11 +387,10 @@ describe('control session client', () => {
 		});
 
 		try {
-			const acceptedSession = await gatewayControlService.getAcceptedSession();
 			const observedAtMs = Date.now();
-			await gatewayControlService.emitApplicationMessage(
-				{
-					bootId: material.bootId,
+			await gatewayControlService.emitApplicationMessage({
+				buildEnvelope: ({ acceptedSession, sequence }) => ({
+					bootId: acceptedSession.bootId,
 					connectionId: acceptedSession.connectionId,
 					controllerEpoch: material.controllerEpoch,
 					createdAtMs: observedAtMs,
@@ -385,19 +400,19 @@ describe('control session client', () => {
 					messageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 					peerId: material.peerId,
 					protocolVersion: CONTROL_PROTOCOL_VERSION,
-					sequence: gatewayControlService.nextPeerSequence(),
+					sequence,
 					sessionId: acceptedSession.sessionId,
 					zoneId: material.zoneId,
-				},
-				{ kind: 'heartbeat' },
-				{
+				}),
+				domainMessage: { kind: 'heartbeat' },
+				payload: {
 					kind: 'heartbeat',
 					payload: {
 						elapsedMs: 7,
 						observedAtMs,
 					},
 				},
-			);
+			});
 
 			expect(recordedHealthEvents).toEqual([
 				{
@@ -431,6 +446,7 @@ describe('control session client', () => {
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
+				processEpoch: material.processEpoch,
 				zoneId: material.zoneId,
 			},
 			verifierPublicKeyPem: material.verifierPublicKeyPem,
@@ -493,6 +509,7 @@ describe('control session client', () => {
 					controllerEpoch: material.controllerEpoch,
 					generationId: material.generationId,
 					peerId: material.peerId,
+					processEpoch: material.processEpoch,
 					zoneId: material.zoneId,
 				},
 				now: () => 10_000,
@@ -519,6 +536,685 @@ describe('control session client', () => {
 			client.close();
 			await gatewayControlService.close();
 			await closeHttpServer(httpServer);
+		}
+	});
+
+	it('preserves zone B safety and liveness under real two-zone control pressure', async () => {
+		const coordinator = createGatewayControlProcessAdmissionCoordinator({
+			maxNonSafetyMessages: 7,
+		});
+		const heldAuthority = deferredProtocolWork();
+		const heldControlPings = [deferredProtocolWork(), deferredProtocolWork()] as const;
+		const heldInboundHeartbeat = deferredProtocolWork();
+		const heldRuntimeStatus = deferredProtocolWork();
+		const inboundHeartbeatStarted = deferredProtocolWork();
+		const runtimeStatusStarted = deferredProtocolWork();
+		let inboundHeartbeatSequence: number | undefined;
+		let runtimeStatusSequence: number | undefined;
+		let authorityStarts = 0;
+		let resolveAuthorityCapacity!: () => void;
+		const authorityCapacity = new Promise<void>((resolve) => {
+			resolveAuthorityCapacity = resolve;
+		});
+		let controlPingStarts = 0;
+		const controlPingStarted = [deferredProtocolWork(), deferredProtocolWork()] as const;
+		const materialA = createGatewayControlSessionMaterial({
+			controllerEpoch: 'controller-pressure',
+			zoneId: 'zone-a',
+		});
+		const materialB = createGatewayControlSessionMaterial({
+			controllerEpoch: 'controller-pressure',
+			zoneId: 'zone-b',
+		});
+		const responseFor = (options: {
+			readonly envelope: ControlEnvelope;
+			readonly operation: string;
+		}): GatewayControlRpcMessage =>
+			GatewayControlRpcMessageSchema.parse({
+				kind: 'command_result',
+				operation: options.operation,
+				payload: {
+					responseToMessageId: options.envelope.messageId,
+					result: 'ok',
+				},
+			});
+		const serviceA = createGatewayControlService({
+			applicationMessageHandler: {
+				handle: async ({ envelope, payload }) => {
+					const message = GatewayControlRpcMessageSchema.parse(payload);
+					if (message.kind === 'command' && message.operation === 'control_ping') {
+						const controlPingIndex = controlPingStarts;
+						controlPingStarts += 1;
+						const started = controlPingStarted[controlPingIndex];
+						const held = heldControlPings[controlPingIndex];
+						if (started === undefined || held === undefined) {
+							throw new Error('unexpected excess zone A control ping');
+						}
+						started.resolve();
+						await held.promise;
+						return responseFor({ envelope, operation: message.operation });
+					}
+					return undefined;
+				},
+				messageIdentity: ({ payload }) => {
+					const message = GatewayControlRpcMessageSchema.parse(payload);
+					return {
+						kind: message.kind,
+						...(message.operation === undefined ? {} : { operation: message.operation }),
+					};
+				},
+			},
+			identity: {
+				bootId: materialA.bootId,
+				callerContextAgentAuthorityKeys: materialA.agentAuthorityKeys,
+				callerContextProofKey: materialA.callerContextProofKey,
+				controllerEpoch: materialA.controllerEpoch,
+				generationId: materialA.generationId,
+				peerId: materialA.peerId,
+				processEpoch: materialA.processEpoch,
+				zoneId: materialA.zoneId,
+			},
+			verifierPublicKeyPem: materialA.verifierPublicKeyPem,
+		});
+		const serviceB = createGatewayControlService({
+			applicationMessageHandler: {
+				handle: async ({ envelope, payload }) => {
+					const message = GatewayControlRpcMessageSchema.parse(payload);
+					return message.kind === 'command'
+						? responseFor({ envelope, operation: message.operation })
+						: undefined;
+				},
+				messageIdentity: ({ payload }) => {
+					const message = GatewayControlRpcMessageSchema.parse(payload);
+					return {
+						kind: message.kind,
+						...(message.operation === undefined ? {} : { operation: message.operation }),
+					};
+				},
+			},
+			identity: {
+				bootId: materialB.bootId,
+				callerContextAgentAuthorityKeys: materialB.agentAuthorityKeys,
+				callerContextProofKey: materialB.callerContextProofKey,
+				controllerEpoch: materialB.controllerEpoch,
+				generationId: materialB.generationId,
+				peerId: materialB.peerId,
+				processEpoch: materialB.processEpoch,
+				zoneId: materialB.zoneId,
+			},
+			verifierPublicKeyPem: materialB.verifierPublicKeyPem,
+		});
+		const startServiceHost = async (
+			service: typeof serviceA,
+		): Promise<{ readonly httpServer: HttpServer; readonly port: number }> => {
+			const httpServer = createServer((request, response) => {
+				if (
+					new URL(request.url ?? '/', 'http://127.0.0.1').pathname === GATEWAY_CONTROL_READY_PATH
+				) {
+					service.handleReadyRequest(request, response);
+					return;
+				}
+				response.statusCode = 404;
+				response.end('not found\n');
+			});
+			httpServer.on('upgrade', (request, socket, head) => {
+				if (
+					new URL(request.url ?? '/', 'http://127.0.0.1').pathname === GATEWAY_CONTROL_SOCKET_PATH
+				) {
+					service.handleUpgrade(request, socket, head);
+					return;
+				}
+				socket.destroy();
+			});
+			return { httpServer, port: await listen(httpServer) };
+		};
+		const hostA = await startServiceHost(serviceA);
+		const hostB = await startServiceHost(serviceB);
+		const dispatcherA = {
+			dispatch: async ({ envelope, payload }) => {
+				const message = GatewayControlRpcMessageSchema.parse(payload);
+				if (message.kind === 'heartbeat') {
+					inboundHeartbeatSequence = envelope.sequence;
+					inboundHeartbeatStarted.resolve();
+					await heldInboundHeartbeat.promise;
+					return undefined;
+				}
+				if (message.kind === 'event' && message.operation === 'runtime_status') {
+					runtimeStatusSequence = envelope.sequence;
+					runtimeStatusStarted.resolve();
+					await heldRuntimeStatus.promise;
+					return undefined;
+				}
+				if (message.kind === 'command' && message.operation === 'lease_get') {
+					authorityStarts += 1;
+					if (authorityStarts === 3) {
+						resolveAuthorityCapacity();
+					}
+					await heldAuthority.promise;
+					return GatewayControlRpcMessageSchema.parse({
+						kind: 'command_result',
+						operation: message.operation,
+						payload: {
+							error: { errorClass: 'test_complete', retryable: false },
+							responseToMessageId: envelope.messageId,
+							result: 'failed',
+						},
+					});
+				}
+				return undefined;
+			},
+			register: () => undefined,
+			validate: () => undefined,
+		} satisfies ControlSessionDispatcher;
+		const dispatcherB = {
+			dispatch: async () => undefined,
+			register: () => undefined,
+			validate: () => undefined,
+		} satisfies ControlSessionDispatcher;
+		const clientA = await connectGatewayControlSession({
+			dispatcher: dispatcherA,
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: hostA.port }),
+			material: materialA,
+			processAdmissionCoordinator: coordinator,
+			resolveInboundStablePrincipal: () => 'a'.repeat(64),
+		});
+		const clientB = await connectGatewayControlSession({
+			dispatcher: dispatcherB,
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: hostB.port }),
+			material: materialB,
+			processAdmissionCoordinator: coordinator,
+		});
+		const leaseIntent = (index: number): Parameters<typeof serviceA.emitApplicationMessage>[0] => ({
+			buildEnvelope: ({ acceptedSession, sequence }) => ({
+				bootId: acceptedSession.bootId,
+				connectionId: acceptedSession.connectionId,
+				controllerEpoch: acceptedSession.controllerEpoch,
+				createdAtMs: index + 1,
+				deliveryPolicy: 'acked_idempotent' as const,
+				domain: 'gateway_control' as const,
+				kind: 'command' as const,
+				messageId: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+				operation: 'lease_get',
+				peerId: acceptedSession.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+				sequence,
+				sessionId: acceptedSession.sessionId,
+				zoneId: acceptedSession.zoneId,
+			}),
+			domainMessage: { kind: 'command' as const, operation: 'lease_get' },
+			payload: GatewayControlRpcMessageSchema.parse({
+				kind: 'command',
+				operation: 'lease_get',
+				payload: {
+					callerContext: { callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+					leaseId: `lease-${String(index)}`,
+				},
+			}),
+		});
+		const authorityPromises = Array.from({ length: 3 }, (_, index) =>
+			serviceA
+				.emitApplicationMessage(leaseIntent(index), {
+					admissionPrincipal: 'a'.repeat(64),
+					commandResultTimeoutMs: 2_000,
+				})
+				.catch((error: unknown) => error),
+		);
+		const zoneAHeartbeat = serviceA
+			.emitApplicationMessage({
+				buildEnvelope: ({ acceptedSession, sequence }) => ({
+					bootId: acceptedSession.bootId,
+					connectionId: acceptedSession.connectionId,
+					controllerEpoch: acceptedSession.controllerEpoch,
+					createdAtMs: 10,
+					deliveryPolicy: 'critical_idempotent',
+					domain: 'gateway_control',
+					kind: 'heartbeat',
+					messageId: '11000000-0000-4000-8000-000000000001',
+					peerId: acceptedSession.peerId,
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence,
+					sessionId: acceptedSession.sessionId,
+					zoneId: acceptedSession.zoneId,
+				}),
+				domainMessage: { kind: 'heartbeat' },
+				payload: GatewayControlRpcMessageSchema.parse({
+					kind: 'heartbeat',
+					payload: { observedAtMs: 10 },
+				}),
+			})
+			.catch((error: unknown) => error);
+		const zoneARuntimeStatus = serviceA
+			.emitApplicationMessage({
+				buildEnvelope: ({ acceptedSession, sequence }) => ({
+					bootId: acceptedSession.bootId,
+					connectionId: acceptedSession.connectionId,
+					controllerEpoch: acceptedSession.controllerEpoch,
+					createdAtMs: 11,
+					deliveryPolicy: 'latest_wins',
+					domain: 'gateway_control',
+					kind: 'event',
+					messageId: '11000000-0000-4000-8000-000000000002',
+					operation: 'runtime_status',
+					peerId: acceptedSession.peerId,
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence,
+					sessionId: acceptedSession.sessionId,
+					zoneId: acceptedSession.zoneId,
+				}),
+				domainMessage: { kind: 'event', operation: 'runtime_status' },
+				payload: GatewayControlRpcMessageSchema.parse({
+					kind: 'event',
+					operation: 'runtime_status',
+					payload: {
+						findings: [{ id: 'zone-a-pressure', ok: true }],
+						observedAtMs: 11,
+						statusKind: 'openclaw-runtime',
+					},
+				}),
+			})
+			.catch((error: unknown) => error);
+
+		try {
+			await withProtocolDeadline(authorityCapacity, 'zone A authority capacity');
+			await withProtocolDeadline(inboundHeartbeatStarted.promise, 'zone A inbound heartbeat');
+			await withProtocolDeadline(runtimeStatusStarted.promise, 'zone A runtime status');
+			expect([inboundHeartbeatSequence, runtimeStatusSequence]).toEqual([4, 5]);
+			const sessionA = clientA.getDiagnostics().lastHelloResponse;
+			const initialDiagnosticsB = clientB.getDiagnostics();
+			const sessionB = initialDiagnosticsB.lastHelloResponse;
+			if (sessionA?.outcome !== 'accepted' || sessionB?.outcome !== 'accepted') {
+				throw new Error('expected two accepted control sessions');
+			}
+			const initialSessionIdentityB = {
+				attachmentGeneration: initialDiagnosticsB.attachmentGeneration,
+				connectionId: sessionB.connectionId,
+				helloCount: initialDiagnosticsB.helloCount,
+				sessionId: sessionB.sessionId,
+			};
+			const pingEnvelope = (messageId: string): ControlEnvelope => ({
+				bootId: materialA.processEpoch,
+				connectionId: sessionA.connectionId,
+				controllerEpoch: materialA.controllerEpoch,
+				createdAtMs: 1,
+				deliveryPolicy: 'acked_idempotent',
+				domain: 'gateway_control',
+				kind: 'command',
+				messageId,
+				operation: 'control_ping',
+				peerId: materialA.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+				sequence: 99,
+				sessionId: sessionA.sessionId,
+				zoneId: materialA.zoneId,
+			});
+			const startControlPing = (index: number): Promise<unknown> =>
+				clientA
+					.emitApplicationMessage(
+						pingEnvelope(`20000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`),
+						{ kind: 'command', operation: 'control_ping' },
+						{ kind: 'command', operation: 'control_ping', payload: {} },
+						{ commandResultTimeoutMs: 2_000 },
+					)
+					.catch((error: unknown) => error);
+			const firstControlPing = startControlPing(0);
+			await withProtocolDeadline(controlPingStarted[0].promise, 'first zone A control ping');
+			const secondControlPing = startControlPing(1);
+			await withProtocolDeadline(controlPingStarted[1].promise, 'second zone A control ping');
+			const controlPingPromises = [firstControlPing, secondControlPing];
+			expect(coordinator.diagnostics()).toMatchObject({ nonSafetyMessages: 7 });
+
+			const globalRefusal = GatewayControlRpcMessageSchema.parse(
+				await withProtocolDeadline(
+					serviceA.emitApplicationMessage(leaseIntent(3), {
+						admissionPrincipal: 'a'.repeat(64),
+						commandResultTimeoutMs: 2_000,
+					}),
+					'zone A shared-process global refusal',
+				),
+			);
+			expect(globalRefusal).toMatchObject({
+				kind: 'command_result',
+				operation: 'lease_get',
+				payload: {
+					error: {
+						errorClass: 'gateway_control_admission_refused',
+						retryable: true,
+					},
+					responseToMessageId: '10000000-0000-4000-8000-000000000004',
+					result: 'failed',
+				},
+			});
+			expect(authorityStarts).toBe(3);
+
+			heldControlPings[0].resolve();
+			await withProtocolDeadline(
+				controlPingPromises[0] ?? Promise.resolve(),
+				'released zone A control ping',
+			);
+			expect(coordinator.diagnostics()).toMatchObject({ nonSafetyMessages: 6 });
+
+			await withProtocolDeadline(
+				serviceB.emitApplicationMessage({
+					buildEnvelope: ({ acceptedSession, sequence }) => ({
+						bootId: acceptedSession.bootId,
+						connectionId: acceptedSession.connectionId,
+						controllerEpoch: acceptedSession.controllerEpoch,
+						createdAtMs: 1,
+						deliveryPolicy: 'critical_idempotent',
+						domain: 'gateway_control',
+						kind: 'heartbeat',
+						messageId: '30000000-0000-4000-8000-000000000001',
+						peerId: acceptedSession.peerId,
+						protocolVersion: CONTROL_PROTOCOL_VERSION,
+						sequence,
+						sessionId: acceptedSession.sessionId,
+						zoneId: acceptedSession.zoneId,
+					}),
+					domainMessage: { kind: 'heartbeat' },
+					payload: GatewayControlRpcMessageSchema.parse({
+						kind: 'heartbeat',
+						payload: { observedAtMs: 1 },
+					}),
+				}),
+				'zone B liveness receipt',
+			);
+			await withProtocolDeadline(
+				clientB.emitApplicationMessage(
+					{
+						bootId: materialB.processEpoch,
+						connectionId: sessionB.connectionId,
+						controllerEpoch: materialB.controllerEpoch,
+						createdAtMs: 1,
+						deliveryPolicy: 'critical_idempotent',
+						domain: 'gateway_control',
+						kind: 'command',
+						messageId: '30000000-0000-4000-8000-000000000002',
+						operation: 'recovery_command',
+						peerId: materialB.peerId,
+						protocolVersion: CONTROL_PROTOCOL_VERSION,
+						sequence: 99,
+						sessionId: sessionB.sessionId,
+						zoneId: materialB.zoneId,
+					},
+					{ kind: 'command', operation: 'recovery_command' },
+					{
+						kind: 'command',
+						operation: 'recovery_command',
+						payload: { action: 'refresh_runtime_status' },
+					},
+					{ commandResultTimeoutMs: 2_000 },
+				),
+				'zone B safety result',
+			);
+			const diagnosticsBAfterPressure = clientB.getDiagnostics();
+			expect(diagnosticsBAfterPressure).toMatchObject({ accepted: true, ready: true });
+			expect({
+				attachmentGeneration: diagnosticsBAfterPressure.attachmentGeneration,
+				connectionId: diagnosticsBAfterPressure.lastHelloResponse?.connectionId,
+				helloCount: diagnosticsBAfterPressure.helloCount,
+				sessionId: diagnosticsBAfterPressure.lastHelloResponse?.sessionId,
+			}).toEqual(initialSessionIdentityB);
+
+			heldAuthority.resolve();
+			heldInboundHeartbeat.resolve();
+			heldRuntimeStatus.resolve();
+			for (const heldControlPing of heldControlPings) {
+				heldControlPing.resolve();
+			}
+			await withProtocolDeadline(
+				Promise.allSettled([
+					...authorityPromises,
+					...controlPingPromises,
+					zoneAHeartbeat,
+					zoneARuntimeStatus,
+				]),
+				'zone A pressure settlement',
+			);
+		} finally {
+			heldAuthority.resolve();
+			heldInboundHeartbeat.resolve();
+			heldRuntimeStatus.resolve();
+			for (const heldControlPing of heldControlPings) {
+				heldControlPing.resolve();
+			}
+			clientA.close();
+			clientB.close();
+			await serviceA.close();
+			await serviceB.close();
+			await closeHttpServer(hostA.httpServer);
+			await closeHttpServer(hostB.httpServer);
+		}
+		expect(coordinator.diagnostics()).toEqual({
+			activeSessions: 0,
+			nonSafetyBytes: 0,
+			nonSafetyMessages: 0,
+		});
+	});
+
+	it('fences a disposable gateway attachment when a sequenced latest-wins frame is not receipted', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const messageObserved = waitForProtocolEvent<ControlEnvelope>((resolve) => {
+			socketServer.on('connection', (socket) => {
+				socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (hello: GatewayControlHello, acknowledge) => {
+					acknowledge({
+						attachmentGeneration: hello.attachmentGeneration,
+						connectionId: '55555555-5555-4555-8555-555555555555',
+						controllerEpoch: hello.controllerEpoch,
+						outcome: 'accepted',
+						sessionId: '33333333-3333-4333-8333-333333333333',
+					});
+				});
+				socket.once(
+					CONTROL_SESSION_EVENT_NAMES.message,
+					(envelope: ControlEnvelope, _payload: unknown, _acknowledge) => {
+						resolve(envelope);
+					},
+				);
+			});
+		});
+		const firstAttachmentDisconnected = waitForProtocolEvent<void>((resolve) => {
+			socketServer.on('connection', (socket) => {
+				socket.once('disconnect', () => resolve());
+			});
+		});
+		const port = await listen(httpServer);
+		let attachmentGeneration = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			commandAckTimeoutMs: 25,
+			connectTimeoutMs: 100,
+			endpoint: { host: '127.0.0.1', path: controlPath, port },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => {
+				attachmentGeneration += 1;
+				return attachmentGeneration;
+			},
+			policyByKind: { heartbeat: 'latest_wins' },
+			policyByOperation: {},
+			refreshExtraHeaders: async () => ({}),
+		});
+
+		try {
+			const hello = await client.ready;
+			await client.emitApplicationMessage(
+				{
+					bootId: 'process-a',
+					connectionId: hello.connectionId,
+					controllerEpoch: 'controller-a',
+					createdAtMs: 1,
+					deliveryPolicy: 'latest_wins',
+					domain: 'gateway_control',
+					kind: 'heartbeat',
+					messageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					peerId: 'gateway-zone-a',
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence: 99,
+					sessionId: hello.sessionId,
+					zoneId: 'zone-a',
+				},
+				{ kind: 'heartbeat' },
+				{ kind: 'heartbeat', payload: { observedAtMs: 1 } },
+			);
+
+			await expect(messageObserved).resolves.toMatchObject({
+				messageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				sequence: 1,
+			});
+			await firstAttachmentDisconnected;
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('fences a real Socket.IO hello with a foreign controller epoch before registration', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const foreignAttachmentDisconnected = waitForProtocolEvent<void>((resolve) => {
+			socketServer.on('connection', (socket) => {
+				socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (hello: GatewayControlHello, acknowledge) => {
+					acknowledge({
+						attachmentGeneration: hello.attachmentGeneration,
+						connectionId: '55555555-5555-4555-8555-555555555555',
+						controllerEpoch: 'controller-foreign',
+						outcome: 'accepted',
+						sessionId: '33333333-3333-4333-8333-333333333333',
+					});
+				});
+				socket.once('disconnect', () => resolve());
+			});
+		});
+		const port = await listen(httpServer);
+		const registeredControllerEpochs: string[] = [];
+		let attachmentGeneration = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			connectTimeoutMs: 100,
+			endpoint: { host: '127.0.0.1', path: controlPath, port },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => {
+				attachmentGeneration += 1;
+				return attachmentGeneration;
+			},
+			onHelloResponse: (response) => registeredControllerEpochs.push(response.controllerEpoch),
+			policyByOperation: {},
+			refreshExtraHeaders: async () => ({}),
+		});
+
+		try {
+			await foreignAttachmentDisconnected;
+			expect(registeredControllerEpochs).toEqual([]);
+			expect(client.getDiagnostics()).toMatchObject({ accepted: false, ready: false });
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
+		}
+	});
+
+	it('fences a real Socket.IO frame without an acknowledgement callback before dispatch', async () => {
+		const httpServer = createServer();
+		const socketServer = new SocketIoServer(httpServer, {
+			addTrailingSlash: false,
+			path: controlPath,
+			serveClient: false,
+			transports: ['websocket'],
+		});
+		const attachmentDisconnected = waitForProtocolEvent<void>((resolve) => {
+			socketServer.on('connection', (socket) => {
+				socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (hello: GatewayControlHello, acknowledge) => {
+					acknowledge({
+						attachmentGeneration: hello.attachmentGeneration,
+						connectionId: '55555555-5555-4555-8555-555555555555',
+						controllerEpoch: hello.controllerEpoch,
+						outcome: 'accepted',
+						sessionId: '33333333-3333-4333-8333-333333333333',
+					});
+					setImmediate(() => {
+						socket.emit(
+							CONTROL_SESSION_EVENT_NAMES.message,
+							{
+								bootId: 'process-a',
+								connectionId: '55555555-5555-4555-8555-555555555555',
+								controllerEpoch: 'controller-a',
+								createdAtMs: 1,
+								deliveryPolicy: 'critical_idempotent',
+								domain: 'gateway_control',
+								kind: 'heartbeat',
+								messageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+								peerId: 'gateway-zone-a',
+								protocolVersion: CONTROL_PROTOCOL_VERSION,
+								sequence: 1,
+								sessionId: '33333333-3333-4333-8333-333333333333',
+								zoneId: 'zone-a',
+							} satisfies ControlEnvelope,
+							{ kind: 'heartbeat', payload: { observedAtMs: 1 } },
+						);
+					});
+				});
+				socket.once('disconnect', () => resolve());
+			});
+		});
+		const port = await listen(httpServer);
+		let dispatchCount = 0;
+		let attachmentGeneration = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			connectTimeoutMs: 100,
+			dispatcher: {
+				dispatch: async () => {
+					dispatchCount += 1;
+					return undefined;
+				},
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: { host: '127.0.0.1', path: controlPath, port },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => {
+				attachmentGeneration += 1;
+				return attachmentGeneration;
+			},
+			policyByKind: { heartbeat: 'critical_idempotent' },
+			policyByOperation: {},
+			refreshExtraHeaders: async () => ({}),
+		});
+
+		try {
+			await attachmentDisconnected;
+			expect(dispatchCount).toBe(0);
+			expect(client.getDiagnostics()).toMatchObject({ accepted: false, ready: false });
+		} finally {
+			client.close();
+			await closeSocketIoServer(socketServer);
 		}
 	});
 
@@ -968,6 +1664,7 @@ describe('control session client', () => {
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
+				processEpoch: material.processEpoch,
 				zoneId: material.zoneId,
 			},
 			verifierPublicKeyPem: material.verifierPublicKeyPem,
@@ -1664,6 +2361,7 @@ describe('control session client', () => {
 					controllerEpoch: material.controllerEpoch,
 					generationId: material.generationId,
 					peerId: material.peerId,
+					processEpoch: material.processEpoch,
 					zoneId: material.zoneId,
 				},
 				verifierPublicKeyPem: material.verifierPublicKeyPem,
@@ -1694,6 +2392,8 @@ describe('control session client', () => {
 		});
 
 		try {
+			const firstAttachmentGeneration = client.getDiagnostics().attachmentGeneration;
+			expect(firstAttachmentGeneration).toBeTypeOf('number');
 			expect(client.getDiagnostics().helloCount).toBe(1);
 			await service.close();
 			service = createService();
@@ -1702,6 +2402,13 @@ describe('control session client', () => {
 				client,
 				minimumHelloCount: 2,
 				timeoutMs: 2_000,
+			});
+			expect(client.getDiagnostics()).toMatchObject({ accepted: true, ready: true });
+			expect(client.getDiagnostics().attachmentGeneration).toBeGreaterThan(
+				firstAttachmentGeneration ?? 0,
+			);
+			await expect(service.waitForAcceptedSession()).resolves.toMatchObject({
+				attachmentGeneration: client.getDiagnostics().attachmentGeneration,
 			});
 		} finally {
 			client.close();
@@ -1880,7 +2587,7 @@ describe('control session client', () => {
 			expect(observedHelloPayloads[1]).toEqual({
 				bootId: 'gateway-boot-a',
 				controllerEpoch: 'epoch-a',
-				domain: 'gateway_control',
+				domain: 'worker_control',
 				lastSeenControllerSequence: 0,
 				lastSeenPeerSequence: 0,
 				peerId: 'gateway-zone-a',

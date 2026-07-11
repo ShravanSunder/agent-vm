@@ -38,9 +38,15 @@ export interface GatewayControlTrustedCallerContext {
 	readonly purpose: GatewayControlCallerContextPurpose;
 	readonly sessionId: string;
 	readonly sessionKeyDigest: string;
+	readonly stablePrincipal: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
 }
+
+export type GatewayControlValidatedCallerRegistration = Omit<
+	GatewayControlTrustedCallerContext,
+	'callerContextId'
+>;
 
 export type GatewayControlCallerContextPurpose =
 	| 'tool_portal_controller_host_action'
@@ -72,9 +78,27 @@ export interface GatewayControlCallerContextRegistry {
 		readonly callerContextId: string;
 		readonly session: GatewayControlCallerContextSessionRef;
 	}): GatewayControlCallerContextResolution;
+	validateRegistrationForSession(options: {
+		readonly payload: GatewayControlCallerContextRegisterPayload;
+		readonly session: GatewayControlCallerContextSessionRef;
+	}): GatewayControlValidatedCallerRegistration;
 }
 
-export const DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_LIMIT = 1024;
+export const DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_LIMIT = 256;
+export const DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_TTL_MS = 10 * 60 * 1_000;
+
+export function deriveGatewayControlStablePrincipal(options: {
+	readonly agentId: string;
+	readonly zoneId: string;
+}): string {
+	return createHash('sha256')
+		.update('agent-vm-gateway-stable-principal-v1', 'utf8')
+		.update('\0')
+		.update(options.zoneId, 'utf8')
+		.update('\0')
+		.update(options.agentId, 'utf8')
+		.digest('hex');
+}
 
 export function digestGatewayControlSessionKey(sessionKey: string): string {
 	return createHash('sha256').update(sessionKey, 'utf8').digest('hex');
@@ -185,12 +209,23 @@ export function createGatewayControlCallerContextRegistry(options: {
 	readonly callerContextProofKey: string;
 	readonly createCallerContextId?: () => string;
 	readonly maxContexts?: number;
+	readonly now?: () => number;
+	readonly ttlMs?: number;
 }): GatewayControlCallerContextRegistry {
 	const agentAuthorityKeys = options.agentAuthorityKeys;
 	const callerContextProofKey = options.callerContextProofKey;
 	const createCallerContextId = options.createCallerContextId ?? randomUUID;
 	const maxContexts = options.maxContexts ?? DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_LIMIT;
+	const now = options.now ?? Date.now;
+	const ttlMs = options.ttlMs ?? DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_TTL_MS;
+	if (!Number.isSafeInteger(maxContexts) || maxContexts <= 0) {
+		throw new Error('gateway caller context maxContexts must be a positive safe integer');
+	}
+	if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
+		throw new Error('gateway caller context ttlMs must be a positive safe integer');
+	}
 	const contextById = new Map<string, GatewayControlTrustedCallerContext>();
+	const contextExpiryById = new Map<string, number>();
 	const contextIdByCacheKey = new Map<string, string>();
 	const staleCallerContextIds = new Map<string, true>();
 
@@ -212,6 +247,7 @@ export function createGatewayControlCallerContextRegistry(options: {
 			return;
 		}
 		contextById.delete(callerContextId);
+		contextExpiryById.delete(callerContextId);
 		rememberStaleCallerContextId(callerContextId);
 		const cacheKey = [
 			context.zoneId,
@@ -244,16 +280,51 @@ export function createGatewayControlCallerContextRegistry(options: {
 		}
 	}
 
+	function pruneExpiredContexts(nowMs: number): void {
+		for (const [callerContextId, expiresAtMs] of contextExpiryById) {
+			if (nowMs >= expiresAtMs) {
+				removeContext(callerContextId);
+			}
+		}
+	}
+
+	function validateRegistrationForSession(validationOptions: {
+		readonly payload: GatewayControlCallerContextRegisterPayload;
+		readonly session: GatewayControlCallerContextSessionRef;
+	}): GatewayControlValidatedCallerRegistration {
+		const evidence = validationOptions.payload.adapterEvidence;
+		if (evidence.zoneId !== validationOptions.session.zoneId) {
+			throw new Error('gateway caller context zoneId mismatch');
+		}
+		assertGatewayControlCallerContextEvidence(evidence, {
+			agentAuthorityKeys,
+			callerContextProofKey,
+		});
+		return {
+			agentId: evidence.agentId,
+			agentWorkspaceDir: evidence.agentWorkspaceDir,
+			bootId: validationOptions.session.bootId,
+			connectionId: validationOptions.session.connectionId,
+			controllerEpoch: validationOptions.session.controllerEpoch,
+			peerId: validationOptions.session.peerId,
+			purpose: evidence.purpose ?? 'tool_vm_lease',
+			sessionId: validationOptions.session.sessionId,
+			sessionKeyDigest: digestGatewayControlSessionKey(evidence.sessionKey),
+			stablePrincipal: deriveGatewayControlStablePrincipal({
+				agentId: evidence.agentId,
+				zoneId: validationOptions.session.zoneId,
+			}),
+			workMountDir: evidence.workMountDir,
+			zoneId: validationOptions.session.zoneId,
+		};
+	}
+
 	return {
 		register: ({ payload, session }) => {
+			const nowMs = now();
+			pruneExpiredContexts(nowMs);
 			const evidence = payload.adapterEvidence;
-			if (evidence.zoneId !== session.zoneId) {
-				throw new Error('gateway caller context zoneId mismatch');
-			}
-			assertGatewayControlCallerContextEvidence(evidence, {
-				agentAuthorityKeys,
-				callerContextProofKey,
-			});
+			const validatedRegistration = validateRegistrationForSession({ payload, session });
 			removeSupersededSessionContexts(session);
 			const cacheKey = buildCallerContextCacheKey({ evidence, session });
 			const existingContextId = contextIdByCacheKey.get(cacheKey);
@@ -271,27 +342,22 @@ export function createGatewayControlCallerContextRegistry(options: {
 			}
 			const callerContextId = createCallerContextId();
 			const context = {
-				agentId: evidence.agentId,
-				agentWorkspaceDir: evidence.agentWorkspaceDir,
-				bootId: session.bootId,
+				...validatedRegistration,
 				callerContextId,
-				connectionId: session.connectionId,
-				controllerEpoch: session.controllerEpoch,
-				peerId: session.peerId,
-				purpose: evidence.purpose ?? 'tool_vm_lease',
-				sessionId: session.sessionId,
-				sessionKeyDigest: digestGatewayControlSessionKey(evidence.sessionKey),
-				workMountDir: evidence.workMountDir,
-				zoneId: session.zoneId,
 			} satisfies GatewayControlTrustedCallerContext;
 			staleCallerContextIds.delete(callerContextId);
 			contextById.set(callerContextId, context);
+			contextExpiryById.set(callerContextId, nowMs + ttlMs);
 			contextIdByCacheKey.set(cacheKey, callerContextId);
 			return context;
 		},
 		release: removeContext,
-		resolve: (callerContextId) => contextById.get(callerContextId),
+		resolve: (callerContextId) => {
+			pruneExpiredContexts(now());
+			return contextById.get(callerContextId);
+		},
 		resolveForSession: ({ callerContextId, session }) => {
+			pruneExpiredContexts(now());
 			const context = contextById.get(callerContextId);
 			if (context !== undefined) {
 				if (callerContextSessionMatches({ context, session })) {
@@ -304,5 +370,6 @@ export function createGatewayControlCallerContextRegistry(options: {
 			}
 			return { status: 'absent' };
 		},
+		validateRegistrationForSession,
 	};
 }

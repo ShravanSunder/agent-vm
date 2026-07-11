@@ -1323,7 +1323,7 @@ export async function startGatewayZone(
 											},
 										}),
 								session: {
-									bootId: controlSessionMaterial.bootId,
+									bootId: controlSessionMaterial.processEpoch,
 									controllerEpoch: controlSessionMaterial.controllerEpoch,
 									peerId: controlSessionMaterial.peerId,
 									zoneId: controlSessionMaterial.zoneId,
@@ -1344,6 +1344,11 @@ export async function startGatewayZone(
 							dispatcher,
 							endpoint: buildGatewayControlEndpoint(ingress),
 							material: controlSessionMaterial,
+							...(options.gatewayControlProcessAdmissionCoordinator === undefined
+								? {}
+								: {
+										processAdmissionCoordinator: options.gatewayControlProcessAdmissionCoordinator,
+									}),
 							sessionFenceRegistry,
 						});
 					});

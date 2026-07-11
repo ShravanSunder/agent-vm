@@ -908,6 +908,9 @@ describe('startControllerRuntime', () => {
 		expect(startGatewayZone).toHaveBeenCalledTimes(2);
 		expect(startGatewayZone.mock.calls[0]?.[0]).toMatchObject({ zoneId: 'shravan' });
 		expect(startGatewayZone.mock.calls[1]?.[0]).toMatchObject({ zoneId: 'shravan' });
+		expect(startGatewayZone.mock.calls[1]?.[0].gatewayControlProcessAdmissionCoordinator).toBe(
+			startGatewayZone.mock.calls[0]?.[0].gatewayControlProcessAdmissionCoordinator,
+		);
 		expect(resolveAllCallCounts).toEqual([1, 1]);
 		await expect(runtime.close()).resolves.toBeUndefined();
 	});
@@ -1090,6 +1093,10 @@ describe('startControllerRuntime', () => {
 				runTask: expect.any(Function),
 				runtimeEnvironment: {},
 				runtimePluginConfigs: {},
+				gatewayControlProcessAdmissionCoordinator: expect.objectContaining({
+					registerSession: expect.any(Function),
+					submit: expect.any(Function),
+				}),
 				zoneId: 'shravan',
 			}),
 		);
@@ -1179,6 +1186,7 @@ describe('startControllerRuntime', () => {
 			purpose: 'tool_vm_lease',
 			sessionId: '33333333-3333-4333-8333-333333333333',
 			sessionKeyDigest: '0123456789abcdef0123456789abcdef',
+			stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 			zoneId: 'shravan',
 		} satisfies GatewayControlTrustedCallerContext;

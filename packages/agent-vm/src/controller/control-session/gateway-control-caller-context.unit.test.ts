@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	createGatewayControlCallerContextRegistry,
+	deriveGatewayControlStablePrincipal,
 	digestGatewayControlSessionKey,
 } from './gateway-control-caller-context.js';
 
@@ -73,6 +74,8 @@ function createRegistry(
 	options: {
 		readonly createCallerContextId?: () => string;
 		readonly maxContexts?: number;
+		readonly now?: () => number;
+		readonly ttlMs?: number;
 	} = {},
 ): ReturnType<typeof createGatewayControlCallerContextRegistry> {
 	return createGatewayControlCallerContextRegistry({
@@ -83,6 +86,188 @@ function createRegistry(
 }
 
 describe('gateway control caller context registry', () => {
+	it('derives a stable principal from controller-validated zone and agent identity', () => {
+		const principal = deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' });
+
+		expect(principal).toMatch(/^[a-f0-9]{64}$/u);
+		expect(deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' })).toBe(
+			principal,
+		);
+		expect(deriveGatewayControlStablePrincipal({ agentId: 'other', zoneId: 'zone-a' })).not.toBe(
+			principal,
+		);
+		expect(deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-b' })).not.toBe(
+			principal,
+		);
+	});
+
+	it('validates normalized trusted caller claims without allocating or registering a context', () => {
+		let createdCallerContextCount = 0;
+		const callerContextId = '44444444-4444-4444-8444-444444444444';
+		const registry = createRegistry({
+			createCallerContextId: () => {
+				createdCallerContextCount += 1;
+				return callerContextId;
+			},
+		});
+
+		const validation = registry.validateRegistrationForSession({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+
+		expect(validation).toEqual({
+			agentId: 'main',
+			agentWorkspaceDir: '/home/openclaw/workspace',
+			bootId: 'boot-a',
+			connectionId: 'connection-a',
+			controllerEpoch: 'epoch-a',
+			peerId: 'gateway-zone-a',
+			purpose: 'tool_vm_lease',
+			sessionId: 'session-a',
+			sessionKeyDigest: digestGatewayControlSessionKey('agent:main:test-session'),
+			stablePrincipal: deriveGatewayControlStablePrincipal({
+				agentId: 'main',
+				zoneId: 'zone-a',
+			}),
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+			zoneId: 'zone-a',
+		});
+		expect(JSON.stringify(validation)).not.toContain('agent:main:test-session');
+		expect(createdCallerContextCount).toBe(0);
+		expect(registry.resolve(callerContextId)).toBeUndefined();
+	});
+
+	it('rejects untrusted registration claims before mutating the caller-context registry', () => {
+		let createdCallerContextCount = 0;
+		const callerContextId = '44444444-4444-4444-8444-444444444444';
+		const registry = createRegistry({
+			createCallerContextId: () => {
+				createdCallerContextCount += 1;
+				return callerContextId;
+			},
+			maxContexts: 1,
+		});
+		const signedPayload = createRegisterPayload({
+			sessionKey: 'agent:main:original-session',
+		});
+		const wrongAgentAuthorityPayload = {
+			adapterEvidence: {
+				...registerPayload.adapterEvidence,
+				agentAuthority: {
+					algorithm: 'hmac-sha256',
+					digest: createHmac('sha256', 'test-other-agent-authority-key')
+						.update(
+							buildGatewayControlCallerContextAgentAuthorityPayload({
+								...registerPayload.adapterEvidence,
+								agentId: 'other-agent',
+							}),
+							'utf8',
+						)
+						.digest('base64url'),
+					keyId: 'other-agent',
+				},
+			},
+		} satisfies GatewayControlCallerContextRegisterPayload;
+
+		expect(() =>
+			registry.validateRegistrationForSession({
+				payload: createRegisterPayload({ zoneId: 'other-zone' }),
+				session: acceptedSession,
+			}),
+		).toThrow(/zoneId mismatch/u);
+		expect(() =>
+			registry.validateRegistrationForSession({
+				payload: {
+					adapterEvidence: {
+						...signedPayload.adapterEvidence,
+						sessionKey: 'agent:main:forged-session',
+					},
+				},
+				session: acceptedSession,
+			}),
+		).toThrow(/proof digest is invalid/u);
+		expect(() =>
+			registry.validateRegistrationForSession({
+				payload: wrongAgentAuthorityPayload,
+				session: acceptedSession,
+			}),
+		).toThrow(/agent authority proof is invalid/u);
+		expect(createdCallerContextCount).toBe(0);
+		expect(registry.resolve(callerContextId)).toBeUndefined();
+
+		const context = registry.register({ payload: registerPayload, session: acceptedSession });
+
+		expect(context.callerContextId).toBe(callerContextId);
+		expect(createdCallerContextCount).toBe(1);
+	});
+
+	it('requires fresh validation and registration after the exact control session changes', () => {
+		const registry = createRegistry({
+			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+		});
+		const successorSession = {
+			...acceptedSession,
+			connectionId: 'connection-b',
+			sessionId: 'session-b',
+		};
+		const firstValidation = registry.validateRegistrationForSession({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+		const firstContext = registry.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+
+		expect(firstValidation).toMatchObject({
+			bootId: 'boot-a',
+			connectionId: 'connection-a',
+			sessionId: 'session-a',
+		});
+		expect(
+			registry.resolveForSession({
+				callerContextId: firstContext.callerContextId,
+				session: successorSession,
+			}),
+		).toEqual({ status: 'session_mismatch' });
+
+		const successorValidation = registry.validateRegistrationForSession({
+			payload: registerPayload,
+			session: successorSession,
+		});
+
+		expect(successorValidation).toMatchObject({
+			bootId: 'boot-a',
+			connectionId: 'connection-b',
+			sessionId: 'session-b',
+			stablePrincipal: firstValidation.stablePrincipal,
+		});
+		expect(firstValidation).not.toEqual(successorValidation);
+	});
+
+	it('expires ephemeral caller contexts without extending their original TTL', () => {
+		let nowMs = 1_000;
+		const registry = createRegistry({
+			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+			now: () => nowMs,
+			ttlMs: 10,
+		});
+		const context = registry.register({ payload: registerPayload, session: acceptedSession });
+
+		nowMs = 1_009;
+		expect(registry.resolve(context.callerContextId)).toEqual(context);
+		registry.register({ payload: registerPayload, session: acceptedSession });
+		nowMs = 1_010;
+		expect(registry.resolve(context.callerContextId)).toBeUndefined();
+		expect(
+			registry.resolveForSession({
+				callerContextId: context.callerContextId,
+				session: acceptedSession,
+			}).status,
+		).toBe('stale');
+	});
+
 	it('issues an opaque context id and stores only a sessionKey digest', () => {
 		const registry = createRegistry({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
@@ -104,6 +289,10 @@ describe('gateway control caller context registry', () => {
 			purpose: 'tool_vm_lease',
 			sessionId: 'session-a',
 			sessionKeyDigest: digestGatewayControlSessionKey('agent:main:test-session'),
+			stablePrincipal: deriveGatewayControlStablePrincipal({
+				agentId: 'main',
+				zoneId: 'zone-a',
+			}),
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 			zoneId: 'zone-a',
 		});

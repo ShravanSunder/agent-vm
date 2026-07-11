@@ -31,6 +31,7 @@ const callerContext = {
 	purpose: 'tool_vm_lease',
 	sessionId: '33333333-3333-4333-8333-333333333333',
 	sessionKeyDigest: '0123456789abcdef0123456789abcdef',
+	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	workMountDir: '/host/sandbox-work',
 	zoneId: 'zone-a',
 } satisfies GatewayControlTrustedCallerContext;
@@ -40,6 +41,7 @@ const otherCallerContext = {
 	agentId: 'other',
 	callerContextId: '55555555-5555-4555-8555-555555555555',
 	sessionKeyDigest: 'fedcba9876543210fedcba9876543210',
+	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 } satisfies GatewayControlTrustedCallerContext;
 
 const refreshedCallerContext = {
@@ -60,6 +62,7 @@ const sameAgentDifferentSessionCallerContext = {
 	connectionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 	sessionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 	sessionKeyDigest: '11111111111111112222222222222222',
+	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 } satisfies GatewayControlTrustedCallerContext;
 
 const callerContextPayload = {
@@ -497,6 +500,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				correlation: {
 					runId: 'run-a',
 					sessionKeyDigest: callerContext.sessionKeyDigest,
+					stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 					toolCallId: 'tool-call-a',
 					traceId: 'fedcba9876543210fedcba9876543210',
 				},
