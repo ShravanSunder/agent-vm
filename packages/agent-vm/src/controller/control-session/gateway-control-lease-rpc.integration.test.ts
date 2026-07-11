@@ -38,6 +38,7 @@ import {
 } from './gateway-control-caller-context.js';
 import { createGatewayControlDomainHandler } from './gateway-control-domain-handler.js';
 import { createGatewayControlLeaseRpcOperations } from './gateway-control-lease-rpc.js';
+import { createGatewaySemanticResultLedger } from './gateway-semantic-result-ledger.js';
 
 const acceptedSession = {
 	bootId: 'gateway-boot-a',
@@ -177,6 +178,7 @@ function createEnvelope(
 		createdAtMs: sequence,
 		deliveryPolicy: gatewayControlDeliveryPolicyByOperation[operation],
 		domain: 'gateway_control',
+		expiresAtMs: 60_000 + sequence,
 		idempotencyKey: `${operation}:${String(sequence)}`,
 		kind: 'command',
 		messageId: `66666666-6666-4666-8666-${String(sequence).padStart(12, '0')}`,
@@ -197,7 +199,21 @@ type GatewayControlCommandResultMessage = Extract<
 function createManagedVmStub(): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
 		const vm = {
-			close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
+			close: vi.fn(async () => ({
+				...createCompleteVmDestroyReceipt('tool-vm-1', {
+					controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+					parentGateway: {
+						epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+						vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+					},
+					role: 'tool',
+				}),
+				requestedRunner: {
+					backend: 'qemu' as const,
+					discoveryIdentity: 'agent-vm-test:tool-vm-1',
+					executableName: 'qemu-system-aarch64',
+				},
+			})),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
@@ -264,10 +280,11 @@ function createIntegrationLeaseRpcOptions(
 		recordHealthEvent: (event: AgentVmHealthEvent) => {
 			options.recordedHealthEvents?.push(event);
 		},
-		resolveLeaseCreateOptions: async ({ callerContext }) => ({
+		resolveLeaseCreateOptions: async ({ callerContext, gateway }) => ({
 			agentId: callerContext.agentId,
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
-			expectedGateway: TEST_GATEWAY_EPOCH,
+			expectedGateway: gateway,
+			gatewayWorkMountDir: callerContext.workMountDir,
 			guestWorkdir: '/workspace',
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
@@ -299,11 +316,17 @@ function createIntegrationDispatcher(options: {
 		},
 	});
 	const leaseRpc = createGatewayControlLeaseRpcOperations(options.leaseRpcOptions);
-	const dispatcher = createControlSessionDispatcher();
+	const dispatcher = createControlSessionDispatcher({
+		semanticLedger: createGatewaySemanticResultLedger({
+			gateway: TEST_GATEWAY_EPOCH,
+			nowMs: () => 1_000,
+		}),
+	});
 	dispatcher.register(
 		'gateway_control',
 		createGatewayControlDomainHandler({
 			callerContexts,
+			gateway: TEST_GATEWAY_EPOCH,
 			leaseRpc,
 			session: acceptedSession,
 		}),
@@ -344,6 +367,7 @@ async function dispatchGatewayControl(
 ): Promise<GatewayControlCommandResultMessage> {
 	return GatewayControlRpcCommandResultMessageSchema.parse(
 		await dispatcher.dispatch({
+			attachmentGeneration: 1,
 			envelope: createEnvelope(operation, sequence, session),
 			payload: message,
 		}),
@@ -351,7 +375,7 @@ async function dispatchGatewayControl(
 }
 
 describe('gateway control lease RPC integration', () => {
-	it('reacquires a replacement lease through the real domain-handler seam after release', async () => {
+	it('reacquires a replacement lease through the real domain-handler seam', async () => {
 		let callerContextIdIndex = 0;
 		const callerContextIds = [
 			'44444444-4444-4444-8444-444444444444',
@@ -376,10 +400,11 @@ describe('gateway control lease RPC integration', () => {
 			recordHealthEvent: (event: AgentVmHealthEvent) => {
 				recordedHealthEvents.push(event);
 			},
-			resolveLeaseCreateOptions: async ({ callerContext }) => ({
+			resolveLeaseCreateOptions: async ({ callerContext, gateway }) => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
-				expectedGateway: TEST_GATEWAY_EPOCH,
+				expectedGateway: gateway,
+				gatewayWorkMountDir: callerContext.workMountDir,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -394,11 +419,17 @@ describe('gateway control lease RPC integration', () => {
 		const leaseRpc = createGatewayControlLeaseRpcOperations({
 			...leaseRpcOptions,
 		});
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createControlSessionDispatcher({
+			semanticLedger: createGatewaySemanticResultLedger({
+				gateway: TEST_GATEWAY_EPOCH,
+				nowMs: () => 1_000,
+			}),
+		});
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
 				callerContexts,
+				gateway: TEST_GATEWAY_EPOCH,
 				leaseRpc,
 				session: acceptedSession,
 			}),
@@ -429,14 +460,6 @@ describe('gateway control lease RPC integration', () => {
 		if (oldLeaseId === undefined) {
 			throw new Error('expected old lease id');
 		}
-		await dispatchGatewayControl(dispatcher, 'lease_release', 3, {
-			kind: 'command',
-			operation: 'lease_release',
-			payload: {
-				callerContext: { callerContextId: firstCallerContextId },
-				leaseId: oldLeaseId,
-			},
-		});
 		const secondRegisterResponse = await dispatchGatewayControl(
 			dispatcher,
 			'caller_context_register',
@@ -527,7 +550,7 @@ describe('gateway control lease RPC integration', () => {
 		});
 	});
 
-	it('rejects current work and reacquire through the domain-handler seam after same-gateway fence drift', async () => {
+	it('rejects current work and reacquire through the domain-handler seam after Gateway epoch drift', async () => {
 		const replacementSession = {
 			...acceptedSession,
 			bootId: 'gateway-boot-b',
@@ -556,20 +579,40 @@ describe('gateway control lease RPC integration', () => {
 			})(),
 		});
 		const leaseRpc = createGatewayControlLeaseRpcOperations(createIntegrationLeaseRpcOptions());
-		const oldSessionDispatcher = createControlSessionDispatcher();
+		const oldSessionDispatcher = createControlSessionDispatcher({
+			semanticLedger: createGatewaySemanticResultLedger({
+				gateway: TEST_GATEWAY_EPOCH,
+				nowMs: () => 1_000,
+			}),
+		});
 		oldSessionDispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
 				callerContexts,
+				gateway: TEST_GATEWAY_EPOCH,
 				leaseRpc,
 				session: acceptedSession,
 			}),
 		);
-		const replacementSessionDispatcher = createControlSessionDispatcher();
+		const replacementGateway = {
+			...TEST_GATEWAY_EPOCH,
+			bootId: replacementSession.bootId,
+			controllerEpoch: replacementSession.controllerEpoch,
+			gatewayEpochId: 'gateway-epoch-b',
+			gatewayVmId: 'gateway-vm-b',
+			generationId: 'gateway-generation-b',
+		} satisfies GatewayEpochIdentity;
+		const replacementSessionDispatcher = createControlSessionDispatcher({
+			semanticLedger: createGatewaySemanticResultLedger({
+				gateway: replacementGateway,
+				nowMs: () => 1_000,
+			}),
+		});
 		replacementSessionDispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
 				callerContexts,
+				gateway: replacementGateway,
 				leaseRpc,
 				session: replacementSession,
 			}),
@@ -624,14 +667,6 @@ describe('gateway control lease RPC integration', () => {
 			},
 			replacementSession,
 		);
-		await dispatchGatewayControl(oldSessionDispatcher, 'lease_release', 6, {
-			kind: 'command',
-			operation: 'lease_release',
-			payload: {
-				callerContext: { callerContextId: oldCallerContextId },
-				leaseId: oldLeaseId,
-			},
-		});
 		const reacquireResponse = await dispatchGatewayControl(
 			replacementSessionDispatcher,
 			'lease_reacquire',
@@ -656,7 +691,7 @@ describe('gateway control lease RPC integration', () => {
 			kind: 'command_result',
 			operation: 'lease_renew',
 			payload: {
-				leaseRejectionReason: 'caller_context_session_mismatch',
+				leaseRejectionReason: 'ownership_denied',
 				responseToMessageId: '66666666-6666-4666-8666-000000000004',
 				result: 'rejected',
 			},
@@ -665,7 +700,7 @@ describe('gateway control lease RPC integration', () => {
 			kind: 'command_result',
 			operation: 'lease_use_start',
 			payload: {
-				leaseRejectionReason: 'caller_context_session_mismatch',
+				leaseRejectionReason: 'ownership_denied',
 				responseToMessageId: '66666666-6666-4666-8666-000000000005',
 				result: 'rejected',
 			},
@@ -674,7 +709,7 @@ describe('gateway control lease RPC integration', () => {
 			kind: 'command_result',
 			operation: 'lease_reacquire',
 			payload: {
-				leaseRejectionReason: 'caller_context_session_mismatch',
+				leaseRejectionReason: 'ownership_denied',
 				responseToMessageId: '66666666-6666-4666-8666-000000000007',
 				result: 'rejected',
 			},
@@ -702,14 +737,6 @@ describe('gateway control lease RPC integration', () => {
 		if (oldLeaseId === undefined) {
 			throw new Error('expected old lease id');
 		}
-		await dispatchGatewayControl(dispatcher, 'lease_release', 3, {
-			kind: 'command',
-			operation: 'lease_release',
-			payload: {
-				callerContext: { callerContextId: firstCallerContextId },
-				leaseId: oldLeaseId,
-			},
-		});
 		const refreshedCallerContextId = await registerCallerContext({ dispatcher, sequence: 4 });
 		const firstReacquireResponse = await dispatchGatewayControl(dispatcher, 'lease_reacquire', 5, {
 			kind: 'command',
@@ -765,7 +792,7 @@ describe('gateway control lease RPC integration', () => {
 			kind: 'command_result',
 			operation: 'lease_reacquire',
 			payload: {
-				leaseRejectionReason: 'ownership_denied',
+				leaseRejectionReason: 'lease_authority_absent',
 				responseToMessageId: '66666666-6666-4666-8666-000000000008',
 				result: 'rejected',
 			},

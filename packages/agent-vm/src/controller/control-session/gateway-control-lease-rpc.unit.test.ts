@@ -1,3 +1,13 @@
+import {
+	GatewayControlLeaseCreateIntentPayloadSchema,
+	GatewayControlLeaseIdPayloadSchema,
+	GatewayControlLeaseReacquireIntentPayloadSchema,
+	GatewayControlLeaseSnapshotSchema,
+	GatewayControlLeaseUseEndPayloadSchema,
+	GatewayControlLeaseUseHeartbeatPayloadSchema,
+	GatewayControlLeaseUseStartPayloadSchema,
+	type GatewayControlLeaseSnapshot,
+} from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import type { VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
@@ -12,14 +22,24 @@ import {
 } from '../../testing/managed-vm-test-helpers.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
-import { OpenClawRuntimeStatusUnavailableError } from '../openclaw-runtime-status.js';
 import type { GatewayOwnershipCoordinator } from '../vm-ownership/gateway-ownership-coordinator.js';
 import {
 	gatewayIdentitiesEqual,
 	type GatewayEpochIdentity,
 } from '../vm-ownership/vm-ownership-contracts.js';
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
+import type {
+	GatewayControlLeaseRpcOperations,
+	GatewayControlLeaseSemanticMutationOperation,
+	GatewayControlLeaseSemanticMutationPayload,
+	GatewayControlLeaseSemanticMutationResult,
+	GatewayControlPreparedLeaseSemanticMutation,
+} from './gateway-control-domain-handler.js';
 import { createGatewayControlLeaseRpcOperations } from './gateway-control-lease-rpc.js';
+import {
+	createGatewaySemanticResultLedger,
+	type GatewaySemanticExecutionProof,
+} from './gateway-semantic-result-ledger.js';
 
 const callerContext = {
 	agentId: 'main',
@@ -81,7 +101,147 @@ const TEST_GATEWAY_EPOCH = {
 	zoneId: callerContext.zoneId,
 } satisfies GatewayEpochIdentity;
 
+const OTHER_GATEWAY_EPOCH = {
+	...TEST_GATEWAY_EPOCH,
+	bootId: 'gateway-boot-b',
+	controllerEpoch: 'epoch-b',
+	gatewayEpochId: 'gateway-epoch-b',
+	gatewayVmId: 'gateway-vm-b',
+	generationId: 'gateway-generation-b',
+} satisfies GatewayEpochIdentity;
+
+const TEST_PROCESS_EPOCH = 'gateway-control-lease-rpc-process-epoch';
+const TEST_ATTACHMENT_GENERATION = 1;
+const TEST_OPERATION_PAYLOAD_DIGEST =
+	'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+type ExpectedLeaseRpcSurface = 'getLease' | 'prepareSemanticMutation';
+
+const leaseRpcHasNoDirectMutationMethods: Exclude<
+	keyof GatewayControlLeaseRpcOperations,
+	ExpectedLeaseRpcSurface
+> extends never
+	? true
+	: false = true;
+const leaseRpcHasEveryHardCutMethod: Exclude<
+	ExpectedLeaseRpcSurface,
+	keyof GatewayControlLeaseRpcOperations
+> extends never
+	? true
+	: false = true;
+
+interface TestLeaseSemanticMutationRequest {
+	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly gateway?: GatewayEpochIdentity;
+	readonly payload: GatewayControlLeaseSemanticMutationPayload;
+}
+
+function executeLeaseSemanticMutation(
+	leaseRpc: GatewayControlLeaseRpcOperations,
+	operation: 'lease_create',
+	request: TestLeaseSemanticMutationRequest,
+): Promise<GatewayControlLeaseSnapshot>;
+function executeLeaseSemanticMutation(
+	leaseRpc: GatewayControlLeaseRpcOperations,
+	operation: Exclude<GatewayControlLeaseSemanticMutationOperation, 'lease_create'>,
+	request: TestLeaseSemanticMutationRequest,
+): Promise<GatewayControlLeaseSemanticMutationResult>;
+async function executeLeaseSemanticMutation(
+	leaseRpc: GatewayControlLeaseRpcOperations,
+	operation: GatewayControlLeaseSemanticMutationOperation,
+	request: TestLeaseSemanticMutationRequest,
+): Promise<GatewayControlLeaseSemanticMutationResult> {
+	const gateway = request.gateway ?? TEST_GATEWAY_EPOCH;
+	const preparationBase = {
+		attachmentGeneration: TEST_ATTACHMENT_GENERATION,
+		callerContext: request.callerContext,
+		gateway,
+		processEpoch: TEST_PROCESS_EPOCH,
+	};
+	const preparedMutation =
+		await (async (): Promise<GatewayControlPreparedLeaseSemanticMutation> => {
+			switch (operation) {
+				case 'lease_create':
+					return await leaseRpc.prepareSemanticMutation({
+						...preparationBase,
+						operation,
+						payload: GatewayControlLeaseCreateIntentPayloadSchema.parse(request.payload),
+					});
+				case 'lease_reacquire':
+					return await leaseRpc.prepareSemanticMutation({
+						...preparationBase,
+						operation,
+						payload: GatewayControlLeaseReacquireIntentPayloadSchema.parse(request.payload),
+					});
+				case 'lease_release':
+				case 'lease_renew':
+					return await leaseRpc.prepareSemanticMutation({
+						...preparationBase,
+						operation,
+						payload: GatewayControlLeaseIdPayloadSchema.parse(request.payload),
+					});
+				case 'lease_use_end':
+					return await leaseRpc.prepareSemanticMutation({
+						...preparationBase,
+						operation,
+						payload: GatewayControlLeaseUseEndPayloadSchema.parse(request.payload),
+					});
+				case 'lease_use_heartbeat':
+					return await leaseRpc.prepareSemanticMutation({
+						...preparationBase,
+						operation,
+						payload: GatewayControlLeaseUseHeartbeatPayloadSchema.parse(request.payload),
+					});
+				case 'lease_use_start':
+					return await leaseRpc.prepareSemanticMutation({
+						...preparationBase,
+						operation,
+						payload: GatewayControlLeaseUseStartPayloadSchema.parse(request.payload),
+					});
+			}
+			operation satisfies never;
+			throw new Error('Unsupported test lease semantic mutation operation.');
+		})();
+	const proof = {
+		identity: {
+			commandId: `test-${operation}-command`,
+			gateway,
+			idempotencyKey: `test-${operation}-idempotency`,
+			operation,
+			profile: preparedMutation.profile,
+			target: preparedMutation.target,
+			validUntilMs: 60_000,
+		},
+		operationPayloadDigest: {
+			algorithm: 'sha256',
+			canonicalVersion: 1,
+			digest: TEST_OPERATION_PAYLOAD_DIGEST,
+		},
+		semanticOperationId: `test-${operation}-semantic-operation`,
+	} satisfies GatewaySemanticExecutionProof;
+	const result = await preparedMutation.execute(proof);
+	return operation === 'lease_create' ? GatewayControlLeaseSnapshotSchema.parse(result) : result;
+}
+
 const TEST_TOOL_VM_KNOWN_HOSTS_LINE = `tool-0.vm.host ${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}`;
+
+function createMatchingToolVmDestroyReceipt(): VmDestroyReceiptV1 {
+	return {
+		...createCompleteVmDestroyReceipt('tool-vm-1', {
+			controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+			parentGateway: {
+				epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+				vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+			},
+			role: 'tool',
+		}),
+		requestedRunner: {
+			backend: 'qemu',
+			discoveryIdentity: 'agent-vm-test:tool-vm-1',
+			executableName: 'qemu-system-aarch64',
+		},
+	};
+}
 
 function refuseUnexpectedGatewayOwnershipOperation(): never {
 	throw new Error('unexpected Gateway ownership operation in lease RPC test');
@@ -128,7 +288,7 @@ function createOwnershipCoordinatorStub(
 						verifiedDestroyTarget,
 					}),
 					commitCurrent: async () => {},
-					destroyDetached: async () => createCompleteVmDestroyReceipt('tool-vm-1'),
+					destroyDetached: async () => createMatchingToolVmDestroyReceipt(),
 					destroyLive: async (closeLiveVm) => await closeLiveVm(),
 				};
 			},
@@ -144,10 +304,13 @@ function createOwnershipCoordinatorStub(
 
 const incompleteVmDestroyReceipt = {
 	contractVersion: 1,
-	reservationId: 'reservation-incomplete',
-	vmId: 'tool-vm-incomplete',
-	controllerEpoch: 'controller-epoch-1',
-	parentGateway: { vmId: 'gateway-vm-1', epoch: 'gateway-epoch-1' },
+	reservationId: 'reservation-tool-vm-1',
+	vmId: 'tool-vm-1',
+	controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+	parentGateway: {
+		vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+		epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+	},
 	role: 'tool',
 	requestedRunner: {
 		backend: 'qemu',
@@ -171,12 +334,15 @@ const incompleteVmDestroyReceipt = {
 function withCallerContextPayload<TPayload>(
 	payload: TPayload,
 	context: GatewayControlTrustedCallerContext = callerContext,
+	gateway: GatewayEpochIdentity = TEST_GATEWAY_EPOCH,
 ): {
 	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly gateway: GatewayEpochIdentity;
 	readonly payload: TPayload;
 } {
 	return {
 		callerContext: context,
+		gateway,
 		payload,
 	};
 }
@@ -191,6 +357,14 @@ function createManagedVmStub(
 	} = {},
 ): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
+		const destroyIdentity = {
+			controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+			parentGateway: {
+				epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+				vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+			},
+			role: 'tool' as const,
+		};
 		let closeReceiptIndex = 0;
 		const sshAccess = {
 			host: '127.0.0.1',
@@ -214,7 +388,7 @@ function createManagedVmStub(
 				if (configuredReceipt !== undefined) {
 					return configuredReceipt;
 				}
-				return createCompleteVmDestroyReceipt('tool-vm-1');
+				return createMatchingToolVmDestroyReceipt();
 			}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => sshAccess),
@@ -224,7 +398,7 @@ function createManagedVmStub(
 					: createManagedExecProcessStub(),
 			),
 			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1'),
+			getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1', destroyIdentity),
 			getHostPid: () => 12345,
 			getVmInstance: () => vm,
 			id: 'tool-vm-1',
@@ -290,6 +464,21 @@ function createTestLeaseManager(
 }
 
 describe('createGatewayControlLeaseRpcOperations', () => {
+	it('exposes only the hard-cut read and semantic-mutation surface', () => {
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager: createTestLeaseManager(),
+			resolveLeaseCreateOptions: async () => {
+				throw new Error('unexpected lease option resolution');
+			},
+		});
+
+		expect([leaseRpcHasNoDirectMutationMethods, leaseRpcHasEveryHardCutMethod]).toEqual([
+			true,
+			true,
+		]);
+		expect(Object.keys(leaseRpc).toSorted()).toEqual(['getLease', 'prepareSemanticMutation']);
+	});
+
 	it('creates and serializes leases through controller-owned create options', async () => {
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
@@ -297,6 +486,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			effectiveIdleTtlMs: 60_000,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: callerContext.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -316,7 +506,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions,
 		});
 
-		const lease = await leaseRpc.createLease({
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: {
 				callerContext: {
@@ -328,10 +518,14 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			withCallerContextPayload({ ...callerContextPayload, leaseId: lease.leaseId }),
 			{ includeSsh: 'public' },
 		);
-		const renewed = await leaseRpc.renewLease(
+		const renewed = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_renew',
 			withCallerContextPayload({ ...callerContextPayload, leaseId: lease.leaseId }),
 		);
-		const released = await leaseRpc.releaseLease(
+		const released = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_release',
 			withCallerContextPayload({
 				...callerContextPayload,
 				leaseId: lease.leaseId,
@@ -340,6 +534,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 
 		expect(resolveLeaseCreateOptions).toHaveBeenCalledWith({
 			callerContext,
+			gateway: TEST_GATEWAY_EPOCH,
 			payload: {
 				callerContext: {
 					callerContextId: callerContext.callerContextId,
@@ -402,6 +597,190 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 	});
 
+	it('defers sandbox seeding until the first admitted semantic execute and never repeats it on replay', async () => {
+		// Arrange
+		const seedSandboxWorkspace = vi.fn(async (): Promise<void> => {});
+		const leaseManager = createTestLeaseManager();
+		const createLease = vi.spyOn(leaseManager, 'createLease');
+		const resolveLeaseCreateOptions = vi.fn(async () => ({
+			agentId: callerContext.agentId,
+			agentWorkspaceDir: callerContext.agentWorkspaceDir,
+			effectiveIdleTtlMs: 60_000,
+			expectedGateway: TEST_GATEWAY_EPOCH,
+			gatewayWorkMountDir: callerContext.workMountDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: callerContext.zoneId,
+		}));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions,
+			seedLeaseWorkspace: seedSandboxWorkspace,
+		});
+		const preparation = {
+			attachmentGeneration: TEST_ATTACHMENT_GENERATION,
+			callerContext,
+			gateway: TEST_GATEWAY_EPOCH,
+			operation: 'lease_create' as const,
+			payload: GatewayControlLeaseCreateIntentPayloadSchema.parse(callerContextPayload),
+			processEpoch: TEST_PROCESS_EPOCH,
+		};
+
+		// Act
+		const firstPreparedMutation = await leaseRpc.prepareSemanticMutation(preparation);
+		const replayPreparedMutation = await leaseRpc.prepareSemanticMutation(preparation);
+		expect.soft(seedSandboxWorkspace).not.toHaveBeenCalled();
+		expect.soft(createLease).not.toHaveBeenCalled();
+		const identity = {
+			commandId: 'semantic-seed-command',
+			gateway: TEST_GATEWAY_EPOCH,
+			idempotencyKey: 'semantic-seed-idempotency',
+			operation: 'lease_create',
+			profile: firstPreparedMutation.profile,
+			target: firstPreparedMutation.target,
+			validUntilMs: 60_000,
+		} satisfies GatewaySemanticExecutionProof['identity'];
+		const semanticLedger = createGatewaySemanticResultLedger({
+			gateway: TEST_GATEWAY_EPOCH,
+			nowMs: () => 1,
+		});
+		const firstResult = await semanticLedger.executeMutating({
+			handler: firstPreparedMutation.execute,
+			identity,
+			payload: callerContextPayload,
+		});
+		const replayResult = await semanticLedger.executeMutating({
+			handler: replayPreparedMutation.execute,
+			identity,
+			payload: callerContextPayload,
+		});
+
+		// Assert
+		expect(firstResult).toMatchObject({ kind: 'completed' });
+		expect(replayResult).toEqual(firstResult);
+		expect(seedSandboxWorkspace).toHaveBeenCalledOnce();
+		expect(createLease).toHaveBeenCalledOnce();
+	});
+
+	it('seeds once before semantic reacquire release and replacement creation without replaying effects', async () => {
+		// Arrange
+		const effectOrder: string[] = [];
+		const seedSandboxWorkspace = vi.fn(async (): Promise<void> => {
+			effectOrder.push('seed');
+		});
+		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+		const originalCreateLease = leaseManager.createLease.bind(leaseManager);
+		const originalReleaseLease = leaseManager.releaseLease.bind(leaseManager);
+		const createLease = vi
+			.spyOn(leaseManager, 'createLease')
+			.mockImplementation(async (options) => {
+				effectOrder.push('create');
+				return await originalCreateLease(options);
+			});
+		const releaseLease = vi
+			.spyOn(leaseManager, 'releaseLease')
+			.mockImplementation(async (leaseId, options) => {
+				effectOrder.push('release');
+				return await originalReleaseLease(leaseId, options);
+			});
+		const resolveLeaseCreateOptions = vi.fn(async () => ({
+			agentId: callerContext.agentId,
+			agentWorkspaceDir: callerContext.agentWorkspaceDir,
+			effectiveIdleTtlMs: 60_000,
+			expectedGateway: TEST_GATEWAY_EPOCH,
+			gatewayWorkMountDir: callerContext.workMountDir,
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: '/host/validated-work',
+			profile: {
+				cpus: 2,
+				imageProfile: 'tool-default',
+				memory: '2G',
+			},
+			profileId: 'standard',
+			zoneId: callerContext.zoneId,
+		}));
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions,
+			seedLeaseWorkspace: seedSandboxWorkspace,
+		});
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext,
+			payload: callerContextPayload,
+		});
+		effectOrder.splice(0);
+		seedSandboxWorkspace.mockClear();
+		createLease.mockClear();
+		releaseLease.mockClear();
+		const reacquirePayload = {
+			callerContext: {
+				callerContextId: refreshedCallerContext.callerContextId,
+			},
+			oldLeaseId: oldLease.leaseId,
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				observedAtMs: 1_100,
+				operation: 'command',
+			},
+		} satisfies GatewayControlLeaseSemanticMutationPayload;
+		const preparation = {
+			attachmentGeneration: TEST_ATTACHMENT_GENERATION,
+			callerContext: refreshedCallerContextIdOnly,
+			gateway: TEST_GATEWAY_EPOCH,
+			operation: 'lease_reacquire' as const,
+			payload: reacquirePayload,
+			processEpoch: TEST_PROCESS_EPOCH,
+		};
+
+		// Act
+		const firstPreparedMutation = await leaseRpc.prepareSemanticMutation(preparation);
+		const replayPreparedMutation = await leaseRpc.prepareSemanticMutation(preparation);
+		expect.soft(effectOrder).toEqual([]);
+		expect.soft(seedSandboxWorkspace).not.toHaveBeenCalled();
+		expect.soft(releaseLease).not.toHaveBeenCalled();
+		expect.soft(createLease).not.toHaveBeenCalled();
+		const identity = {
+			commandId: 'semantic-reacquire-command',
+			gateway: TEST_GATEWAY_EPOCH,
+			idempotencyKey: 'semantic-reacquire-idempotency',
+			operation: 'lease_reacquire',
+			profile: firstPreparedMutation.profile,
+			target: firstPreparedMutation.target,
+			validUntilMs: 60_000,
+		} satisfies GatewaySemanticExecutionProof['identity'];
+		const semanticLedger = createGatewaySemanticResultLedger({
+			gateway: TEST_GATEWAY_EPOCH,
+			nowMs: () => 1,
+		});
+		const firstResult = await semanticLedger.executeMutating({
+			handler: firstPreparedMutation.execute,
+			identity,
+			payload: reacquirePayload,
+		});
+		const replayResult = await semanticLedger.executeMutating({
+			handler: replayPreparedMutation.execute,
+			identity,
+			payload: reacquirePayload,
+		});
+
+		// Assert
+		expect(firstResult).toMatchObject({ kind: 'completed' });
+		expect(replayResult).toEqual(firstResult);
+		expect(effectOrder).toEqual(['seed', 'release', 'create']);
+		expect(seedSandboxWorkspace).toHaveBeenCalledOnce();
+		expect(releaseLease).toHaveBeenCalledOnce();
+		expect(releaseLease).toHaveBeenCalledWith(oldLease.leaseId, { force: true });
+		expect(createLease).toHaveBeenCalledOnce();
+	});
+
 	it.each([
 		['missing', { omitServerHostKey: true }],
 		[
@@ -424,6 +803,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					agentWorkspaceDir: callerContext.agentWorkspaceDir,
 					expectedGateway: TEST_GATEWAY_EPOCH,
 					guestWorkdir: '/workspace',
+					gatewayWorkMountDir: callerContext.workMountDir,
 					hostWorkMountDir: '/host/validated-work',
 					profile: {
 						cpus: 2,
@@ -436,7 +816,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			});
 
 			await expect(
-				leaseRpc.createLease({ callerContext, payload: callerContextPayload }),
+				executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+					callerContext,
+					payload: callerContextPayload,
+				}),
 			).rejects.toThrow("Lease 'lease-main' does not have a valid ssh-ed25519 server host key.");
 		},
 	);
@@ -460,6 +843,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: staleGateway,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -472,7 +856,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 
 		await expect(
-			leaseRpc.createLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 				callerContext,
 				payload: callerContextPayload,
 			}),
@@ -497,6 +881,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: callerContext.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -517,7 +902,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 
 		await expect(
-			leaseRpc.createLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 				callerContext,
 				payload: callerContextPayload,
 			}),
@@ -550,6 +935,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -560,7 +946,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				zoneId: callerContext.zoneId,
 			}),
 		});
-		const lease = await leaseRpc.createLease({
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: {
 				callerContext: {
@@ -569,13 +955,14 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			},
 		});
 
-		const started = await leaseRpc.startLeaseUse(
+		const started = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_use_start',
 			withCallerContextPayload({
 				...callerContextPayload,
 				correlation: {
 					runId: 'run-a',
 					sessionKeyDigest: callerContext.sessionKeyDigest,
-					stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 					toolCallId: 'tool-call-a',
 					traceId: 'fedcba9876543210fedcba9876543210',
 				},
@@ -583,14 +970,18 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				useId: '01890f00-0000-7000-8000-000000000000',
 			}),
 		);
-		const heartbeat = await leaseRpc.heartbeatLeaseUse(
+		const heartbeat = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_use_heartbeat',
 			withCallerContextPayload({
 				...callerContextPayload,
 				leaseId: lease.leaseId,
 				useId: '01890f00-0000-7000-8000-000000000000',
 			}),
 		);
-		const ended = await leaseRpc.endLeaseUse(
+		const ended = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_use_end',
 			withCallerContextPayload({
 				...callerContextPayload,
 				leaseId: lease.leaseId,
@@ -630,6 +1021,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -640,7 +1032,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				zoneId: callerContext.zoneId,
 			}),
 		});
-		const lease = await leaseRpc.createLease({
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: {
 				callerContext: {
@@ -664,13 +1056,21 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			result: 'rejected',
 		});
 		await expect(
-			leaseRpc.renewLease(withCallerContextPayload(crossCallerLeasePayload, otherCallerContext)),
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_renew',
+				withCallerContextPayload(crossCallerLeasePayload, otherCallerContext),
+			),
 		).resolves.toEqual({
 			leaseRejectionReason: 'ownership_denied',
 			result: 'rejected',
 		});
 		await expect(
-			leaseRpc.releaseLease(withCallerContextPayload(crossCallerLeasePayload, otherCallerContext)),
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_release',
+				withCallerContextPayload(crossCallerLeasePayload, otherCallerContext),
+			),
 		).resolves.toEqual({
 			leaseRejectionReason: 'ownership_denied',
 			result: 'rejected',
@@ -686,6 +1086,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -701,7 +1102,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				callerContextId: refreshedCallerContext.callerContextId,
 			},
 		};
-		const lease = await leaseRpc.createLease({
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: {
 				callerContext: {
@@ -717,13 +1118,17 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			),
 			{ includeSsh: 'public' },
 		);
-		const renewed = await leaseRpc.renewLease(
+		const renewed = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_renew',
 			withCallerContextPayload(
 				{ ...refreshedCallerContextPayload, leaseId: lease.leaseId },
 				refreshedCallerContextIdOnly,
 			),
 		);
-		const released = await leaseRpc.releaseLease(
+		const released = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_release',
 			withCallerContextPayload(
 				{ ...refreshedCallerContextPayload, leaseId: lease.leaseId },
 				refreshedCallerContextIdOnly,
@@ -759,6 +1164,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -769,14 +1175,14 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				zoneId: callerContext.zoneId,
 			}),
 		});
-		const lease = await leaseRpc.createLease({
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
 		const sameOwnerDifferentGatewayContext = {
 			...refreshedCallerContextIdOnly,
-			bootId: 'gateway-boot-b',
-			controllerEpoch: 'epoch-b',
+			bootId: OTHER_GATEWAY_EPOCH.bootId,
+			controllerEpoch: OTHER_GATEWAY_EPOCH.controllerEpoch,
 			peerId: 'gateway-zone-b',
 		} satisfies GatewayControlTrustedCallerContext;
 		const driftedCallerContextPayload = {
@@ -787,98 +1193,53 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		};
 
 		await expect(
-			leaseRpc.renewLease(
-				withCallerContextPayload(driftedCallerContextPayload, sameOwnerDifferentGatewayContext),
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_renew',
+				withCallerContextPayload(
+					driftedCallerContextPayload,
+					sameOwnerDifferentGatewayContext,
+					OTHER_GATEWAY_EPOCH,
+				),
 			),
 		).resolves.toEqual({
-			leaseRejectionReason: 'caller_context_session_mismatch',
+			leaseRejectionReason: 'ownership_denied',
 			result: 'rejected',
 		});
 		await expect(
-			leaseRpc.releaseLease(
-				withCallerContextPayload(driftedCallerContextPayload, sameOwnerDifferentGatewayContext),
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_release',
+				withCallerContextPayload(
+					driftedCallerContextPayload,
+					sameOwnerDifferentGatewayContext,
+					OTHER_GATEWAY_EPOCH,
+				),
 			),
 		).resolves.toEqual({
-			leaseRejectionReason: 'caller_context_session_mismatch',
+			leaseRejectionReason: 'ownership_denied',
 			result: 'rejected',
 		});
 		await expect(
-			leaseRpc.startLeaseUse(
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_use_start',
 				withCallerContextPayload(
 					{
 						...driftedCallerContextPayload,
 						useId: '01890f00-0000-7000-8000-000000000001',
 					},
 					sameOwnerDifferentGatewayContext,
+					OTHER_GATEWAY_EPOCH,
 				),
 			),
 		).resolves.toEqual({
-			leaseRejectionReason: 'caller_context_session_mismatch',
+			leaseRejectionReason: 'ownership_denied',
 			result: 'rejected',
 		});
 	});
 
-	it('rejects current lease work when only the session attachment changes', async () => {
-		const leaseRpc = createGatewayControlLeaseRpcOperations({
-			leaseManager: createTestLeaseManager(),
-			readIdentityPem: async () => 'identity-pem',
-			resolveLeaseCreateOptions: async () => ({
-				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
-				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				hostWorkMountDir: '/host/validated-work',
-				profile: {
-					cpus: 2,
-					imageProfile: 'tool-default',
-					memory: '2G',
-				},
-				profileId: 'standard',
-				zoneId: callerContext.zoneId,
-			}),
-		});
-		const lease = await leaseRpc.createLease({
-			callerContext,
-			payload: callerContextPayload,
-		});
-		const sameOwnerDifferentSessionAttachment = {
-			...callerContext,
-			callerContextId: '12121212-1212-4212-8212-121212121212',
-			connectionId: '23232323-2323-4232-8232-232323232323',
-			sessionId: '34343434-3434-4343-8343-343434343434',
-		} satisfies GatewayControlTrustedCallerContext;
-		const driftedCallerContextPayload = {
-			callerContext: {
-				callerContextId: sameOwnerDifferentSessionAttachment.callerContextId,
-			},
-			leaseId: lease.leaseId,
-		};
-
-		await expect(
-			leaseRpc.renewLease(
-				withCallerContextPayload(driftedCallerContextPayload, sameOwnerDifferentSessionAttachment),
-			),
-		).resolves.toEqual({
-			leaseRejectionReason: 'caller_context_session_mismatch',
-			result: 'rejected',
-		});
-		await expect(
-			leaseRpc.startLeaseUse(
-				withCallerContextPayload(
-					{
-						...driftedCallerContextPayload,
-						useId: '01890f00-0000-7000-8000-000000000001',
-					},
-					sameOwnerDifferentSessionAttachment,
-				),
-			),
-		).resolves.toEqual({
-			leaseRejectionReason: 'caller_context_session_mismatch',
-			result: 'rejected',
-		});
-	});
-
-	it('reacquires a replacement lease after the old lease was released', async () => {
+	it('reacquires a replacement lease while retiring the old lease', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(2_000);
 		try {
@@ -895,6 +1256,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					agentWorkspaceDir: callerContext.agentWorkspaceDir,
 					expectedGateway: TEST_GATEWAY_EPOCH,
 					guestWorkdir: '/workspace',
+					gatewayWorkMountDir: callerContext.workMountDir,
 					hostWorkMountDir: '/host/validated-work',
 					profile: {
 						cpus: 2,
@@ -905,18 +1267,12 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					zoneId: callerContext.zoneId,
 				}),
 			});
-			const oldLease = await leaseRpc.createLease({
+			const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 				callerContext,
 				payload: callerContextPayload,
 			});
-			await leaseRpc.releaseLease(
-				withCallerContextPayload({
-					...callerContextPayload,
-					leaseId: oldLease.leaseId,
-				}),
-			);
 
-			const replacementLease = await leaseRpc.reacquireLease({
+			const replacementLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -959,6 +1315,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: callerContext.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -973,21 +1330,15 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
-		await leaseRpc.releaseLease(
-			withCallerContextPayload({
-				...callerContextPayload,
-				leaseId: oldLease.leaseId,
-			}),
-		);
 
 		profileId = 'larger';
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1017,6 +1368,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: callerContext.workMountDir,
 			hostWorkMountDir,
 			profile: {
 				cpus: 2,
@@ -1031,18 +1383,12 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
-		await leaseRpc.releaseLease(
-			withCallerContextPayload({
-				...callerContextPayload,
-				leaseId: oldLease.leaseId,
-			}),
-		);
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1061,7 +1407,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		hostWorkMountDir = '/host/other-work';
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1076,10 +1422,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				},
 			}),
 		).resolves.toEqual({
-			leaseRejectionReason: 'ownership_denied',
+			leaseRejectionReason: 'lease_authority_absent',
 			result: 'rejected',
 		});
-		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(3);
+		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(2);
 	});
 
 	it('allows reacquire after refreshable caller-context id rotates inside the same session attachment', async () => {
@@ -1089,6 +1435,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: context.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -1103,19 +1450,13 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
-		await leaseRpc.releaseLease(
-			withCallerContextPayload({
-				...callerContextPayload,
-				leaseId: oldLease.leaseId,
-			}),
-		);
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: {
 					...callerContext,
 					callerContextId: refreshedCallerContext.callerContextId,
@@ -1135,7 +1476,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
 	});
 
-	it('rejects reacquire when only the session attachment changes', async () => {
+	it('uses exact Gateway authority instead of a removed direct caller-attachment bypass', async () => {
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
 		const recordedHealthEvents: AgentVmHealthEvent[] = [];
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
@@ -1143,6 +1484,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: callerContext.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -1160,16 +1502,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			},
 			resolveLeaseCreateOptions,
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
-		await leaseRpc.releaseLease(
-			withCallerContextPayload({
-				...callerContextPayload,
-				leaseId: oldLease.leaseId,
-			}),
-		);
 		const sameOwnerDifferentSessionAttachment = {
 			...callerContext,
 			callerContextId: refreshedCallerContext.callerContextId,
@@ -1178,7 +1514,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		} satisfies GatewayControlTrustedCallerContext;
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: sameOwnerDifferentSessionAttachment,
 				payload: {
 					callerContext: {
@@ -1192,31 +1528,29 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					},
 				},
 			}),
-		).resolves.toEqual({
-			leaseRejectionReason: 'caller_context_session_mismatch',
-			result: 'rejected',
-		});
+		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
 		expect(recordedHealthEvents).toEqual([
 			expect.objectContaining({
-				callerContextState: 'session_mismatch',
-				leaseRejectionReason: 'caller_context_session_mismatch',
+				callerContextState: 'ok',
 				lifecycleEventRole: 'controller_final',
-				lifecycleTransition: 'retired_rejected',
+				lifecycleTransition: 'stale_to_reacquired',
 				oldLeaseId: oldLease.leaseId,
-				result: 'failed',
+				replacementLeaseId: 'lease-new',
+				result: 'ok',
 				transitionId: `lease_reacquire:${oldLease.leaseId}`,
 			}),
 		]);
-		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(1);
+		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(2);
 	});
 
-	it('rejects reacquire when the same-gateway fence changes after caller-context resolution', async () => {
+	it('uses exact Gateway G instead of caller-context gateway fields during reacquire', async () => {
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
 			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: callerContext.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -1231,16 +1565,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
-		await leaseRpc.releaseLease(
-			withCallerContextPayload({
-				...callerContextPayload,
-				leaseId: oldLease.leaseId,
-			}),
-		);
 		const sameOwnerDifferentGatewayContext = {
 			...refreshedCallerContextIdOnly,
 			bootId: 'gateway-boot-b',
@@ -1249,7 +1577,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		} satisfies GatewayControlTrustedCallerContext;
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: sameOwnerDifferentGatewayContext,
 				payload: {
 					callerContext: {
@@ -1263,11 +1591,8 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					},
 				},
 			}),
-		).resolves.toEqual({
-			leaseRejectionReason: 'caller_context_session_mismatch',
-			result: 'rejected',
-		});
-		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(1);
+		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+		expect(resolveLeaseCreateOptions).toHaveBeenCalledTimes(2);
 	});
 
 	it('rejects old-lease reacquire when replacement ownership moved to another same-agent session', async () => {
@@ -1277,6 +1602,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: context.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -1291,17 +1617,11 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
-		await leaseRpc.releaseLease(
-			withCallerContextPayload({
-				...callerContextPayload,
-				leaseId: oldLease.leaseId,
-			}),
-		);
-		const firstReplacement = await leaseRpc.reacquireLease({
+		const firstReplacement = await executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 			callerContext: refreshedCallerContextIdOnly,
 			payload: {
 				callerContext: {
@@ -1322,14 +1642,14 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			},
 		};
 		await expect(
-			leaseRpc.createLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 				callerContext: sameAgentDifferentSessionCallerContext,
 				payload: sameAgentDifferentSessionPayload,
 			}),
 		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1344,12 +1664,12 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				},
 			}),
 		).resolves.toEqual({
-			leaseRejectionReason: 'ownership_denied',
+			leaseRejectionReason: 'lease_authority_absent',
 			result: 'rejected',
 		});
 	});
 
-	it('rejects reacquire when a concurrent same-agent session creates the replacement lease', async () => {
+	it('serializes the replacement created during reacquire resolution', async () => {
 		const baseLeaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-race'] });
 		let injectedSameAgentCreate = false;
 		const leaseRpcRef: {
@@ -1368,7 +1688,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					if (currentLeaseRpc === undefined) {
 						throw new Error('test lease RPC was not initialized');
 					}
-					await currentLeaseRpc.createLease({
+					await executeLeaseSemanticMutation(currentLeaseRpc, 'lease_create', {
 						callerContext: sameAgentDifferentSessionCallerContext,
 						payload: {
 							callerContext: {
@@ -1384,6 +1704,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: context.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -1399,13 +1720,13 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			resolveLeaseCreateOptions,
 		});
 		leaseRpcRef.current = leaseRpc;
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1419,10 +1740,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					},
 				},
 			}),
-		).resolves.toEqual({
-			leaseRejectionReason: 'ownership_denied',
-			result: 'rejected',
-		});
+		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-race' }));
 		expect(injectedSameAgentCreate).toBe(true);
 	});
 
@@ -1436,6 +1754,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			guestWorkdir: '/workspace',
+			gatewayWorkMountDir: context.workMountDir,
 			hostWorkMountDir: '/host/validated-work',
 			profile: {
 				cpus: 2,
@@ -1450,13 +1769,13 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1478,7 +1797,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 	it('keeps releasing authority fenced until exact retry permits one successor', async () => {
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const leaseManager = createTestLeaseManager({
-			closeReceipts: [incompleteVmDestroyReceipt, createCompleteVmDestroyReceipt('tool-vm-old')],
+			closeReceipts: [incompleteVmDestroyReceipt, createMatchingToolVmDestroyReceipt()],
 			leaseIds: ['lease-old', 'lease-new', 'lease-unexpected'],
 			tcpPool,
 		});
@@ -1492,6 +1811,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: context.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: context.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -1502,7 +1822,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				zoneId: context.zoneId,
 			}),
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
@@ -1511,18 +1831,24 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			leaseId: oldLease.leaseId,
 		});
 
-		await expect(leaseRpc.releaseLease(oldLeasePayload)).rejects.toThrow(/incomplete/u);
-
-		await expect(leaseRpc.renewLease(oldLeasePayload)).rejects.toThrow(/releasing/u);
 		await expect(
-			leaseRpc.startLeaseUse(
+			executeLeaseSemanticMutation(leaseRpc, 'lease_release', oldLeasePayload),
+		).rejects.toThrow(/incomplete/u);
+
+		await expect(
+			executeLeaseSemanticMutation(leaseRpc, 'lease_renew', oldLeasePayload),
+		).rejects.toThrow(/releasing/u);
+		await expect(
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_use_start',
 				withCallerContextPayload({
 					...callerContextPayload,
 					leaseId: oldLease.leaseId,
 					useId: '01890f00-0000-7000-8000-000000000001',
 				}),
 			),
-		).rejects.toThrow(/releasing/u);
+		).rejects.toThrow(/not available for new active work/u);
 		expect(leaseManager.peekLease(oldLease.leaseId)?.lease.id).toBe(oldLease.leaseId);
 		expect(retirementEvents).toEqual([]);
 		expect(tcpPool.isQuarantined(0)).toBe(true);
@@ -1540,12 +1866,23 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					operation: 'command',
 				},
 			},
-		} satisfies Parameters<typeof leaseRpc.reacquireLease>[0];
-		const replacementLease = await leaseRpc.reacquireLease(reacquireRequest);
-		const repeatedReacquire = await leaseRpc.reacquireLease(reacquireRequest);
+		};
+		const replacementLease = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_reacquire',
+			reacquireRequest,
+		);
+		const repeatedReacquire = await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_reacquire',
+			reacquireRequest,
+		);
 
 		expect(replacementLease).toMatchObject({ leaseId: 'lease-new', tcpSlot: 0 });
-		expect(repeatedReacquire).toMatchObject({ leaseId: 'lease-new', tcpSlot: 0 });
+		expect(repeatedReacquire).toEqual({
+			leaseRejectionReason: 'lease_authority_absent',
+			result: 'rejected',
+		});
 		expect(leaseManager.peekLease(oldLease.leaseId)).toBeUndefined();
 		expect(leaseManager.listLeases().map((lease) => lease.id)).toEqual(['lease-new']);
 		expect(retirementEvents).toEqual([
@@ -1554,22 +1891,20 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		expect(tcpPool.isQuarantined(0)).toBe(false);
 	});
 
-	it('reacquires from stored authority compatibility when runtime status is temporarily unavailable', async () => {
+	it('reacquires from current controller compatibility without runtime-status authority', async () => {
 		const leaseManager = createTestLeaseManager({
 			leaseIds: ['lease-old', 'lease-new', 'lease-newer'],
 		});
 		const recordedHealthEvents: AgentVmHealthEvent[] = [];
-		let resolveCallCount = 0;
-		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => {
-			resolveCallCount += 1;
-			if (resolveCallCount > 2) {
-				throw new OpenClawRuntimeStatusUnavailableError(context.zoneId, 'runtime status missing');
-			}
+		const observedResolvedGateways: GatewayEpochIdentity[] = [];
+		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context, gateway }) => {
+			observedResolvedGateways.push(structuredClone(gateway));
 			return {
 				agentId: context.agentId,
 				agentWorkspaceDir: context.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: context.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -1588,11 +1923,11 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			},
 			resolveLeaseCreateOptions,
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
-		const firstReplacement = await leaseRpc.reacquireLease({
+		const firstReplacement = await executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 			callerContext: refreshedCallerContextIdOnly,
 			payload: {
 				callerContext: {
@@ -1611,7 +1946,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		}
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1626,14 +1961,28 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				},
 			}),
 		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-newer' }));
-		expect(recordedHealthEvents).toContainEqual(
-			expect.objectContaining({
-				lifecycleEventRole: 'controller_final',
-				lifecycleTransition: 'stale_to_reacquired',
-				oldLeaseId: firstReplacement.leaseId,
-				replacementLeaseId: 'lease-newer',
-				result: 'ok',
-			}),
+		expect(observedResolvedGateways).toEqual([
+			TEST_GATEWAY_EPOCH,
+			TEST_GATEWAY_EPOCH,
+			TEST_GATEWAY_EPOCH,
+		]);
+		expect(recordedHealthEvents).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					lifecycleEventRole: 'controller_final',
+					lifecycleTransition: 'stale_to_reacquired',
+					oldLeaseId: oldLease.leaseId,
+					replacementLeaseId: 'lease-new',
+					result: 'ok',
+				}),
+				expect.objectContaining({
+					lifecycleEventRole: 'controller_final',
+					lifecycleTransition: 'stale_to_reacquired',
+					oldLeaseId: firstReplacement.leaseId,
+					replacementLeaseId: 'lease-newer',
+					result: 'ok',
+				}),
+			]),
 		);
 	});
 
@@ -1654,6 +2003,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -1664,7 +2014,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				zoneId: callerContext.zoneId,
 			}),
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
@@ -1674,7 +2024,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		nowMs = 1_000 + 10 * 60 * 1000 + 1;
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1715,6 +2065,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -1725,19 +2076,13 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				zoneId: callerContext.zoneId,
 			}),
 		});
-		const oldLease = await leaseRpc.createLease({
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
-		await leaseRpc.releaseLease(
-			withCallerContextPayload({
-				...callerContextPayload,
-				leaseId: oldLease.leaseId,
-			}),
-		);
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
 				payload: {
 					callerContext: {
@@ -1764,6 +2109,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -1776,7 +2122,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 
 		await expect(
-			leaseRpc.reacquireLease({
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext,
 				payload: {
 					callerContext: {
@@ -1806,6 +2152,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				guestWorkdir: '/workspace',
+				gatewayWorkMountDir: callerContext.workMountDir,
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
 					cpus: 2,
@@ -1816,7 +2163,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				zoneId: callerContext.zoneId,
 			}),
 		});
-		const lease = await leaseRpc.createLease({
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: {
 				callerContext: {
@@ -1826,7 +2173,9 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 		const useId = '01890f00-0000-7000-8000-000000000000';
 		await expect(
-			leaseRpc.startLeaseUse(
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_use_start',
 				withCallerContextPayload({
 					callerContext: {
 						callerContextId: callerContext.callerContextId,
@@ -1850,7 +2199,9 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		};
 
 		await expect(
-			leaseRpc.heartbeatLeaseUse(
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_use_heartbeat',
 				withCallerContextPayload(crossCallerUsePayload, otherCallerContext),
 			),
 		).resolves.toEqual({
@@ -1858,7 +2209,9 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			result: 'rejected',
 		});
 		await expect(
-			leaseRpc.endLeaseUse(
+			executeLeaseSemanticMutation(
+				leaseRpc,
+				'lease_use_end',
 				withCallerContextPayload(
 					{
 						...crossCallerUsePayload,

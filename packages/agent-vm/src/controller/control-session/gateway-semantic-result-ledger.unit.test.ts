@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import {
 	GATEWAY_SEMANTIC_ACTIVE_WINDOW_MS,
 	GATEWAY_SEMANTIC_ACTIVE_CAPACITY,
 	GATEWAY_SEMANTIC_TOMBSTONE_CAPACITY,
 	GATEWAY_SEMANTIC_TOMBSTONE_TTL_MS,
+	canonicalGatewaySemanticOperationId,
 	canonicalGatewaySemanticPayloadDigest,
 	createGatewaySemanticResultLedger,
 	type GatewaySemanticEpoch,
@@ -13,11 +15,13 @@ import {
 } from './gateway-semantic-result-ledger.js';
 
 const gatewayA = {
+	bootId: 'gateway-boot-a',
 	controllerEpoch: 'controller-epoch-a',
 	gatewayEpochId: 'gateway-epoch-a',
 	gatewayVmId: 'gateway-vm-a',
+	generationId: 'gateway-generation-a',
 	zoneId: 'zone-a',
-} as const satisfies GatewaySemanticEpoch;
+} as const satisfies GatewayEpochIdentity;
 
 function leaseOperation(options?: {
 	readonly gateway?: GatewaySemanticEpoch;
@@ -202,6 +206,44 @@ describe('Gateway semantic result ledger', () => {
 			}),
 		).resolves.toEqual({ kind: 'gateway_mismatch' });
 		expect(handler).not.toHaveBeenCalled();
+	});
+
+	it('does not share a semantic operation or result across Gateway boot identities', async () => {
+		const handler = vi.fn(async () => 'completed');
+		const ledger = createGatewaySemanticResultLedger({ gateway: gatewayA, nowMs: () => 0 });
+		const otherBootGateway = { ...gatewayA, bootId: 'gateway-boot-b' };
+		const exactGatewayIdentity = leaseOperation();
+		const otherBootIdentity = leaseOperation({ gateway: otherBootGateway });
+
+		expect(canonicalGatewaySemanticOperationId(otherBootIdentity)).not.toBe(
+			canonicalGatewaySemanticOperationId(exactGatewayIdentity),
+		);
+		await expect(
+			ledger.executeMutating({ handler, identity: exactGatewayIdentity, payload: null }),
+		).resolves.toMatchObject({ kind: 'completed' });
+		await expect(
+			ledger.executeMutating({ handler, identity: otherBootIdentity, payload: null }),
+		).resolves.toEqual({ kind: 'gateway_mismatch' });
+		expect(handler).toHaveBeenCalledOnce();
+	});
+
+	it('does not share a semantic operation or result across Gateway generations', async () => {
+		const handler = vi.fn(async () => 'completed');
+		const ledger = createGatewaySemanticResultLedger({ gateway: gatewayA, nowMs: () => 0 });
+		const otherGenerationGateway = { ...gatewayA, generationId: 'gateway-generation-b' };
+		const exactGatewayIdentity = leaseOperation();
+		const otherGenerationIdentity = leaseOperation({ gateway: otherGenerationGateway });
+
+		expect(canonicalGatewaySemanticOperationId(otherGenerationIdentity)).not.toBe(
+			canonicalGatewaySemanticOperationId(exactGatewayIdentity),
+		);
+		await expect(
+			ledger.executeMutating({ handler, identity: exactGatewayIdentity, payload: null }),
+		).resolves.toMatchObject({ kind: 'completed' });
+		await expect(
+			ledger.executeMutating({ handler, identity: otherGenerationIdentity, payload: null }),
+		).resolves.toEqual({ kind: 'gateway_mismatch' });
+		expect(handler).toHaveBeenCalledOnce();
 	});
 
 	it('turns pending and completed cap eviction into no-replay unknown-side-effect tombstones', async () => {

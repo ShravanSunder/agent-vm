@@ -93,10 +93,33 @@ function isDestroyLiveCall(callExpression: ts.CallExpression): boolean {
 	);
 }
 
-function isWithinDestroyLive(closeCall: ts.CallExpression): boolean {
+function isAuthorityRuntimeExactDestructionCall(
+	callExpression: ts.CallExpression,
+	sourceFile: ts.SourceFile,
+): boolean {
+	if (!ts.isPropertyAccessExpression(callExpression.expression)) {
+		return false;
+	}
+	const methodName = callExpression.expression.name.text;
+	if (methodName !== 'destroyExact' && methodName !== 'admitExactDestruction') {
+		return false;
+	}
+	return (
+		callExpression.expression.expression.getText(sourceFile).replaceAll(/\s+/gu, '') ===
+		'authorityRuntime'
+	);
+}
+
+function isWithinReceiptProtectedDestruction(
+	closeCall: ts.CallExpression,
+	sourceFile: ts.SourceFile,
+): boolean {
 	let ancestor: ts.Node | undefined = closeCall.parent;
 	while (ancestor !== undefined) {
-		if (ts.isCallExpression(ancestor) && isDestroyLiveCall(ancestor)) {
+		if (
+			ts.isCallExpression(ancestor) &&
+			(isDestroyLiveCall(ancestor) || isAuthorityRuntimeExactDestructionCall(ancestor, sourceFile))
+		) {
 			return true;
 		}
 		ancestor = ancestor.parent;
@@ -213,7 +236,7 @@ function auditSource(
 			const receiver = managedVmCloseReceiver(node, sourceFile);
 			if (
 				receiver !== undefined &&
-				!isWithinDestroyLive(node) &&
+				!isWithinReceiptProtectedDestruction(node, sourceFile) &&
 				!isAssertedDestructionReceipt(node)
 			) {
 				insertFinding(

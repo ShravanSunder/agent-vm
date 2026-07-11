@@ -58,11 +58,14 @@ interface RejectedToolVmProvisioningCleanupResource<
 	destructionInFlight?: Promise<ToolVmLeaseRuntimeResource<TLease>>;
 }
 
-export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLeaseIdentity>(
+export function createToolVmLeaseAuthorityRuntime<
+	TLease extends ToolVmRuntimeLeaseIdentity,
+	TCleanupContext = never,
+>(
 	options: {
 		readonly retentionPolicy?: Partial<ToolVmLeaseAuthorityRetentionPolicy>;
 	} = {},
-): ToolVmLeaseAuthorityRuntime<TLease> {
+): ToolVmLeaseAuthorityRuntime<TLease, TCleanupContext> {
 	const authorityStatesByGateway = new Map<string, ToolVmLeaseAuthorityState>();
 	const resourcesByAuthority = new Map<string, MutableToolVmLeaseRuntimeResource<TLease>>();
 	const rejectedCleanupResourcesByAuthority = new Map<
@@ -70,6 +73,8 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 		RejectedToolVmProvisioningCleanupResource<TLease>
 	>();
 	const authorityResourceKeysByLeaseId = new Map<string, string>();
+	const cleanupContextsByAuthority = new Map<string, TCleanupContext>();
+	const rejectedCleanupContextsById = new Map<string, TCleanupContext>();
 	const reservedDestructionTombstonesByGateway = new Map<string, Set<string>>();
 
 	function requireAuthorityState(gateway: GatewayEpochIdentity): ToolVmLeaseAuthorityState {
@@ -265,6 +270,7 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 				);
 				replaceAuthorityState(destroyOptions.authority.gateway, completedState);
 				resourcesByAuthority.delete(authorityResourceKey(destroyOptions.authority));
+				cleanupContextsByAuthority.delete(authorityResourceKey(destroyOptions.authority));
 				authorityResourceKeysByLeaseId.delete(destroyOptions.authority.leaseId);
 				releaseDestructionTombstone(destroyOptions.authority);
 				return resource;
@@ -349,6 +355,32 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 			const resource = resourceForLeaseId(leaseId);
 			return resource === undefined ? undefined : structuredClone(resource.authority);
 		},
+		authorityForPrincipal(principal): ToolVmLeafAuthorityReference | undefined {
+			const principalKey = stablePrincipalKey(principal);
+			const resource = [...resourcesByAuthority.values()].find(
+				(candidateResource) =>
+					stablePrincipalKey(candidateResource.authority.principal) === principalKey,
+			);
+			if (resource !== undefined) {
+				return structuredClone(resource.authority);
+			}
+			const rejectedResource = [...rejectedCleanupResourcesByAuthority.values()].find(
+				(candidateResource) =>
+					stablePrincipalKey(candidateResource.authority.principal) === principalKey,
+			);
+			return rejectedResource === undefined
+				? undefined
+				: structuredClone(rejectedResource.authority);
+		},
+		cleanupContextForAuthority(authority): TCleanupContext | undefined {
+			return cleanupContextsByAuthority.get(authorityResourceKey(authority));
+		},
+		cleanupContextForLease(leaseId): TCleanupContext | undefined {
+			const resource = resourceForLeaseId(leaseId);
+			return resource === undefined
+				? undefined
+				: cleanupContextsByAuthority.get(authorityResourceKey(resource.authority));
+		},
 		async beginProvisioning(beginOptions): Promise<ToolVmProvisionalOwnershipProof> {
 			const ownershipProof = await beginOptions.ownership.ready;
 			const resourceKey = authorityResourceKey(beginOptions.authority);
@@ -392,11 +424,17 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 						ownership: beginOptions.ownership,
 						ownershipProof: structuredClone(ownershipProof),
 					});
+					if (beginOptions.cleanupContext !== undefined) {
+						rejectedCleanupContextsById.set(cleanupId, beginOptions.cleanupContext);
+					}
 					throw new RejectedToolVmProvisioningCleanupError(cleanupId, authorityError, cleanupError);
 				}
 				throw authorityError;
 			}
 			replaceAuthorityState(beginOptions.authority.gateway, state);
+			if (beginOptions.cleanupContext !== undefined) {
+				cleanupContextsByAuthority.set(resourceKey, beginOptions.cleanupContext);
+			}
 			resourcesByAuthority.set(resourceKey, {
 				authority: structuredClone(beginOptions.authority),
 				commitDisposition: 'not-started',
@@ -488,9 +526,16 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 				}),
 			);
 		},
+		getCleanupLease(leaseId): TLease | undefined {
+			return resourceForLeaseId(leaseId)?.lease;
+		},
 		getLease(leaseId): TLease | undefined {
 			const resource = resourceForLeaseId(leaseId);
 			return resource === undefined ? undefined : committedLeaseForResource(resource);
+		},
+		getRetainedLease(leaseId): TLease | undefined {
+			const resource = resourceForLeaseId(leaseId);
+			return resource?.commitDisposition === 'complete' ? resource.lease : undefined;
 		},
 		leaseIdsOwnedByGateway(gateway): readonly string[] {
 			return leaseIdsForGateway(gateway);
@@ -507,6 +552,16 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 		},
 		rejectedCleanupIdsOwnedByGateway(gateway): readonly string[] {
 			return rejectedCleanupIdsForGateway(gateway);
+		},
+		rejectedCleanupAuthority(cleanupId): ToolVmLeafAuthorityReference | undefined {
+			const authority = rejectedCleanupResourcesByAuthority.get(cleanupId)?.authority;
+			return authority === undefined ? undefined : structuredClone(authority);
+		},
+		rejectedCleanupIdForPrincipal(principal): string | undefined {
+			const principalKey = stablePrincipalKey(principal);
+			return [...rejectedCleanupResourcesByAuthority.entries()].find(
+				([, resource]) => stablePrincipalKey(resource.authority.principal) === principalKey,
+			)?.[0];
 		},
 		registerGateway(gateway): void {
 			const key = gatewayAuthorityKey(gateway);
@@ -540,14 +595,16 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 				}),
 			);
 		},
-		async retryRejectedProvisioningCleanup(cleanupId): Promise<void> {
+		async retryRejectedProvisioningCleanup(cleanupId): Promise<TCleanupContext | undefined> {
 			const resource = rejectedCleanupResourcesByAuthority.get(cleanupId);
 			if (resource === undefined) {
-				return;
+				return undefined;
 			}
 			if (resource.destructionInFlight !== undefined) {
 				await resource.destructionInFlight;
-				return;
+				const cleanupContext = rejectedCleanupContextsById.get(cleanupId);
+				rejectedCleanupContextsById.delete(cleanupId);
+				return cleanupContext;
 			}
 			const cleanup = (async (): Promise<ToolVmLeaseRuntimeResource<TLease>> => {
 				const receipt = await resource.ownership.destroyDetached();
@@ -565,8 +622,15 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 			} finally {
 				delete resource.destructionInFlight;
 			}
+			const cleanupContext = rejectedCleanupContextsById.get(cleanupId);
+			rejectedCleanupContextsById.delete(cleanupId);
+			return cleanupContext;
 		},
 		sealGateway(gateway): void {
+			const parent = requireAuthorityState(gateway).parent;
+			if (parent.kind === 'sealed') {
+				return;
+			}
 			replaceAuthorityState(
 				gateway,
 				reduceToolVmLeaseAuthorityState(requireAuthorityState(gateway), {
@@ -574,6 +638,10 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 					kind: 'seal-parent',
 				}),
 			);
+		},
+		setCleanupContext(authority, context): void {
+			requireResource(authority);
+			cleanupContextsByAuthority.set(authorityResourceKey(authority), context);
 		},
 		touchLease(authority, nowMs, nextIdleExpiresAtMs, updateLease): TLease {
 			const resource = requireResource(authority);

@@ -29,6 +29,8 @@ import {
 	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 import type { GatewayControlTrustedCallerContext } from './control-session/gateway-control-caller-context.js';
+import type { GatewayControlPreparedLeaseSemanticMutation } from './control-session/gateway-control-domain-handler.js';
+import type { GatewaySemanticExecutionProof } from './control-session/gateway-semantic-result-ledger.js';
 import { createStopControllerOperation } from './controller-runtime-operations.js';
 import type { ControllerRuntimeDependencies } from './controller-runtime-types.js';
 import {
@@ -42,6 +44,7 @@ import { GatewayDestructionTimeoutError } from './vm-ownership/gateway-destructi
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
 import { GatewayOwnershipCoordinatorError } from './vm-ownership/gateway-ownership-errors.js';
 import type { VmCreationOwnership } from './vm-ownership/vm-creation-ownership.js';
+import type { GatewayEpochIdentity } from './vm-ownership/vm-ownership-contracts.js';
 import type {
 	ExecuteWorkerTaskOptions,
 	PreparedWorkerTask,
@@ -73,6 +76,32 @@ function createManagedVmInstanceStub(vmId: string, hostPid: number | null): Mana
 		id: vmId,
 		setIngressRoutes: () => {},
 	};
+}
+
+async function executePreparedGatewayLeaseMutation(options: {
+	readonly gateway: GatewayEpochIdentity;
+	readonly operation: string;
+	readonly preparedMutation: GatewayControlPreparedLeaseSemanticMutation;
+	readonly semanticOperationId: string;
+}): Promise<Awaited<ReturnType<GatewayControlPreparedLeaseSemanticMutation['execute']>>> {
+	const proof = {
+		identity: {
+			commandId: `${options.semanticOperationId}-command`,
+			gateway: options.gateway,
+			idempotencyKey: `${options.semanticOperationId}-idempotency`,
+			operation: options.operation,
+			profile: options.preparedMutation.profile,
+			target: options.preparedMutation.target,
+			validUntilMs: 60_000,
+		},
+		operationPayloadDigest: {
+			algorithm: 'sha256',
+			canonicalVersion: 1,
+			digest: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+		},
+		semanticOperationId: options.semanticOperationId,
+	} satisfies GatewaySemanticExecutionProof;
+	return await options.preparedMutation.execute(proof);
 }
 
 async function createManagedVmStubFromOwnershipReservation(
@@ -964,6 +993,7 @@ describe('startControllerRuntime', () => {
 		);
 		let capturedHealthEventStore: HealthEventStore | undefined;
 		let capturedOpenClawRuntimeStatusStore: OpenClawRuntimeStatusStore | undefined;
+		let capturedGatewayIdentity: GatewayEpochIdentity | undefined;
 		const startGatewayZone = vi.fn(async (startOptions) => {
 			capturedHealthEventStore = startOptions.healthEventStore;
 			capturedOpenClawRuntimeStatusStore = startOptions.openClawRuntimeStatusStore;
@@ -978,6 +1008,7 @@ describe('startControllerRuntime', () => {
 				sessionLabel: `gateway-runtime-test-${startOrdinal}`,
 				zoneId: absoluteLeaseZone.id,
 			});
+			capturedGatewayIdentity = vmOwnership.gatewayIdentity;
 			const managedGatewayVm = await createManagedVmStubFromOwnershipReservation(
 				vmOwnership.ownershipReservation,
 				48_282,
@@ -1198,14 +1229,31 @@ describe('startControllerRuntime', () => {
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 			zoneId: 'shravan',
 		} satisfies GatewayControlTrustedCallerContext;
-		const oldLease = await gatewayControlLeaseRpc.createLease({
-			callerContext: controllerLeaseCallerContext,
-			payload: {
-				callerContext: {
-					callerContextId: controllerLeaseCallerContext.callerContextId,
-				},
+		if (capturedGatewayIdentity === undefined) {
+			throw new Error('Expected exact Gateway identity to be captured during gateway startup.');
+		}
+		const createLeasePayload = {
+			callerContext: {
+				callerContextId: controllerLeaseCallerContext.callerContextId,
 			},
+		};
+		const preparedCreateLease = await gatewayControlLeaseRpc.prepareSemanticMutation({
+			attachmentGeneration: 1,
+			callerContext: controllerLeaseCallerContext,
+			gateway: capturedGatewayIdentity,
+			operation: 'lease_create',
+			payload: createLeasePayload,
+			processEpoch: 'controller-runtime-test-process-epoch',
 		});
+		const oldLease = await executePreparedGatewayLeaseMutation({
+			gateway: capturedGatewayIdentity,
+			operation: 'lease_create',
+			preparedMutation: preparedCreateLease,
+			semanticOperationId: 'controller-runtime-test-lease-create',
+		});
+		if (oldLease === undefined || 'result' in oldLease || !('leaseId' in oldLease)) {
+			throw new Error(`Expected created lease, got ${JSON.stringify(oldLease)}.`);
+		}
 		const forwardedToolReservation = createManagedToolVm.mock.calls[0]?.[0].ownershipReservation;
 		if (forwardedToolReservation === undefined) {
 			throw new Error('Expected exact Tool VM ownership reservation to reach VM creation.');
@@ -1227,32 +1275,34 @@ describe('startControllerRuntime', () => {
 			role: 'tool',
 			vmId: 'tool-vm-2',
 		});
-		await gatewayControlLeaseRpc.releaseLease({
-			callerContext: controllerLeaseCallerContext,
-			payload: {
-				callerContext: {
-					callerContextId: controllerLeaseCallerContext.callerContextId,
-				},
-				leaseId: oldLease.leaseId,
-			},
-		});
 		const refreshedControllerLeaseCallerContext = {
 			...controllerLeaseCallerContext,
 			callerContextId: '99999999-9999-4999-8999-999999999999',
 		} satisfies GatewayControlTrustedCallerContext;
-		const replacementLease = await gatewayControlLeaseRpc.reacquireLease({
-			callerContext: refreshedControllerLeaseCallerContext,
-			payload: {
-				callerContext: {
-					callerContextId: refreshedControllerLeaseCallerContext.callerContextId,
-				},
-				oldLeaseId: oldLease.leaseId,
-				staleEvidence: {
-					kind: 'tool-vm-ssh',
-					observedAtMs: statusNowMs,
-					operation: 'finalize',
-				},
+		const reacquireLeasePayload = {
+			callerContext: {
+				callerContextId: refreshedControllerLeaseCallerContext.callerContextId,
 			},
+			oldLeaseId: oldLease.leaseId,
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				observedAtMs: statusNowMs,
+				operation: 'finalize',
+			},
+		};
+		const preparedReacquireLease = await gatewayControlLeaseRpc.prepareSemanticMutation({
+			attachmentGeneration: 1,
+			callerContext: refreshedControllerLeaseCallerContext,
+			gateway: capturedGatewayIdentity,
+			operation: 'lease_reacquire',
+			payload: reacquireLeasePayload,
+			processEpoch: 'controller-runtime-test-process-epoch',
+		});
+		const replacementLease = await executePreparedGatewayLeaseMutation({
+			gateway: capturedGatewayIdentity,
+			operation: 'lease_reacquire',
+			preparedMutation: preparedReacquireLease,
+			semanticOperationId: 'controller-runtime-test-lease-reacquire',
 		});
 		if (
 			replacementLease === undefined ||
@@ -1282,6 +1332,25 @@ describe('startControllerRuntime', () => {
 					zoneId: 'shravan',
 				}),
 			]),
+		});
+		const preparedReleaseReplacementLease = await gatewayControlLeaseRpc.prepareSemanticMutation({
+			attachmentGeneration: 1,
+			callerContext: refreshedControllerLeaseCallerContext,
+			gateway: capturedGatewayIdentity,
+			operation: 'lease_release',
+			payload: {
+				callerContext: {
+					callerContextId: refreshedControllerLeaseCallerContext.callerContextId,
+				},
+				leaseId: replacementLease.leaseId,
+			},
+			processEpoch: 'controller-runtime-test-process-epoch',
+		});
+		await executePreparedGatewayLeaseMutation({
+			gateway: capturedGatewayIdentity,
+			operation: 'lease_release',
+			preparedMutation: preparedReleaseReplacementLease,
+			semanticOperationId: 'controller-runtime-test-lease-release',
 		});
 		recordControllerHealthEvent(capturedHealthEventStore, {
 			channelProviderId: 'primary-channel',

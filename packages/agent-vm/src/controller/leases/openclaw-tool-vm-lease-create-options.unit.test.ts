@@ -2,14 +2,15 @@ import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
-import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
+import { resolveToolVmLeaseCompatibility } from './lease-manager.js';
 import {
 	createOpenClawToolVmLeaseCreateOptionsResolver,
 	type OpenClawToolVmLeaseAuthorityContext,
+	type ResolveOpenClawToolVmLeaseCreateOptionsInput,
 } from './openclaw-tool-vm-lease-create-options.js';
 
 let testRoot: string;
@@ -23,17 +24,7 @@ const resolvedGatewayEpoch = {
 	zoneId: 'zone-a',
 } satisfies GatewayEpochIdentity;
 
-const resolveGatewayEpoch = vi.fn(
-	(_expected: {
-		readonly bootId: string;
-		readonly controllerEpoch: string;
-		readonly zoneId: string;
-	}): GatewayEpochIdentity => resolvedGatewayEpoch,
-);
-
 beforeEach(async () => {
-	resolveGatewayEpoch.mockReset();
-	resolveGatewayEpoch.mockReturnValue(resolvedGatewayEpoch);
 	testRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-lease-create-options-'));
 });
 
@@ -173,12 +164,18 @@ function authorityContextFor(options?: {
 	};
 }
 
-function recordFreshRuntimeStatus(store: OpenClawRuntimeStatusStore): void {
-	store.record({
-		...acceptedRuntimeSession,
-		findings: [{ hint: 'ok', id: 'tool-vm-runtime-config', ok: true }],
-		pluginId: 'gondolin',
-	});
+function leaseResolutionInput(options?: {
+	readonly authorityContext?: OpenClawToolVmLeaseAuthorityContext;
+	readonly expectedGateway?: GatewayEpochIdentity;
+	readonly requestedIdleTtlMs?: number;
+}): ResolveOpenClawToolVmLeaseCreateOptionsInput {
+	return {
+		authorityContext: options?.authorityContext ?? authorityContextFor(),
+		expectedGateway: options?.expectedGateway ?? resolvedGatewayEpoch,
+		...(options?.requestedIdleTtlMs === undefined
+			? {}
+			: { requestedIdleTtlMs: options.requestedIdleTtlMs }),
+	};
 }
 
 describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
@@ -188,24 +185,22 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 			maxRequestedMs: 60_000,
 			minRequestedMs: 5_000,
 		});
-		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
-		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
 		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
-			openClawRuntimeStatusStore,
-			resolveGatewayEpoch,
 			systemConfig,
 		});
 
-		const options = await resolveLeaseCreateOptions({
-			authorityContext: authorityContextFor(),
-		});
+		const options = await resolveLeaseCreateOptions(leaseResolutionInput());
+		const requestedPolicyOptions = await resolveLeaseCreateOptions(
+			leaseResolutionInput({ requestedIdleTtlMs: 50_000 }),
+		);
 
 		expect(options.effectiveIdleTtlMs).toBe(42_000);
+		expect(requestedPolicyOptions.effectiveIdleTtlMs).toBe(50_000);
+		expect(resolveToolVmLeaseCompatibility(requestedPolicyOptions).policyFingerprint).not.toBe(
+			resolveToolVmLeaseCompatibility(options).policyFingerprint,
+		);
 		await expect(
-			resolveLeaseCreateOptions({
-				authorityContext: authorityContextFor(),
-				requestedIdleTtlMs: 90_000,
-			}),
+			resolveLeaseCreateOptions(leaseResolutionInput({ requestedIdleTtlMs: 90_000 })),
 		).rejects.toThrow(/at most 60000ms/u);
 	});
 
@@ -225,19 +220,15 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 			imageProfile: 'default',
 			memory: '4G',
 		};
-		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
-		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
 		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
-			openClawRuntimeStatusStore,
-			resolveGatewayEpoch,
 			systemConfig,
 		});
 
-		const options = await resolveLeaseCreateOptions({
-			authorityContext: authorityContextFor({
-				agentId: 'second',
+		const options = await resolveLeaseCreateOptions(
+			leaseResolutionInput({
+				authorityContext: authorityContextFor({ agentId: 'second' }),
 			}),
-		});
+		);
 
 		expect(options.agentId).toBe('second');
 		expect(options.profileId).toBe('larger');
@@ -245,6 +236,14 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 			cpus: 4,
 			imageProfile: 'default',
 			memory: '4G',
+		});
+		expect(options.gatewayWorkMountDir).toBe(
+			'/home/openclaw/.openclaw/state/sandboxes/second/work',
+		);
+		expect(resolveToolVmLeaseCompatibility(options)).toMatchObject({
+			profileId: 'larger',
+			purpose: 'tool_vm_lease',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/second/work',
 		});
 		await expect(
 			realpath(path.join(testRoot, 'state', 'zone-a', 'sandboxes', 'second', 'work')),
@@ -261,41 +260,37 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 			recursive: true,
 		});
 		zone.agents = [{ id: 'main' }, { id: 'second' }];
-		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
-		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
 		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
-			openClawRuntimeStatusStore,
-			resolveGatewayEpoch,
 			systemConfig,
 		});
 
 		await expect(
-			resolveLeaseCreateOptions({
-				authorityContext: authorityContextFor({
-					agentId: 'second',
-					agentWorkspaceDir: '/home/openclaw/workspace-second',
+			resolveLeaseCreateOptions(
+				leaseResolutionInput({
+					authorityContext: authorityContextFor({
+						agentId: 'second',
+						agentWorkspaceDir: '/home/openclaw/workspace-second',
+					}),
 				}),
-			}),
+			),
 		).rejects.toThrow(/agentWorkspaceDir/u);
 	});
 
-	it('rejects a runtime status snapshot from a stale control session', async () => {
+	it('does not treat stale runtime status as lease authority', async () => {
 		const systemConfig = await createSystemConfigFixture();
-		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
-		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
 		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
-			openClawRuntimeStatusStore,
-			resolveGatewayEpoch,
 			systemConfig,
 		});
 
 		await expect(
-			resolveLeaseCreateOptions({
-				authorityContext: authorityContextFor({
-					sessionId: '99999999-9999-4999-8999-999999999999',
+			resolveLeaseCreateOptions(
+				leaseResolutionInput({
+					authorityContext: authorityContextFor({
+						sessionId: '99999999-9999-4999-8999-999999999999',
+					}),
 				}),
-			}),
-		).rejects.toThrow(/stale control session/u);
+			),
+		).resolves.toEqual(expect.objectContaining({ expectedGateway: resolvedGatewayEpoch }));
 	});
 
 	it('does not trust a gateway-supplied profileId when zone policy has no profile mapping', async () => {
@@ -306,19 +301,13 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 		}
 		delete zoneWithoutProfilePolicy.agentToolVmProfiles;
 		delete zoneWithoutProfilePolicy.defaultToolVmProfile;
-		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
-		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
 		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
-			openClawRuntimeStatusStore,
-			resolveGatewayEpoch,
 			systemConfig,
 		});
 
-		await expect(
-			resolveLeaseCreateOptions({
-				authorityContext: authorityContextFor(),
-			}),
-		).rejects.toThrow(/does not have a tool VM profile configured/u);
+		await expect(resolveLeaseCreateOptions(leaseResolutionInput())).rejects.toThrow(
+			/does not have a tool VM profile configured/u,
+		);
 	});
 
 	it('rejects caller context for an undeclared OpenClaw zone agent', async () => {
@@ -327,70 +316,39 @@ describe('createOpenClawToolVmLeaseCreateOptionsResolver', () => {
 		if (zone === undefined) {
 			throw new Error('Expected OpenClaw fixture zone');
 		}
-		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
-		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
 		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
-			openClawRuntimeStatusStore,
-			resolveGatewayEpoch,
 			systemConfig,
 		});
 
 		await expect(
-			resolveLeaseCreateOptions({
-				authorityContext: authorityContextFor({
-					agentId: 'victim',
-					agentWorkspaceDir: '/home/openclaw/workspace',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+			resolveLeaseCreateOptions(
+				leaseResolutionInput({
+					authorityContext: authorityContextFor({
+						agentId: 'victim',
+						agentWorkspaceDir: '/home/openclaw/workspace',
+						workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+					}),
 				}),
-			}),
+			),
 		).rejects.toThrow(/does not declare OpenClaw agent 'victim'/u);
 	});
 
-	it('resolves the exact caller control identity to the full expected Gateway epoch', async () => {
+	it('uses runtime status only for health and preserves controller-resolved Gateway authority', async () => {
 		const systemConfig = await createSystemConfigFixture();
-		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
-		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
+		const controllerResolvedGateway = {
+			...resolvedGatewayEpoch,
+			gatewayEpochId: 'gateway-epoch-controller-resolved',
+			gatewayVmId: 'gateway-vm-controller-resolved',
+			generationId: 'gateway-generation-controller-resolved',
+		} satisfies GatewayEpochIdentity;
 		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
-			openClawRuntimeStatusStore,
-			resolveGatewayEpoch,
 			systemConfig,
 		});
 
-		const options = await resolveLeaseCreateOptions({
-			authorityContext: authorityContextFor(),
-		});
+		const options = await resolveLeaseCreateOptions(
+			leaseResolutionInput({ expectedGateway: controllerResolvedGateway }),
+		);
 
-		expect(resolveGatewayEpoch).toHaveBeenCalledExactlyOnceWith({
-			bootId: acceptedRuntimeSession.bootId,
-			controllerEpoch: acceptedRuntimeSession.controllerEpoch,
-			zoneId: acceptedRuntimeSession.zoneId,
-		});
-		expect(options.expectedGateway).toEqual(resolvedGatewayEpoch);
-	});
-
-	it('propagates Gateway epoch resolution refusal instead of producing lease options', async () => {
-		const systemConfig = await createSystemConfigFixture();
-		const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
-		recordFreshRuntimeStatus(openClawRuntimeStatusStore);
-		const resolutionRefusal = new Error('Gateway epoch resolution refused');
-		resolveGatewayEpoch.mockImplementationOnce(() => {
-			throw resolutionRefusal;
-		});
-		const resolveLeaseCreateOptions = createOpenClawToolVmLeaseCreateOptionsResolver({
-			openClawRuntimeStatusStore,
-			resolveGatewayEpoch,
-			systemConfig,
-		});
-
-		await expect(
-			resolveLeaseCreateOptions({
-				authorityContext: authorityContextFor(),
-			}),
-		).rejects.toBe(resolutionRefusal);
-		expect(resolveGatewayEpoch).toHaveBeenCalledExactlyOnceWith({
-			bootId: acceptedRuntimeSession.bootId,
-			controllerEpoch: acceptedRuntimeSession.controllerEpoch,
-			zoneId: acceptedRuntimeSession.zoneId,
-		});
+		expect(options.expectedGateway).toEqual(controllerResolvedGateway);
 	});
 });

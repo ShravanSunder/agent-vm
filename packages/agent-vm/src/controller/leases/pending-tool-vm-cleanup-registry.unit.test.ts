@@ -163,6 +163,38 @@ function createDeferred<TValue>(): {
 }
 
 describe('createPendingToolVmCleanupRegistry', () => {
+	it('rejects a foreign expected Gateway before destruction and retains cleanup discovery', async () => {
+		const destroyDetached = vi.fn<ProvisionalToolVmOwnershipHandle['destroyDetached']>(async () =>
+			createCompleteVmDestroyReceipt('tool-vm-detached'),
+		);
+		const { registry, releaseTcpSlot } = createRegistryHarness();
+		const agentIdentity = { agentId: 'main', zoneId: 'shravan' };
+		registry.recordDetachedCleanup({
+			...agentIdentity,
+			gatewayIdentity: TEST_GATEWAY_EPOCH,
+			ownership: createOwnershipHandle({ destroyDetached }),
+			tcpSlot: 3,
+		});
+		const foreignGateway = createGatewayEpoch({
+			bootId: 'gateway-boot-foreign',
+			gatewayEpochId: 'gateway-epoch-foreign',
+			gatewayVmId: 'gateway-vm-foreign',
+			generationId: 'gateway-generation-foreign',
+		});
+
+		await expect(registry.retry(agentIdentity, foreignGateway)).rejects.toThrow(
+			/different Gateway VM epoch/u,
+		);
+
+		expect(destroyDetached).not.toHaveBeenCalled();
+		expect(releaseTcpSlot).not.toHaveBeenCalled();
+		expect(registry.pendingGatewayIdentityForAgent(agentIdentity)).toEqual(TEST_GATEWAY_EPOCH);
+		expect(registry.pendingCleanupIdentitiesForGateway(TEST_GATEWAY_EPOCH)).toEqual([
+			agentIdentity,
+		]);
+		expect(registry.pendingCleanupIdentitiesForGateway(foreignGateway)).toEqual([]);
+	});
+
 	it('retains detached cleanup after failure and releases its TCP slot only after success', async () => {
 		// Arrange
 		const destroyFailure = new Error('detached exact destruction failed');
@@ -180,14 +212,14 @@ describe('createPendingToolVmCleanupRegistry', () => {
 		});
 
 		// Act
-		await expect(registry.retry(agentIdentity)).rejects.toBe(destroyFailure);
+		await expect(registry.retry(agentIdentity, TEST_GATEWAY_EPOCH)).rejects.toBe(destroyFailure);
 
 		// Assert
 		expect(registry.pendingCleanupIdentitiesForGateway(TEST_GATEWAY_EPOCH)).toHaveLength(1);
 		expect(releaseTcpSlot).not.toHaveBeenCalled();
 
 		// Act
-		await expect(registry.retry(agentIdentity)).resolves.toBeUndefined();
+		await expect(registry.retry(agentIdentity, TEST_GATEWAY_EPOCH)).resolves.toBeUndefined();
 
 		// Assert
 		expect(destroyDetached).toHaveBeenCalledTimes(2);
@@ -212,7 +244,9 @@ describe('createPendingToolVmCleanupRegistry', () => {
 		});
 
 		// Act
-		await expect(registry.retry(agentIdentity)).rejects.toThrow(/incomplete exact VM destruction/u);
+		await expect(registry.retry(agentIdentity, TEST_GATEWAY_EPOCH)).rejects.toThrow(
+			/incomplete exact VM destruction/u,
+		);
 
 		// Assert
 		expect(registry.pendingCleanupIdentitiesForGateway(TEST_GATEWAY_EPOCH)).toEqual([
@@ -221,7 +255,7 @@ describe('createPendingToolVmCleanupRegistry', () => {
 		expect(releaseTcpSlot).not.toHaveBeenCalled();
 
 		// Act
-		await expect(registry.retry(agentIdentity)).resolves.toBeUndefined();
+		await expect(registry.retry(agentIdentity, TEST_GATEWAY_EPOCH)).resolves.toBeUndefined();
 
 		// Assert
 		expect(destroyDetached).toHaveBeenCalledTimes(2);
@@ -266,7 +300,9 @@ describe('createPendingToolVmCleanupRegistry', () => {
 		});
 
 		// Act
-		await expect(registry.retry(agentIdentity)).rejects.toThrow(/incomplete exact VM destruction/u);
+		await expect(registry.retry(agentIdentity, TEST_GATEWAY_EPOCH)).rejects.toThrow(
+			/incomplete exact VM destruction/u,
+		);
 
 		// Assert
 		expect(registry.pendingCleanupIdentitiesForGateway(TEST_GATEWAY_EPOCH)).toHaveLength(1);
@@ -274,7 +310,7 @@ describe('createPendingToolVmCleanupRegistry', () => {
 		expect(releaseTcpSlot).not.toHaveBeenCalled();
 
 		// Act
-		await expect(registry.retry(agentIdentity)).rejects.toBe(closeFailure);
+		await expect(registry.retry(agentIdentity, TEST_GATEWAY_EPOCH)).rejects.toBe(closeFailure);
 
 		// Assert
 		expect(registry.pendingCleanupIdentitiesForGateway(TEST_GATEWAY_EPOCH)).toHaveLength(1);
@@ -282,7 +318,7 @@ describe('createPendingToolVmCleanupRegistry', () => {
 		expect(releaseTcpSlot).not.toHaveBeenCalled();
 
 		// Act
-		await expect(registry.retry(agentIdentity)).resolves.toBeUndefined();
+		await expect(registry.retry(agentIdentity, TEST_GATEWAY_EPOCH)).resolves.toBeUndefined();
 
 		// Assert
 		expect(destroyLive).toHaveBeenCalledTimes(3);
@@ -334,7 +370,7 @@ describe('createPendingToolVmCleanupRegistry', () => {
 		});
 
 		// Act
-		await expect(registry.retry(agentIdentity)).resolves.toBeUndefined();
+		await expect(registry.retry(agentIdentity, TEST_GATEWAY_EPOCH)).resolves.toBeUndefined();
 
 		// Assert
 		expect(events).toEqual([
@@ -410,7 +446,9 @@ describe('createPendingToolVmCleanupRegistry', () => {
 		// Act
 		const cleanupIdentities = registry.pendingCleanupIdentitiesForGateway(TEST_GATEWAY_EPOCH);
 		const cleanupPromise = Promise.all(
-			cleanupIdentities.map(async (agentIdentity) => await registry.retry(agentIdentity)),
+			cleanupIdentities.map(
+				async (agentIdentity) => await registry.retry(agentIdentity, TEST_GATEWAY_EPOCH),
+			),
 		);
 		await Promise.resolve();
 

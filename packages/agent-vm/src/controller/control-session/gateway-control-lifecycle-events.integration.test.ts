@@ -39,6 +39,7 @@ import { createControlSessionDispatcher } from './control-session-dispatcher.js'
 import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
 import { createGatewayControlDomainHandler } from './gateway-control-domain-handler.js';
 import { createGatewayControlLeaseRpcOperations } from './gateway-control-lease-rpc.js';
+import { createGatewaySemanticResultLedger } from './gateway-semantic-result-ledger.js';
 
 const acceptedSession = {
 	bootId: 'gateway-boot-a',
@@ -157,6 +158,7 @@ function createEnvelope(operation: GatewayControlRpcOperation, sequence: number)
 		createdAtMs: sequence,
 		deliveryPolicy: gatewayControlDeliveryPolicyByOperation[operation],
 		domain: 'gateway_control',
+		expiresAtMs: 60_000 + sequence,
 		idempotencyKey: `${operation}:${String(sequence)}`,
 		kind: operation === 'health_event' ? 'event' : 'command',
 		messageId: `66666666-6666-4666-8666-${String(sequence).padStart(12, '0')}`,
@@ -177,7 +179,21 @@ type GatewayControlCommandResultMessage = Extract<
 function createManagedVmStub(): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
 		const vm = {
-			close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
+			close: vi.fn(async () => ({
+				...createCompleteVmDestroyReceipt('tool-vm-1', {
+					controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+					parentGateway: {
+						epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
+						vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+					},
+					role: 'tool',
+				}),
+				requestedRunner: {
+					backend: 'qemu' as const,
+					discoveryIdentity: 'agent-vm-test:tool-vm-1',
+					executableName: 'qemu-system-aarch64',
+				},
+			})),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
@@ -239,6 +255,7 @@ async function dispatchGatewayControl(
 	message: GatewayControlRpcMessage,
 ): Promise<GatewayControlCommandResultMessage | undefined> {
 	const response = await dispatcher.dispatch({
+		attachmentGeneration: 1,
 		envelope: createEnvelope(operation, sequence),
 		payload: message,
 	});
@@ -274,10 +291,11 @@ describe('gateway control lifecycle event integration', () => {
 			recordHealthEvent: (event: AgentVmHealthEvent) => {
 				recordedHealthEvents.push(event);
 			},
-			resolveLeaseCreateOptions: async ({ callerContext }) => ({
+			resolveLeaseCreateOptions: async ({ callerContext, gateway }) => ({
 				agentId: callerContext.agentId,
 				agentWorkspaceDir: callerContext.agentWorkspaceDir,
-				expectedGateway: TEST_GATEWAY_EPOCH,
+				expectedGateway: gateway,
+				gatewayWorkMountDir: callerContext.workMountDir,
 				guestWorkdir: '/workspace',
 				hostWorkMountDir: '/host/validated-work',
 				profile: {
@@ -289,11 +307,17 @@ describe('gateway control lifecycle event integration', () => {
 				zoneId: callerContext.zoneId,
 			}),
 		});
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createControlSessionDispatcher({
+			semanticLedger: createGatewaySemanticResultLedger({
+				gateway: TEST_GATEWAY_EPOCH,
+				nowMs: () => 1_000,
+			}),
+		});
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
 				callerContexts,
+				gateway: TEST_GATEWAY_EPOCH,
 				leaseRpc,
 				recordHealthEvent: (event: AgentVmHealthEvent) => {
 					recordedHealthEvents.push(event);
@@ -327,15 +351,6 @@ describe('gateway control lifecycle event integration', () => {
 		if (oldLeaseId === undefined) {
 			throw new Error('expected old lease id');
 		}
-		await dispatchGatewayControl(dispatcher, 'lease_release', 3, {
-			kind: 'command',
-			operation: 'lease_release',
-			payload: {
-				callerContext: { callerContextId: firstCallerContextId },
-				leaseId: oldLeaseId,
-			},
-		});
-
 		await dispatchGatewayControl(dispatcher, 'health_event', 4, {
 			kind: 'event',
 			operation: 'health_event',

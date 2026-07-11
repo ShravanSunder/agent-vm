@@ -1385,6 +1385,7 @@ export async function startGatewayZone(
 									agentAuthorityKeys: controlSessionMaterial.agentAuthorityKeys,
 									callerContextProofKey: controlSessionMaterial.callerContextProofKey,
 								}),
+								gateway: gatewayIdentity,
 								...(options.gatewayControlControllerHostActions === undefined
 									? {}
 									: {

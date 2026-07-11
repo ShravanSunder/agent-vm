@@ -29,6 +29,10 @@ export interface ControlSessionDomainHandler {
 		context: ControlSessionDispatchContext,
 		decision: Exclude<GatewaySemanticLedgerDecision<unknown>, { readonly kind: 'completed' }>,
 	): unknown;
+	buildSemanticTransportResult?(
+		context: ControlSessionDispatchContext,
+		completedValue: unknown,
+	): unknown;
 	readonly policyByKind?: Parameters<typeof assertControlSessionDispatchAllowed>[0]['policyByKind'];
 	readonly policyByOperation: Parameters<
 		typeof assertControlSessionDispatchAllowed
@@ -261,7 +265,9 @@ export function createControlSessionDispatcher(
 					payload: semanticMutation.payload,
 				});
 				if (semanticDecision.kind === 'completed') {
-					return semanticDecision.value;
+					return handler.buildSemanticTransportResult === undefined
+						? semanticDecision.value
+						: handler.buildSemanticTransportResult(context, semanticDecision.value);
 				}
 				if (handler.buildSemanticFailureResult !== undefined) {
 					return handler.buildSemanticFailureResult(context, semanticDecision);

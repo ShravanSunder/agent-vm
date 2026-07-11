@@ -4168,15 +4168,19 @@ describe('startGatewayZone', () => {
 			zoneId: 'shravan',
 		} satisfies GatewayControlLeaseSnapshot;
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const prepareSemanticMutation = vi.fn(async () => ({
+			execute: vi.fn(async () => leaseSnapshot),
+			profile: {
+				compatibilityId: 'compatibility-main',
+				currentLeafTargetId: null,
+				kind: 'lease_authority' as const,
+				stablePrincipal: 'shravan/main',
+			},
+			target: 'agent:main',
+		}));
 		const gatewayControlLeaseRpc = {
-			createLease: vi.fn(async () => leaseSnapshot),
-			endLeaseUse: vi.fn(async () => undefined),
 			getLease: vi.fn(async () => undefined),
-			heartbeatLeaseUse: vi.fn(async () => undefined),
-			reacquireLease: vi.fn(async () => undefined),
-			releaseLease: vi.fn(async () => undefined),
-			renewLease: vi.fn(async () => undefined),
-			startLeaseUse: vi.fn(async () => undefined),
+			prepareSemanticMutation,
 		} satisfies GatewayControlLeaseRpcOperations;
 		const pushZoneGit = vi.fn(async () => ({
 			branch: 'agent/main',
@@ -4318,6 +4322,7 @@ describe('startGatewayZone', () => {
 			createdAtMs: 1,
 			deliveryPolicy: input.deliveryPolicy,
 			domain: 'gateway_control',
+			expiresAtMs: 60_000,
 			idempotencyKey: input.idempotencyKey,
 			kind: 'command',
 			messageId: input.messageId,
@@ -4378,6 +4383,7 @@ describe('startGatewayZone', () => {
 			throw new Error('Expected caller_context_register result to include callerContextId.');
 		}
 		await connectedDispatcher.dispatch({
+			attachmentGeneration: 1,
 			envelope: createEnvelope({
 				commandId: '55555555-5555-4555-8555-555555555555',
 				deliveryPolicy: 'critical_idempotent',
@@ -4394,15 +4400,24 @@ describe('startGatewayZone', () => {
 				},
 			},
 		});
-		expect(gatewayControlLeaseRpc.createLease).toHaveBeenCalledWith({
+		expect(prepareSemanticMutation).toHaveBeenCalledWith({
+			attachmentGeneration: 1,
 			callerContext: expect.objectContaining({
 				agentId: 'main',
 				callerContextId,
 				zoneId: 'shravan',
 			}),
+			gateway: expect.objectContaining({
+				bootId: connectedOptions.material.bootId,
+				controllerEpoch: 'controller-epoch-test',
+				generationId: connectedOptions.material.generationId,
+				zoneId: 'shravan',
+			}),
+			operation: 'lease_create',
 			payload: {
 				callerContext: { callerContextId },
 			},
+			processEpoch: connectedOptions.material.bootId,
 		});
 		const hostActionRegisterResult = GatewayControlRpcCommandResultMessageSchema.parse(
 			await connectedDispatcher.dispatch({

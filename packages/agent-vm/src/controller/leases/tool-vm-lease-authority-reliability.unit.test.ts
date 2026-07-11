@@ -164,6 +164,7 @@ function exactDestructionReceipt(
 function expectTransitionError(
 	operation: () => unknown,
 	code: ToolVmLeaseAuthorityTransitionError['code'],
+	expectedMessage?: RegExp,
 ): void {
 	let thrownError: unknown;
 	try {
@@ -173,6 +174,9 @@ function expectTransitionError(
 	}
 	expect(thrownError).toBeInstanceOf(ToolVmLeaseAuthorityTransitionError);
 	expect(thrownError).toMatchObject({ code });
+	if (expectedMessage !== undefined) {
+		expect(thrownError).toMatchObject({ message: expect.stringMatching(expectedMessage) });
+	}
 }
 
 describe('Tool VM lease authority reliability boundaries', () => {
@@ -422,13 +426,16 @@ describe('Tool VM lease authority reliability boundaries', () => {
 		});
 
 		expect(terminal.terminalUseTombstones.size).toBe(1);
-		expect(
-			reduceToolVmLeaseAuthorityState(terminal, {
-				authority,
-				kind: 'start-active-use',
-				use,
-			}),
-		).toBe(terminal);
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(terminal, {
+					authority,
+					kind: 'start-active-use',
+					use,
+				}),
+			'active-use-not-resumable',
+			/already ended/iu,
+		);
 		for (const changedUse of [
 			{ ...use, processEpoch: 'process-2' },
 			{ ...use, semanticOperationId: 'operation-2' },

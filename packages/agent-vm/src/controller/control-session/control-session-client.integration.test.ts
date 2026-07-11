@@ -367,6 +367,14 @@ describe('control session client', () => {
 					agentAuthorityKeys: material.agentAuthorityKeys,
 					callerContextProofKey: material.callerContextProofKey,
 				}),
+				gateway: {
+					bootId: material.bootId,
+					controllerEpoch: material.controllerEpoch,
+					gatewayEpochId: `gateway-epoch:${material.generationId}`,
+					gatewayVmId: 'gateway-vm-health-event-test',
+					generationId: material.generationId,
+					zoneId: material.zoneId,
+				},
 				recordHealthEvent: (event) => {
 					recordedHealthEvents.push(event);
 				},
@@ -479,6 +487,14 @@ describe('control session client', () => {
 					agentAuthorityKeys: material.agentAuthorityKeys,
 					callerContextProofKey: material.callerContextProofKey,
 				}),
+				gateway: {
+					bootId: material.bootId,
+					controllerEpoch: material.controllerEpoch,
+					gatewayEpochId: `gateway-epoch:${material.generationId}`,
+					gatewayVmId: 'gateway-vm-heartbeat-test',
+					generationId: material.generationId,
+					zoneId: material.zoneId,
+				},
 				recordHealthEvent: (event) => {
 					recordedHealthEvents.push(event);
 				},

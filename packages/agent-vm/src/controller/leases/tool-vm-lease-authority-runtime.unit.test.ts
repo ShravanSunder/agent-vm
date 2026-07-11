@@ -494,6 +494,7 @@ describe('createToolVmLeaseAuthorityRuntime', () => {
 		const verifiedDestroyTarget = createVerifiedDestroyTarget();
 		const durableCommit = createDeferred<void>();
 		const destroyDetached = vi.fn(async () => createMatchingDestroyReceipt(verifiedDestroyTarget));
+		const closeLiveVm = vi.fn(async () => createMatchingDestroyReceipt(verifiedDestroyTarget));
 		const ownership = createOwnershipHandle(verifiedDestroyTarget, {
 			commitCurrent: vi.fn(() => durableCommit.promise),
 			destroyDetached,
@@ -521,20 +522,21 @@ describe('createToolVmLeaseAuthorityRuntime', () => {
 		durableCommit.resolve();
 
 		// Assert
-		expect(await commitOutcome).toMatchObject({ code: 'parent-not-admitting' });
-		expect(runtime.getLease(lease.id)).toBeUndefined();
+		expect(await commitOutcome).toBeUndefined();
+		expect(runtime.getLease(lease.id)).toBe(lease);
 		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([lease.id]);
 
 		// Act
 		await runtime.destroyExact({
 			authority,
 			destroyedAtMs: 30_000,
-			mode: { kind: 'detached' },
+			mode: { closeLiveVm, kind: 'live' },
 			reason: 'sealed-after-durable-commit',
 		});
 
 		// Assert
-		expect(destroyDetached).toHaveBeenCalledOnce();
+		expect(closeLiveVm).toHaveBeenCalledOnce();
+		expect(destroyDetached).not.toHaveBeenCalled();
 		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
 	});
 

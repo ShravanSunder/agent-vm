@@ -185,7 +185,10 @@ export function reduceToolVmLeaseAuthorityState(
 			});
 		}
 		case 'commit-current': {
-			requireAdmittingParent(state, command.authority.gateway);
+			// Provisioning authority was admitted before a parent seal. Completing
+			// that exact durable commit publishes the existing child so teardown
+			// can discover it; it does not admit a new child under the sealed parent.
+			requireExactParent(state, command.authority.gateway);
 			const leaf = requireLiveLeaf(state, command.authority);
 			if (leaf.kind !== 'provisioning') {
 				return transitionError(
@@ -296,7 +299,10 @@ export function reduceToolVmLeaseAuthorityState(
 					terminalTombstone.operationPayloadDigest === command.use.operationPayloadDigest &&
 					terminalTombstone.processEpoch === command.use.processEpoch
 				) {
-					return state;
+					return transitionError(
+						'active-use-not-resumable',
+						'Active use already ended and cannot be started again.',
+					);
 				}
 				return transitionError(
 					'active-use-semantic-collision',
@@ -373,6 +379,9 @@ export function reduceToolVmLeaseAuthorityState(
 			activeUses.set(command.useId, {
 				...activeUse,
 				lastHeartbeatAtMs: command.heartbeatAtMs,
+				...(command.operationReport === undefined
+					? {}
+					: { latestOperationReport: structuredClone(command.operationReport) }),
 				...(command.report === undefined ? {} : { latestReport: structuredClone(command.report) }),
 			});
 			return replaceLeaf(state, { ...leaf, activeUses });
@@ -445,6 +454,10 @@ export function reduceToolVmLeaseAuthorityState(
 			activeUses.set(command.useId, {
 				kind: 'running',
 				lastHeartbeatAtMs: command.lastHeartbeatAtMs,
+				...(activeUse.correlation === undefined ? {} : { correlation: activeUse.correlation }),
+				...(activeUse.latestOperationReport === undefined
+					? {}
+					: { latestOperationReport: activeUse.latestOperationReport }),
 				...(activeUse.latestReport === undefined ? {} : { latestReport: activeUse.latestReport }),
 				operationPayloadDigest: activeUse.operationPayloadDigest,
 				processEpoch: activeUse.processEpoch,
@@ -499,11 +512,19 @@ export function reduceToolVmLeaseAuthorityState(
 			activeUses.delete(command.useId);
 			const terminalUseTombstones = new Map(state.terminalUseTombstones);
 			const terminalTombstone = {
+				...(activeUse.correlation === undefined ? {} : { correlation: activeUse.correlation }),
 				endedAtMs: command.endedAtMs,
 				expiresAtMs: command.endedAtMs + state.retentionPolicy.terminalUseTombstoneTtlMs,
 				gateway: structuredClone(command.authority.gateway),
 				leafGeneration: leaf.leafGeneration,
 				...(activeUse.latestReport === undefined ? {} : { latestReport: activeUse.latestReport }),
+				...(command.operationReport === undefined && activeUse.latestOperationReport === undefined
+					? {}
+					: {
+							latestOperationReport: structuredClone(
+								command.operationReport ?? activeUse.latestOperationReport,
+							),
+						}),
 				operationPayloadDigest: activeUse.operationPayloadDigest,
 				outcome: command.outcome,
 				principal: leaf.principal,
@@ -543,7 +564,11 @@ export function reduceToolVmLeaseAuthorityState(
 			const activeUses = new Map(leaf.activeUses);
 			activeUses.set(command.useId, {
 				ambiguousAtMs: command.ambiguousAtMs,
+				...(activeUse.correlation === undefined ? {} : { correlation: activeUse.correlation }),
 				kind: 'ambiguous',
+				...(activeUse.latestOperationReport === undefined
+					? {}
+					: { latestOperationReport: activeUse.latestOperationReport }),
 				...(activeUse.latestReport === undefined ? {} : { latestReport: activeUse.latestReport }),
 				operationPayloadDigest: activeUse.operationPayloadDigest,
 				processEpoch: activeUse.processEpoch,
@@ -570,7 +595,13 @@ export function reduceToolVmLeaseAuthorityState(
 						activeUses ??= new Map(leaf.activeUses);
 						activeUses.set(useId, {
 							ambiguousAtMs: command.ambiguousAtMs,
+							...(activeUse.correlation === undefined
+								? {}
+								: { correlation: activeUse.correlation }),
 							kind: 'ambiguous',
+							...(activeUse.latestOperationReport === undefined
+								? {}
+								: { latestOperationReport: activeUse.latestOperationReport }),
 							...(activeUse.latestReport === undefined
 								? {}
 								: { latestReport: activeUse.latestReport }),

@@ -9,7 +9,10 @@ import type {
 } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { VmDestructionReceiptMismatchError } from '../../shared/vm-destruction-receipt.js';
+import {
+	IncompleteVmDestructionError,
+	VmDestructionReceiptMismatchError,
+} from '../../shared/vm-destruction-receipt.js';
 import {
 	createCompleteVmDestroyReceipt,
 	createTestVmDestroyTarget,
@@ -888,7 +891,7 @@ describe('Standalone VM creation ownership', () => {
 				...createMatchingReceipt(target),
 				complete: false,
 			}),
-			expectedError: VmDestructionReceiptMismatchError,
+			expectedError: IncompleteVmDestructionError,
 		},
 	])('rereads the detached destroy target and rejects a $label receipt', async (testCase) => {
 		let createdReservation: CreatedManagedVmOwnershipReservation | undefined;
@@ -940,7 +943,7 @@ describe('Standalone VM creation ownership', () => {
 				...createMatchingReceipt(target),
 				complete: false,
 			}),
-			expectedError: VmDestructionReceiptMismatchError,
+			expectedError: IncompleteVmDestructionError,
 		},
 	])('rereads the live destroy target and rejects a $label receipt', async (testCase) => {
 		let createdReservation: CreatedManagedVmOwnershipReservation | undefined;

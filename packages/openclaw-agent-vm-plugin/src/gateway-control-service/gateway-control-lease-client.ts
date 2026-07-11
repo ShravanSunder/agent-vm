@@ -10,6 +10,7 @@ import {
 import {
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
+	gatewayControlCommandExecutionTimeoutMsByOperation,
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayControlLeaseRejectionReason,
 	type GatewayControlLeaseSnapshot,
@@ -420,17 +421,20 @@ export function createGatewayControlLeaseClient(
 			response: GatewayControlRpcCommandResultMessageSchema.parse(
 				await options.controlService.emitApplicationMessage(
 					{
-						buildEnvelope: ({ acceptedSession, sequence }) =>
-							({
+						buildEnvelope: ({ acceptedSession, sequence }) => {
+							const createdAtMs = Math.max(1, now());
+							return {
 								bootId: acceptedSession.bootId,
 								commandId: retryIdentity.commandId,
 								connectionId: acceptedSession.connectionId,
 								controllerEpoch: options.identity.controllerEpoch,
-								createdAtMs: Math.max(1, now()),
+								createdAtMs,
 								deliveryPolicy: gatewayControlDeliveryPolicyByOperation[
 									operation
 								] as ControlDeliveryPolicy,
 								domain: 'gateway_control',
+								expiresAtMs:
+									createdAtMs + gatewayControlCommandExecutionTimeoutMsByOperation[operation],
 								idempotencyKey: retryIdentity.idempotencyKey,
 								kind: 'command',
 								messageId,
@@ -440,7 +444,8 @@ export function createGatewayControlLeaseClient(
 								sequence,
 								sessionId: acceptedSession.sessionId,
 								zoneId: options.identity.zoneId,
-							}) satisfies ControlEnvelope,
+							} satisfies ControlEnvelope;
+						},
 						domainMessage,
 						payload: message,
 					},

@@ -19,6 +19,9 @@ import {
 	type GatewayControlRpcMessage,
 	type GatewayControlZoneGitPushResult,
 	GatewayControlRpcCommandResultMessageSchema,
+	GatewayControlLeaseSnapshotSchema,
+	GatewayControlLeaseRejectionReasonSchema,
+	GatewayControlLeaseUseSnapshotSchema,
 	GatewayControlRpcMessageSchema,
 	GatewayControlRpcResponsePayloadSchema,
 	assertGatewayControlEnvelopeDeliveryPolicy,
@@ -31,6 +34,7 @@ import {
 } from '@agent-vm/gateway-interface';
 
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
+import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import type { ControlSessionDomainHandler } from './control-session-dispatcher.js';
 import type {
 	GatewayControlAcceptedSessionRef,
@@ -38,43 +42,99 @@ import type {
 	GatewayControlCallerContextRegistry,
 	GatewayControlTrustedCallerContext,
 } from './gateway-control-caller-context.js';
+import {
+	parseGatewaySemanticJsonValue,
+	type GatewaySemanticExecutionProof,
+	type GatewaySemanticGenerationProfile,
+} from './gateway-semantic-result-ledger.js';
+
+export type GatewayControlLeaseSemanticMutationOperation =
+	| 'lease_create'
+	| 'lease_reacquire'
+	| 'lease_release'
+	| 'lease_renew'
+	| 'lease_use_end'
+	| 'lease_use_heartbeat'
+	| 'lease_use_start';
+
+type GatewayControlLeaseSemanticMutationMessage = Extract<
+	GatewayControlRpcMessage,
+	{
+		readonly kind: 'command';
+		readonly operation: GatewayControlLeaseSemanticMutationOperation;
+	}
+>;
+
+export type GatewayControlLeaseSemanticMutationPayload =
+	| GatewayControlLeaseCreateIntentPayload
+	| GatewayControlLeaseIdPayload
+	| GatewayControlLeaseReacquireIntentPayload
+	| GatewayControlLeaseUseEndPayload
+	| GatewayControlLeaseUseHeartbeatPayload
+	| GatewayControlLeaseUseStartPayload;
+
+type GatewayControlLeaseSemanticMutationPreparationBase = {
+	readonly attachmentGeneration: number;
+	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly gateway: GatewayEpochIdentity;
+	readonly processEpoch: string;
+};
+
+export type GatewayControlLeaseSemanticMutationPreparationOptions =
+	GatewayControlLeaseSemanticMutationPreparationBase &
+		(
+			| {
+					readonly operation: 'lease_create';
+					readonly payload: GatewayControlLeaseCreateIntentPayload;
+			  }
+			| {
+					readonly operation: 'lease_reacquire';
+					readonly payload: GatewayControlLeaseReacquireIntentPayload;
+			  }
+			| {
+					readonly operation: 'lease_release' | 'lease_renew';
+					readonly payload: GatewayControlLeaseIdPayload;
+			  }
+			| {
+					readonly operation: 'lease_use_end';
+					readonly payload: GatewayControlLeaseUseEndPayload;
+			  }
+			| {
+					readonly operation: 'lease_use_heartbeat';
+					readonly payload: GatewayControlLeaseUseHeartbeatPayload;
+			  }
+			| {
+					readonly operation: 'lease_use_start';
+					readonly payload: GatewayControlLeaseUseStartPayload;
+			  }
+		);
+
+export type GatewayControlLeaseSemanticMutationResult =
+	| GatewayControlLeaseRpcRejection
+	| GatewayControlLeaseSnapshot
+	| GatewayControlLeaseUseSnapshot
+	| undefined;
+
+export interface GatewayControlPreparedLeaseSemanticMutation {
+	readonly execute: (
+		proof: GatewaySemanticExecutionProof,
+	) => Promise<GatewayControlLeaseSemanticMutationResult>;
+	readonly profile: GatewaySemanticGenerationProfile;
+	readonly target: string;
+}
 
 export interface GatewayControlLeaseRpcOperations {
-	createLease(options: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlLeaseCreateIntentPayload;
-	}): Promise<GatewayControlLeaseSnapshot>;
-	endLeaseUse(options: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlLeaseUseEndPayload;
-	}): Promise<GatewayControlLeaseUseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
-	getLease(
+	readonly getLease: (
 		request: {
 			readonly callerContext: GatewayControlTrustedCallerContext | undefined;
+			readonly gateway: GatewayEpochIdentity;
 			readonly payload: GatewayControlLeaseIdPayload;
 		},
 		readOptions: { readonly includeSsh: 'private' | 'public' | false },
-	): Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
-	heartbeatLeaseUse(options: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlLeaseUseHeartbeatPayload;
-	}): Promise<GatewayControlLeaseUseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
-	reacquireLease(options: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlLeaseReacquireIntentPayload;
-	}): Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
-	releaseLease(options: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlLeaseIdPayload;
-	}): Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
-	renewLease(options: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlLeaseIdPayload;
-	}): Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
-	startLeaseUse(options: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlLeaseUseStartPayload;
-	}): Promise<GatewayControlLeaseUseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
+	) => Promise<GatewayControlLeaseSnapshot | GatewayControlLeaseRpcRejection | undefined>;
+	readonly prepareSemanticMutation: (
+		options: GatewayControlLeaseSemanticMutationPreparationOptions,
+	) => Promise<GatewayControlPreparedLeaseSemanticMutation>;
 }
 
 export interface GatewayControlLeaseRpcRejection {
@@ -118,6 +178,7 @@ export interface GatewayControlControllerHostActionOperations {
 export interface GatewayControlDomainHandlerOptions {
 	readonly callerContexts: GatewayControlCallerContextRegistry;
 	readonly controllerHostActions?: GatewayControlControllerHostActionOperations;
+	readonly gateway: GatewayEpochIdentity;
 	readonly leaseRpc?: GatewayControlLeaseRpcOperations;
 	readonly recordHealthEvent?: (event: AgentVmHealthEvent) => void;
 	readonly recordRuntimeStatus?: (report: OpenClawRuntimeStatusReport) => void;
@@ -657,6 +718,161 @@ function leaseUseResultPayload(options: {
 	});
 }
 
+function isLeaseSemanticMutationOperation(
+	operation: GatewayControlRpcMessage['operation'],
+): operation is GatewayControlLeaseSemanticMutationOperation {
+	return (
+		operation === 'lease_create' ||
+		operation === 'lease_reacquire' ||
+		operation === 'lease_release' ||
+		operation === 'lease_renew' ||
+		operation === 'lease_use_end' ||
+		operation === 'lease_use_heartbeat' ||
+		operation === 'lease_use_start'
+	);
+}
+
+function isLeaseSemanticMutationMessage(
+	message: GatewayControlRpcMessage,
+): message is GatewayControlLeaseSemanticMutationMessage {
+	return message.kind === 'command' && isLeaseSemanticMutationOperation(message.operation);
+}
+
+function requireSemanticEnvelopeField(
+	value: string | number | undefined,
+	fieldName: 'attachmentGeneration' | 'commandId' | 'expiresAtMs' | 'idempotencyKey',
+): string | number {
+	if (value === undefined) {
+		throw new Error(`gateway semantic mutation missing '${fieldName}'`);
+	}
+	return value;
+}
+
+function buildLeaseSemanticMutationPreparationOptions(options: {
+	readonly attachmentGeneration: number;
+	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly gateway: GatewayEpochIdentity;
+	readonly message: GatewayControlLeaseSemanticMutationMessage;
+	readonly processEpoch: string;
+}): GatewayControlLeaseSemanticMutationPreparationOptions {
+	const base = {
+		attachmentGeneration: options.attachmentGeneration,
+		callerContext: options.callerContext,
+		gateway: options.gateway,
+		processEpoch: options.processEpoch,
+	};
+	switch (options.message.operation) {
+		case 'lease_create':
+			return { ...base, operation: 'lease_create', payload: options.message.payload };
+		case 'lease_reacquire':
+			return { ...base, operation: 'lease_reacquire', payload: options.message.payload };
+		case 'lease_release':
+			return { ...base, operation: 'lease_release', payload: options.message.payload };
+		case 'lease_renew':
+			return { ...base, operation: 'lease_renew', payload: options.message.payload };
+		case 'lease_use_end':
+			return { ...base, operation: 'lease_use_end', payload: options.message.payload };
+		case 'lease_use_heartbeat':
+			return { ...base, operation: 'lease_use_heartbeat', payload: options.message.payload };
+		case 'lease_use_start':
+			return {
+				...base,
+				operation: 'lease_use_start',
+				payload:
+					options.message.payload.correlation === undefined
+						? options.message.payload
+						: {
+								...options.message.payload,
+								correlation: normalizeToolVmActiveUseCorrelation(
+									options.message.payload.correlation,
+								),
+							},
+			};
+	}
+	throw new Error('unsupported lease semantic mutation operation');
+}
+
+function buildLeaseSemanticMutationTransportResult(options: {
+	readonly message: GatewayControlLeaseSemanticMutationMessage;
+	readonly responseToMessageId: string;
+	readonly semanticValue: GatewayControlLeaseSemanticMutationResult;
+}): GatewayControlRpcMessage {
+	const expectsLeaseUse =
+		options.message.operation === 'lease_use_start' ||
+		options.message.operation === 'lease_use_heartbeat' ||
+		options.message.operation === 'lease_use_end';
+	const semanticRejection = isLeaseRpcRejection(options.semanticValue);
+	const parsedLeaseUse = GatewayControlLeaseUseSnapshotSchema.safeParse(options.semanticValue);
+	const parsedLease = GatewayControlLeaseSnapshotSchema.safeParse(options.semanticValue);
+	if (
+		expectsLeaseUse &&
+		options.semanticValue !== undefined &&
+		!semanticRejection &&
+		!parsedLeaseUse.success
+	) {
+		throw new Error(
+			`gateway semantic completion for '${options.message.operation}' did not return a lease-use value`,
+		);
+	}
+	if (
+		!expectsLeaseUse &&
+		options.semanticValue !== undefined &&
+		!semanticRejection &&
+		!parsedLease.success
+	) {
+		throw new Error(
+			`gateway semantic completion for '${options.message.operation}' did not return a lease value`,
+		);
+	}
+	return GatewayControlRpcCommandResultMessageSchema.parse({
+		kind: 'command_result',
+		operation: options.message.operation,
+		payload: expectsLeaseUse
+			? leaseUseResultPayload({
+					leaseUse:
+						options.semanticValue === undefined || semanticRejection
+							? options.semanticValue
+							: parsedLeaseUse.data,
+					responseToMessageId: options.responseToMessageId,
+				})
+			: leaseResultPayload({
+					lease:
+						options.semanticValue === undefined || semanticRejection
+							? options.semanticValue
+							: parsedLease.data,
+					responseToMessageId: options.responseToMessageId,
+				}),
+	});
+}
+
+function parseLeaseSemanticMutationResult(
+	value: unknown,
+): GatewayControlLeaseSemanticMutationResult {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (typeof value === 'object' && value !== null && 'result' in value) {
+		if (value.result !== 'rejected' || !('leaseRejectionReason' in value)) {
+			throw new Error('gateway semantic lease mutation returned an invalid rejection');
+		}
+		return {
+			leaseRejectionReason: GatewayControlLeaseRejectionReasonSchema.parse(
+				value.leaseRejectionReason,
+			),
+			result: 'rejected',
+		};
+	}
+	const parsedLease = GatewayControlLeaseSnapshotSchema.safeParse(value);
+	if (parsedLease.success) {
+		return parsedLease.data;
+	}
+	const parsedLeaseUse = GatewayControlLeaseUseSnapshotSchema.safeParse(value);
+	if (parsedLeaseUse.success) {
+		return parsedLeaseUse.data;
+	}
+	throw new Error('gateway semantic lease mutation returned an invalid domain value');
+}
+
 export function createGatewayControlDomainHandler(
 	options: GatewayControlDomainHandlerOptions,
 ): ControlSessionDomainHandler {
@@ -689,6 +905,101 @@ export function createGatewayControlDomainHandler(
 					result: 'failed',
 				}),
 			});
+		},
+		buildSemanticFailureResult: ({ envelope, payload }, decision) => {
+			const message = GatewayControlRpcMessageSchema.parse(payload);
+			if (!isLeaseSemanticMutationMessage(message)) {
+				throw new Error('gateway semantic failure does not belong to a lease mutation');
+			}
+			return GatewayControlRpcCommandResultMessageSchema.parse({
+				kind: 'command_result',
+				operation: message.operation,
+				payload: commandResultPayload({
+					error: {
+						errorClass: `gateway_semantic_${decision.kind}`,
+						retryable: false,
+						safeMessage: `Gateway semantic lease mutation was refused: ${decision.kind}.`,
+					},
+					responseToMessageId: envelope.messageId,
+					result: 'failed',
+				}),
+			});
+		},
+		buildSemanticTransportResult: ({ envelope, payload }, completedValue) => {
+			const message = GatewayControlRpcMessageSchema.parse(payload);
+			if (!isLeaseSemanticMutationMessage(message)) {
+				throw new Error('gateway semantic completion does not belong to a lease mutation');
+			}
+			const semanticValue = parseLeaseSemanticMutationResult(completedValue);
+			if (
+				message.operation === 'lease_release' &&
+				semanticValue !== undefined &&
+				!isLeaseRpcRejection(semanticValue) &&
+				GatewayControlLeaseSnapshotSchema.safeParse(semanticValue).success
+			) {
+				options.callerContexts.release(message.payload.callerContext.callerContextId);
+			}
+			return buildLeaseSemanticMutationTransportResult({
+				message,
+				responseToMessageId: envelope.messageId,
+				semanticValue,
+			});
+		},
+		prepareSemanticMutation: async ({ attachmentGeneration, envelope, payload }) => {
+			const message = GatewayControlRpcMessageSchema.parse(payload);
+			if (!isLeaseSemanticMutationMessage(message)) {
+				return undefined;
+			}
+			const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
+				callerContextId: message.payload.callerContext.callerContextId,
+				callerContexts: options.callerContexts,
+				session: callerContextSessionFromEnvelope(envelope),
+			});
+			if (callerContextResolution.status === 'rejected') {
+				return undefined;
+			}
+			const requiredAttachmentGeneration = requireSemanticEnvelopeField(
+				attachmentGeneration,
+				'attachmentGeneration',
+			);
+			const commandId = requireSemanticEnvelopeField(envelope.commandId, 'commandId');
+			const idempotencyKey = requireSemanticEnvelopeField(
+				envelope.idempotencyKey,
+				'idempotencyKey',
+			);
+			const validUntilMs = requireSemanticEnvelopeField(envelope.expiresAtMs, 'expiresAtMs');
+			if (
+				typeof requiredAttachmentGeneration !== 'number' ||
+				typeof commandId !== 'string' ||
+				typeof idempotencyKey !== 'string' ||
+				typeof validUntilMs !== 'number'
+			) {
+				throw new Error('gateway semantic mutation envelope fields have invalid types');
+			}
+			const preparationOptions = buildLeaseSemanticMutationPreparationOptions({
+				attachmentGeneration: requiredAttachmentGeneration,
+				callerContext: callerContextResolution.callerContext,
+				gateway: options.gateway,
+				message,
+				processEpoch: envelope.bootId,
+			});
+			const normalizedPayload = preparationOptions.payload;
+			const preparedMutation = await assertLeaseRpcConfigured(
+				options.leaseRpc,
+			).prepareSemanticMutation(preparationOptions);
+			return {
+				execute: preparedMutation.execute,
+				identity: {
+					commandId,
+					gateway: options.gateway,
+					idempotencyKey,
+					operation: message.operation,
+					profile: preparedMutation.profile,
+					target: preparedMutation.target,
+					validUntilMs,
+				},
+				payload: parseGatewaySemanticJsonValue(normalizedPayload),
+			};
 		},
 		handle: async ({ envelope, payload }) => {
 			const message = GatewayControlRpcMessageSchema.parse(payload);
@@ -766,7 +1077,6 @@ export function createGatewayControlDomainHandler(
 					});
 				}
 				case 'lease_create': {
-					const leaseRpc = assertLeaseRpcConfigured(options.leaseRpc);
 					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
 						callerContextId: message.payload.callerContext.callerContextId,
 						callerContexts: options.callerContexts,
@@ -783,19 +1093,7 @@ export function createGatewayControlDomainHandler(
 							}),
 						});
 					}
-					const lease = await leaseRpc.createLease({
-						callerContext: callerContextResolution.callerContext,
-						payload: message.payload,
-					});
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'lease_create',
-						payload: commandResultPayload({
-							lease,
-							responseToMessageId: envelope.messageId,
-							result: 'ok',
-						}),
-					});
+					throw new Error('lease_create must execute through semantic preparation');
 				}
 				case 'lease_get':
 				case 'lease_peek': {
@@ -824,6 +1122,7 @@ export function createGatewayControlDomainHandler(
 								callerContext === undefined || callerContext.status === 'rejected'
 									? undefined
 									: callerContext.callerContext,
+							gateway: options.gateway,
 							payload: message.payload,
 						},
 						{
@@ -856,18 +1155,7 @@ export function createGatewayControlDomainHandler(
 							}),
 						});
 					}
-					const lease = await assertLeaseRpcConfigured(options.leaseRpc).reacquireLease({
-						callerContext: callerContextResolution.callerContext,
-						payload: message.payload,
-					});
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'lease_reacquire',
-						payload: leaseResultPayload({
-							lease,
-							responseToMessageId: envelope.messageId,
-						}),
-					});
+					throw new Error('lease_reacquire must execute through semantic preparation');
 				}
 				case 'lease_renew': {
 					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
@@ -886,18 +1174,7 @@ export function createGatewayControlDomainHandler(
 							}),
 						});
 					}
-					const lease = await assertLeaseRpcConfigured(options.leaseRpc).renewLease({
-						callerContext: callerContextResolution.callerContext,
-						payload: message.payload,
-					});
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'lease_renew',
-						payload: leaseResultPayload({
-							lease,
-							responseToMessageId: envelope.messageId,
-						}),
-					});
+					throw new Error('lease_renew must execute through semantic preparation');
 				}
 				case 'lease_release': {
 					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
@@ -916,21 +1193,7 @@ export function createGatewayControlDomainHandler(
 							}),
 						});
 					}
-					const lease = await assertLeaseRpcConfigured(options.leaseRpc).releaseLease({
-						callerContext: callerContextResolution.callerContext,
-						payload: message.payload,
-					});
-					if (lease !== undefined) {
-						options.callerContexts.release(message.payload.callerContext.callerContextId);
-					}
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'lease_release',
-						payload: leaseResultPayload({
-							lease,
-							responseToMessageId: envelope.messageId,
-						}),
-					});
+					throw new Error('lease_release must execute through semantic preparation');
 				}
 				case 'lease_use_start': {
 					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
@@ -949,25 +1212,7 @@ export function createGatewayControlDomainHandler(
 							}),
 						});
 					}
-					const leaseUse = await assertLeaseRpcConfigured(options.leaseRpc).startLeaseUse({
-						callerContext: callerContextResolution.callerContext,
-						payload: {
-							...message.payload,
-							...(message.payload.correlation === undefined
-								? {}
-								: {
-										correlation: normalizeToolVmActiveUseCorrelation(message.payload.correlation),
-									}),
-						},
-					});
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'lease_use_start',
-						payload: leaseUseResultPayload({
-							leaseUse,
-							responseToMessageId: envelope.messageId,
-						}),
-					});
+					throw new Error('lease_use_start must execute through semantic preparation');
 				}
 				case 'lease_use_heartbeat': {
 					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
@@ -986,18 +1231,7 @@ export function createGatewayControlDomainHandler(
 							}),
 						});
 					}
-					const leaseUse = await assertLeaseRpcConfigured(options.leaseRpc).heartbeatLeaseUse({
-						callerContext: callerContextResolution.callerContext,
-						payload: message.payload,
-					});
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'lease_use_heartbeat',
-						payload: leaseUseResultPayload({
-							leaseUse,
-							responseToMessageId: envelope.messageId,
-						}),
-					});
+					throw new Error('lease_use_heartbeat must execute through semantic preparation');
 				}
 				case 'lease_use_end': {
 					const callerContextResolution = resolveCurrentToolVmLeaseCallerContext({
@@ -1016,18 +1250,7 @@ export function createGatewayControlDomainHandler(
 							}),
 						});
 					}
-					const leaseUse = await assertLeaseRpcConfigured(options.leaseRpc).endLeaseUse({
-						callerContext: callerContextResolution.callerContext,
-						payload: message.payload,
-					});
-					return GatewayControlRpcCommandResultMessageSchema.parse({
-						kind: 'command_result',
-						operation: 'lease_use_end',
-						payload: leaseUseResultPayload({
-							leaseUse,
-							responseToMessageId: envelope.messageId,
-						}),
-					});
+					throw new Error('lease_use_end must execute through semantic preparation');
 				}
 				case 'tool_portal_controller_host_action':
 					return GatewayControlRpcCommandResultMessageSchema.parse({

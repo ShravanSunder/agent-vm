@@ -1,3 +1,8 @@
+import type {
+	ToolVmActiveUseCorrelation,
+	ToolVmActiveUseOperationReport,
+} from '@agent-vm/gateway-interface';
+
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 
 export interface StableToolVmLeasePrincipal {
@@ -55,6 +60,8 @@ export interface ToolVmActiveUseLatestReport {
 }
 
 interface ToolVmActiveUseIdentity {
+	readonly correlation?: ToolVmActiveUseCorrelation;
+	readonly latestOperationReport?: ToolVmActiveUseOperationReport;
 	readonly latestReport?: ToolVmActiveUseLatestReport;
 	readonly operationPayloadDigest: string;
 	readonly processEpoch: string;
@@ -169,11 +176,13 @@ export interface DestroyedToolVmLeaseLeafTombstone {
 }
 
 export interface TerminalToolVmActiveUseTombstone {
+	readonly correlation?: ToolVmActiveUseCorrelation;
 	readonly endedAtMs: number;
 	readonly expiresAtMs: number;
 	readonly gateway: GatewayEpochIdentity;
 	readonly leafGeneration: string;
 	readonly latestReport?: ToolVmActiveUseLatestReport;
+	readonly latestOperationReport?: ToolVmActiveUseOperationReport;
 	readonly operationPayloadDigest: string;
 	readonly outcome: TerminalToolVmActiveUse['outcome'];
 	readonly principal: StableToolVmLeasePrincipal;
@@ -250,7 +259,9 @@ export class ToolVmLeaseAuthorityTransitionError extends Error {
 }
 
 export interface StartToolVmActiveUseInput {
+	readonly correlation?: ToolVmActiveUseCorrelation;
 	readonly lastHeartbeatAtMs: number;
+	readonly latestOperationReport?: ToolVmActiveUseOperationReport;
 	readonly operationPayloadDigest: string;
 	readonly processEpoch: string;
 	readonly semanticOperationId: string;
@@ -305,6 +316,7 @@ export type ToolVmLeaseAuthorityCommand =
 			readonly authority: ToolVmLeafAuthorityReference;
 			readonly heartbeatAtMs: number;
 			readonly kind: 'heartbeat-active-use';
+			readonly operationReport?: ToolVmActiveUseOperationReport;
 			readonly processEpoch: string;
 			readonly report?: ToolVmActiveUseLatestReport;
 			readonly sessionAttachmentGeneration: number;
@@ -330,6 +342,7 @@ export type ToolVmLeaseAuthorityCommand =
 			readonly authority: ToolVmLeafAuthorityReference;
 			readonly endedAtMs: number;
 			readonly kind: 'end-active-use';
+			readonly operationReport?: ToolVmActiveUseOperationReport;
 			readonly outcome: TerminalToolVmActiveUse['outcome'];
 			readonly processEpoch: string;
 			readonly sessionAttachmentGeneration: number;

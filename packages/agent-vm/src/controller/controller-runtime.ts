@@ -67,7 +67,10 @@ import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
 import { createLeaseManager } from './leases/lease-manager.js';
-import { createOpenClawToolVmLeaseCreateOptionsResolver } from './leases/openclaw-tool-vm-lease-create-options.js';
+import {
+	createOpenClawToolVmLeaseCreateOptionsResolver,
+	createOpenClawToolVmLeaseWorkspaceSeeder,
+} from './leases/openclaw-tool-vm-lease-create-options.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
@@ -521,8 +524,9 @@ async function startControllerRuntimeWithOwnershipLock(
 		...(options.systemConfig.leaseIdleTtl === undefined
 			? {}
 			: { leaseIdleTtlPolicy: options.systemConfig.leaseIdleTtl }),
-		openClawRuntimeStatusStore,
-		resolveGatewayEpoch: (expected) => ownershipCoordinator.resolveGatewayEpoch(expected),
+		systemConfig: options.systemConfig,
+	});
+	const seedOpenClawToolVmLeaseWorkspace = createOpenClawToolVmLeaseWorkspaceSeeder({
 		secretResolver,
 		systemConfig: options.systemConfig,
 	});
@@ -535,11 +539,13 @@ async function startControllerRuntimeWithOwnershipLock(
 		recordHealthEvent: (event) => {
 			healthEventStore.record(event);
 		},
-		resolveLeaseCreateOptions: async ({ callerContext, payload }) =>
+		resolveLeaseCreateOptions: async ({ callerContext, gateway, payload }) =>
 			await resolveOpenClawToolVmLeaseCreateOptions({
 				authorityContext: callerContext,
+				expectedGateway: gateway,
 				requestedIdleTtlMs: payload.idleTtlHintMs,
 			}),
+		seedLeaseWorkspace: seedOpenClawToolVmLeaseWorkspace,
 	});
 	const createOpenClawGatewayVmOwnership = async (ownershipOptions: {
 		readonly controlIdentity?: { readonly bootId: string; readonly generationId: string };

@@ -66,6 +66,7 @@ export function assertVmDestroyReceiptMatchesTarget(
 	target: VmDestroyTargetV1,
 	context: string,
 ): void {
+	assertVmDestructionComplete(receipt, context);
 	if (!vmDestroyReceiptMatchesTarget(receipt, target)) {
 		throw new VmDestructionReceiptMismatchError(context);
 	}

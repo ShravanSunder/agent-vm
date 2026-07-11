@@ -1,6 +1,19 @@
 import type {
+	GatewayControlLeaseCreateIntentPayload,
+	GatewayControlLeaseIdPayload,
 	GatewayControlLeaseReacquireIntentPayload,
 	GatewayControlLeaseSnapshot,
+	GatewayControlLeaseUseEndPayload,
+	GatewayControlLeaseUseHeartbeatPayload,
+	GatewayControlLeaseUseStartPayload,
+} from '@agent-vm/gateway-control-contracts';
+import {
+	GatewayControlLeaseCreateIntentPayloadSchema,
+	GatewayControlLeaseIdPayloadSchema,
+	GatewayControlLeaseReacquireIntentPayloadSchema,
+	GatewayControlLeaseUseEndPayloadSchema,
+	GatewayControlLeaseUseHeartbeatPayloadSchema,
+	GatewayControlLeaseUseStartPayloadSchema,
 } from '@agent-vm/gateway-control-contracts';
 import {
 	normalizeToolVmActiveUseCorrelation,
@@ -11,133 +24,52 @@ import {
 	type ControllerLeaseManager,
 	readIdentityPemFromFile,
 } from '../http/controller-http-route-support.js';
+import { resolveToolVmLeaseCompatibility } from '../leases/lease-manager.js';
 import type { ObservedControllerLeaseCreateRequest } from '../leases/observed-lease-create-request.js';
-import {
-	createToolVmLeaseAuthorityStore,
-	type ToolVmLeaseSessionAttachment,
-	type ToolVmLeaseStableOwner,
-} from '../leases/tool-vm-lease-authority-store.js';
+import type { ToolVmLeaseCompatibility } from '../leases/tool-vm-lease-authority-state.js';
 import { buildToolVmKnownHostsLine } from '../leases/tool-vm-ssh-server-identity.js';
-import { OpenClawRuntimeStatusUnavailableError } from '../openclaw-runtime-status.js';
+import {
+	gatewayIdentitiesEqual,
+	type GatewayEpochIdentity,
+} from '../vm-ownership/vm-ownership-contracts.js';
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
 import type {
 	GatewayControlLeaseRpcOperations,
 	GatewayControlLeaseRpcRejection,
+	GatewayControlLeaseSemanticMutationResult,
+	GatewayControlLeaseSemanticMutationOperation,
+	GatewayControlLeaseSemanticMutationPayload,
+	GatewayControlPreparedLeaseSemanticMutation,
 } from './gateway-control-domain-handler.js';
+import type { GatewaySemanticExecutionProof } from './gateway-semantic-result-ledger.js';
 
 type LeaseCreateOptions = Parameters<ControllerLeaseManager['createLease']>[0];
-type GatewayControlLeaseCreatePayload = Parameters<
-	GatewayControlLeaseRpcOperations['createLease']
->[0]['payload'];
+type GatewayControlLeaseManager = ControllerLeaseManager &
+	Required<Pick<ControllerLeaseManager, 'getLeaseAuthority'>>;
+type GatewayControlLeaseCreatePayload = GatewayControlLeaseCreateIntentPayload;
 type ToolVmSshHealthEvent = Extract<AgentVmHealthEvent, { readonly kind: 'tool-vm-ssh' }>;
 
+interface LeaseMutationExecutionContext<TPayload> {
+	readonly attachmentGeneration: number;
+	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly gateway: GatewayEpochIdentity;
+	readonly payload: TPayload;
+	readonly processEpoch: string;
+	readonly proof: GatewaySemanticExecutionProof;
+}
+
 export interface GatewayControlLeaseRpcControllerOptions {
-	readonly leaseManager: ControllerLeaseManager;
+	readonly leaseManager: GatewayControlLeaseManager;
 	readonly now?: () => number;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly recordHealthEvent?: (event: AgentVmHealthEvent) => void;
 	readonly resolveLeaseCreateOptions: (options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly gateway: GatewayEpochIdentity;
 		readonly payload: GatewayControlLeaseCreatePayload;
 	}) => Promise<LeaseCreateOptions>;
-}
-
-function stableOwnerFromCallerContext(
-	callerContext: GatewayControlTrustedCallerContext,
-): ToolVmLeaseStableOwner {
-	return {
-		agentId: callerContext.agentId,
-		agentWorkspaceDir: callerContext.agentWorkspaceDir,
-		purpose: callerContext.purpose,
-		sessionKeyDigest: callerContext.sessionKeyDigest,
-		workMountDir: callerContext.workMountDir,
-		zoneId: callerContext.zoneId,
-	};
-}
-
-function sessionAttachmentFromCallerContext(
-	callerContext: GatewayControlTrustedCallerContext,
-): ToolVmLeaseSessionAttachment {
-	return {
-		bootId: callerContext.bootId,
-		connectionId: callerContext.connectionId,
-		controllerEpoch: callerContext.controllerEpoch,
-		peerId: callerContext.peerId,
-		sessionId: callerContext.sessionId,
-	};
-}
-
-function callerContextMatchesLeaseOwner(comparison: {
-	readonly callerContext: GatewayControlTrustedCallerContext;
-	readonly owner: ToolVmLeaseStableOwner;
-}): boolean {
-	return (
-		comparison.callerContext.agentId === comparison.owner.agentId &&
-		comparison.callerContext.agentWorkspaceDir === comparison.owner.agentWorkspaceDir &&
-		comparison.callerContext.purpose === comparison.owner.purpose &&
-		comparison.callerContext.sessionKeyDigest === comparison.owner.sessionKeyDigest &&
-		comparison.callerContext.workMountDir === comparison.owner.workMountDir &&
-		comparison.callerContext.zoneId === comparison.owner.zoneId
-	);
-}
-
-function callerContextMatchesLeaseSessionFence(comparison: {
-	readonly callerContext: GatewayControlTrustedCallerContext;
-	readonly sessionAttachment: ToolVmLeaseSessionAttachment;
-}): boolean {
-	return (
-		comparison.callerContext.bootId === comparison.sessionAttachment.bootId &&
-		comparison.callerContext.connectionId === comparison.sessionAttachment.connectionId &&
-		comparison.callerContext.controllerEpoch === comparison.sessionAttachment.controllerEpoch &&
-		comparison.callerContext.peerId === comparison.sessionAttachment.peerId &&
-		comparison.callerContext.sessionId === comparison.sessionAttachment.sessionId
-	);
-}
-
-function zoneGitMountsMatch(
-	leftMount: LeaseCreateOptions['zoneGitMount'],
-	rightMount: LeaseCreateOptions['zoneGitMount'],
-): boolean {
-	if (leftMount === undefined || rightMount === undefined) {
-		return leftMount === rightMount;
-	}
-	return (
-		leftMount.hostZoneFilesDir === rightMount.hostZoneFilesDir &&
-		leftMount.hostZoneGitRoot === rightMount.hostZoneGitRoot
-	);
-}
-
-function leaseCreateCompatibilityMismatchFields(
-	leftOptions: LeaseCreateOptions,
-	rightOptions: LeaseCreateOptions,
-): readonly string[] {
-	const mismatchedFields: string[] = [];
-	if (leftOptions.agentId !== rightOptions.agentId) {
-		mismatchedFields.push('agentId');
-	}
-	if (leftOptions.agentWorkspaceDir !== rightOptions.agentWorkspaceDir) {
-		mismatchedFields.push('agentWorkspaceDir');
-	}
-	if (leftOptions.effectiveIdleTtlMs !== rightOptions.effectiveIdleTtlMs) {
-		mismatchedFields.push('effectiveIdleTtlMs');
-	}
-	if (leftOptions.guestWorkdir !== rightOptions.guestWorkdir) {
-		mismatchedFields.push('guestWorkdir');
-	}
-	if (leftOptions.hostWorkMountDir !== rightOptions.hostWorkMountDir) {
-		mismatchedFields.push('hostWorkMountDir');
-	}
-	if (leftOptions.profileId !== rightOptions.profileId) {
-		mismatchedFields.push('profileId');
-	}
-	if (leftOptions.zoneId !== rightOptions.zoneId) {
-		mismatchedFields.push('zoneId');
-	}
-	if (!zoneGitMountsMatch(leftOptions.zoneGitMount, rightOptions.zoneGitMount)) {
-		mismatchedFields.push('zoneGitMount');
-	}
-	return mismatchedFields;
+	readonly seedLeaseWorkspace?: (leaseCreateOptions: LeaseCreateOptions) => Promise<void>;
 }
 
 function leaseCreatePayloadFromReacquirePayload(
@@ -171,6 +103,7 @@ function safeControllerRequestErrorCode(options: {
 
 type CurrentLeaseAuthorityDecision =
 	| {
+			readonly authority: NonNullable<ReturnType<GatewayControlLeaseManager['getLeaseAuthority']>>;
 			readonly status: 'accepted';
 	  }
 	| {
@@ -180,6 +113,32 @@ type CurrentLeaseAuthorityDecision =
 	| {
 			readonly status: 'absent';
 	  };
+
+interface LeaseAuthoritySemanticProfileResolution {
+	readonly decision: CurrentLeaseAuthorityDecision;
+	readonly profile: {
+		readonly compatibilityId: string;
+		readonly currentLeafTargetId: string | null;
+		readonly kind: 'lease_authority';
+		readonly stablePrincipal: string;
+	};
+}
+
+function isReacquireCompatibilityCurrent(optionsToCompare: {
+	readonly authorityCompatibility: ToolVmLeaseCompatibility;
+	readonly currentCompatibility: ToolVmLeaseCompatibility;
+}): boolean {
+	return (
+		optionsToCompare.authorityCompatibility.policyFingerprint ===
+			optionsToCompare.currentCompatibility.policyFingerprint &&
+		optionsToCompare.authorityCompatibility.profileId ===
+			optionsToCompare.currentCompatibility.profileId &&
+		optionsToCompare.authorityCompatibility.purpose ===
+			optionsToCompare.currentCompatibility.purpose &&
+		optionsToCompare.authorityCompatibility.workMountDir ===
+			optionsToCompare.currentCompatibility.workMountDir
+	);
+}
 
 function toolVmSshOperationFromReacquirePayload(
 	payload: GatewayControlLeaseReacquireIntentPayload,
@@ -322,117 +281,40 @@ export function createGatewayControlLeaseRpcOperations(
 ): GatewayControlLeaseRpcOperations {
 	const now = options.now ?? (() => Date.now());
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
-	const leaseAuthorityStore = createToolVmLeaseAuthorityStore<LeaseCreateOptions>({ now });
-	options.leaseManager.subscribeLeaseRetirement?.((event) => {
-		leaseAuthorityStore.markRetired(event.leaseId);
-	});
-
-	function recordLeaseOwner(record: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly leaseCreateOptions: LeaseCreateOptions;
-		readonly leaseId: string;
-	}): void {
-		leaseAuthorityStore.recordCurrent({
-			compatibility: record.leaseCreateOptions,
-			leaseId: record.leaseId,
-			owner: stableOwnerFromCallerContext(record.callerContext),
-			sessionAttachment: sessionAttachmentFromCallerContext(record.callerContext),
-		});
-	}
 
 	function resolveCurrentLeaseAuthorityDecision(payload: {
 		readonly callerContext: GatewayControlTrustedCallerContext | undefined;
+		readonly gateway: GatewayEpochIdentity;
 		readonly leaseId: string;
 	}): CurrentLeaseAuthorityDecision {
-		const authority = leaseAuthorityStore.resolve(payload.leaseId);
-		if (
-			authority === undefined ||
-			authority.state !== 'current' ||
-			payload.callerContext === undefined
-		) {
+		const authority = options.leaseManager.getLeaseAuthority(payload.leaseId);
+		if (authority === undefined || payload.callerContext === undefined) {
 			return { status: 'absent' };
 		}
 		if (
-			!callerContextMatchesLeaseOwner({
-				callerContext: payload.callerContext,
-				owner: authority.owner,
-			})
+			!gatewayIdentitiesEqual(authority.authority.gateway, payload.gateway) ||
+			authority.authority.principal.agentId !== payload.callerContext.agentId ||
+			authority.authority.principal.zoneId !== payload.callerContext.zoneId
 		) {
 			return {
 				rejection: leaseRpcRejection('ownership_denied'),
 				status: 'rejected',
 			};
 		}
-		if (
-			!callerContextMatchesLeaseSessionFence({
-				callerContext: payload.callerContext,
-				sessionAttachment: authority.sessionAttachment,
-			})
-		) {
-			return {
-				rejection: leaseRpcRejection('caller_context_session_mismatch'),
-				status: 'rejected',
-			};
-		}
-		return { status: 'accepted' };
+		return { authority, status: 'accepted' };
 	}
 
-	function currentLeaseAuthorityMatchesCaller(optionsToCheck: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly leaseId: string;
-	}): boolean {
-		return (
-			resolveCurrentLeaseAuthorityDecision({
-				callerContext: optionsToCheck.callerContext,
-				leaseId: optionsToCheck.leaseId,
-			}).status === 'accepted'
-		);
-	}
-
-	function currentLeaseAuthorityRejectionReason(optionsToCheck: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly leaseId: string;
-	}): GatewayControlLeaseRpcRejection['leaseRejectionReason'] {
-		const decision = resolveCurrentLeaseAuthorityDecision({
-			callerContext: optionsToCheck.callerContext,
-			leaseId: optionsToCheck.leaseId,
-		});
-		if (decision.status === 'rejected') {
-			return decision.rejection.leaseRejectionReason;
-		}
-		return 'ownership_denied';
-	}
-
-	async function resolveCurrentReacquireCompatibility(optionsToResolve: {
-		readonly callerContext: GatewayControlTrustedCallerContext;
-		readonly payload: GatewayControlLeaseReacquireIntentPayload;
-	}): Promise<LeaseCreateOptions> {
-		return await options.resolveLeaseCreateOptions({
-			callerContext: optionsToResolve.callerContext,
-			payload: leaseCreatePayloadFromReacquirePayload(optionsToResolve.payload),
-		});
-	}
-
-	function isReacquireCompatibilityCurrent(optionsToCompare: {
-		readonly authorityCompatibility: LeaseCreateOptions;
-		readonly currentCompatibility: LeaseCreateOptions;
-	}): boolean {
-		return (
-			leaseCreateCompatibilityMismatchFields(
-				optionsToCompare.authorityCompatibility,
-				optionsToCompare.currentCompatibility,
-			).length === 0
-		);
-	}
-
-	return {
-		createLease: async ({ callerContext, payload }) => {
-			let stage = 'resolve_lease_create_options';
+	const mutationOperations = {
+		createLease: async ({
+			callerContext,
+			leaseCreateOptions,
+		}: {
+			readonly callerContext: GatewayControlTrustedCallerContext;
+			readonly leaseCreateOptions: LeaseCreateOptions;
+		}) => {
+			let stage = 'seed_lease_workspace';
 			try {
-				const leaseCreateOptions = await options.resolveLeaseCreateOptions({
-					callerContext,
-					payload,
-				});
+				await options.seedLeaseWorkspace?.(leaseCreateOptions);
 				options.onLeaseCreateRequest?.({
 					agentId: callerContext.agentId,
 					agentWorkspaceDir: callerContext.agentWorkspaceDir,
@@ -446,11 +328,6 @@ export function createGatewayControlLeaseRpcOperations(
 				});
 				stage = 'lease_manager_create_lease';
 				const lease = await options.leaseManager.createLease(leaseCreateOptions);
-				recordLeaseOwner({
-					callerContext,
-					leaseCreateOptions,
-					leaseId: lease.id,
-				});
 				stage = 'serialize_lease_snapshot';
 				return await serializeGatewayControlLeaseSnapshot({
 					includeSsh: 'private',
@@ -474,9 +351,19 @@ export function createGatewayControlLeaseRpcOperations(
 				throw error;
 			}
 		},
-		endLeaseUse: async ({ callerContext, payload }) => {
+		endLeaseUse: async ({
+			attachmentGeneration,
+			callerContext,
+			gateway,
+			payload,
+			processEpoch,
+		}: LeaseMutationExecutionContext<GatewayControlLeaseUseEndPayload>): Promise<GatewayControlLeaseSemanticMutationResult> => {
 			const { leaseId, useId } = payload;
-			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({
+				callerContext,
+				gateway,
+				leaseId,
+			});
 			if (authorityDecision.status === 'rejected') {
 				return authorityDecision.rejection;
 			}
@@ -484,7 +371,13 @@ export function createGatewayControlLeaseRpcOperations(
 				return undefined;
 			}
 			const result = options.leaseManager.endActiveUse?.(leaseId, useId, {
-				outcome: 'completed',
+				authority: {
+					gateway,
+					principal: { agentId: callerContext.agentId, zoneId: callerContext.zoneId },
+				},
+				outcome: payload.reason === 'completed' ? 'completed' : 'failed',
+				processEpoch,
+				sessionAttachmentGeneration: attachmentGeneration,
 			});
 			if (result === undefined || result.kind === 'unknown-use') {
 				return undefined;
@@ -495,9 +388,13 @@ export function createGatewayControlLeaseRpcOperations(
 				useId,
 			};
 		},
-		getLease: async ({ callerContext, payload }, { includeSsh }) => {
+		getLease: (async ({ callerContext, gateway, payload }, { includeSsh }) => {
 			const { leaseId } = payload;
-			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({
+				callerContext,
+				gateway,
+				leaseId,
+			});
 			if (authorityDecision.status === 'rejected') {
 				return authorityDecision.rejection;
 			}
@@ -513,70 +410,45 @@ export function createGatewayControlLeaseRpcOperations(
 				lease: leaseSnapshot.lease,
 				readIdentityPem,
 			});
-		},
-		reacquireLease: async ({ callerContext, payload }) => {
+		}) satisfies GatewayControlLeaseRpcOperations['getLease'],
+		reacquireLease: async ({
+			callerContext,
+			gateway,
+			leaseCreateOptions,
+			payload,
+		}: LeaseMutationExecutionContext<GatewayControlLeaseReacquireIntentPayload> & {
+			readonly leaseCreateOptions?: LeaseCreateOptions;
+		}) => {
 			const operation = toolVmSshOperationFromReacquirePayload(payload);
-			const authority = leaseAuthorityStore.resolve(payload.oldLeaseId);
-			if (authority === undefined) {
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({
+				callerContext,
+				gateway,
+				leaseId: payload.oldLeaseId,
+			});
+			if (authorityDecision.status !== 'accepted') {
+				const leaseRejectionReason =
+					authorityDecision.status === 'rejected'
+						? authorityDecision.rejection.leaseRejectionReason
+						: 'lease_authority_absent';
 				emitReacquireLifecycleEvent({
 					callerContext,
 					elapsedMs: 0,
-					leaseRejectionReason: 'lease_authority_absent',
+					leaseRejectionReason,
 					observedAtMs: Math.max(1, now()),
 					operation,
 					oldLeaseId: payload.oldLeaseId,
 					recordHealthEvent: options.recordHealthEvent,
 					result: 'failed',
 				});
-				return leaseRpcRejection('lease_authority_absent');
+				return leaseRpcRejection(leaseRejectionReason);
 			}
-			if (!callerContextMatchesLeaseOwner({ callerContext, owner: authority.owner })) {
-				emitReacquireLifecycleEvent({
-					callerContext,
-					elapsedMs: 0,
-					leaseRejectionReason: 'ownership_denied',
-					observedAtMs: Math.max(1, now()),
-					operation,
-					oldLeaseId: payload.oldLeaseId,
-					recordHealthEvent: options.recordHealthEvent,
-					result: 'failed',
-				});
-				return leaseRpcRejection('ownership_denied');
-			}
-			if (
-				!callerContextMatchesLeaseSessionFence({
-					callerContext,
-					sessionAttachment: authority.sessionAttachment,
-				})
-			) {
-				emitReacquireLifecycleEvent({
-					callerContext,
-					elapsedMs: 0,
-					leaseRejectionReason: 'caller_context_session_mismatch',
-					observedAtMs: Math.max(1, now()),
-					operation,
-					oldLeaseId: payload.oldLeaseId,
-					recordHealthEvent: options.recordHealthEvent,
-					result: 'failed',
-				});
-				return leaseRpcRejection('caller_context_session_mismatch');
-			}
-			let currentCompatibility: LeaseCreateOptions;
-			try {
-				currentCompatibility = await resolveCurrentReacquireCompatibility({
-					callerContext,
-					payload,
-				});
-			} catch (error) {
-				if (!(error instanceof OpenClawRuntimeStatusUnavailableError)) {
-					throw error;
-				}
-				currentCompatibility = authority.compatibility;
+			if (leaseCreateOptions === undefined) {
+				throw new Error('Lease reacquire execution is missing prepared lease create options.');
 			}
 			if (
 				!isReacquireCompatibilityCurrent({
-					authorityCompatibility: authority.compatibility,
-					currentCompatibility,
+					authorityCompatibility: authorityDecision.authority.compatibility,
+					currentCompatibility: resolveToolVmLeaseCompatibility(leaseCreateOptions),
 				})
 			) {
 				emitReacquireLifecycleEvent({
@@ -591,38 +463,7 @@ export function createGatewayControlLeaseRpcOperations(
 				});
 				return leaseRpcRejection('ownership_denied');
 			}
-			if (authority.replacementLeaseId !== undefined) {
-				const replacementSnapshot = options.leaseManager.peekLease(authority.replacementLeaseId);
-				if (replacementSnapshot !== undefined) {
-					if (
-						!currentLeaseAuthorityMatchesCaller({
-							callerContext,
-							leaseId: authority.replacementLeaseId,
-						})
-					) {
-						const leaseRejectionReason = currentLeaseAuthorityRejectionReason({
-							callerContext,
-							leaseId: authority.replacementLeaseId,
-						});
-						emitReacquireLifecycleEvent({
-							callerContext,
-							elapsedMs: 0,
-							leaseRejectionReason,
-							observedAtMs: Math.max(1, now()),
-							operation,
-							oldLeaseId: payload.oldLeaseId,
-							recordHealthEvent: options.recordHealthEvent,
-							result: 'failed',
-						});
-						return leaseRpcRejection(leaseRejectionReason);
-					}
-					return await serializeGatewayControlLeaseSnapshot({
-						includeSsh: 'private',
-						lease: replacementSnapshot.lease,
-						readIdentityPem,
-					});
-				}
-			}
+			await options.seedLeaseWorkspace?.(leaseCreateOptions);
 			if (options.leaseManager.peekLease(payload.oldLeaseId) !== undefined) {
 				try {
 					await options.leaseManager.releaseLease(payload.oldLeaseId, { force: true });
@@ -632,8 +473,7 @@ export function createGatewayControlLeaseRpcOperations(
 					}
 				}
 			}
-			leaseAuthorityStore.markRetired(payload.oldLeaseId);
-			const replacementLease = await options.leaseManager.createLease(currentCompatibility);
+			const replacementLease = await options.leaseManager.createLease(leaseCreateOptions);
 			if (replacementLease.id === payload.oldLeaseId) {
 				emitReacquireLifecycleEvent({
 					callerContext,
@@ -647,36 +487,6 @@ export function createGatewayControlLeaseRpcOperations(
 				});
 				return leaseRpcRejection('lease_reacquire_required');
 			}
-			const existingReplacementAuthority = leaseAuthorityStore.resolve(replacementLease.id);
-			if (
-				existingReplacementAuthority !== undefined &&
-				!currentLeaseAuthorityMatchesCaller({
-					callerContext,
-					leaseId: replacementLease.id,
-				})
-			) {
-				const leaseRejectionReason = currentLeaseAuthorityRejectionReason({
-					callerContext,
-					leaseId: replacementLease.id,
-				});
-				emitReacquireLifecycleEvent({
-					callerContext,
-					elapsedMs: 0,
-					leaseRejectionReason,
-					observedAtMs: Math.max(1, now()),
-					operation,
-					oldLeaseId: payload.oldLeaseId,
-					recordHealthEvent: options.recordHealthEvent,
-					result: 'failed',
-				});
-				return leaseRpcRejection(leaseRejectionReason);
-			}
-			leaseAuthorityStore.markReplaced(payload.oldLeaseId, replacementLease.id);
-			recordLeaseOwner({
-				callerContext,
-				leaseCreateOptions: currentCompatibility,
-				leaseId: replacementLease.id,
-			});
 			const replacementSnapshot = await serializeGatewayControlLeaseSnapshot({
 				includeSsh: 'private',
 				lease: replacementLease,
@@ -694,16 +504,33 @@ export function createGatewayControlLeaseRpcOperations(
 			});
 			return replacementSnapshot;
 		},
-		heartbeatLeaseUse: async ({ callerContext, payload }) => {
+		heartbeatLeaseUse: async ({
+			attachmentGeneration,
+			callerContext,
+			gateway,
+			payload,
+			processEpoch,
+		}: LeaseMutationExecutionContext<GatewayControlLeaseUseHeartbeatPayload>): Promise<GatewayControlLeaseSemanticMutationResult> => {
 			const { leaseId, useId } = payload;
-			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({
+				callerContext,
+				gateway,
+				leaseId,
+			});
 			if (authorityDecision.status === 'rejected') {
 				return authorityDecision.rejection;
 			}
 			if (authorityDecision.status === 'absent') {
 				return undefined;
 			}
-			const heartbeat = options.leaseManager.heartbeatActiveUse?.(leaseId, useId, {});
+			const heartbeat = options.leaseManager.heartbeatActiveUse?.(leaseId, useId, {
+				authority: {
+					gateway,
+					principal: { agentId: callerContext.agentId, zoneId: callerContext.zoneId },
+				},
+				processEpoch,
+				sessionAttachmentGeneration: attachmentGeneration,
+			});
 			if (heartbeat === undefined) {
 				return undefined;
 			}
@@ -715,9 +542,17 @@ export function createGatewayControlLeaseRpcOperations(
 				useId,
 			};
 		},
-		releaseLease: async ({ callerContext, payload }) => {
+		releaseLease: async ({
+			callerContext,
+			gateway,
+			payload,
+		}: LeaseMutationExecutionContext<GatewayControlLeaseIdPayload>) => {
 			const { leaseId } = payload;
-			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({
+				callerContext,
+				gateway,
+				leaseId,
+			});
 			if (authorityDecision.status === 'rejected') {
 				return authorityDecision.rejection;
 			}
@@ -729,7 +564,6 @@ export function createGatewayControlLeaseRpcOperations(
 				return undefined;
 			}
 			await options.leaseManager.releaseLease(leaseId);
-			leaseAuthorityStore.markRetired(leaseId);
 			return await serializeGatewayControlLeaseSnapshot({
 				includeSsh: false,
 				lease: leaseSnapshot.lease,
@@ -737,9 +571,17 @@ export function createGatewayControlLeaseRpcOperations(
 				state: 'released',
 			});
 		},
-		renewLease: async ({ callerContext, payload }) => {
+		renewLease: async ({
+			callerContext,
+			gateway,
+			payload,
+		}: LeaseMutationExecutionContext<GatewayControlLeaseIdPayload>) => {
 			const { leaseId } = payload;
-			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({
+				callerContext,
+				gateway,
+				leaseId,
+			});
 			if (authorityDecision.status === 'rejected') {
 				return authorityDecision.rejection;
 			}
@@ -748,7 +590,6 @@ export function createGatewayControlLeaseRpcOperations(
 			}
 			const renewal = await options.leaseManager.renewLease(leaseId);
 			if (renewal.kind === 'not-found') {
-				leaseAuthorityStore.markRetired(leaseId);
 				return undefined;
 			}
 			return await serializeGatewayControlLeaseSnapshot({
@@ -757,9 +598,20 @@ export function createGatewayControlLeaseRpcOperations(
 				readIdentityPem,
 			});
 		},
-		startLeaseUse: async ({ callerContext, payload }) => {
+		startLeaseUse: async ({
+			attachmentGeneration,
+			callerContext,
+			gateway,
+			payload,
+			processEpoch,
+			proof,
+		}: LeaseMutationExecutionContext<GatewayControlLeaseUseStartPayload>): Promise<GatewayControlLeaseSemanticMutationResult> => {
 			const { correlation, leaseId, useId } = payload;
-			const authorityDecision = resolveCurrentLeaseAuthorityDecision({ callerContext, leaseId });
+			const authorityDecision = resolveCurrentLeaseAuthorityDecision({
+				callerContext,
+				gateway,
+				leaseId,
+			});
 			if (authorityDecision.status === 'rejected') {
 				return authorityDecision.rejection;
 			}
@@ -767,9 +619,17 @@ export function createGatewayControlLeaseRpcOperations(
 				return undefined;
 			}
 			const activeUse = options.leaseManager.startActiveUse?.(leaseId, {
+				authority: {
+					gateway,
+					principal: { agentId: callerContext.agentId, zoneId: callerContext.zoneId },
+				},
 				...(correlation === undefined
 					? {}
 					: { correlation: normalizeToolVmActiveUseCorrelation(correlation) }),
+				operationPayloadDigest: `v1:sha256:${proof.operationPayloadDigest.digest}`,
+				processEpoch,
+				semanticOperationId: proof.semanticOperationId,
+				sessionAttachmentGeneration: attachmentGeneration,
 				useId,
 			});
 			if (activeUse === undefined) {
@@ -783,5 +643,166 @@ export function createGatewayControlLeaseRpcOperations(
 				useId: activeUse.useId,
 			};
 		},
+	};
+
+	async function prepareSemanticMutation(optionsToPrepare: {
+		readonly attachmentGeneration: number;
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly gateway: GatewayEpochIdentity;
+		readonly operation: GatewayControlLeaseSemanticMutationOperation;
+		readonly payload: GatewayControlLeaseSemanticMutationPayload;
+		readonly processEpoch: string;
+	}): Promise<GatewayControlPreparedLeaseSemanticMutation> {
+		const executeContext = <TPayload>(
+			payload: TPayload,
+			proof: GatewaySemanticExecutionProof,
+		): LeaseMutationExecutionContext<TPayload> => ({
+			attachmentGeneration: optionsToPrepare.attachmentGeneration,
+			callerContext: optionsToPrepare.callerContext,
+			gateway: optionsToPrepare.gateway,
+			payload,
+			processEpoch: optionsToPrepare.processEpoch,
+			proof,
+		});
+		if (optionsToPrepare.operation === 'lease_create') {
+			const payload = GatewayControlLeaseCreateIntentPayloadSchema.parse(optionsToPrepare.payload);
+			const leaseOptions = await options.resolveLeaseCreateOptions({
+				callerContext: optionsToPrepare.callerContext,
+				gateway: optionsToPrepare.gateway,
+				payload,
+			});
+			const compatibility = resolveToolVmLeaseCompatibility(leaseOptions);
+			return {
+				execute: async () =>
+					await mutationOperations.createLease({
+						callerContext: optionsToPrepare.callerContext,
+						leaseCreateOptions: leaseOptions,
+					}),
+				profile: {
+					compatibilityId: compatibility.policyFingerprint,
+					currentLeafTargetId: null,
+					kind: 'lease_authority' as const,
+					stablePrincipal: optionsToPrepare.callerContext.stablePrincipal,
+				},
+				target: `principal:${optionsToPrepare.callerContext.stablePrincipal}`,
+			};
+		}
+		const parseLeaseAuthorityProfile = (
+			leaseId: string,
+		): LeaseAuthoritySemanticProfileResolution => {
+			const decision = resolveCurrentLeaseAuthorityDecision({
+				callerContext: optionsToPrepare.callerContext,
+				gateway: optionsToPrepare.gateway,
+				leaseId,
+			});
+			return {
+				decision,
+				profile: {
+					compatibilityId:
+						decision.status === 'accepted'
+							? decision.authority.compatibility.policyFingerprint
+							: 'lease-authority-absent',
+					currentLeafTargetId:
+						decision.status === 'accepted' ? decision.authority.authority.leafGeneration : null,
+					kind: 'lease_authority' as const,
+					stablePrincipal: optionsToPrepare.callerContext.stablePrincipal,
+				},
+			};
+		};
+		switch (optionsToPrepare.operation) {
+			case 'lease_reacquire': {
+				const payload = GatewayControlLeaseReacquireIntentPayloadSchema.parse(
+					optionsToPrepare.payload,
+				);
+				const { decision, profile } = parseLeaseAuthorityProfile(payload.oldLeaseId);
+				const leaseCreateOptions =
+					decision.status === 'accepted'
+						? await options.resolveLeaseCreateOptions({
+								callerContext: optionsToPrepare.callerContext,
+								gateway: optionsToPrepare.gateway,
+								payload: leaseCreatePayloadFromReacquirePayload(payload),
+							})
+						: undefined;
+				const semanticProfile =
+					leaseCreateOptions === undefined
+						? profile
+						: {
+								...profile,
+								compatibilityId:
+									resolveToolVmLeaseCompatibility(leaseCreateOptions).policyFingerprint,
+							};
+				return {
+					execute: async (proof: GatewaySemanticExecutionProof) =>
+						await mutationOperations.reacquireLease({
+							...executeContext(payload, proof),
+							...(leaseCreateOptions === undefined ? {} : { leaseCreateOptions }),
+						}),
+					profile: semanticProfile,
+					target: `lease:${payload.oldLeaseId}`,
+				};
+			}
+			case 'lease_release':
+			case 'lease_renew': {
+				const payload = GatewayControlLeaseIdPayloadSchema.parse(optionsToPrepare.payload);
+				const { profile } = parseLeaseAuthorityProfile(payload.leaseId);
+				const execute =
+					optionsToPrepare.operation === 'lease_release'
+						? async (proof: GatewaySemanticExecutionProof) =>
+								await mutationOperations.releaseLease(executeContext(payload, proof))
+						: async (proof: GatewaySemanticExecutionProof) =>
+								await mutationOperations.renewLease(executeContext(payload, proof));
+				return { execute, profile, target: `lease:${payload.leaseId}` };
+			}
+			case 'lease_use_start':
+			case 'lease_use_heartbeat':
+			case 'lease_use_end': {
+				const payload =
+					optionsToPrepare.operation === 'lease_use_start'
+						? GatewayControlLeaseUseStartPayloadSchema.parse(optionsToPrepare.payload)
+						: optionsToPrepare.operation === 'lease_use_heartbeat'
+							? GatewayControlLeaseUseHeartbeatPayloadSchema.parse(optionsToPrepare.payload)
+							: GatewayControlLeaseUseEndPayloadSchema.parse(optionsToPrepare.payload);
+				const decision = resolveCurrentLeaseAuthorityDecision({
+					callerContext: optionsToPrepare.callerContext,
+					gateway: optionsToPrepare.gateway,
+					leaseId: payload.leaseId,
+				});
+				const profile = {
+					kind: 'active_use' as const,
+					leafGeneration:
+						decision.status === 'accepted'
+							? decision.authority.authority.leafGeneration
+							: 'lease-authority-absent',
+					processEpoch: optionsToPrepare.processEpoch,
+					stablePrincipal: optionsToPrepare.callerContext.stablePrincipal,
+					useId: payload.useId,
+				};
+				const execute = async (
+					proof: GatewaySemanticExecutionProof,
+				): Promise<GatewayControlLeaseSemanticMutationResult> => {
+					if (optionsToPrepare.operation === 'lease_use_start') {
+						return await mutationOperations.startLeaseUse(
+							executeContext(GatewayControlLeaseUseStartPayloadSchema.parse(payload), proof),
+						);
+					}
+					if (optionsToPrepare.operation === 'lease_use_heartbeat') {
+						return await mutationOperations.heartbeatLeaseUse(
+							executeContext(GatewayControlLeaseUseHeartbeatPayloadSchema.parse(payload), proof),
+						);
+					}
+					return await mutationOperations.endLeaseUse(
+						executeContext(GatewayControlLeaseUseEndPayloadSchema.parse(payload), proof),
+					);
+				};
+				return { execute, profile, target: `lease:${payload.leaseId}:use:${payload.useId}` };
+			}
+		}
+		optionsToPrepare.operation satisfies never;
+		throw new Error('Unsupported gateway control lease semantic mutation operation.');
+	}
+
+	return {
+		getLease: mutationOperations.getLease,
+		prepareSemanticMutation,
 	};
 }

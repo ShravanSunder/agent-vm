@@ -87,7 +87,10 @@ export class RejectedToolVmProvisioningCleanupError extends AggregateError {
 	}
 }
 
-export interface ToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLeaseIdentity> {
+export interface ToolVmLeaseAuthorityRuntime<
+	TLease extends ToolVmRuntimeLeaseIdentity,
+	TCleanupContext = never,
+> {
 	activeUseCount(leaseId: string): number;
 	activeUseSnapshots(leaseId: string): readonly ToolVmActiveUse[];
 	admitExactDestruction(
@@ -99,8 +102,14 @@ export interface ToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLeaseId
 		command: RuntimeForwardedAuthorityCommand,
 	): ToolVmLeaseLeafState | undefined;
 	authorityForLease(leaseId: string): ToolVmLeafAuthorityReference | undefined;
+	authorityForPrincipal(
+		principal: StableToolVmLeasePrincipal,
+	): ToolVmLeafAuthorityReference | undefined;
+	cleanupContextForAuthority(authority: ToolVmLeafAuthorityReference): TCleanupContext | undefined;
+	cleanupContextForLease(leaseId: string): TCleanupContext | undefined;
 	beginProvisioning(options: {
 		readonly authority: ToolVmLeafAuthorityReference;
+		readonly cleanupContext?: TCleanupContext;
 		readonly compatibility: ToolVmLeaseCompatibility;
 		readonly idleExpiresAtMs: number;
 		readonly ownership: ProvisionalToolVmOwnershipHandle;
@@ -116,15 +125,20 @@ export interface ToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLeaseId
 		readonly gateway: GatewayEpochIdentity;
 		readonly principal: StableToolVmLeasePrincipal;
 	}): TLease | undefined;
+	getCleanupLease(leaseId: string): TLease | undefined;
 	getLease(leaseId: string): TLease | undefined;
+	getRetainedLease(leaseId: string): TLease | undefined;
 	leaseIdsOwnedByGateway(gateway: GatewayEpochIdentity): readonly string[];
 	leafSnapshotForLease(leaseId: string): ToolVmLeaseLeafState | undefined;
 	listLeases(): readonly TLease[];
+	rejectedCleanupAuthority(cleanupId: string): ToolVmLeafAuthorityReference | undefined;
+	rejectedCleanupIdForPrincipal(principal: StableToolVmLeasePrincipal): string | undefined;
 	rejectedCleanupIdsOwnedByGateway(gateway: GatewayEpochIdentity): readonly string[];
 	registerGateway(gateway: GatewayEpochIdentity): void;
-	retryRejectedProvisioningCleanup(cleanupId: string): Promise<void>;
+	retryRejectedProvisioningCleanup(cleanupId: string): Promise<TCleanupContext | undefined>;
 	retireGateway(gateway: GatewayEpochIdentity): void;
 	sealGateway(gateway: GatewayEpochIdentity): void;
+	setCleanupContext(authority: ToolVmLeafAuthorityReference, context: TCleanupContext): void;
 	touchLease(
 		authority: ToolVmLeafAuthorityReference,
 		nowMs: number,

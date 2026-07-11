@@ -18,7 +18,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
-import { createControlSessionDispatcher } from './control-session-dispatcher.js';
+import {
+	createControlSessionDispatcher,
+	type ControlSessionDispatcher,
+} from './control-session-dispatcher.js';
 import {
 	createGatewayControlCallerContextRegistry,
 	deriveGatewayControlStablePrincipal,
@@ -26,8 +29,12 @@ import {
 import {
 	createGatewayControlDomainHandler,
 	type GatewayControlControllerHostActionOperations,
+	type GatewayControlDomainHandlerOptions,
 	type GatewayControlLeaseRpcOperations,
+	type GatewayControlPreparedLeaseSemanticMutation,
+	type GatewayControlLeaseSemanticMutationPreparationOptions,
 } from './gateway-control-domain-handler.js';
+import { createGatewaySemanticResultLedger } from './gateway-semantic-result-ledger.js';
 
 const acceptedSession = {
 	bootId: 'gateway-boot-a',
@@ -37,6 +44,19 @@ const acceptedSession = {
 	sessionId: '33333333-3333-4333-8333-333333333333',
 	zoneId: 'zone-a',
 };
+
+const gateway = {
+	bootId: acceptedSession.bootId,
+	controllerEpoch: acceptedSession.controllerEpoch,
+	gatewayEpochId: 'gateway-epoch-a',
+	gatewayVmId: 'gateway-vm-a',
+	generationId: 'gateway-generation-a',
+	zoneId: acceptedSession.zoneId,
+};
+const stablePrincipal = deriveGatewayControlStablePrincipal({
+	agentId: 'main',
+	zoneId: gateway.zoneId,
+});
 
 const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length';
 const agentAuthorityKeys: Readonly<Record<string, string>> = {
@@ -151,10 +171,60 @@ const callerContextPayload = {
 	},
 };
 
+type LeaseCreatePreparation = Extract<
+	GatewayControlLeaseSemanticMutationPreparationOptions,
+	{ readonly operation: 'lease_create' }
+>;
+type LeaseReacquirePreparation = Extract<
+	GatewayControlLeaseSemanticMutationPreparationOptions,
+	{ readonly operation: 'lease_reacquire' }
+>;
+type LeaseIdPreparation = Extract<
+	GatewayControlLeaseSemanticMutationPreparationOptions,
+	{ readonly operation: 'lease_release' | 'lease_renew' }
+>;
+type LeaseUseStartPreparation = Extract<
+	GatewayControlLeaseSemanticMutationPreparationOptions,
+	{ readonly operation: 'lease_use_start' }
+>;
+type LeaseUseHeartbeatPreparation = Extract<
+	GatewayControlLeaseSemanticMutationPreparationOptions,
+	{ readonly operation: 'lease_use_heartbeat' }
+>;
+type LeaseUseEndPreparation = Extract<
+	GatewayControlLeaseSemanticMutationPreparationOptions,
+	{ readonly operation: 'lease_use_end' }
+>;
+
+interface LeaseMutationExecutors {
+	readonly createLease: (
+		options: Pick<LeaseCreatePreparation, 'callerContext' | 'payload'>,
+	) => Promise<GatewayControlLeaseSnapshot>;
+	readonly endLeaseUse: (
+		options: Pick<LeaseUseEndPreparation, 'callerContext' | 'payload'>,
+	) => Promise<GatewayControlLeaseUseSnapshot | undefined>;
+	readonly getLease: GatewayControlLeaseRpcOperations['getLease'];
+	readonly heartbeatLeaseUse: (
+		options: Pick<LeaseUseHeartbeatPreparation, 'callerContext' | 'payload'>,
+	) => Promise<GatewayControlLeaseUseSnapshot | undefined>;
+	readonly reacquireLease: (
+		options: Pick<LeaseReacquirePreparation, 'callerContext' | 'payload'>,
+	) => Promise<GatewayControlLeaseSnapshot | undefined>;
+	readonly releaseLease: (
+		options: Pick<LeaseIdPreparation, 'callerContext' | 'payload'>,
+	) => Promise<GatewayControlLeaseSnapshot | undefined>;
+	readonly renewLease: (
+		options: Pick<LeaseIdPreparation, 'callerContext' | 'payload'>,
+	) => Promise<GatewayControlLeaseSnapshot | undefined>;
+	readonly startLeaseUse: (
+		options: Pick<LeaseUseStartPreparation, 'callerContext' | 'payload'>,
+	) => Promise<GatewayControlLeaseUseSnapshot | undefined>;
+}
+
 function createLeaseRpcStub(
-	overrides: Partial<GatewayControlLeaseRpcOperations> = {},
+	overrides: Partial<LeaseMutationExecutors> = {},
 ): GatewayControlLeaseRpcOperations {
-	return {
+	const executors = {
 		createLease: vi.fn(async () => leaseSnapshot),
 		endLeaseUse: vi.fn(async () => endedLeaseUseSnapshot),
 		getLease: vi.fn(async () => leaseSnapshot),
@@ -164,6 +234,62 @@ function createLeaseRpcStub(
 		renewLease: vi.fn(async () => leaseSnapshot),
 		startLeaseUse: vi.fn(async () => activeLeaseUseSnapshot),
 		...overrides,
+	} satisfies LeaseMutationExecutors;
+	return {
+		getLease: executors.getLease,
+		prepareSemanticMutation: vi.fn(
+			async (
+				options: GatewayControlLeaseSemanticMutationPreparationOptions,
+			): Promise<GatewayControlPreparedLeaseSemanticMutation> => ({
+				execute: async () => {
+					switch (options.operation) {
+						case 'lease_create':
+							return await executors.createLease({
+								callerContext: options.callerContext,
+								payload: options.payload,
+							});
+						case 'lease_reacquire':
+							return await executors.reacquireLease({
+								callerContext: options.callerContext,
+								payload: options.payload,
+							});
+						case 'lease_release':
+							return await executors.releaseLease({
+								callerContext: options.callerContext,
+								payload: options.payload,
+							});
+						case 'lease_renew':
+							return await executors.renewLease({
+								callerContext: options.callerContext,
+								payload: options.payload,
+							});
+						case 'lease_use_start':
+							return await executors.startLeaseUse({
+								callerContext: options.callerContext,
+								payload: options.payload,
+							});
+						case 'lease_use_heartbeat':
+							return await executors.heartbeatLeaseUse({
+								callerContext: options.callerContext,
+								payload: options.payload,
+							});
+						case 'lease_use_end':
+							return await executors.endLeaseUse({
+								callerContext: options.callerContext,
+								payload: options.payload,
+							});
+					}
+					throw new Error('unsupported lease semantic mutation operation');
+				},
+				profile: {
+					compatibilityId: 'compatibility-a',
+					currentLeafTargetId: leaseSnapshot.leaseId,
+					kind: 'lease_authority',
+					stablePrincipal,
+				},
+				target: leaseSnapshot.leaseId,
+			}),
+		),
 	};
 }
 
@@ -175,12 +301,38 @@ function createEnvelope(
 		...callerContextRegisterEnvelope,
 		commandId: '55555555-5555-4555-8555-555555555555',
 		deliveryPolicy: gatewayControlDeliveryPolicyByOperation[operation],
+		expiresAtMs: 60_000,
 		idempotencyKey: `${operation}-idempotency`,
 		messageId: '66666666-6666-4666-8666-666666666666',
 		operation,
 		sequence: 2,
 		...overrides,
 	};
+}
+
+function createGatewayControlTestDispatcher(): ControlSessionDispatcher {
+	const dispatcher = createControlSessionDispatcher({
+		semanticLedger: createGatewaySemanticResultLedger({ gateway, nowMs: () => 1 }),
+	});
+	return {
+		dispatch: async (context) =>
+			await dispatcher.dispatch({
+				...context,
+				attachmentGeneration: context.attachmentGeneration ?? 1,
+			}),
+		register: (domain, handler) => {
+			dispatcher.register(domain, handler);
+		},
+		validate: (context) => {
+			dispatcher.validate(context);
+		},
+	};
+}
+
+function createTestGatewayControlDomainHandler(
+	options: Omit<GatewayControlDomainHandlerOptions, 'gateway'>,
+): ReturnType<typeof createGatewayControlDomainHandler> {
+	return createGatewayControlDomainHandler({ gateway, ...options });
 }
 
 function createAuthorizedControllerHostActions(
@@ -238,10 +390,10 @@ describe('gateway control domain handler', () => {
 		const callerContexts = createCallerContexts({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 		});
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts,
 				session: acceptedSession,
 			}),
@@ -276,10 +428,10 @@ describe('gateway control domain handler', () => {
 		});
 		const createLease = vi.fn(async () => leaseSnapshot);
 		const leaseRpc = createLeaseRpcStub({ createLease });
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts,
 				leaseRpc,
 				session: acceptedSession,
@@ -329,10 +481,10 @@ describe('gateway control domain handler', () => {
 	it('rejects lease_create that claims idempotent delivery without an idempotency key', async () => {
 		const createLease = vi.fn(async () => leaseSnapshot);
 		const leaseRpc = createLeaseRpcStub({ createLease });
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createRegisteredCallerContexts(),
 				leaseRpc,
 				session: acceptedSession,
@@ -358,10 +510,10 @@ describe('gateway control domain handler', () => {
 	it('rejects lease_create when callerContextId is unknown', async () => {
 		const createLease = vi.fn(async () => leaseSnapshot);
 		const leaseRpc = createLeaseRpcStub({ createLease });
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				leaseRpc,
 				session: acceptedSession,
@@ -403,10 +555,10 @@ describe('gateway control domain handler', () => {
 		});
 		const createLease = vi.fn(async () => leaseSnapshot);
 		const leaseRpc = createLeaseRpcStub({ createLease });
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts,
 				leaseRpc,
 				session: {
@@ -453,10 +605,10 @@ describe('gateway control domain handler', () => {
 		});
 		const createLease = vi.fn(async () => leaseSnapshot);
 		const leaseRpc = createLeaseRpcStub({ createLease });
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts,
 				leaseRpc,
 				session: acceptedSession,
@@ -496,10 +648,10 @@ describe('gateway control domain handler', () => {
 		callerContexts.release('44444444-4444-4444-8444-444444444444');
 		const renewLease = vi.fn(async () => leaseSnapshot);
 		const leaseRpc = createLeaseRpcStub({ renewLease });
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts,
 				leaseRpc,
 				session: acceptedSession,
@@ -533,10 +685,10 @@ describe('gateway control domain handler', () => {
 	it('routes lease_reacquire through lease RPC operations', async () => {
 		const reacquireLease = vi.fn(async () => leaseSnapshot);
 		const leaseRpc = createLeaseRpcStub({ reacquireLease });
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createRegisteredCallerContexts(),
 				leaseRpc,
 				session: acceptedSession,
@@ -599,10 +751,10 @@ describe('gateway control domain handler', () => {
 		'routes %s through lease RPC operations',
 		async (operation, operationMethod, includeSsh) => {
 			const leaseRpc = createLeaseRpcStub();
-			const dispatcher = createControlSessionDispatcher();
+			const dispatcher = createGatewayControlTestDispatcher();
 			dispatcher.register(
 				'gateway_control',
-				createGatewayControlDomainHandler({
+				createTestGatewayControlDomainHandler({
 					callerContexts: createRegisteredCallerContexts(),
 					leaseRpc,
 					session: acceptedSession,
@@ -622,15 +774,21 @@ describe('gateway control domain handler', () => {
 			});
 
 			if (includeSsh === undefined) {
-				expect(leaseRpc[operationMethod]).toHaveBeenCalledWith({
-					callerContext: expect.objectContaining({
-						agentId: 'main',
-						callerContextId: '44444444-4444-4444-8444-444444444444',
-						purpose: 'tool_vm_lease',
-						zoneId: acceptedSession.zoneId,
+				expect(leaseRpc.prepareSemanticMutation).toHaveBeenCalledWith(
+					expect.objectContaining({
+						attachmentGeneration: 1,
+						callerContext: expect.objectContaining({
+							agentId: 'main',
+							callerContextId: '44444444-4444-4444-8444-444444444444',
+							purpose: 'tool_vm_lease',
+							zoneId: acceptedSession.zoneId,
+						}),
+						gateway,
+						operation,
+						payload: { ...callerContextPayload, leaseId: 'lease-main' },
+						processEpoch: acceptedSession.bootId,
 					}),
-					payload: { ...callerContextPayload, leaseId: 'lease-main' },
-				});
+				);
 			} else {
 				expect(leaseRpc[operationMethod]).toHaveBeenCalledWith(
 					{
@@ -640,6 +798,7 @@ describe('gateway control domain handler', () => {
 							purpose: 'tool_vm_lease',
 							zoneId: acceptedSession.zoneId,
 						}),
+						gateway,
 						payload: { ...callerContextPayload, leaseId: 'lease-main' },
 					},
 					{ includeSsh },
@@ -665,10 +824,10 @@ describe('gateway control domain handler', () => {
 			heartbeatLeaseUse,
 			startLeaseUse,
 		});
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createRegisteredCallerContexts(),
 				leaseRpc,
 				session: acceptedSession,
@@ -794,10 +953,10 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects a lease_create payload that tries to carry raw authority fields', async () => {
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				session: acceptedSession,
 			}),
@@ -831,10 +990,10 @@ describe('gateway control domain handler', () => {
 
 	it('records gateway health events from the accepted control session', async () => {
 		const recordHealthEvent = vi.fn<(event: AgentVmHealthEvent) => void>();
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				recordHealthEvent,
 				session: acceptedSession,
@@ -892,10 +1051,10 @@ describe('gateway control domain handler', () => {
 
 	it('records Tool VM lifecycle health fields from the accepted control session', async () => {
 		const recordHealthEvent = vi.fn<(event: AgentVmHealthEvent) => void>();
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				recordHealthEvent,
 				session: acceptedSession,
@@ -953,10 +1112,10 @@ describe('gateway control domain handler', () => {
 
 	it('rejects inbound controller-final Tool VM lifecycle health events', async () => {
 		const recordHealthEvent = vi.fn<(event: AgentVmHealthEvent) => void>();
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				recordHealthEvent,
 				session: acceptedSession,
@@ -995,10 +1154,10 @@ describe('gateway control domain handler', () => {
 
 	it('rejects malformed gateway health events before recording them', async () => {
 		const recordHealthEvent = vi.fn<(event: AgentVmHealthEvent) => void>();
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				recordHealthEvent,
 				session: acceptedSession,
@@ -1031,10 +1190,10 @@ describe('gateway control domain handler', () => {
 
 	it('records priority heartbeat as gateway control-session liveness', async () => {
 		const recordHealthEvent = vi.fn<(event: AgentVmHealthEvent) => void>();
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				recordHealthEvent,
 				session: acceptedSession,
@@ -1073,10 +1232,10 @@ describe('gateway control domain handler', () => {
 
 	it('records runtime status from the accepted control session', async () => {
 		const recordRuntimeStatus = vi.fn<(report: OpenClawRuntimeStatusReport) => void>();
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				recordRuntimeStatus,
 				session: acceptedSession,
@@ -1122,10 +1281,10 @@ describe('gateway control domain handler', () => {
 		const callerContexts = createRegisteredCallerContexts({
 			purpose: 'tool_portal_controller_host_action',
 		});
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts,
 				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
 				session: acceptedSession,
@@ -1205,10 +1364,10 @@ describe('gateway control domain handler', () => {
 		const callerContexts = createRegisteredCallerContexts({
 			purpose: 'tool_portal_controller_host_action',
 		});
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts,
 				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit, {
 					runControllerHostProbe,
@@ -1280,10 +1439,10 @@ describe('gateway control domain handler', () => {
 			pushedCommits: [],
 			remoteHead: 'abc123',
 		}));
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createRegisteredCallerContexts({ purpose: 'tool_vm_lease' }),
 				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
 				session: acceptedSession,
@@ -1328,10 +1487,10 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects tool_portal_controller_host_action when no controller handler is configured', async () => {
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				session: acceptedSession,
 			}),
@@ -1380,10 +1539,10 @@ describe('gateway control domain handler', () => {
 			pushedCommits: [],
 			remoteHead: 'abc123',
 		}));
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
 				session: acceptedSession,
@@ -1445,10 +1604,10 @@ describe('gateway control domain handler', () => {
 		const callerContexts = createRegisteredCallerContexts({
 			purpose: 'tool_portal_controller_host_action',
 		});
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts,
 				controllerHostActions: {
 					authorizeControllerHostAction,
@@ -1519,10 +1678,10 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects inbound operation_cancel without pretending an active operation was cancelled', async () => {
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				session: acceptedSession,
 			}),
@@ -1560,10 +1719,10 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects inbound recovery_command as controller-only control', async () => {
-		const dispatcher = createControlSessionDispatcher();
+		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
-			createGatewayControlDomainHandler({
+			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
 				session: acceptedSession,
 			}),

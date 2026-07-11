@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { createCompleteVmDestroyReceipt } from '../testing/managed-vm-test-helpers.js';
 import {
+	createCompleteVmDestroyReceipt,
+	createTestVmDestroyTarget,
+} from '../testing/managed-vm-test-helpers.js';
+import {
+	assertVmDestroyReceiptMatchesTarget,
 	containsIncompleteVmDestructionError,
 	containsUnprovenVmDestructionError,
 	IncompleteVmDestructionError,
+	VmDestructionReceiptMismatchError,
 	VmDestructionUnprovenError,
 } from './vm-destruction-receipt.js';
 
@@ -31,5 +36,34 @@ describe('VM destruction receipt errors', () => {
 
 		expect(containsUnprovenVmDestructionError(aggregateError)).toBe(true);
 		expect(containsIncompleteVmDestructionError(aggregateError)).toBe(false);
+	});
+
+	it('classifies an incomplete wrong-target receipt as incomplete before target matching', () => {
+		const expectedTarget = createTestVmDestroyTarget('expected-target');
+		const incompleteWrongTargetReceipt = {
+			...createCompleteVmDestroyReceipt('wrong-target'),
+			complete: false,
+		} as const;
+
+		expect(() =>
+			assertVmDestroyReceiptMatchesTarget(
+				incompleteWrongTargetReceipt,
+				expectedTarget,
+				'Tool VM cleanup',
+			),
+		).toThrow(IncompleteVmDestructionError);
+	});
+
+	it('classifies a complete wrong-target receipt as a target mismatch', () => {
+		const expectedTarget = createTestVmDestroyTarget('expected-target');
+		const completeWrongTargetReceipt = createCompleteVmDestroyReceipt('wrong-target');
+
+		expect(() =>
+			assertVmDestroyReceiptMatchesTarget(
+				completeWrongTargetReceipt,
+				expectedTarget,
+				'Tool VM cleanup',
+			),
+		).toThrow(VmDestructionReceiptMismatchError);
 	});
 });

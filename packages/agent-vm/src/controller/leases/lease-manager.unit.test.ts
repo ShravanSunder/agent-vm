@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IncompleteVmDestructionError } from '../../shared/vm-destruction-receipt.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
+	createCompleteVmDestroyReceipt as createBaseCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 	createTestVmDestroyTarget,
@@ -35,6 +35,8 @@ import {
 	AgentLeaseCompatibilityConflictError,
 	createLeaseManager,
 	LeaseActiveUseConflictError,
+	type ToolVmLeaseActiveUseExecutionProof,
+	type ToolVmLeaseRequestAuthority,
 } from './lease-manager.js';
 import { createTcpPool } from './tcp-pool.js';
 import { deleteToolVmRuntimeRecord, writeToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
@@ -62,17 +64,19 @@ const TEST_TOOL_VM_OWNERSHIP_RESERVATION = {
 
 function createTestToolVmOwnershipProof(
 	options: {
+		readonly gateway?: GatewayEpochIdentity;
 		readonly ownershipReservation?: VmOwnershipReservationReferenceV1;
 		readonly vmId?: string;
 	} = {},
 ): ToolVmProvisionalOwnershipProof {
+	const gateway = options.gateway ?? TEST_GATEWAY_EPOCH;
 	const ownershipReservation = options.ownershipReservation ?? TEST_TOOL_VM_OWNERSHIP_RESERVATION;
 	const verifiedDestroyTarget = {
 		...createTestVmDestroyTarget(options.vmId ?? 'tool-vm-1', {
-			controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+			controllerEpoch: gateway.controllerEpoch,
 			parentGateway: {
-				epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
-				vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
+				epoch: gateway.gatewayEpochId,
+				vmId: gateway.gatewayVmId,
 			},
 			reservationId: ownershipReservation.reservationId,
 			role: 'tool',
@@ -90,13 +94,56 @@ function createTestToolVmOwnershipProof(
 	};
 }
 
+function createCompleteToolVmDestroyReceipt(
+	vmId: string = 'tool-vm-1',
+	options: {
+		readonly gateway?: GatewayEpochIdentity;
+		readonly ownershipReservation?: VmOwnershipReservationReferenceV1;
+	} = {},
+): VmDestroyReceiptV1 {
+	const gateway = options.gateway ?? TEST_GATEWAY_EPOCH;
+	const ownershipReservation = options.ownershipReservation ?? TEST_TOOL_VM_OWNERSHIP_RESERVATION;
+	const verifiedDestroyTarget = createTestToolVmOwnershipProof({
+		gateway,
+		ownershipReservation,
+		vmId,
+	}).verifiedDestroyTarget;
+	return {
+		...createBaseCompleteVmDestroyReceipt(vmId, {
+			controllerEpoch: gateway.controllerEpoch,
+			parentGateway: {
+				epoch: gateway.gatewayEpochId,
+				vmId: gateway.gatewayVmId,
+			},
+			reservationId: ownershipReservation.reservationId,
+			role: 'tool',
+		}),
+		controllerEpoch: gateway.controllerEpoch,
+		requestedRunner: {
+			backend: verifiedDestroyTarget.runner.backend,
+			discoveryIdentity: verifiedDestroyTarget.runner.discoveryIdentity,
+			executableName: 'qemu-system-aarch64',
+		},
+	};
+}
+
+function createCompleteGatewayVmDestroyReceipt(
+	vmId: string = TEST_GATEWAY_EPOCH.gatewayVmId,
+): VmDestroyReceiptV1 {
+	return createBaseCompleteVmDestroyReceipt(vmId, {
+		controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
+		reservationId: `gateway-reservation-${vmId}`,
+		role: 'gateway',
+	});
+}
+
 function createProvisionalToolVmOwnershipHandle(
 	overrides: Partial<ProvisionalToolVmOwnershipHandle> = {},
 ): ProvisionalToolVmOwnershipHandle {
 	return {
 		ready: Promise.resolve(createTestToolVmOwnershipProof()),
 		commitCurrent: async () => {},
-		destroyDetached: async () => createCompleteVmDestroyReceipt('tool-vm-1'),
+		destroyDetached: async () => createCompleteToolVmDestroyReceipt(),
 		destroyLive: async (closeLiveVm) => await closeLiveVm(),
 		...overrides,
 	};
@@ -110,8 +157,20 @@ function createOwnershipCoordinatorStub(
 			gatewayIdentity: TEST_GATEWAY_EPOCH,
 			ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 		}),
-		admitProvisionalToolVm: () => createProvisionalToolVmOwnershipHandle(),
-		destroyGatewayDetached: async () => createCompleteVmDestroyReceipt('gateway-vm-1'),
+		admitProvisionalToolVm: (admissionOptions) => {
+			const ownershipProof = createTestToolVmOwnershipProof({
+				gateway: admissionOptions.expectedGateway,
+			});
+			return createProvisionalToolVmOwnershipHandle({
+				destroyDetached: async () =>
+					createCompleteToolVmDestroyReceipt(ownershipProof.destructionIdentity.vmId, {
+						gateway: admissionOptions.expectedGateway,
+						ownershipReservation: ownershipProof.ownershipReservation,
+					}),
+				ready: Promise.resolve(ownershipProof),
+			});
+		},
+		destroyGatewayDetached: async () => createCompleteGatewayVmDestroyReceipt(),
 		recordGatewayDestroyReceipt: async () => {},
 		recordGatewayDestroyUnavailable: async () => {},
 		reconcileControllerStartup: async () => {},
@@ -143,35 +202,33 @@ const defaultRuntimeRecordOptions = {
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
-const incompleteVmDestroyReceipt = {
-	contractVersion: 1,
-	reservationId: 'reservation-incomplete',
-	vmId: 'tool-vm-incomplete',
-	controllerEpoch: 'controller-epoch-1',
-	parentGateway: { vmId: 'gateway-vm-1', epoch: 'gateway-epoch-1' },
-	role: 'tool',
-	requestedRunner: {
-		backend: 'qemu',
-		executableName: 'qemu-system-aarch64',
-		discoveryIdentity: 'runner-incomplete',
-	},
-	complete: false,
-	completedAt: '2026-07-10T00:00:00.000Z',
-	resources: {
-		exactRunner: { status: 'unproven', reason: 'runner-resistant' },
-		ingressListener: { status: 'already-absent' },
-		ingressSockets: { status: 'already-absent' },
-		sshListener: { status: 'destroyed' },
-		sshSessions: { status: 'destroyed' },
-		sessionIpc: { status: 'already-absent' },
-		qmp: { status: 'destroyed' },
-		disposableStorage: { status: 'destroyed' },
-	},
-} satisfies VmDestroyReceiptV1;
-
-function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
+function createIncompleteToolVmDestroyReceipt(vmId: string = 'tool-vm-1'): VmDestroyReceiptV1 {
 	return {
-		close: vi.fn(async () => createCompleteVmDestroyReceipt(id)),
+		...createCompleteToolVmDestroyReceipt(vmId),
+		complete: false,
+		resources: {
+			exactRunner: { reason: 'runner-resistant', status: 'unproven' },
+			ingressListener: { status: 'already-absent' },
+			ingressSockets: { status: 'already-absent' },
+			sshListener: { status: 'destroyed' },
+			sshSessions: { status: 'destroyed' },
+			sessionIpc: { status: 'already-absent' },
+			qmp: { status: 'destroyed' },
+			disposableStorage: { status: 'destroyed' },
+		},
+	};
+}
+
+function createManagedVmStub(
+	id: string = 'tool-vm-1',
+	options: { readonly gateway?: GatewayEpochIdentity } = {},
+): ManagedVm {
+	return {
+		close: vi.fn(async () =>
+			createCompleteToolVmDestroyReceipt(id, {
+				gateway: options.gateway ?? TEST_GATEWAY_EPOCH,
+			}),
+		),
 		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 		enableSsh: vi.fn(async () => ({
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
@@ -211,6 +268,7 @@ describe('createLeaseManager', () => {
 		return {
 			agentId: 'beta',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/beta/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -221,6 +279,29 @@ describe('createLeaseManager', () => {
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
+			...overrides,
+		};
+	}
+
+	function createActiveUseRequestContext(
+		lease: { readonly agentId: string; readonly zoneId: string },
+		overrides: Partial<
+			ToolVmLeaseActiveUseExecutionProof & {
+				readonly authority: ToolVmLeaseRequestAuthority;
+			}
+		> = {},
+	): ToolVmLeaseActiveUseExecutionProof & {
+		readonly authority: ToolVmLeaseRequestAuthority;
+	} {
+		return {
+			authority: {
+				gateway: TEST_GATEWAY_EPOCH,
+				principal: { agentId: lease.agentId, zoneId: lease.zoneId },
+			},
+			operationPayloadDigest: 'payload-digest-1',
+			processEpoch: 'process-1',
+			semanticOperationId: 'semantic-operation-1',
+			sessionAttachmentGeneration: 1,
 			...overrides,
 		};
 	}
@@ -262,13 +343,11 @@ describe('createLeaseManager', () => {
 				};
 			},
 		});
-		const closeMock = vi.fn<ManagedVm['close']>(async () =>
-			createCompleteVmDestroyReceipt('tool-vm-sealed-gateway'),
-		);
+		const closeMock = vi.fn<ManagedVm['close']>(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
-				...createManagedVmStub('tool-vm-sealed-gateway'),
+				...createManagedVmStub(),
 				close: closeMock,
 			})),
 			now: () => nowMs,
@@ -278,6 +357,7 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease(createAgentLeaseOptions());
 		if (options.startActiveUseBeforeSeal) {
 			leaseManager.startActiveUse(lease.id, {
+				...createActiveUseRequestContext(lease),
 				useId: '01890f00-0000-7000-8000-000000000000',
 			});
 		}
@@ -451,7 +531,9 @@ describe('createLeaseManager', () => {
 			} as const;
 			const admission = barrier.admitProvisionalChild(TEST_GATEWAY_EPOCH, toolReservation);
 			const closeMock = vi.fn<ManagedVm['close']>(async () =>
-				createCompleteVmDestroyReceipt(toolReservation.vmId),
+				createCompleteToolVmDestroyReceipt(toolReservation.vmId, {
+					ownershipReservation: managedReservation,
+				}),
 			);
 			const destroyLive = vi.fn<ProvisionalToolVmOwnershipHandle['destroyLive']>(
 				async (closeLiveVm) => {
@@ -472,7 +554,10 @@ describe('createLeaseManager', () => {
 			const ownershipCoordinator = createOwnershipCoordinatorStub({
 				admitProvisionalToolVm: () => ({
 					commitCurrent: async () => await admission.commitCurrent(),
-					destroyDetached: async () => createCompleteVmDestroyReceipt(toolReservation.vmId),
+					destroyDetached: async () =>
+						createCompleteToolVmDestroyReceipt(toolReservation.vmId, {
+							ownershipReservation: managedReservation,
+						}),
 					destroyLive,
 					ready: Promise.resolve(
 						createTestToolVmOwnershipProof({
@@ -520,11 +605,12 @@ describe('createLeaseManager', () => {
 					vmId: 'tool-vm-successor-before-gateway-receipt',
 				}),
 			).toThrowError(expect.objectContaining({ code: 'gateway-not-admitting' }));
-			const gatewayLeaseDestruction = leaseManager.destroyGatewayOwnedLeases(TEST_GATEWAY_EPOCH);
-			await Promise.resolve();
 			releaseCurrentPersistence?.();
+			const publishedLease = await leaseCreation;
+			expect(leaseManager.peekLease(publishedLease.id)?.lease.id).toBe(publishedLease.id);
+			expect(leaseManager.listLeases()).toHaveLength(1);
 
-			await leaseCreation;
+			const gatewayLeaseDestruction = leaseManager.destroyGatewayOwnedLeases(TEST_GATEWAY_EPOCH);
 			await gatewayLeaseDestruction;
 			await journal.loadGatewayMembership(TEST_GATEWAY_EPOCH.gatewayEpochId);
 
@@ -553,7 +639,7 @@ describe('createLeaseManager', () => {
 			).toThrowError(expect.objectContaining({ code: 'gateway-not-admitting' }));
 			await ownershipCoordinator.recordGatewayDestroyReceipt(
 				TEST_GATEWAY_EPOCH,
-				createCompleteVmDestroyReceipt(TEST_GATEWAY_EPOCH.gatewayVmId),
+				createCompleteGatewayVmDestroyReceipt(),
 			);
 			expect(barrier.snapshot().state).toBe('destroyed');
 			expect(() =>
@@ -577,7 +663,7 @@ describe('createLeaseManager', () => {
 		const commitFailure = new Error('ownership commit failed');
 		const closeMock = vi.fn(async () => {
 			callOrder.push('close-vm');
-			return createCompleteVmDestroyReceipt('tool-vm-commit-rollback-complete');
+			return createCompleteToolVmDestroyReceipt();
 		});
 		const destroyLive = vi.fn(
 			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>): Promise<VmDestroyReceiptV1> => {
@@ -604,7 +690,7 @@ describe('createLeaseManager', () => {
 			...defaultRuntimeRecordOptions,
 			createLeaseId: () => '01890f00-0000-7000-8000-000000000100',
 			createManagedVm: vi.fn(async () => ({
-				...createManagedVmStub('tool-vm-commit-rollback-complete'),
+				...createManagedVmStub(),
 				close: closeMock,
 			})),
 			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000101',
@@ -644,7 +730,7 @@ describe('createLeaseManager', () => {
 			destroyLive: async (
 				closeLiveVm: () => Promise<VmDestroyReceiptV1>,
 			): Promise<VmDestroyReceiptV1> => await closeLiveVm(),
-			vmClose: async (): Promise<VmDestroyReceiptV1> => incompleteVmDestroyReceipt,
+			vmClose: async (): Promise<VmDestroyReceiptV1> => createIncompleteToolVmDestroyReceipt(),
 		},
 		{
 			destroyKind: 'throw',
@@ -653,8 +739,7 @@ describe('createLeaseManager', () => {
 			destroyLive: async (): Promise<VmDestroyReceiptV1> => {
 				throw new Error('ownership destroy failed');
 			},
-			vmClose: async (): Promise<VmDestroyReceiptV1> =>
-				createCompleteVmDestroyReceipt('tool-vm-unreached-close'),
+			vmClose: async (): Promise<VmDestroyReceiptV1> => createCompleteToolVmDestroyReceipt(),
 		},
 	])(
 		'preserves the runtime record and quarantines TCP when commitCurrent rollback returns $destroyKind',
@@ -683,7 +768,7 @@ describe('createLeaseManager', () => {
 				...defaultRuntimeRecordOptions,
 				createLeaseId: () => '01890f00-0000-7000-8000-000000000102',
 				createManagedVm: vi.fn(async () => ({
-					...createManagedVmStub('tool-vm-commit-rollback-owner-unsafe'),
+					...createManagedVmStub(),
 					close: closeMock,
 				})),
 				createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000103',
@@ -722,8 +807,8 @@ describe('createLeaseManager', () => {
 	it('retries receipt-bound release without dropping ownership after an incomplete destroy', async () => {
 		const closeMock = vi
 			.fn()
-			.mockResolvedValueOnce(incompleteVmDestroyReceipt)
-			.mockResolvedValueOnce(createCompleteVmDestroyReceipt('tool-vm-release-retry'));
+			.mockResolvedValueOnce(createIncompleteToolVmDestroyReceipt())
+			.mockResolvedValueOnce(createCompleteToolVmDestroyReceipt());
 		const destroyLive = vi.fn(
 			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>): Promise<VmDestroyReceiptV1> =>
 				await closeLiveVm(),
@@ -739,7 +824,7 @@ describe('createLeaseManager', () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
-				...createManagedVmStub('tool-vm-release-retry'),
+				...createManagedVmStub(),
 				close: closeMock,
 			})),
 			deleteToolVmRuntimeRecord: deleteToolVmRuntimeRecordMock,
@@ -766,7 +851,7 @@ describe('createLeaseManager', () => {
 	});
 
 	it('refuses to reuse a live agent lease from a different Gateway epoch', async () => {
-		const createManagedVm = vi.fn(async () => createManagedVmStub('tool-vm-gateway-fenced'));
+		const createManagedVm = vi.fn(async () => createManagedVmStub());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm,
@@ -792,6 +877,249 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.peekLease(firstLease.id)?.lease.id).toBe(firstLease.id);
 	});
 
+	it('refuses a G2 same-principal create while G1 owner-unsafe cleanup is pending', async () => {
+		const pendingCleanupFailure = new IncompleteVmDestructionError(
+			'G1 provisional Tool VM creation',
+			createIncompleteToolVmDestroyReceipt(),
+		);
+		const destroyG1Detached = vi.fn<ProvisionalToolVmOwnershipHandle['destroyDetached']>(async () =>
+			createCompleteToolVmDestroyReceipt(),
+		);
+		const g1Ownership = createProvisionalToolVmOwnershipHandle({
+			destroyDetached: destroyG1Detached,
+			ready: Promise.reject(pendingCleanupFailure),
+		});
+		const admitProvisionalToolVm = vi
+			.fn<GatewayOwnershipCoordinator['admitProvisionalToolVm']>()
+			.mockReturnValueOnce(g1Ownership);
+		const ownershipCoordinator = createOwnershipCoordinatorStub({ admitProvisionalToolVm });
+		const createManagedVm = vi.fn(async () => createManagedVmStub());
+		const tcpPool = createTcpPool({ basePort: 19_000, size: 2 });
+		const allocateTcpSlot = vi.spyOn(tcpPool, 'allocate');
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm,
+			now: () => 100,
+			ownershipCoordinator,
+			tcpPool,
+		});
+		const g1Request = createAgentLeaseOptions({ agentId: 'epoch-fenced-agent' });
+		await expect(leaseManager.createLease(g1Request)).rejects.toBe(pendingCleanupFailure);
+		const g2Gateway = {
+			...TEST_GATEWAY_EPOCH,
+			bootId: 'gateway-boot-2',
+			gatewayEpochId: 'gateway-epoch-2',
+			gatewayVmId: 'gateway-vm-2',
+			generationId: 'gateway-generation-2',
+		} satisfies GatewayEpochIdentity;
+
+		const g2CreateError = await captureOperationError(
+			async () =>
+				await leaseManager.createLease({
+					...g1Request,
+					expectedGateway: g2Gateway,
+				}),
+		);
+
+		expect(g2CreateError).toBeInstanceOf(Error);
+		expect(destroyG1Detached).not.toHaveBeenCalled();
+		expect(admitProvisionalToolVm).toHaveBeenCalledOnce();
+		expect(allocateTcpSlot).toHaveBeenCalledOnce();
+		expect(createManagedVm).not.toHaveBeenCalled();
+		expect(tcpPool.isQuarantined(0)).toBe(true);
+		expect(tcpPool.isQuarantined(1)).toBe(false);
+	});
+
+	it('retries runtime-owned rejected provisioning cleanup before reusing its TCP slot', async () => {
+		const rejectedVmId = 'tool-vm-beta-rejected';
+		const destroyRejectedDetached = vi
+			.fn<ProvisionalToolVmOwnershipHandle['destroyDetached']>()
+			.mockResolvedValueOnce(createIncompleteToolVmDestroyReceipt(rejectedVmId))
+			.mockResolvedValueOnce(createCompleteToolVmDestroyReceipt(rejectedVmId));
+		const createOwnershipForVm = (
+			vmId: string,
+			overrides: Partial<ProvisionalToolVmOwnershipHandle> = {},
+		): ProvisionalToolVmOwnershipHandle =>
+			createProvisionalToolVmOwnershipHandle({
+				destroyDetached: async () => createCompleteToolVmDestroyReceipt(vmId),
+				ready: Promise.resolve(createTestToolVmOwnershipProof({ vmId })),
+				...overrides,
+			});
+		const ownershipHandles = [
+			createOwnershipForVm('tool-vm-alpha'),
+			createOwnershipForVm(rejectedVmId, { destroyDetached: destroyRejectedDetached }),
+			createOwnershipForVm('tool-vm-beta-success'),
+		];
+		const admitProvisionalToolVm = vi.fn<GatewayOwnershipCoordinator['admitProvisionalToolVm']>(
+			() => {
+				const ownership = ownershipHandles.shift();
+				if (ownership === undefined) {
+					throw new Error('unexpected Tool VM ownership admission');
+				}
+				return ownership;
+			},
+		);
+		const createManagedVm = vi.fn(async (createOptions) =>
+			createManagedVmStub(
+				createOptions.agentId === 'alpha' ? 'tool-vm-alpha' : 'tool-vm-beta-success',
+			),
+		);
+		const createLeafGeneration = vi
+			.fn<() => string>()
+			.mockReturnValueOnce('leaf-generation-shared')
+			.mockReturnValueOnce('leaf-generation-shared')
+			.mockReturnValueOnce('leaf-generation-beta-success');
+		const createLeaseId = vi
+			.fn<() => string>()
+			.mockReturnValueOnce('lease-alpha')
+			.mockReturnValueOnce('lease-beta-rejected')
+			.mockReturnValueOnce('lease-beta-success');
+		const tcpPool = createTcpPool({ basePort: 19_000, size: 2 });
+		const allocateTcpSlot = vi.spyOn(tcpPool, 'allocate');
+		const releaseTcpSlot = vi.spyOn(tcpPool, 'release');
+		const releaseQuarantinedTcpSlot = vi.spyOn(tcpPool, 'releaseQuarantined');
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId,
+			createLeafGeneration,
+			createManagedVm,
+			now: () => 100,
+			ownershipCoordinator: createOwnershipCoordinatorStub({ admitProvisionalToolVm }),
+			tcpPool,
+		});
+		await leaseManager.createLease(createAgentLeaseOptions({ agentId: 'alpha' }));
+		const betaRequest = createAgentLeaseOptions({ agentId: 'beta' });
+
+		await expect(leaseManager.createLease(betaRequest)).rejects.toBeInstanceOf(AggregateError);
+
+		expect(destroyRejectedDetached).toHaveBeenCalledOnce();
+		expect(tcpPool.isQuarantined(1)).toBe(true);
+		expect(releaseTcpSlot).not.toHaveBeenCalled();
+		expect(releaseQuarantinedTcpSlot).not.toHaveBeenCalled();
+		expect(createManagedVm).toHaveBeenCalledOnce();
+
+		const betaLease = await leaseManager.createLease(betaRequest);
+
+		expect(betaLease.id).toBe('lease-beta-success');
+		expect(betaLease.tcpSlot).toBe(1);
+		expect(destroyRejectedDetached).toHaveBeenCalledTimes(2);
+		expect(admitProvisionalToolVm).toHaveBeenCalledTimes(3);
+		expect(createManagedVm).toHaveBeenCalledTimes(2);
+		expect(allocateTcpSlot).toHaveNthReturnedWith(1, 0);
+		expect(allocateTcpSlot).toHaveNthReturnedWith(2, 1);
+		expect(allocateTcpSlot).toHaveNthReturnedWith(3, 1);
+		expect(releaseTcpSlot).toHaveBeenCalledOnce();
+		expect(releaseTcpSlot).toHaveBeenCalledWith(1);
+		expect(releaseQuarantinedTcpSlot).toHaveBeenCalledOnce();
+		expect(releaseQuarantinedTcpSlot).toHaveBeenCalledWith(1);
+		expect(tcpPool.isQuarantined(1)).toBe(false);
+		expect(leaseManager.listLeases()).toHaveLength(2);
+	});
+
+	it('releases rejected provisioning cleanup resources once when create races Gateway cleanup', async () => {
+		// Arrange
+		const rejectedVmId = 'tool-vm-beta-rejected-race';
+		let rejectedDestroyAttempt = 0;
+		let markRejectedRetryStarted: (() => void) | undefined;
+		const rejectedRetryStarted = new Promise<void>((resolve) => {
+			markRejectedRetryStarted = resolve;
+		});
+		let allowRejectedRetryToFinish: (() => void) | undefined;
+		const rejectedRetryMayFinish = new Promise<void>((resolve) => {
+			allowRejectedRetryToFinish = resolve;
+		});
+		const destroyRejectedDetached = vi.fn<ProvisionalToolVmOwnershipHandle['destroyDetached']>(
+			async () => {
+				rejectedDestroyAttempt += 1;
+				if (rejectedDestroyAttempt === 1) {
+					return createIncompleteToolVmDestroyReceipt(rejectedVmId);
+				}
+				markRejectedRetryStarted?.();
+				await rejectedRetryMayFinish;
+				return createCompleteToolVmDestroyReceipt(rejectedVmId);
+			},
+		);
+		const ownershipHandles = [
+			createProvisionalToolVmOwnershipHandle({
+				destroyDetached: async () => createCompleteToolVmDestroyReceipt('tool-vm-alpha-race'),
+				ready: Promise.resolve(createTestToolVmOwnershipProof({ vmId: 'tool-vm-alpha-race' })),
+			}),
+			createProvisionalToolVmOwnershipHandle({
+				destroyDetached: destroyRejectedDetached,
+				ready: Promise.resolve(createTestToolVmOwnershipProof({ vmId: rejectedVmId })),
+			}),
+		];
+		const admitProvisionalToolVm = vi.fn<GatewayOwnershipCoordinator['admitProvisionalToolVm']>(
+			() => {
+				const ownership = ownershipHandles.shift();
+				if (ownership === undefined) {
+					throw new Error('unexpected Tool VM ownership admission');
+				}
+				return ownership;
+			},
+		);
+		const createLeafGeneration = vi
+			.fn<() => string>()
+			.mockReturnValueOnce('leaf-generation-rejected-race')
+			.mockReturnValueOnce('leaf-generation-rejected-race')
+			.mockReturnValueOnce('leaf-generation-successor-not-admitted');
+		const createLeaseId = vi
+			.fn<() => string>()
+			.mockReturnValueOnce('lease-alpha-race')
+			.mockReturnValueOnce('lease-beta-rejected-race')
+			.mockReturnValueOnce('lease-beta-successor-not-admitted');
+		const tcpPool = createTcpPool({ basePort: 19_000, size: 2 });
+		const allocateTcpSlot = tcpPool.allocate.bind(tcpPool);
+		let allocationAttempt = 0;
+		vi.spyOn(tcpPool, 'allocate').mockImplementation(() => {
+			allocationAttempt += 1;
+			if (allocationAttempt === 3) {
+				throw new Error('stop successor after rejected cleanup retry');
+			}
+			return allocateTcpSlot();
+		});
+		const releaseTcpSlot = vi.spyOn(tcpPool, 'release');
+		const releaseQuarantinedTcpSlot = vi.spyOn(tcpPool, 'releaseQuarantined');
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId,
+			createLeafGeneration,
+			createManagedVm: vi.fn(async () => createManagedVmStub('tool-vm-alpha-race')),
+			now: () => 100,
+			ownershipCoordinator: createOwnershipCoordinatorStub({ admitProvisionalToolVm }),
+			tcpPool,
+		});
+		const alphaLease = await leaseManager.createLease(
+			createAgentLeaseOptions({ agentId: 'alpha-race' }),
+		);
+		const betaRequest = createAgentLeaseOptions({ agentId: 'beta-race' });
+		await expect(leaseManager.createLease(betaRequest)).rejects.toBeInstanceOf(AggregateError);
+		await leaseManager.releaseLease(alphaLease.id);
+		releaseTcpSlot.mockClear();
+		releaseQuarantinedTcpSlot.mockClear();
+
+		// Act
+		const successorCreate = leaseManager.createLease(betaRequest);
+		await rejectedRetryStarted;
+		const gatewayCleanup = leaseManager.destroyGatewayOwnedLeases(TEST_GATEWAY_EPOCH);
+		allowRejectedRetryToFinish?.();
+		const [successorCreateResult, gatewayCleanupResult] = await Promise.allSettled([
+			successorCreate,
+			gatewayCleanup,
+		]);
+
+		// Assert
+		expect(successorCreateResult).toMatchObject({ status: 'rejected' });
+		expect(gatewayCleanupResult).toEqual({ status: 'fulfilled', value: undefined });
+		expect(destroyRejectedDetached).toHaveBeenCalledTimes(2);
+		expect(releaseTcpSlot).toHaveBeenCalledOnce();
+		expect(releaseTcpSlot).toHaveBeenCalledWith(1);
+		expect(releaseQuarantinedTcpSlot).toHaveBeenCalledOnce();
+		expect(releaseQuarantinedTcpSlot).toHaveBeenCalledWith(1);
+		expect(tcpPool.isQuarantined(1)).toBe(false);
+		expect(leaseManager.listLeases()).toHaveLength(0);
+	});
+
 	it.each([
 		{
 			invoke: async (
@@ -815,6 +1143,7 @@ describe('createLeaseManager', () => {
 				leaseId: string,
 			): Promise<unknown> =>
 				leaseManager.startActiveUse(leaseId, {
+					...createActiveUseRequestContext({ agentId: 'beta', zoneId: 'shravan' }),
 					useId: '01890f00-0000-7000-8000-000000000001',
 				}),
 			name: 'active-use start',
@@ -825,7 +1154,11 @@ describe('createLeaseManager', () => {
 				leaseManager: ReturnType<typeof createLeaseManager>,
 				leaseId: string,
 			): Promise<unknown> =>
-				leaseManager.heartbeatActiveUse(leaseId, '01890f00-0000-7000-8000-000000000000', {}),
+				leaseManager.heartbeatActiveUse(
+					leaseId,
+					'01890f00-0000-7000-8000-000000000000',
+					createActiveUseRequestContext({ agentId: 'beta', zoneId: 'shravan' }),
+				),
 			name: 'active-use heartbeat',
 			startActiveUseBeforeSeal: true,
 		},
@@ -835,6 +1168,7 @@ describe('createLeaseManager', () => {
 				leaseId: string,
 			): Promise<unknown> =>
 				leaseManager.endActiveUse(leaseId, '01890f00-0000-7000-8000-000000000000', {
+					...createActiveUseRequestContext({ agentId: 'beta', zoneId: 'shravan' }),
 					outcome: 'completed',
 				}),
 			name: 'active-use end',
@@ -901,15 +1235,27 @@ describe('createLeaseManager', () => {
 			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>): Promise<VmDestroyReceiptV1> =>
 				await closeLiveVm(),
 		);
+		const siblingGateway = {
+			...TEST_GATEWAY_EPOCH,
+			gatewayEpochId: 'gateway-epoch-sibling',
+			gatewayVmId: 'gateway-vm-sibling',
+			zoneId: 'alex',
+		} satisfies GatewayEpochIdentity;
 		const ownershipByAgent = new Map<string, ProvisionalToolVmOwnershipHandle>([
 			['first', createProvisionalToolVmOwnershipHandle({ destroyLive: destroyFirst })],
 			['second', createProvisionalToolVmOwnershipHandle({ destroyLive: destroySecond })],
 			['third', createProvisionalToolVmOwnershipHandle({ destroyLive: destroyThird })],
 			['fourth', createProvisionalToolVmOwnershipHandle({ destroyLive: destroyFourth })],
-			['sibling', createProvisionalToolVmOwnershipHandle({ destroyLive: destroySibling })],
 		]);
 		const ownershipCoordinator = createOwnershipCoordinatorStub({
 			admitProvisionalToolVm: (options) => {
+				if (options.agentId === 'sibling') {
+					const ownershipProof = createTestToolVmOwnershipProof({ gateway: siblingGateway });
+					return createProvisionalToolVmOwnershipHandle({
+						destroyLive: destroySibling,
+						ready: Promise.resolve(ownershipProof),
+					});
+				}
 				const ownership = ownershipByAgent.get(options.agentId);
 				if (ownership === undefined) {
 					throw new Error(`missing ownership stub for '${options.agentId}'`);
@@ -923,7 +1269,11 @@ describe('createLeaseManager', () => {
 		const tcpPool = createTcpPool({ basePort: 19000, size: 5 });
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
-			createManagedVm: vi.fn(async (options) => createManagedVmStub(`tool-vm-${options.agentId}`)),
+			createManagedVm: vi.fn(async (options) =>
+				createManagedVmStub('tool-vm-1', {
+					gateway: options.zoneId === siblingGateway.zoneId ? siblingGateway : TEST_GATEWAY_EPOCH,
+				}),
+			),
 			deleteToolVmRuntimeRecord: deleteToolVmRuntimeRecordMock,
 			now: () => 100,
 			ownershipCoordinator,
@@ -941,12 +1291,6 @@ describe('createLeaseManager', () => {
 		const fourthLease = await leaseManager.createLease(
 			createAgentLeaseOptions({ agentId: 'fourth' }),
 		);
-		const siblingGateway = {
-			...TEST_GATEWAY_EPOCH,
-			gatewayEpochId: 'gateway-epoch-sibling',
-			gatewayVmId: 'gateway-vm-sibling',
-			zoneId: 'alex',
-		} satisfies GatewayEpochIdentity;
 		const siblingLease = await leaseManager.createLease(
 			createAgentLeaseOptions({
 				agentId: 'sibling',
@@ -1035,7 +1379,7 @@ describe('createLeaseManager', () => {
 		});
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
-			createManagedVm: vi.fn(async (options) => createManagedVmStub(`tool-vm-${options.agentId}`)),
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
 			now: () => 100,
 			ownershipCoordinator,
 			tcpPool: createTcpPool({ basePort: 19000, size: agentIds.length }),
@@ -1086,7 +1430,7 @@ describe('createLeaseManager', () => {
 		});
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
-			createManagedVm: vi.fn(async (options) => createManagedVmStub(`tool-vm-${options.agentId}`)),
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
 			now: () => 100,
 			ownershipCoordinator,
 			tcpPool: createTcpPool({ basePort: 19000, size: agentIds.length }),
@@ -1125,8 +1469,8 @@ describe('createLeaseManager', () => {
 		const commitFailure = new Error('ownership commit failed');
 		const closeMock = vi
 			.fn()
-			.mockResolvedValueOnce(incompleteVmDestroyReceipt)
-			.mockResolvedValueOnce(createCompleteVmDestroyReceipt('tool-vm-pending-cleanup'));
+			.mockResolvedValueOnce(createIncompleteToolVmDestroyReceipt())
+			.mockResolvedValueOnce(createCompleteToolVmDestroyReceipt());
 		const destroyLive = vi.fn(
 			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>): Promise<VmDestroyReceiptV1> =>
 				await closeLiveVm(),
@@ -1148,7 +1492,7 @@ describe('createLeaseManager', () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
-				...createManagedVmStub('tool-vm-pending-cleanup'),
+				...createManagedVmStub(),
 				close: closeMock,
 			})),
 			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000104',
@@ -1186,19 +1530,19 @@ describe('createLeaseManager', () => {
 		// Arrange
 		const primaryCreateFailure = new IncompleteVmDestructionError(
 			'Primary provisional Tool VM creation',
-			incompleteVmDestroyReceipt,
+			createIncompleteToolVmDestroyReceipt(),
 		);
 		const siblingCreateFailure = new IncompleteVmDestructionError(
 			'Sibling provisional Tool VM creation',
-			incompleteVmDestroyReceipt,
+			createIncompleteToolVmDestroyReceipt(),
 		);
 		const primaryDetachedFailure = new Error('primary detached cleanup rejected');
 		const primaryDestroyDetached = vi
 			.fn<ProvisionalToolVmOwnershipHandle['destroyDetached']>()
 			.mockRejectedValueOnce(primaryDetachedFailure)
-			.mockResolvedValueOnce(createCompleteVmDestroyReceipt('tool-vm-primary-detached'));
+			.mockResolvedValueOnce(createCompleteToolVmDestroyReceipt());
 		const siblingDestroyDetached = vi.fn<ProvisionalToolVmOwnershipHandle['destroyDetached']>(
-			async () => createCompleteVmDestroyReceipt('tool-vm-sibling-detached'),
+			async () => createCompleteToolVmDestroyReceipt(),
 		);
 		const ownershipByAgent = new Map<string, ProvisionalToolVmOwnershipHandle>([
 			[
@@ -1225,7 +1569,7 @@ describe('createLeaseManager', () => {
 				return ownership;
 			},
 		});
-		const createManagedVm = vi.fn(async () => createManagedVmStub('unreachable-tool-vm'));
+		const createManagedVm = vi.fn(async () => createManagedVmStub());
 		const tcpPool = createTcpPool({ basePort: 19_000, size: 2 });
 		const releaseQuarantinedTcpSlot = vi.spyOn(tcpPool, 'releaseQuarantined');
 		const siblingGateway = {
@@ -1298,8 +1642,8 @@ describe('createLeaseManager', () => {
 		});
 		const pendingClose = vi
 			.fn<ManagedVm['close']>()
-			.mockResolvedValueOnce(incompleteVmDestroyReceipt)
-			.mockResolvedValue(createCompleteVmDestroyReceipt('tool-vm-pending-serialized'));
+			.mockResolvedValueOnce(createIncompleteToolVmDestroyReceipt())
+			.mockResolvedValue(createCompleteToolVmDestroyReceipt());
 		const pendingDestroyLive = vi.fn(
 			async (closeLiveVm: () => Promise<VmDestroyReceiptV1>): Promise<VmDestroyReceiptV1> => {
 				pendingDestroyAttempt += 1;
@@ -1326,10 +1670,10 @@ describe('createLeaseManager', () => {
 		const createManagedVm = vi
 			.fn()
 			.mockResolvedValueOnce({
-				...createManagedVmStub('tool-vm-pending-serialized'),
+				...createManagedVmStub(),
 				close: pendingClose,
 			})
-			.mockResolvedValueOnce(createManagedVmStub('tool-vm-successor'));
+			.mockResolvedValueOnce(createManagedVmStub());
 		const deleteToolVmRuntimeRecordMock = vi.fn(
 			async (_stateDirectory: string, _recordId: string): Promise<void> => {},
 		);
@@ -1368,33 +1712,33 @@ describe('createLeaseManager', () => {
 		]);
 
 		// Assert
-		expect([successorCreateResult.status, gatewayCleanupResult.status]).toEqual([
-			'fulfilled',
-			'fulfilled',
-		]);
+		expect(successorCreateResult.status).toBe('rejected');
+		if (successorCreateResult.status === 'rejected') {
+			expect(successorCreateResult.reason).toMatchObject({
+				code: expect.stringMatching(/^(?:gateway|parent)-not-admitting$/u),
+			});
+		}
+		expect(gatewayCleanupResult.status).toBe('fulfilled');
 		expect(destroyAttemptCountWhileRetryPaused).toBe(2);
 		expect(pendingDestroyLive).toHaveBeenCalledTimes(2);
 		expect(pendingClose).toHaveBeenCalledTimes(2);
-		expect(deleteToolVmRuntimeRecordMock).toHaveBeenCalledTimes(2);
-		expect(deleteToolVmRuntimeRecordMock).toHaveBeenNthCalledWith(
-			1,
+		expect(createManagedVm).toHaveBeenCalledOnce();
+		expect(writeToolVmRuntimeRecordMock).toHaveBeenCalledOnce();
+		expect(deleteToolVmRuntimeRecordMock).toHaveBeenCalledOnce();
+		expect(deleteToolVmRuntimeRecordMock).toHaveBeenCalledWith(
 			'/tmp/lease-manager-tests/shravan',
 			'01890f00-0000-7000-8000-000000000201',
 		);
-		expect(deleteToolVmRuntimeRecordMock).toHaveBeenNthCalledWith(
-			2,
-			'/tmp/lease-manager-tests/shravan',
-			'01890f00-0000-7000-8000-000000000202',
-		);
 		expect(releaseTcpSlot).toHaveBeenCalledTimes(2);
-		expect(releaseQuarantinedTcpSlot).toHaveBeenCalledTimes(2);
+		expect(releaseQuarantinedTcpSlot).toHaveBeenCalledOnce();
 		expect(tcpPool.isQuarantined(0)).toBe(false);
 		expect(leaseManager.listLeases()).toHaveLength(0);
+		expect(tcpPool.allocate()).toBe(0);
 	});
 
 	it('evicts and refuses to renew an expired lease instead of resurrecting it', async () => {
 		let now = 1_000;
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createLeaseId: () => '01890f00-0000-7000-8000-000000000001',
@@ -1420,7 +1764,7 @@ describe('createLeaseManager', () => {
 	});
 
 	it('evicts and refuses to renew a lease whose VM liveness check fails', async () => {
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createLeaseId: () => '01890f00-0000-7000-8000-000000000002',
@@ -1444,7 +1788,7 @@ describe('createLeaseManager', () => {
 	});
 
 	it('reaps dead idle leases without treating active-use heartbeat as liveness', async () => {
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createLeaseId: () => '01890f00-0000-7000-8000-000000000003',
@@ -1471,7 +1815,7 @@ describe('createLeaseManager', () => {
 		const probeBarrier = new Promise<void>((resolve) => {
 			resolveProbe = resolve;
 		});
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createLeaseId: () => '01890f00-0000-7000-8000-000000000004',
@@ -1517,6 +1861,7 @@ describe('createLeaseManager', () => {
 			effectiveIdleTtlMs: 1_000,
 		});
 		leaseManager.startActiveUse(lease.id, {
+			...createActiveUseRequestContext(lease),
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
 		now = 2_001;
@@ -1525,7 +1870,7 @@ describe('createLeaseManager', () => {
 	});
 
 	it('creates, stores, and releases a lease while returning its tcp slot', async () => {
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const enableSshMock = vi.fn(async () => ({
 			command: 'ssh ...',
 			host: '127.0.0.1',
@@ -1558,6 +1903,7 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -1593,7 +1939,7 @@ describe('createLeaseManager', () => {
 	});
 
 	it('closes VM, releases tcpSlot, and clears the lease when writeToolVmRuntimeRecord throws', async () => {
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const createManagedVm = vi.fn(async () => ({
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -1607,8 +1953,8 @@ describe('createLeaseManager', () => {
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
-			getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-write-fails')),
-			id: 'tool-vm-write-fails',
+			getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-1')),
+			id: 'tool-vm-1',
 			setIngressRoutes: vi.fn(),
 			getHostPid: () => 12345,
 			getVmInstance: vi.fn(),
@@ -1636,6 +1982,7 @@ describe('createLeaseManager', () => {
 			leaseManager.createLease({
 				agentId: 'main',
 				agentWorkspaceDir: '/home/openclaw/work',
+				gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 				profileId: 'standard',
@@ -1654,6 +2001,7 @@ describe('createLeaseManager', () => {
 		const reusable = await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 			profileId: 'standard',
@@ -1665,9 +2013,9 @@ describe('createLeaseManager', () => {
 	});
 
 	it('quarantines partial-create ownership when close resolves with an incomplete receipt', async () => {
-		const closeMock = vi.fn(async () => incompleteVmDestroyReceipt);
+		const closeMock = vi.fn(async () => createIncompleteToolVmDestroyReceipt());
 		const createManagedVm = vi.fn(async () => ({
-			...createManagedVmStub('tool-vm-partial-create-incomplete'),
+			...createManagedVmStub(),
 			close: closeMock,
 			enableSsh: vi.fn(async () => {
 				throw new Error('ssh setup failed');
@@ -1701,9 +2049,16 @@ describe('createLeaseManager', () => {
 	});
 
 	it('permits same-G replacement after exact detached cleanup completes a nested create rollback', async () => {
+		const freshGateway = {
+			...TEST_GATEWAY_EPOCH,
+			bootId: 'gateway-boot-2',
+			gatewayEpochId: 'gateway-epoch-2',
+			gatewayVmId: 'gateway-vm-2',
+			generationId: 'gateway-generation-2',
+		} satisfies GatewayEpochIdentity;
 		const incompleteCleanup = new IncompleteVmDestructionError(
 			'Tool VM create rollback',
-			incompleteVmDestroyReceipt,
+			createIncompleteToolVmDestroyReceipt(),
 		);
 		const createFailure = new AggregateError(
 			[new Error('mediated bootstrap failed'), incompleteCleanup],
@@ -1713,12 +2068,41 @@ describe('createLeaseManager', () => {
 			.fn()
 			.mockRejectedValueOnce(createFailure)
 			.mockResolvedValueOnce(createManagedVmStub('tool-vm-same-gateway-replacement'))
-			.mockResolvedValueOnce(createManagedVmStub('tool-vm-fresh-gateway'));
+			.mockResolvedValueOnce(
+				createManagedVmStub('tool-vm-fresh-gateway', { gateway: freshGateway }),
+			);
+		const provisionedVmIds = [
+			'tool-vm-failed-create',
+			'tool-vm-same-gateway-replacement',
+			'tool-vm-fresh-gateway',
+		] as const;
+		let admissionIndex = 0;
+		const ownershipCoordinator = createOwnershipCoordinatorStub({
+			admitProvisionalToolVm: (admissionOptions) => {
+				const vmId = provisionedVmIds[admissionIndex];
+				if (vmId === undefined) {
+					throw new Error('unexpected Tool VM ownership admission');
+				}
+				admissionIndex += 1;
+				const ownershipProof = createTestToolVmOwnershipProof({
+					gateway: admissionOptions.expectedGateway,
+					vmId,
+				});
+				return createProvisionalToolVmOwnershipHandle({
+					destroyDetached: async () =>
+						createCompleteToolVmDestroyReceipt(vmId, {
+							gateway: admissionOptions.expectedGateway,
+						}),
+					ready: Promise.resolve(ownershipProof),
+				});
+			},
+		});
 		const tcpPool = createTcpPool({ basePort: 19000, size: 2 });
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm,
 			now: () => 200,
+			ownershipCoordinator,
 			tcpPool,
 		});
 		const request = createAgentLeaseOptions({ agentId: 'main' });
@@ -1736,14 +2120,6 @@ describe('createLeaseManager', () => {
 		await expect(
 			leaseManager.destroyGatewayOwnedLeases(TEST_GATEWAY_EPOCH),
 		).resolves.toBeUndefined();
-		const freshGateway = {
-			...TEST_GATEWAY_EPOCH,
-			bootId: 'gateway-boot-2',
-			gatewayEpochId: 'gateway-epoch-2',
-			gatewayVmId: 'gateway-vm-2',
-			generationId: 'gateway-generation-2',
-		} satisfies GatewayEpochIdentity;
-
 		await expect(
 			leaseManager.createLease(
 				createAgentLeaseOptions({
@@ -1775,8 +2151,8 @@ describe('createLeaseManager', () => {
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
-			getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-close-fails')),
-			id: 'tool-vm-close-fails',
+			getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-1')),
+			id: 'tool-vm-1',
 			setIngressRoutes: vi.fn(),
 			getHostPid: () => 12345,
 			getVmInstance: vi.fn(),
@@ -1794,6 +2170,7 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 			profileId: 'standard',
@@ -1811,13 +2188,13 @@ describe('createLeaseManager', () => {
 	});
 
 	it('refuses explicit release when close resolves with an incomplete receipt', async () => {
-		const closeMock = vi.fn(async () => incompleteVmDestroyReceipt);
+		const closeMock = vi.fn(async () => createIncompleteToolVmDestroyReceipt());
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const deleteToolVmRuntimeRecordMock = vi.fn(async () => {});
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
-				...createManagedVmStub('tool-vm-release-incomplete'),
+				...createManagedVmStub(),
 				close: closeMock,
 			})),
 			deleteToolVmRuntimeRecord: deleteToolVmRuntimeRecordMock,
@@ -1848,6 +2225,7 @@ describe('createLeaseManager', () => {
 		const request = {
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -1896,9 +2274,7 @@ describe('createLeaseManager', () => {
 	});
 
 	it('creates separate Tool VMs for separate agents in the same zone', async () => {
-		const createManagedVm = vi.fn(async () =>
-			createManagedVmStub(`tool-vm-${createManagedVm.mock.calls.length}`),
-		);
+		const createManagedVm = vi.fn(async () => createManagedVmStub());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm,
@@ -1997,6 +2373,7 @@ describe('createLeaseManager', () => {
 		const request = {
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2021,7 +2398,7 @@ describe('createLeaseManager', () => {
 	});
 
 	it('rejects same-agent lease reuse when the workspace changes', async () => {
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
@@ -2035,6 +2412,7 @@ describe('createLeaseManager', () => {
 		await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2051,6 +2429,7 @@ describe('createLeaseManager', () => {
 			leaseManager.createLease({
 				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
+				gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				profile: {
 					cpus: 1,
@@ -2077,6 +2456,7 @@ describe('createLeaseManager', () => {
 		await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2093,6 +2473,7 @@ describe('createLeaseManager', () => {
 			leaseManager.createLease({
 				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
+				gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				profile: {
 					cpus: 2,
@@ -2118,6 +2499,7 @@ describe('createLeaseManager', () => {
 		await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2134,6 +2516,7 @@ describe('createLeaseManager', () => {
 			leaseManager.createLease({
 				agentId: 'main',
 				agentWorkspaceDir: '/host/other-agent-work',
+				gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				profile: {
 					cpus: 1,
@@ -2149,9 +2532,7 @@ describe('createLeaseManager', () => {
 	});
 
 	it('does not reuse matching agent ids across zones', async () => {
-		const createManagedVm = vi.fn(async () =>
-			createManagedVmStub(`tool-vm-${createManagedVm.mock.calls.length}`),
-		);
+		const createManagedVm = vi.fn(async () => createManagedVmStub());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm,
@@ -2161,6 +2542,7 @@ describe('createLeaseManager', () => {
 		const request = {
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2190,13 +2572,13 @@ describe('createLeaseManager', () => {
 			throw new Error('stale close failed');
 		});
 		const staleVm = {
-			...createManagedVmStub('stale-vm'),
+			...createManagedVmStub(),
 			close: staleClose,
 			exec: vi.fn(() => {
 				throw new Error('vm is gone');
 			}),
 		};
-		const freshVm = createManagedVmStub('fresh-vm');
+		const freshVm = createManagedVmStub();
 		const createManagedVm = vi.fn(async () =>
 			createManagedVm.mock.calls.length === 1 ? staleVm : freshVm,
 		);
@@ -2212,6 +2594,7 @@ describe('createLeaseManager', () => {
 		const request = {
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2252,15 +2635,15 @@ describe('createLeaseManager', () => {
 	});
 
 	it('preserves evicted lease ownership when close resolves with an incomplete receipt', async () => {
-		const staleClose = vi.fn(async () => incompleteVmDestroyReceipt);
+		const staleClose = vi.fn(async () => createIncompleteToolVmDestroyReceipt());
 		const staleVm = {
-			...createManagedVmStub('stale-vm-incomplete'),
+			...createManagedVmStub(),
 			close: staleClose,
 			exec: vi.fn(() => {
 				throw new Error('vm is gone');
 			}),
 		};
-		const freshVm = createManagedVmStub('fresh-vm-after-incomplete');
+		const freshVm = createManagedVmStub();
 		const createManagedVm = vi.fn(async () =>
 			createManagedVm.mock.calls.length === 1 ? staleVm : freshVm,
 		);
@@ -2311,6 +2694,7 @@ describe('createLeaseManager', () => {
 		const request = {
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2343,7 +2727,7 @@ describe('createLeaseManager', () => {
 		const execCanFinish = new Promise<void>((resolve) => {
 			releaseExec = resolve;
 		});
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const vm = {
 			...createManagedVmStub(),
 			close: closeMock,
@@ -2363,6 +2747,7 @@ describe('createLeaseManager', () => {
 		const request = {
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2409,7 +2794,7 @@ describe('createLeaseManager', () => {
 				close: vi.fn(async () => {
 					markCloseStarted?.();
 					await closeCanFinish;
-					return createCompleteVmDestroyReceipt('tool-vm-releasing');
+					return createCompleteToolVmDestroyReceipt();
 				}),
 			})),
 			now: () => 100,
@@ -2418,6 +2803,7 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2435,6 +2821,7 @@ describe('createLeaseManager', () => {
 
 		expect(() =>
 			leaseManager.startActiveUse(lease.id, {
+				...createActiveUseRequestContext(lease),
 				useId: '01890f00-0000-7000-8000-000000000000',
 			}),
 		).toThrow(LeaseActiveUseConflictError);
@@ -2446,7 +2833,7 @@ describe('createLeaseManager', () => {
 
 	it('does not release a lease that was touched after an idle reaper snapshot', async () => {
 		let now = 100;
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
@@ -2459,6 +2846,7 @@ describe('createLeaseManager', () => {
 		const request = {
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2487,7 +2875,7 @@ describe('createLeaseManager', () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
-				close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-list')),
+				close: vi.fn(async () => createCompleteToolVmDestroyReceipt()),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
 					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
@@ -2512,6 +2900,7 @@ describe('createLeaseManager', () => {
 		const lease1 = await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2526,6 +2915,7 @@ describe('createLeaseManager', () => {
 		const lease2 = await leaseManager.createLease({
 			agentId: 'laura',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2578,8 +2968,8 @@ describe('createLeaseManager', () => {
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
-				getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-close-fail')),
-				id: 'tool-vm-close-fail',
+				getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-1')),
+				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
 				getHostPid: () => 12345,
 				getVmInstance: vi.fn(),
@@ -2591,6 +2981,7 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			profile: {
 				cpus: 1,
@@ -2628,6 +3019,7 @@ describe('createLeaseManager', () => {
 			leaseManager.createLease({
 				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
+				gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				profile: {
 					cpus: 1,
@@ -2654,6 +3046,7 @@ describe('createLeaseManager', () => {
 		const request = {
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			effectiveIdleTtlMs: 60_000,
 			profile: {
@@ -2682,7 +3075,7 @@ describe('createLeaseManager', () => {
 
 	it('tracks active uses, heartbeats, tombstones, and forced release cleanup', async () => {
 		let now = 1_000;
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
@@ -2700,6 +3093,7 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
 			effectiveIdleTtlMs: 60_000,
 			profile: {
@@ -2722,17 +3116,19 @@ describe('createLeaseManager', () => {
 		} as unknown as ToolVmActiveUseCorrelation;
 
 		const startedUse = leaseManager.startActiveUse(lease.id, {
+			...createActiveUseRequestContext(lease),
 			correlation: unsafeCorrelation,
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
 		const repeatedStart = leaseManager.startActiveUse(lease.id, {
+			...createActiveUseRequestContext(lease),
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
 		now = 2_000;
 		const heartbeat = leaseManager.heartbeatActiveUse(
 			lease.id,
 			'01890f00-0000-7000-8000-000000000000',
-			{},
+			createActiveUseRequestContext(lease),
 		);
 		expect(leaseManager.getActiveUses(lease.id)).toEqual([
 			expect.objectContaining({
@@ -2745,6 +3141,7 @@ describe('createLeaseManager', () => {
 			}),
 		]);
 		leaseManager.endActiveUse(lease.id, '01890f00-0000-7000-8000-000000000000', {
+			...createActiveUseRequestContext(lease),
 			outcome: 'completed',
 		});
 
@@ -2758,11 +3155,13 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.getActiveUseCount(lease.id)).toBe(0);
 		expect(() =>
 			leaseManager.startActiveUse(lease.id, {
+				...createActiveUseRequestContext(lease),
 				useId: '01890f00-0000-7000-8000-000000000000',
 			}),
 		).toThrow(/already ended/u);
 		expect(() =>
 			leaseManager.startActiveUse(lease.id, {
+				...createActiveUseRequestContext(lease),
 				useId: '1b5c5d78-91b4-4c8e-a15e-f475dced59ef',
 			}),
 		).toThrow(/UUIDv7/u);
@@ -2783,11 +3182,13 @@ describe('createLeaseManager', () => {
 		});
 		const lease = await leaseManager.createLease(createAgentLeaseOptions());
 		leaseManager.startActiveUse(lease.id, {
+			...createActiveUseRequestContext(lease),
 			report: { observedAtMs: 1_000, phase: 'starting' },
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
 
 		leaseManager.heartbeatActiveUse(lease.id, '01890f00-0000-7000-8000-000000000000', {
+			...createActiveUseRequestContext(lease),
 			report: {
 				observedAtMs: 1_001,
 				phase: 'failed',
@@ -2816,9 +3217,9 @@ describe('createLeaseManager', () => {
 		]);
 	});
 
-	it('reaps stale active uses and expired tombstones without closing the lease', async () => {
+	it('prunes one terminal active-use tombstone without closing the lease', async () => {
 		let now = 1_000;
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
@@ -2836,8 +3237,9 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease({
 			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
+			gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			effectiveIdleTtlMs: 60_000,
+			effectiveIdleTtlMs: 1_000_000,
 			profile: {
 				cpus: 1,
 				memory: '1G',
@@ -2850,32 +3252,50 @@ describe('createLeaseManager', () => {
 		});
 
 		leaseManager.startActiveUse(lease.id, {
+			...createActiveUseRequestContext(lease),
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
-		leaseManager.startActiveUse(lease.id, {
-			useId: '01890f00-0000-7000-8000-000000000001',
-		});
 		now = 2_000;
-		leaseManager.heartbeatActiveUse(lease.id, '01890f00-0000-7000-8000-000000000001', {});
-		now = 5_001;
-
-		leaseManager.reapExpiredActiveUses();
+		leaseManager.heartbeatActiveUse(
+			lease.id,
+			'01890f00-0000-7000-8000-000000000000',
+			createActiveUseRequestContext(lease),
+		);
 
 		expect(leaseManager.getActiveUseCount(lease.id)).toBe(1);
 		expect(closeMock).not.toHaveBeenCalled();
 
-		leaseManager.endActiveUse(lease.id, '01890f00-0000-7000-8000-000000000001', {
+		leaseManager.endActiveUse(lease.id, '01890f00-0000-7000-8000-000000000000', {
+			...createActiveUseRequestContext(lease),
 			outcome: 'completed',
 		});
-		now = 9_000;
-		leaseManager.reapExpiredActiveUses();
-
 		expect(leaseManager.getActiveUseCount(lease.id)).toBe(0);
+		expect(() =>
+			leaseManager.startActiveUse(lease.id, {
+				...createActiveUseRequestContext(lease, {
+					operationPayloadDigest: 'payload-digest-2',
+					semanticOperationId: 'semantic-operation-2',
+				}),
+				useId: '01890f00-0000-7000-8000-000000000000',
+			}),
+		).toThrow(/semantic|terminal/iu);
+
+		now = 602_001;
+		leaseManager.reapExpiredActiveUses();
+		leaseManager.startActiveUse(lease.id, {
+			...createActiveUseRequestContext(lease, {
+				operationPayloadDigest: 'payload-digest-2',
+				semanticOperationId: 'semantic-operation-2',
+			}),
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+
+		expect(leaseManager.getActiveUseCount(lease.id)).toBe(1);
 		expect(closeMock).not.toHaveBeenCalled();
 	});
 
 	it('closes the VM and releases the tcp slot when enabling SSH fails', async () => {
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
@@ -2887,8 +3307,8 @@ describe('createLeaseManager', () => {
 				}),
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
-				getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-ssh-fail')),
-				id: 'tool-vm-ssh-fail',
+				getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-1')),
+				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
 				getHostPid: () => 12345,
 				getVmInstance: vi.fn(),
@@ -2901,6 +3321,7 @@ describe('createLeaseManager', () => {
 			leaseManager.createLease({
 				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
+				gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 				expectedGateway: TEST_GATEWAY_EPOCH,
 				profile: {
 					cpus: 1,
@@ -2934,8 +3355,8 @@ describe('createLeaseManager', () => {
 				}),
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
-				getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-ssh-fail-close-fail')),
-				id: 'tool-vm-ssh-fail-close-fail',
+				getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-1')),
+				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
 				getHostPid: () => 12345,
 				getVmInstance: vi.fn(),
@@ -2950,6 +3371,7 @@ describe('createLeaseManager', () => {
 				await leaseManager.createLease({
 					agentId: 'main',
 					agentWorkspaceDir: '/host/agent-work',
+					gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 					expectedGateway: TEST_GATEWAY_EPOCH,
 					profile: {
 						cpus: 1,
@@ -3004,7 +3426,7 @@ describe('createLeaseManager — runtime record disk integration', () => {
 	}
 
 	function makeIntegrationManagedVm(): ManagedVm & { closeMock: ReturnType<typeof vi.fn> } {
-		const closeMock = vi.fn(async () => createCompleteVmDestroyReceipt());
+		const closeMock = vi.fn(async () => createCompleteToolVmDestroyReceipt());
 		return {
 			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -3018,8 +3440,8 @@ describe('createLeaseManager — runtime record disk integration', () => {
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
-			getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-integration')),
-			id: 'tool-vm-integration',
+			getDestroyTarget: vi.fn(() => createTestVmDestroyTarget('tool-vm-1')),
+			id: 'tool-vm-1',
 			setIngressRoutes: vi.fn(),
 			getHostPid: () => 31337,
 			getVmInstance: vi.fn(),
@@ -3030,6 +3452,7 @@ describe('createLeaseManager — runtime record disk integration', () => {
 	const integrationLeaseRequest = {
 		agentId: 'main',
 		agentWorkspaceDir: '/home/openclaw/work',
+		gatewayWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/test/work',
 		expectedGateway: TEST_GATEWAY_EPOCH,
 		profile: { cpus: 1, memory: '1G', imageProfile: 'default' as const },
 		profileId: 'standard' as const,
@@ -3070,7 +3493,7 @@ describe('createLeaseManager — runtime record disk integration', () => {
 			recordId: '01890f00-0000-7000-8000-000000000001',
 			schemaVersion: 1,
 			tcpSlot: 0,
-			vmId: 'tool-vm-integration',
+			vmId: 'tool-vm-1',
 			zoneId: 'shravan',
 		});
 		expect(parsed).not.toHaveProperty('scopeKey');

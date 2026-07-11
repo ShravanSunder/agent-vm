@@ -135,6 +135,55 @@ describe('auditVmOwnershipBoundaries', () => {
 		expect(findings).toEqual([]);
 	});
 
+	it('allows ManagedVm close callbacks owned by exact authority-runtime destruction', () => {
+		const findings = auditVmOwnershipBoundaries([
+			{
+				content: [
+					'await authorityRuntime.destroyExact({',
+					"  mode: { kind: 'live', closeLiveVm: async () => await lease.vm.close() },",
+					'});',
+					'const admission = authorityRuntime.admitExactDestruction({',
+					"  mode: { kind: 'live', closeLiveVm: async () => await currentLease.vm.close() },",
+					'});',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+			},
+		]);
+
+		expect(findings).toEqual([]);
+	});
+
+	it('rejects similarly named destruction wrappers outside the exact authority runtime', () => {
+		const findings = auditVmOwnershipBoundaries([
+			{
+				content: [
+					'await cleanupFacade.destroyExact({',
+					"  mode: { kind: 'live', closeLiveVm: async () => await lease.vm.close() },",
+					'});',
+					'const admission = otherRuntime.admitExactDestruction({',
+					"  mode: { kind: 'live', closeLiveVm: async () => await currentLease.vm.close() },",
+					'});',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+			},
+		]);
+
+		expect(findings).toEqual([
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 2,
+				reason:
+					"ManagedVm close 'lease.vm.close()' is not protected by an ownership destruction receipt",
+			},
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 5,
+				reason:
+					"ManagedVm close 'currentLease.vm.close()' is not protected by an ownership destruction receipt",
+			},
+		]);
+	});
+
 	it('does not classify sockets, servers, files, databases, or generic handles as ManagedVm', () => {
 		const findings = auditVmOwnershipBoundaries([
 			{

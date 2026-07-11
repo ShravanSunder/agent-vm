@@ -30,12 +30,15 @@ interface PendingLiveToolVmCleanup extends AgentLeaseIdentity {
 type PendingToolVmCleanup = PendingDetachedToolVmCleanup | PendingLiveToolVmCleanup;
 
 export interface PendingToolVmCleanupRegistry {
+	pendingGatewayIdentityForAgent(
+		agentIdentity: AgentLeaseIdentity,
+	): GatewayEpochIdentity | undefined;
 	pendingCleanupIdentitiesForGateway(
 		expectedGateway: GatewayEpochIdentity,
 	): readonly AgentLeaseIdentity[];
 	recordDetachedCleanup(cleanup: Omit<PendingDetachedToolVmCleanup, 'kind'>): void;
 	recordLiveCleanup(cleanup: Omit<PendingLiveToolVmCleanup, 'kind'>): void;
-	retry(agentIdentity: AgentLeaseIdentity): Promise<void>;
+	retry(agentIdentity: AgentLeaseIdentity, expectedGateway: GatewayEpochIdentity): Promise<void>;
 }
 
 interface CreatePendingToolVmCleanupRegistryOptions {
@@ -57,11 +60,19 @@ export function createPendingToolVmCleanupRegistry(
 ): PendingToolVmCleanupRegistry {
 	const pendingCleanupByAgent = new Map<string, PendingToolVmCleanup>();
 
-	const retry = async (agentIdentity: AgentLeaseIdentity): Promise<void> => {
+	const retry = async (
+		agentIdentity: AgentLeaseIdentity,
+		expectedGateway: GatewayEpochIdentity,
+	): Promise<void> => {
 		const identityKey = agentIdentityKey(agentIdentity);
 		const pendingCleanup = pendingCleanupByAgent.get(identityKey);
 		if (pendingCleanup === undefined) {
 			return;
+		}
+		if (!gatewayIdentitiesEqual(pendingCleanup.gatewayIdentity, expectedGateway)) {
+			throw new Error(
+				`Pending Tool VM cleanup for '${agentIdentity.zoneId}/${agentIdentity.agentId}' belongs to a different Gateway VM epoch.`,
+			);
 		}
 		if (pendingCleanup.kind === 'detached') {
 			const destroyReceipt = await pendingCleanup.ownership.destroyDetached();
@@ -98,6 +109,14 @@ export function createPendingToolVmCleanupRegistry(
 	};
 
 	return {
+		pendingGatewayIdentityForAgent(
+			agentIdentity: AgentLeaseIdentity,
+		): GatewayEpochIdentity | undefined {
+			const pendingCleanup = pendingCleanupByAgent.get(agentIdentityKey(agentIdentity));
+			return pendingCleanup === undefined
+				? undefined
+				: structuredClone(pendingCleanup.gatewayIdentity);
+		},
 		pendingCleanupIdentitiesForGateway(expectedGateway): readonly AgentLeaseIdentity[] {
 			const agentIdentities: AgentLeaseIdentity[] = [];
 			for (const pendingCleanup of pendingCleanupByAgent.values()) {

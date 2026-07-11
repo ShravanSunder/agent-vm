@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
+import {
+	gatewayIdentitiesEqual,
+	type GatewayEpochIdentity,
+} from '../vm-ownership/vm-ownership-contracts.js';
 
 export const GATEWAY_SEMANTIC_CANONICAL_PAYLOAD_VERSION = 1 as const;
 export const GATEWAY_SEMANTIC_ACTIVE_CAPACITY = 2_048;
@@ -16,10 +19,7 @@ export type GatewaySemanticJsonValue =
 	| readonly GatewaySemanticJsonValue[]
 	| { readonly [key: string]: GatewaySemanticJsonValue };
 
-export type GatewaySemanticEpoch = Pick<
-	GatewayEpochIdentity,
-	'controllerEpoch' | 'gatewayEpochId' | 'gatewayVmId' | 'zoneId'
->;
+export type GatewaySemanticEpoch = GatewayEpochIdentity;
 
 export type GatewaySemanticGenerationProfile =
 	| {
@@ -197,9 +197,11 @@ export function canonicalGatewaySemanticPayloadDigest(
 
 function gatewaySemanticEpochValue(gateway: GatewaySemanticEpoch): GatewaySemanticJsonValue {
 	return {
+		bootId: gateway.bootId,
 		controllerEpoch: gateway.controllerEpoch,
 		gatewayEpochId: gateway.gatewayEpochId,
 		gatewayVmId: gateway.gatewayVmId,
+		generationId: gateway.generationId,
 		zoneId: gateway.zoneId,
 	};
 }
@@ -248,12 +250,7 @@ function principalScopeValue(profile: GatewaySemanticGenerationProfile): Gateway
 }
 
 function gatewaysEqual(left: GatewaySemanticEpoch, right: GatewaySemanticEpoch): boolean {
-	return (
-		left.controllerEpoch === right.controllerEpoch &&
-		left.gatewayEpochId === right.gatewayEpochId &&
-		left.gatewayVmId === right.gatewayVmId &&
-		left.zoneId === right.zoneId
-	);
+	return gatewayIdentitiesEqual(left, right);
 }
 
 function correlationKeyForIdentity(identity: GatewaySemanticOperationIdentity): string {

@@ -114,6 +114,7 @@ export type ControllerLeaseManager = Pick<
 			LeaseManager,
 			| 'endActiveUse'
 			| 'getActiveUseCount'
+			| 'getLeaseAuthority'
 			| 'heartbeatActiveUse'
 			| 'startActiveUse'
 			| 'subscribeLeaseRetirement'

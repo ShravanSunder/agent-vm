@@ -235,21 +235,30 @@ describe('Tool VM lease authority state', () => {
 		expectTransitionError(() => beginProvisioning(state), code);
 	});
 
-	it('denies late commit after seal and every cross-Gateway authority mutation', () => {
+	it('completes an admitted late commit after seal while denying every cross-Gateway authority mutation', () => {
 		const provisional = beginProvisioning(registerGateway());
 		const sealed = reduceToolVmLeaseAuthorityState(provisional, {
 			gateway: GATEWAY_ONE,
 			kind: 'seal-parent',
 		});
+		const committedAfterSeal = commitCurrent(sealed);
 
-		expectTransitionError(() => commitCurrent(sealed), 'parent-not-admitting');
+		expect(committedAfterSeal.parent).toEqual({ gateway: GATEWAY_ONE, kind: 'sealed' });
+		expect(committedAfterSeal.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+			kind: 'current',
+			leafGeneration: 'leaf-generation-1',
+		});
+		expectTransitionError(
+			() => commitCurrent(sealed, { gateway: GATEWAY_TWO }),
+			'parent-identity-mismatch',
+		);
 		expectTransitionError(
 			() => beginProvisioning(registerGateway(), { gateway: GATEWAY_TWO }),
 			'parent-identity-mismatch',
 		);
 		expectTransitionError(
 			() =>
-				reduceToolVmLeaseAuthorityState(sealed, {
+				reduceToolVmLeaseAuthorityState(committedAfterSeal, {
 					gateway: GATEWAY_TWO,
 					kind: 'retire-parent',
 				}),

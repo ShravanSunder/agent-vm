@@ -6,6 +6,7 @@ import type {
 	GatewayControlLeaseSnapshot,
 	GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
+import { gatewayControlCommandExecutionTimeoutMsByOperation } from '@agent-vm/gateway-control-contracts';
 import { isToolVmSshLease } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -274,6 +275,69 @@ describe('createGatewayControlLeaseClient', () => {
 		expect(observedMessages[1]?.payload).not.toHaveProperty('workMountDir');
 	});
 
+	it('keeps lease reads bounded by the operation timeout', async () => {
+		const observedEnvelopes: ControlEnvelope[] = [];
+		const leaseId = '01890f00-0000-7000-8000-000000000001';
+		const controlService = createFakeGatewayControlService(({ payload, envelope }) => {
+			observedEnvelopes.push(envelope);
+			if (payload.operation === 'caller_context_register') {
+				return {
+					kind: 'command_result',
+					operation: 'caller_context_register',
+					payload: {
+						callerContext: {
+							admissionPrincipal:
+								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							callerContextId: '44444444-4444-4444-8444-444444444444',
+						},
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			if (payload.operation === 'lease_create' || payload.operation === 'lease_peek') {
+				return {
+					kind: 'command_result',
+					operation: payload.operation,
+					payload: {
+						lease: gatewayControlLeaseSnapshot(leaseId),
+						responseToMessageId: envelope.messageId,
+						result: 'ok',
+					},
+				};
+			}
+			throw new Error(`unexpected operation: ${payload.operation}`);
+		});
+		let nextId = 1;
+		const leaseClient = createGatewayControlLeaseClient({
+			controlService,
+			createId: () => `00000000-0000-4000-8000-${String(nextId++).padStart(12, '0')}`,
+			identity,
+			now: () => 2_000,
+		});
+		await leaseClient.requestLease({
+			agentId: 'main',
+			agentWorkspaceDir: '/home/openclaw/workspace',
+			profileId: 'standard',
+			sessionKey: 'agent:main:test-session',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+			zoneId: 'zone-a',
+		});
+
+		await expect(leaseClient.peekLease(leaseId)).resolves.toEqual(
+			expect.objectContaining({ leaseId }),
+		);
+
+		for (const operation of ['caller_context_register', 'lease_create', 'lease_peek'] as const) {
+			const envelope = observedEnvelopes.find(
+				(candidateEnvelope) => candidateEnvelope.operation === operation,
+			);
+			expect(envelope?.expiresAtMs).toBe(
+				2_000 + gatewayControlCommandExecutionTimeoutMsByOperation[operation],
+			);
+		}
+	});
+
 	it('retries lease_create once with stable command and message identity after a lost result', async () => {
 		const observedEnvelopes: ControlEnvelope[] = [];
 		let leaseCreateAttempts = 0;
@@ -326,6 +390,7 @@ describe('createGatewayControlLeaseClient', () => {
 				},
 			};
 		});
+		let senderClockMs = 1_000;
 		const leaseClient = createGatewayControlLeaseClient({
 			controlService,
 			createId: (() => {
@@ -346,7 +411,7 @@ describe('createGatewayControlLeaseClient', () => {
 				};
 			})(),
 			identity,
-			now: () => 1,
+			now: () => senderClockMs++,
 		});
 
 		await expect(
@@ -375,6 +440,14 @@ describe('createGatewayControlLeaseClient', () => {
 		expect(retriedLeaseCreateEnvelope.idempotencyKey).toBe(firstLeaseCreateEnvelope.idempotencyKey);
 		expect(retriedLeaseCreateEnvelope.messageId).toBe(firstLeaseCreateEnvelope.messageId);
 		expect(retriedLeaseCreateEnvelope.sequence).toBe(firstLeaseCreateEnvelope.sequence + 1);
+		for (const envelope of leaseCreateEnvelopes) {
+			expect(envelope.expiresAtMs).toBe(
+				envelope.createdAtMs + gatewayControlCommandExecutionTimeoutMsByOperation.lease_create,
+			);
+		}
+		expect(retriedLeaseCreateEnvelope.createdAtMs).toBeGreaterThan(
+			firstLeaseCreateEnvelope.createdAtMs,
+		);
 	});
 
 	it.each([
@@ -522,11 +595,12 @@ describe('createGatewayControlLeaseClient', () => {
 				throw new Error('unsupported retry test operation');
 			});
 			let nextId = 1;
+			let senderClockMs = 1_000;
 			const leaseClient = createGatewayControlLeaseClient({
 				controlService,
 				createId: () => `00000000-0000-4000-8000-${String(nextId++).padStart(12, '0')}`,
 				identity,
-				now: () => 1,
+				now: () => senderClockMs++,
 			});
 			await leaseClient.requestLease({
 				agentId: 'main',
@@ -547,6 +621,12 @@ describe('createGatewayControlLeaseClient', () => {
 			expect(targetEnvelopes[1]?.idempotencyKey).toBe(targetEnvelopes[0]?.idempotencyKey);
 			expect(targetEnvelopes[1]?.messageId).toBe(targetEnvelopes[0]?.messageId);
 			expect(targetEnvelopes[1]?.sequence).toBe((targetEnvelopes[0]?.sequence ?? 0) + 1);
+			for (const envelope of targetEnvelopes) {
+				expect(envelope.expiresAtMs).toBe(
+					envelope.createdAtMs + gatewayControlCommandExecutionTimeoutMsByOperation[operation],
+				);
+			}
+			expect(targetEnvelopes[1]?.createdAtMs).toBeGreaterThan(targetEnvelopes[0]?.createdAtMs ?? 0);
 		},
 	);
 

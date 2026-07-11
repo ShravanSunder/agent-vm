@@ -1,8 +1,7 @@
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
-import type { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
-import type { GatewayOwnershipCoordinator } from '../vm-ownership/gateway-ownership-coordinator.js';
+import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import { type AgentSandboxSeedResult, seedAgentSandboxWorkspace } from './agent-sandbox-seeding.js';
 import {
 	defaultToolVmLeaseIdleTtlMs,
@@ -35,21 +34,48 @@ export interface OpenClawToolVmLeaseAuthorityContext {
 
 export interface ResolveOpenClawToolVmLeaseCreateOptionsInput {
 	readonly authorityContext: OpenClawToolVmLeaseAuthorityContext;
+	readonly expectedGateway: GatewayEpochIdentity;
 	readonly requestedIdleTtlMs?: number | undefined;
 }
 
 export interface OpenClawToolVmLeaseCreateOptionsResolverOptions {
 	readonly leaseIdleTtlPolicy?: ToolVmLeaseIdleTtlPolicy;
+	readonly systemConfig: LoadedSystemConfig;
+}
+
+export interface OpenClawToolVmLeaseWorkspaceSeederOptions {
 	readonly onSandboxSeedResult?: (result: AgentSandboxSeedResult) => void;
-	readonly openClawRuntimeStatusStore: OpenClawRuntimeStatusStore;
-	readonly resolveGatewayEpoch: GatewayOwnershipCoordinator['resolveGatewayEpoch'];
-	readonly secretResolver?: SecretResolver;
+	readonly secretResolver: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 }
 
 export type OpenClawToolVmLeaseCreateOptionsResolver = (
 	input: ResolveOpenClawToolVmLeaseCreateOptionsInput,
 ) => Promise<LeaseCreateOptions>;
+
+export type OpenClawToolVmLeaseWorkspaceSeeder = (
+	leaseCreateOptions: LeaseCreateOptions,
+) => Promise<void>;
+
+export function createOpenClawToolVmLeaseWorkspaceSeeder(
+	options: OpenClawToolVmLeaseWorkspaceSeederOptions,
+): OpenClawToolVmLeaseWorkspaceSeeder {
+	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
+	return async (leaseCreateOptions): Promise<void> => {
+		const zone = zonesById.get(leaseCreateOptions.zoneId);
+		if (zone === undefined) {
+			throw new Error(`Unknown zone '${leaseCreateOptions.zoneId}'`);
+		}
+		options.onSandboxSeedResult?.(
+			await seedAgentSandboxWorkspace({
+				agentId: leaseCreateOptions.agentId,
+				hostWorkMountDir: leaseCreateOptions.hostWorkMountDir,
+				secretResolver: options.secretResolver,
+				zone,
+			}),
+		);
+	};
+}
 
 export function createOpenClawToolVmLeaseCreateOptionsResolver(
 	options: OpenClawToolVmLeaseCreateOptionsResolverOptions,
@@ -60,7 +86,7 @@ export function createOpenClawToolVmLeaseCreateOptionsResolver(
 		options.systemConfig.leaseIdleTtl ??
 		defaultGatewayControlLeaseIdleTtlPolicy;
 
-	return async ({ authorityContext, requestedIdleTtlMs }) => {
+	return async ({ authorityContext, expectedGateway, requestedIdleTtlMs }) => {
 		const zone = zonesById.get(authorityContext.zoneId);
 		if (!zone) {
 			throw new Error(`Unknown zone '${authorityContext.zoneId}'`);
@@ -81,14 +107,6 @@ export function createOpenClawToolVmLeaseCreateOptionsResolver(
 			agentWorkspaceDir: authorityContext.agentWorkspaceDir,
 			context: `OpenClaw tool VM lease for zone '${authorityContext.zoneId}'`,
 		});
-		options.openClawRuntimeStatusStore.assertFreshOk({
-			bootId: authorityContext.bootId,
-			connectionId: authorityContext.connectionId,
-			controllerEpoch: authorityContext.controllerEpoch,
-			peerId: authorityContext.peerId,
-			sessionId: authorityContext.sessionId,
-			zoneId: authorityContext.zoneId,
-		});
 		const resolvedProfileId =
 			zone.agentToolVmProfiles?.[authorityContext.agentId] ?? zone.defaultToolVmProfile;
 		if (!resolvedProfileId) {
@@ -106,16 +124,6 @@ export function createOpenClawToolVmLeaseCreateOptionsResolver(
 			workMountDir: authorityContext.workMountDir,
 			zone,
 		});
-		if (options.secretResolver !== undefined) {
-			options.onSandboxSeedResult?.(
-				await seedAgentSandboxWorkspace({
-					agentId: authorityContext.agentId,
-					hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
-					secretResolver: options.secretResolver,
-					zone,
-				}),
-			);
-		}
 		const effectiveIdleTtl = resolveToolVmLeaseIdleTtlMs({
 			policy: leaseIdleTtlPolicy,
 			requestedIdleTtlMs,
@@ -126,12 +134,9 @@ export function createOpenClawToolVmLeaseCreateOptionsResolver(
 		return {
 			agentId: authorityContext.agentId,
 			agentWorkspaceDir: authorityContext.agentWorkspaceDir,
+			gatewayWorkMountDir: authorityContext.workMountDir,
 			effectiveIdleTtlMs: effectiveIdleTtl.value,
-			expectedGateway: options.resolveGatewayEpoch({
-				bootId: authorityContext.bootId,
-				controllerEpoch: authorityContext.controllerEpoch,
-				zoneId: authorityContext.zoneId,
-			}),
+			expectedGateway,
 			guestWorkdir: resolvedWorkMount.guestWorkdir,
 			hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
 			profile,
