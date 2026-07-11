@@ -17,6 +17,16 @@ export interface VmOwnershipBoundaryAuditFinding {
 
 const AUDIT_SOURCE_ROOTS = ['packages/agent-vm/src'] as const;
 
+const LEASE_MANAGER_FILE_PATH = 'packages/agent-vm/src/controller/leases/lease-manager.ts';
+const LEGACY_LEASE_MANAGER_AUTHORITY_STORE_NAMES = new Set([
+	'activeUses',
+	'currentLeaseRegistry',
+	'endedUseTombstones',
+	'releasingLeaseIds',
+]);
+const LEGACY_CURRENT_LEASE_REGISTRY_MODULE = './tool-vm-current-lease-registry.js';
+const LEGACY_CURRENT_LEASE_REGISTRY_FACTORY = 'createToolVmCurrentLeaseRegistry';
+
 const LEGACY_VM_CLEANUP_ALLOWED_FILE_PATHS = new Map<string, ReadonlySet<string>>([
 	[
 		'cleanupOrphanedGatewayIfPresent',
@@ -229,6 +239,65 @@ export function auditVmOwnershipBoundaries(
 	return findings;
 }
 
+export function auditLeaseManagerSoleAuthorityOwnership(
+	sources: readonly VmOwnershipBoundaryAuditSource[],
+): readonly VmOwnershipBoundaryAuditFinding[] {
+	const findings: VmOwnershipBoundaryAuditFinding[] = [];
+	for (const source of sources) {
+		const normalizedPath = normalizeFilePath(source.filePath);
+		if (normalizedPath !== LEASE_MANAGER_FILE_PATH) {
+			continue;
+		}
+		const sourceFile = ts.createSourceFile(
+			normalizedPath,
+			source.content,
+			ts.ScriptTarget.Latest,
+			true,
+			ts.ScriptKind.TS,
+		);
+		const insertFinding = (node: ts.Node, reason: string): void => {
+			findings.push({
+				filePath: normalizedPath,
+				line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+				reason,
+			});
+		};
+		const visit = (node: ts.Node): void => {
+			if (
+				ts.isImportDeclaration(node) &&
+				ts.isStringLiteral(node.moduleSpecifier) &&
+				node.moduleSpecifier.text === LEGACY_CURRENT_LEASE_REGISTRY_MODULE
+			) {
+				insertFinding(node, 'LeaseManager imports the legacy Tool VM current-lease registry');
+			}
+			if (
+				ts.isCallExpression(node) &&
+				ts.isIdentifier(node.expression) &&
+				node.expression.text === LEGACY_CURRENT_LEASE_REGISTRY_FACTORY
+			) {
+				insertFinding(
+					node,
+					`LeaseManager calls legacy mutable authority factory '${LEGACY_CURRENT_LEASE_REGISTRY_FACTORY}'`,
+				);
+			}
+			if (
+				ts.isVariableDeclaration(node) &&
+				ts.isIdentifier(node.name) &&
+				LEGACY_LEASE_MANAGER_AUTHORITY_STORE_NAMES.has(node.name.text)
+			) {
+				insertFinding(
+					node.name,
+					`LeaseManager declares legacy mutable authority store '${node.name.text}'`,
+				);
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sourceFile);
+	}
+	findings.sort(compareAuditFindings);
+	return findings;
+}
+
 async function listProductionTypeScriptFiles(directoryPath: string): Promise<readonly string[]> {
 	const entries = await readdir(directoryPath, { withFileTypes: true });
 	const nestedFiles = await Promise.all(
@@ -269,7 +338,10 @@ export async function readVmOwnershipBoundaryAuditSources(
 async function runAuditCli(): Promise<void> {
 	const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 	const sources = await readVmOwnershipBoundaryAuditSources(repositoryRoot);
-	const findings = auditVmOwnershipBoundaries(sources);
+	const findings = [
+		...auditVmOwnershipBoundaries(sources),
+		...auditLeaseManagerSoleAuthorityOwnership(sources),
+	].toSorted(compareAuditFindings);
 	if (findings.length === 0) {
 		process.stdout.write('VM ownership boundary audit passed.\n');
 		return;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	auditLeaseManagerSoleAuthorityOwnership,
 	auditVmOwnershipBoundaries,
 	readVmOwnershipBoundaryAuditSources,
 } from './audit-vm-ownership-boundaries.js';
@@ -164,6 +165,75 @@ describe('auditVmOwnershipBoundaries', () => {
 			{
 				content: 'await managedVm.close();\nawait cleanupOrphanedGatewayIfPresent();',
 				filePath: 'packages/agent-vm/src/integration-tests/controller.host.e2e.test.ts',
+			},
+		]);
+
+		expect(findings).toEqual([]);
+	});
+
+	it('rejects every legacy mutable authority owned locally by LeaseManager', () => {
+		const findings = auditLeaseManagerSoleAuthorityOwnership([
+			{
+				content: [
+					"import { createToolVmCurrentLeaseRegistry } from './tool-vm-current-lease-registry.js';",
+					'const currentLeaseRegistry = createToolVmCurrentLeaseRegistry();',
+					'const activeUses = new Map();',
+					'const endedUseTombstones = new Map();',
+					'const releasingLeaseIds = new Set();',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+			},
+		]);
+
+		expect(findings).toEqual([
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 1,
+				reason: 'LeaseManager imports the legacy Tool VM current-lease registry',
+			},
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 2,
+				reason:
+					"LeaseManager calls legacy mutable authority factory 'createToolVmCurrentLeaseRegistry'",
+			},
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 2,
+				reason: "LeaseManager declares legacy mutable authority store 'currentLeaseRegistry'",
+			},
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 3,
+				reason: "LeaseManager declares legacy mutable authority store 'activeUses'",
+			},
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 4,
+				reason: "LeaseManager declares legacy mutable authority store 'endedUseTombstones'",
+			},
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 5,
+				reason: "LeaseManager declares legacy mutable authority store 'releasingLeaseIds'",
+			},
+		]);
+	});
+
+	it('accepts LeaseManager projection through the sole Tool VM authority runtime', () => {
+		const findings = auditLeaseManagerSoleAuthorityOwnership([
+			{
+				content: [
+					"import { createToolVmLeaseAuthorityRuntime } from './tool-vm-lease-authority-runtime.js';",
+					'const authorityRuntime = createToolVmLeaseAuthorityRuntime();',
+					'const activeUseCount = authorityRuntime.activeUseCount(leaseId);',
+					'const lease = authorityRuntime.getLease(leaseId);',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+			},
+			{
+				content: 'const activeUses = new Map();',
+				filePath: 'packages/agent-vm/src/controller/leases/legacy-fixture.ts',
 			},
 		]);
 
