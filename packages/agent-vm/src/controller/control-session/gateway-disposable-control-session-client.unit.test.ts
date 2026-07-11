@@ -420,6 +420,86 @@ describe('Gateway disposable control session client', () => {
 		client.close();
 	});
 
+	it('fences only the exact current session and reconnects with a fresh attachment', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const second = createFakeSocket({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		const sockets = [first.socket, second.socket];
+		const reconnectCallbacks: Array<() => void> = [];
+		let attachmentGeneration = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => {
+				const socket = sockets.shift();
+				if (socket === undefined) {
+					throw new Error('unexpected socket attempt');
+				}
+				return socket;
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => {
+				attachmentGeneration += 1;
+				return attachmentGeneration;
+			},
+			policyByOperation: {},
+			reconnectJitterRandom: () => 0.5,
+			refreshExtraHeaders: async () => ({}),
+			scheduleReconnectTimer: (callback) => {
+				reconnectCallbacks.push(callback);
+				return { cancel: () => undefined };
+			},
+		});
+		await client.ready;
+
+		expect(
+			client.fenceCurrentSession({
+				expectedAttachmentGeneration: 2,
+				expectedSessionId: '22222222-2222-4222-8222-222222222222',
+				reason: 'reliability_test_disconnect',
+			}),
+		).toEqual({ status: 'not-current' });
+		expect(first.control.clientDisconnectCount).toBe(0);
+		expect(reconnectCallbacks).toEqual([]);
+
+		expect(
+			client.fenceCurrentSession({
+				expectedAttachmentGeneration: 1,
+				expectedSessionId: '22222222-2222-4222-8222-222222222222',
+				reason: 'reliability_test_disconnect',
+			}),
+		).toEqual({
+			attachmentGeneration: 1,
+			sessionId: '22222222-2222-4222-8222-222222222222',
+			status: 'fenced',
+		});
+		expect(first.control.clientDisconnectCount).toBe(1);
+		expect(reconnectCallbacks).toHaveLength(1);
+
+		reconnectCallbacks.shift()?.();
+		await Promise.resolve();
+		await second.control.accept();
+		expect(client.getDiagnostics()).toMatchObject({
+			accepted: true,
+			attachmentGeneration: 2,
+			lastHelloResponse: {
+				sessionId: '44444444-4444-4444-8444-444444444444',
+			},
+		});
+		client.close();
+	});
+
 	it('bounds authority handlers while an exact pending safety result still completes', async () => {
 		const connectionId = '11111111-1111-4111-8111-111111111111';
 		const sessionId = '22222222-2222-4222-8222-222222222222';

@@ -8,17 +8,18 @@ import type { ManagedVmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import type {
-	ControlSessionClient,
 	ControlSessionDispatcher,
 	ControlSessionFenceRegistry,
 	GatewayControlControllerHostActionOperations,
 	GatewayControlLeaseRpcOperations,
 	GatewayControlProcessAdmissionCoordinator,
+	GatewayDisposableControlSessionClient,
 	GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
 import type { GatewayVmRecoverySourceKey } from '../controller/health/gateway-vm-recovery-policy.js';
 import type { HealthEventStore } from '../controller/health/health-event-store.js';
 import type { OpenClawRuntimeStatusStore } from '../controller/openclaw-runtime-status.js';
+import type { OpenClawProcessSupervisor } from '../controller/process-supervisor/openclaw-process-supervisor.js';
 import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 
@@ -66,13 +67,15 @@ export interface StartGatewayZoneOptions {
 export type GatewayZonePreflightOptions = Omit<StartGatewayZoneOptions, 'createVmOwnership'>;
 
 export interface GatewayZoneStartResult {
-	readonly controlSession?: ControlSessionClient | undefined;
+	readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
 	readonly controlSessionRecoverySourceKey?: GatewayVmRecoverySourceKey | undefined;
 	readonly image: import('@agent-vm/gondolin-adapter').BuildImageResult;
 	readonly ingress: {
 		readonly host: string;
 		readonly port: number;
 	};
+	readonly openClawProcessSupervisor?: OpenClawProcessSupervisor | undefined;
+	readonly processEpoch?: string | undefined;
 	readonly processSpec: GatewayProcessSpec;
 	readonly vm: import('@agent-vm/gondolin-adapter').ManagedVm;
 	readonly vmOwnership: VmCreationOwnership;
@@ -94,7 +97,7 @@ export type GatewayControlSessionConnector = (options: {
 	readonly material: GatewayControlSessionMaterial;
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
-}) => Promise<ControlSessionClient>;
+}) => Promise<GatewayDisposableControlSessionClient>;
 
 export interface GatewayBuildImageOptions {
 	readonly buildConfig: unknown;

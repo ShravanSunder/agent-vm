@@ -1009,6 +1009,10 @@ describe('openclawLifecycle', () => {
 			expect(helperSource).toContain("path.join(groupPath, 'cgroup.kill')");
 			expect(helperSource).toContain("path.join(groupPath, 'cgroup.events')");
 			expect(helperSource).toContain('emptyObserved: true');
+			expect(helperSource).toContain(
+				`set -a; . /run/openclaw/secrets.env; set +a; cd /home/openclaw; exec /usr/local/bin/openclaw gateway --port 18789`,
+			);
+			expect(helperSource).not.toContain('exec su ');
 			expect(processSpec.startCommand).not.toMatch(
 				/(?:openclaw gateway|while true|restart_delay_seconds|nohup)/u,
 			);

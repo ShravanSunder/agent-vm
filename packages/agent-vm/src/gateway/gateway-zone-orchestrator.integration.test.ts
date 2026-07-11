@@ -30,14 +30,16 @@ import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import type {
-	ControlSessionClient,
 	GatewayControlLeaseRpcOperations,
+	GatewayDisposableControlSessionClient,
 } from '../controller/control-session/index.js';
 import {
 	createGatewayControlProcessAdmissionCoordinator,
 	createGatewayControlSessionMaterial,
 	resolveGatewayControlSessionMaterialPath,
 } from '../controller/control-session/index.js';
+import type { OpenClawProcessSupervisorGateway } from '../controller/process-supervisor/openclaw-process-supervisor-contracts.js';
+import type { OpenClawProcessSupervisor } from '../controller/process-supervisor/openclaw-process-supervisor.js';
 import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
@@ -176,21 +178,77 @@ function withTestVmOwnership(
 const connectTestGatewayControlSession: GatewayControlSessionConnector = async () => ({
 	close: vi.fn(),
 	emitApplicationMessage: vi.fn(async () => ({ ok: true })),
+	fenceCurrentSession: vi.fn(() => ({ status: 'not-current' as const })),
 	getDiagnostics: vi.fn(() => ({
 		accepted: true,
+		attachmentGeneration: 1,
 		connected: true,
 		endpointPath: '/__agent-vm/gateway-control',
 		helloCount: 1,
 		ready: true,
+		reconnectAttempts: 0,
+		reconnectExhausted: false,
 		transportName: 'websocket',
 	})),
 	ready: Promise.resolve({
+		attachmentGeneration: 1,
 		connectionId: '55555555-5555-4555-8555-555555555555',
 		controllerEpoch: 'controller-epoch-test',
 		outcome: 'accepted',
 		sessionId: '33333333-3333-4333-8333-333333333333',
 	}),
 });
+
+function createTestOpenClawProcessSupervisor(
+	gateway: OpenClawProcessSupervisorGateway,
+): OpenClawProcessSupervisor {
+	let currentProcessEpoch: string | undefined;
+	return {
+		contain: async () => {
+			throw new Error('test process supervisor containment was not expected');
+		},
+		observe: async (request) => {
+			if (request.expectedProcessEpoch === null) {
+				return {
+					actionId: request.actionId,
+					cgroup: { name: null, populated: false },
+					contractVersion: 1,
+					expectedProcessEpoch: null,
+					gateway,
+					kind: 'observe',
+					observedProcessEpoch: null,
+					status: 'completed',
+				};
+			}
+			if (currentProcessEpoch !== request.expectedProcessEpoch) {
+				throw new Error('test process supervisor observed the wrong process epoch');
+			}
+			return {
+				actionId: request.actionId,
+				cgroup: { name: 'test-openclaw-cgroup', populated: true },
+				contractVersion: 1,
+				expectedProcessEpoch: request.expectedProcessEpoch,
+				gateway,
+				kind: 'observe',
+				observedProcessEpoch: request.expectedProcessEpoch,
+				status: 'completed',
+			};
+		},
+		start: async (request) => {
+			currentProcessEpoch = request.selectedProcessEpoch;
+			return {
+				actionId: request.actionId,
+				cgroup: { name: 'test-openclaw-cgroup', populated: true },
+				contractVersion: 1,
+				expectedProcessEpoch: request.expectedProcessEpoch,
+				gateway,
+				kind: 'start',
+				observedProcessEpoch: request.selectedProcessEpoch,
+				status: 'completed',
+			};
+		},
+	};
+}
 
 function startGatewayZone(
 	options: TestStartGatewayZoneOptions,
@@ -208,6 +266,8 @@ function startGatewayZone(
 		),
 		{
 			connectGatewayControlSession: connectTestGatewayControlSession,
+			createOpenClawProcessSupervisor: ({ gateway }) =>
+				createTestOpenClawProcessSupervisor(gateway),
 			...dependencies,
 			...(createManagedVm === undefined
 				? {}
@@ -709,20 +769,23 @@ function createHealthyGatewayVmStub(
 	pid: number,
 ): {
 	readonly close: Mock<ManagedVm['close']>;
+	readonly enableIngress: Mock<ManagedVm['enableIngress']>;
 	readonly exec: Mock<ManagedVm['exec']>;
 	readonly managedVm: ManagedVm;
 } {
 	const close = vi.fn(async () => createCompleteGatewayVmDestroyReceipt(vmId));
+	const enableIngress = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 	const exec = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
 	const vmInstance = createVmInstanceStub(pid);
 	return {
 		close,
+		enableIngress,
 		exec,
 		managedVm: {
 			id: vmId,
 			getDestroyTarget: () => createGatewayVmDestroyTarget(vmId),
 			close,
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableIngress,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec,
 			fs: createManagedVmFsStub(),
@@ -835,6 +898,14 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const processStart = vi.fn<OpenClawProcessSupervisor['start']>();
+		const createOpenClawProcessSupervisor = vi.fn(
+			({ gateway }: { readonly gateway: OpenClawProcessSupervisorGateway }) => {
+				const supervisor = createTestOpenClawProcessSupervisor(gateway);
+				processStart.mockImplementation(async (request) => await supervisor.start(request));
+				return { ...supervisor, start: processStart };
+			},
+		);
 		const buildConfig: BuildConfig = {
 			arch: 'aarch64',
 			distro: 'alpine',
@@ -859,6 +930,7 @@ describe('startGatewayZone', () => {
 			{
 				buildImage,
 				createManagedVm,
+				createOpenClawProcessSupervisor,
 				loadBuildConfig,
 			},
 		);
@@ -965,6 +1037,21 @@ describe('startGatewayZone', () => {
 		).resolves.toMatchObject({ allow: false });
 		expect(createdVmOptions.tcpHosts).not.toHaveProperty('controller.vm.host:18800');
 		expect(execMock).toHaveBeenCalledWith(buildExpectedOpenClawGatewayStartCommandForTest());
+		expect(createOpenClawProcessSupervisor).toHaveBeenCalledWith(
+			expect.objectContaining({
+				gateway: {
+					controllerEpoch: 'controller-epoch-test',
+					gatewayEpochId: 'test-gateway-epoch-shravan',
+					gatewayVmId: 'vm-123',
+				},
+				vm: managedVm,
+			}),
+		);
+		expect(processStart).toHaveBeenCalledWith({
+			actionId: expect.stringMatching(/^process-start-/u),
+			expectedProcessEpoch: null,
+			selectedProcessEpoch: result.processEpoch,
+		});
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{
 				port: 18789,
@@ -989,6 +1076,8 @@ describe('startGatewayZone', () => {
 			'Booting gateway VM',
 			'Configuring gateway',
 			'Starting gateway',
+			'Starting OpenClaw process',
+			'Observing OpenClaw process',
 			'Waiting for service health',
 			'Connecting gateway control session',
 			'Recording gateway runtime',
@@ -3595,6 +3684,86 @@ describe('startGatewayZone', () => {
 		expect(ownership.destroyDetached).not.toHaveBeenCalled();
 	});
 
+	it('rolls back the exact Gateway when P1 is not positively observed before health and S1', async () => {
+		const ownership = createTestVmOwnershipHarness(
+			'vm-process-observe-failed',
+			createTestGatewayEpochIdentity('vm-process-observe-failed'),
+		);
+		const { close, enableIngress, exec, managedVm } = createHealthyGatewayVmStub(
+			'vm-process-observe-failed',
+			28_296,
+		);
+		const omittedLogPrefix = 'omitted-sensitive-prefix';
+		const retainedLogSuffix = 'retained-openclaw-exit-suffix';
+		exec.mockImplementation((command) =>
+			createManagedExecProcessStub({
+				stdout:
+					typeof command === 'string' && command.startsWith('tail -n 80 ')
+						? `${omittedLogPrefix}${'x'.repeat(20_000)}${retainedLogSuffix}\n`
+						: '200',
+			}),
+		);
+		const connectGatewayControlSession = vi.fn(connectTestGatewayControlSession);
+		const writeGatewayRuntimeRecord = vi.fn(async () => undefined);
+		const processStart = vi.fn<OpenClawProcessSupervisor['start']>();
+		const processObserve = vi.fn<OpenClawProcessSupervisor['observe']>();
+
+		const startup = startGatewayZone(
+			{
+				controlSession: { controllerEpoch: 'controller-epoch-test' },
+				createVmOwnership: ownership.createVmOwnership,
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					PERPLEXITY_API_KEY: 'pplx-key',
+				}),
+				systemConfig: await createSystemConfig(),
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				connectGatewayControlSession,
+				createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+				createManagedVm: vi.fn(async () => managedVm),
+				createOpenClawProcessSupervisor: ({ gateway }) => {
+					const supervisor = createTestOpenClawProcessSupervisor(gateway);
+					processStart.mockImplementation(async (request) => await supervisor.start(request));
+					processObserve.mockImplementation(async (request) => ({
+						actionId: request.actionId,
+						cgroup: { name: 'test-openclaw-cgroup', populated: false },
+						contractVersion: 1,
+						expectedProcessEpoch: request.expectedProcessEpoch ?? 'missing-process',
+						gateway,
+						kind: 'observe',
+						observedProcessEpoch: request.expectedProcessEpoch ?? 'missing-process',
+						status: 'completed',
+					}));
+					return { ...supervisor, observe: processObserve, start: processStart };
+				},
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				writeGatewayRuntimeRecord,
+			},
+		);
+
+		await expect(startup).rejects.toThrow(
+			/was not positively observed in its exact cgroup.*Gateway log tail.*gateway log tail truncated.*retained-openclaw-exit-suffix/su,
+		);
+		await expect(startup).rejects.not.toThrow(omittedLogPrefix);
+
+		expect(processStart).toHaveBeenCalledOnce();
+		expect(processObserve).toHaveBeenCalledOnce();
+		expect(enableIngress).not.toHaveBeenCalled();
+		expect(connectGatewayControlSession).not.toHaveBeenCalled();
+		expect(writeGatewayRuntimeRecord).not.toHaveBeenCalled();
+		expect(ownership.destroyLive).toHaveBeenCalledOnce();
+		expect(close).toHaveBeenCalledOnce();
+		expect(ownership.destroyDetached).not.toHaveBeenCalled();
+	});
+
 	it('closes the booted gateway VM if writing the runtime record fails', async () => {
 		const closeMock = vi.fn(async () => createCompleteGatewayVmDestroyReceipt('vm-record-fail'));
 		const managedVm: ManagedVm = {
@@ -3824,8 +3993,9 @@ describe('startGatewayZone', () => {
 	it('provisions plugin verifier config and connects the gateway control session after ingress', async () => {
 		const taskTitles: string[] = [];
 		const controlSessionClose = vi.fn();
-		const controlSessionClient: ControlSessionClient = {
+		const controlSessionClient: GatewayDisposableControlSessionClient = {
 			ready: Promise.resolve({
+				attachmentGeneration: 1,
 				connectionId: '55555555-5555-4555-8555-555555555555',
 				controllerEpoch: 'controller-epoch-test',
 				outcome: 'accepted',
@@ -3833,12 +4003,16 @@ describe('startGatewayZone', () => {
 			}),
 			close: controlSessionClose,
 			emitApplicationMessage: vi.fn(async () => ({ ok: true })),
+			fenceCurrentSession: vi.fn(() => ({ status: 'not-current' as const })),
 			getDiagnostics: vi.fn(() => ({
 				accepted: true,
+				attachmentGeneration: 1,
 				connected: true,
 				endpointPath: '/__agent-vm/gateway-control',
 				helloCount: 1,
 				ready: true,
+				reconnectAttempts: 0,
+				reconnectExhausted: false,
 				transportName: 'websocket',
 			})),
 		};

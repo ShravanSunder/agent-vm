@@ -74,7 +74,14 @@ async function readRawGatewayControlUpgradeResponse(options: {
 	return response;
 }
 
-async function restartOpenClawGatewayProcess(gatewayVm: ManagedVm): Promise<void> {
+interface OpenClawProcessIdentity {
+	readonly pid: number;
+	readonly startTimeTicks: string;
+}
+
+async function readOpenClawGatewayProcessIdentity(
+	gatewayVm: ManagedVm,
+): Promise<OpenClawProcessIdentity> {
 	const result = await gatewayVm.exec(`
 set -eu
 port_hex="$(printf '%04X' 18789)"
@@ -93,26 +100,22 @@ if [ -z "$gateway_pid" ]; then
   echo "no openclaw gateway process found" >&2
   exit 1
 fi
-kill -KILL "$gateway_pid"
-for _attempt in $(seq 1 90); do
-  readyz_code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/readyz 2>/dev/null || true)"
-  if [ "$readyz_code" = "200" ] && grep -q 'gateway-supervisor: starting openclaw gateway attempt=2' /agent-vm/logs/gateway-boot-latest.log; then
-    echo "supervisor restarted openclaw gateway after pid $gateway_pid"
-    exit 0
-  fi
-  sleep 1
-done
-echo "openclaw gateway did not restart after killing pid $gateway_pid" >&2
-tail -n 80 /agent-vm/logs/gateway-boot-latest.log >&2 || true
-exit 1
+start_time_ticks="$(awk '{ print $22 }' "/proc/$gateway_pid/stat")"
+printf '%s %s\\n' "$gateway_pid" "$start_time_ticks"
 `);
 	if (result.exitCode !== 0) {
 		throw new Error(
-			`OpenClaw gateway process restart failed with exit ${String(result.exitCode)}.\nstdout:\n${
+			`OpenClaw gateway process identity read failed with exit ${String(result.exitCode)}.\nstdout:\n${
 				result.stdout
 			}\nstderr:\n${result.stderr}`,
 		);
 	}
+	const [pidText, startTimeTicks] = result.stdout.trim().split(/\s+/u);
+	const pid = Number.parseInt(pidText ?? '', 10);
+	if (!Number.isSafeInteger(pid) || pid <= 0 || startTimeTicks === undefined) {
+		throw new Error(`Invalid OpenClaw process identity output: ${result.stdout}`);
+	}
+	return { pid, startTimeTicks };
 }
 
 async function sendControllerOriginatedGatewayControlPing(options: {
@@ -124,7 +127,12 @@ async function sendControllerOriginatedGatewayControlPing(options: {
 }> {
 	const controlSession = options.gatewayStart.controlSession;
 	const recoverySourceKey = options.gatewayStart.controlSessionRecoverySourceKey;
-	if (controlSession === undefined || recoverySourceKey === undefined) {
+	const processEpoch = options.gatewayStart.processEpoch;
+	if (
+		controlSession === undefined ||
+		recoverySourceKey === undefined ||
+		processEpoch === undefined
+	) {
 		throw new Error('Expected OpenClaw gateway start to expose a control session.');
 	}
 	const diagnostics = controlSession.getDiagnostics();
@@ -135,7 +143,7 @@ async function sendControllerOriginatedGatewayControlPing(options: {
 		);
 	}
 	const envelope: ControlEnvelope = ControlEnvelopeSchema.parse({
-		bootId: recoverySourceKey.bootId,
+		bootId: processEpoch,
 		connectionId: helloResponse.connectionId,
 		controllerEpoch: helloResponse.controllerEpoch,
 		createdAtMs: Date.now(),
@@ -247,7 +255,7 @@ describeOpenClawControlSession(
 			}
 		});
 
-		it('rejects bad upgrades before 101, connects websocket-only, and reconnects after gateway flap', async () => {
+		it('rejects bad upgrades before 101 and replaces only the control session after an idle transport interruption', async () => {
 			if (gatewayStart?.controlSession === undefined || harness === undefined) {
 				throw new Error('Expected OpenClaw control-session harness to be initialized.');
 			}
@@ -275,7 +283,27 @@ describeOpenClawControlSession(
 			expect(connectedDiagnostics.helloCount).toBeGreaterThanOrEqual(1);
 
 			const helloCountBeforeFlap = connectedDiagnostics.helloCount;
-			await restartOpenClawGatewayProcess(gatewayStart.vm);
+			const gatewayIdentityBefore = {
+				generationId: gatewayStart.controlSessionRecoverySourceKey?.generationId,
+				vmId: gatewayStart.vm.id,
+			};
+			const processIdentityBefore = await readOpenClawGatewayProcessIdentity(gatewayStart.vm);
+			const attachmentGenerationBefore = connectedDiagnostics.attachmentGeneration;
+			const sessionIdBefore = connectedDiagnostics.lastHelloResponse?.sessionId;
+			if (attachmentGenerationBefore === undefined || sessionIdBefore === undefined) {
+				throw new Error('Expected an exact accepted control-session identity before interruption.');
+			}
+			expect(
+				gatewayStart.controlSession.fenceCurrentSession({
+					expectedAttachmentGeneration: attachmentGenerationBefore,
+					expectedSessionId: sessionIdBefore,
+					reason: 'reliability_test_disconnect',
+				}),
+			).toMatchObject({
+				attachmentGeneration: attachmentGenerationBefore,
+				sessionId: sessionIdBefore,
+				status: 'fenced',
+			});
 			await waitForControlSessionReconnected({
 				controlSession: gatewayStart.controlSession,
 				minimumHelloCount: helloCountBeforeFlap + 1,
@@ -292,6 +320,15 @@ describeOpenClawControlSession(
 			expect(reconnectDiagnostics.lastHelloResponse).toMatchObject({
 				outcome: 'accepted',
 			});
+			expect(reconnectDiagnostics.attachmentGeneration).toBeGreaterThan(attachmentGenerationBefore);
+			expect(reconnectDiagnostics.lastHelloResponse?.sessionId).not.toBe(sessionIdBefore);
+			expect({
+				generationId: gatewayStart.controlSessionRecoverySourceKey?.generationId,
+				vmId: gatewayStart.vm.id,
+			}).toEqual(gatewayIdentityBefore);
+			expect(await readOpenClawGatewayProcessIdentity(gatewayStart.vm)).toEqual(
+				processIdentityBefore,
+			);
 
 			const pingResult = await sendControllerOriginatedGatewayControlPing({
 				gatewayStart,

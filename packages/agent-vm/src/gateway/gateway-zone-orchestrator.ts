@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -41,6 +41,10 @@ import { findOpenClawLeaseWorkMountAgentMismatch } from '../controller/leases/le
 import { assertCanonicalOpenClawAgentWorkspaceDir } from '../controller/leases/openclaw-agent-workspace-paths.js';
 import { createOpenClawGatewayLeasePathMapping } from '../controller/leases/openclaw-gateway-lease-path-mapping.js';
 import { OPENCLAW_PROCESS_SUPERVISOR_GUEST_STATE_DIRECTORY } from '../controller/process-supervisor/openclaw-process-supervisor-contracts.js';
+import {
+	createManagedVmOpenClawProcessSupervisor,
+	type OpenClawProcessSupervisor,
+} from '../controller/process-supervisor/openclaw-process-supervisor.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
 	createObservabilityRuntimeConfig,
@@ -332,6 +336,7 @@ export interface GatewayManagerDependencies extends GatewayImageBuilderDependenc
 	readonly connectGatewayControlSession?: GatewayControlSessionConnector;
 	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
 	readonly createGatewayControlSessionMaterial?: GatewayControlSessionMaterialFactory;
+	readonly createOpenClawProcessSupervisor?: typeof createManagedVmOpenClawProcessSupervisor;
 	readonly gatewayReadinessMaxAttempts?: number;
 	readonly gatewayReadinessRetryDelayMs?: number;
 	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
@@ -627,6 +632,18 @@ interface GatewayCommandResult {
 	readonly stdout: string;
 }
 
+const MAX_GATEWAY_LOG_TAIL_CHARACTERS = 16 * 1024;
+const GATEWAY_LOG_TAIL_TRUNCATION_MARKER = '[gateway log tail truncated]\n';
+
+function boundGatewayLogTail(logTail: string): string {
+	if (logTail.length <= MAX_GATEWAY_LOG_TAIL_CHARACTERS) {
+		return logTail;
+	}
+	return `${GATEWAY_LOG_TAIL_TRUNCATION_MARKER}${logTail.slice(
+		-(MAX_GATEWAY_LOG_TAIL_CHARACTERS - GATEWAY_LOG_TAIL_TRUNCATION_MARKER.length),
+	)}`;
+}
+
 function selectGatewayImageProfile(options: {
 	readonly systemConfig: import('../config/system-config.js').SystemConfig;
 	readonly zone: GatewayZone;
@@ -672,7 +689,7 @@ async function readGatewayLogTail(options: {
 		const output = [result.stdout.trim(), result.stderr.trim()]
 			.filter((chunk) => chunk.length > 0)
 			.join('\n');
-		return output.length > 0 ? output : undefined;
+		return output.length > 0 ? boundGatewayLogTail(output) : undefined;
 	} catch {
 		return undefined;
 	}
@@ -1148,6 +1165,9 @@ export async function startGatewayZone(
 		zone,
 	});
 	let exactGatewayVfsMounts = vfsMounts;
+	let openClawProcessSupervisorStateMount:
+		| { readonly guestPath: string; readonly hostPath: string }
+		| undefined;
 	if (zone.gateway.type === 'openclaw') {
 		const gatewayIdentity = vmOwnership.gatewayIdentity;
 		if (gatewayIdentity === undefined) {
@@ -1161,6 +1181,7 @@ export async function startGatewayZone(
 		});
 		await fs.mkdir(supervisorStateMount.hostPath, { mode: 0o700, recursive: true });
 		await fs.chmod(supervisorStateMount.hostPath, 0o700);
+		openClawProcessSupervisorStateMount = supervisorStateMount;
 		exactGatewayVfsMounts = {
 			...vfsMounts,
 			[supervisorStateMount.guestPath]: {
@@ -1256,6 +1277,57 @@ export async function startGatewayZone(
 				stepName: 'Starting gateway',
 			});
 		});
+		let openClawProcessSupervisor: OpenClawProcessSupervisor | undefined;
+		const processEpoch = controlSessionMaterial?.processEpoch ?? randomUUID();
+		if (zone.gateway.type === 'openclaw') {
+			const gatewayIdentity = vmOwnership.gatewayIdentity;
+			if (gatewayIdentity === undefined || openClawProcessSupervisorStateMount === undefined) {
+				throw new Error(
+					`OpenClaw zone '${zone.id}' cannot start its process without exact Gateway supervisor state.`,
+				);
+			}
+			const processSupervisor = (
+				dependencies.createOpenClawProcessSupervisor ?? createManagedVmOpenClawProcessSupervisor
+			)({
+				gateway: {
+					controllerEpoch: gatewayIdentity.controllerEpoch,
+					gatewayEpochId: gatewayIdentity.gatewayEpochId,
+					gatewayVmId: gatewayIdentity.gatewayVmId,
+				},
+				hostStateDirectory: openClawProcessSupervisorStateMount.hostPath,
+				vm: managedVm,
+			});
+			openClawProcessSupervisor = processSupervisor;
+			await runTaskStep('Starting OpenClaw process', async () => {
+				await processSupervisor.start({
+					actionId: `process-start-${randomUUID()}`,
+					expectedProcessEpoch: null,
+					selectedProcessEpoch: processEpoch,
+				});
+			});
+			const processObservation = await runTaskWithResult(
+				runTaskStep,
+				'Observing OpenClaw process',
+				async () =>
+					await processSupervisor.observe({
+						actionId: `process-observe-${randomUUID()}`,
+						expectedProcessEpoch: processEpoch,
+					}),
+			);
+			if (
+				processObservation.kind !== 'observe' ||
+				processObservation.observedProcessEpoch !== processEpoch ||
+				!processObservation.cgroup.populated
+			) {
+				const logTail = await readGatewayLogTail({
+					logPath: processSpec.logPath,
+					managedVm,
+				});
+				throw new Error(
+					`OpenClaw process '${processEpoch}' was not positively observed in its exact cgroup.${logTail ? `\nGateway log tail (${processSpec.logPath}):\n${logTail}` : ''}`,
+				);
+			}
+		}
 		const startupHealthCheck = processSpec.serviceHealthCheck ?? processSpec.healthCheck;
 		await runTaskStep('Waiting for service health', async () => {
 			await waitForHealth({
@@ -1377,6 +1449,9 @@ export async function startGatewayZone(
 		});
 		return {
 			...(controlSession === undefined ? {} : { controlSession }),
+			...(openClawProcessSupervisor === undefined
+				? {}
+				: { openClawProcessSupervisor, processEpoch }),
 			...(controlSessionMaterial === undefined
 				? {}
 				: {

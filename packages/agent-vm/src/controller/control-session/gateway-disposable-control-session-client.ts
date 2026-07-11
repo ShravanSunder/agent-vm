@@ -126,6 +126,17 @@ export interface GatewayDisposableControlSessionDiagnostics {
 }
 
 export interface GatewayDisposableControlSessionClient extends ControlSessionClient<GatewayControlHelloResponse> {
+	fenceCurrentSession(options: {
+		readonly expectedAttachmentGeneration: number;
+		readonly expectedSessionId: string;
+		readonly reason: 'reliability_test_disconnect';
+	}):
+		| { readonly status: 'not-current' }
+		| {
+				readonly attachmentGeneration: number;
+				readonly sessionId: string;
+				readonly status: 'fenced';
+		  };
 	getDiagnostics(): GatewayDisposableControlSessionDiagnostics;
 }
 
@@ -842,6 +853,24 @@ export function createGatewayDisposableControlSessionClient(
 	return {
 		ready,
 		close: () => closeClient('gateway control session closed'),
+		fenceCurrentSession: (fenceOptions) => {
+			const attempt = currentAttempt;
+			if (
+				attempt === undefined ||
+				!attempt.accepted ||
+				attempt.attachmentGeneration !== fenceOptions.expectedAttachmentGeneration ||
+				attempt.sessionId !== fenceOptions.expectedSessionId
+			) {
+				return { status: 'not-current' };
+			}
+			const fencedSession = {
+				attachmentGeneration: attempt.attachmentGeneration,
+				sessionId: attempt.sessionId,
+				status: 'fenced',
+			} as const;
+			fenceAttempt(attempt, fenceOptions.reason);
+			return fencedSession;
+		},
 		emitApplicationMessage: async (envelope, domainMessage, payload, emitOptions) => {
 			const attempt = currentAttempt;
 			if (attempt === undefined || !attempt.accepted || !attempt.socket.connected) {

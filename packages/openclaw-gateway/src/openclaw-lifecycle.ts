@@ -481,7 +481,7 @@ try {
     writeReceipt({ actionId: request.actionId, cgroup: { name: cgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: request.selectedProcessEpoch, reason: 'helper-failed', status: 'incomplete' });
     try {
       const logFd = openSync('${openClawGatewayBootLogFileVmPath}', 'a', 0o600);
-      const launch = 'echo $$ > ' + JSON.stringify(path.join(groupPath, 'cgroup.procs')) + '; exec su openclaw -s /bin/sh -c ' + JSON.stringify('set -a; . ${openClawRuntimeSecretsEnvFilePath}; set +a; cd /home/openclaw; exec ${openClawCommandVmPath} gateway --port ${openClawGatewayGuestPort}');
+      const launch = 'echo $$ > ' + JSON.stringify(path.join(groupPath, 'cgroup.procs')) + '; set -a; . ${openClawRuntimeSecretsEnvFilePath}; set +a; cd /home/openclaw; exec ${openClawCommandVmPath} gateway --port ${openClawGatewayGuestPort}';
       let child;
       try {
         child = spawn('/bin/sh', ['-c', launch], { detached: true, stdio: ['ignore', logFd, logFd] });
