@@ -652,8 +652,13 @@ export function createGatewayDisposableControlSessionClient(
 								if (options.dispatcher === undefined) {
 									throw new Error('no gateway control dispatcher configured');
 								}
-								options.dispatcher.validate({ envelope, payload: message });
+								options.dispatcher.validate({
+									attachmentGeneration: attempt.attachmentGeneration,
+									envelope,
+									payload: message,
+								});
 								const responsePayload = await options.dispatcher.dispatch({
+									attachmentGeneration: attempt.attachmentGeneration,
 									envelope,
 									payload: message,
 								});

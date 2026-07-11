@@ -8,6 +8,7 @@ import {
 	canonicalGatewaySemanticPayloadDigest,
 	createGatewaySemanticResultLedger,
 	type GatewaySemanticEpoch,
+	type GatewaySemanticExecutionProof,
 	type GatewaySemanticOperationIdentity,
 } from './gateway-semantic-result-ledger.js';
 
@@ -67,6 +68,44 @@ describe('Gateway semantic canonical payload digest', () => {
 });
 
 describe('Gateway semantic result ledger', () => {
+	it('passes an exact cloned execution proof with a payload-independent semantic operation id', async () => {
+		const firstLedger = createGatewaySemanticResultLedger({ gateway: gatewayA, nowMs: () => 0 });
+		const secondLedger = createGatewaySemanticResultLedger({ gateway: gatewayA, nowMs: () => 0 });
+		const firstIdentity = leaseOperation();
+		const refreshedIdentity = {
+			...firstIdentity,
+			validUntilMs: firstIdentity.validUntilMs - 1,
+		};
+		let firstProof: GatewaySemanticExecutionProof | undefined;
+		let refreshedProof: GatewaySemanticExecutionProof | undefined;
+
+		await firstLedger.executeMutating({
+			handler: async (proof) => {
+				firstProof = proof;
+				return 'first';
+			},
+			identity: firstIdentity,
+			payload: { value: 1 },
+		});
+		await secondLedger.executeMutating({
+			handler: async (proof) => {
+				refreshedProof = proof;
+				return 'second';
+			},
+			identity: refreshedIdentity,
+			payload: { value: 2 },
+		});
+
+		expect(firstProof).toBeDefined();
+		expect(firstProof?.identity).toEqual(firstIdentity);
+		expect(firstProof?.identity).not.toBe(firstIdentity);
+		expect(firstProof?.identity.profile).not.toBe(firstIdentity.profile);
+		expect(refreshedProof?.identity).toEqual(refreshedIdentity);
+		expect(refreshedProof?.semanticOperationId).toBe(firstProof?.semanticOperationId);
+		expect(refreshedProof?.operationPayloadDigest).not.toEqual(firstProof?.operationPayloadDigest);
+		expect(firstProof?.semanticOperationId).toMatch(/^[a-f0-9]{64}$/u);
+	});
+
 	it('shares an exact pending/completed retry and rejects changed meaning without redispatch', async () => {
 		const ledger = createGatewaySemanticResultLedger({ gateway: gatewayA, nowMs: () => 0 });
 		let resolveHandler: ((value: string) => void) | undefined;

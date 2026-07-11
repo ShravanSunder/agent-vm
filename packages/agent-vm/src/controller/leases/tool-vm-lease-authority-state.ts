@@ -80,7 +80,7 @@ export function authorizeCurrentToolVmLeafBinding(
 			'Lease compatibility does not match the current leaf.',
 		);
 	}
-	if (request.nowMs >= leaf.policyExpiresAtMs) {
+	if (request.nowMs >= leaf.idleExpiresAtMs && !nonTerminalActiveUseExists(leaf.activeUses)) {
 		return transitionError('lease-expired', 'Lease policy has expired.');
 	}
 	if (leaf.sshBinding.bindingId !== request.sshBindingId) {
@@ -89,7 +89,7 @@ export function authorizeCurrentToolVmLeafBinding(
 	return {
 		leaseId: leaf.leaseId,
 		leafGeneration: leaf.leafGeneration,
-		policyExpiresAtMs: leaf.policyExpiresAtMs,
+		idleExpiresAtMs: leaf.idleExpiresAtMs,
 		runtimeBinding: leaf.runtimeBinding,
 		sshBinding: leaf.sshBinding,
 	};
@@ -142,8 +142,8 @@ export function reduceToolVmLeaseAuthorityState(
 			requireAdmittingParent(state, command.authority.gateway);
 			if (
 				command.authority.leaseId.length === 0 ||
-				!Number.isSafeInteger(command.policyExpiresAtMs) ||
-				command.policyExpiresAtMs <= 0
+				!Number.isSafeInteger(command.idleExpiresAtMs) ||
+				command.idleExpiresAtMs <= 0
 			) {
 				throw new Error(
 					'Lease identity and policy expiry must be controller-owned bounded values.',
@@ -180,7 +180,7 @@ export function reduceToolVmLeaseAuthorityState(
 				kind: 'provisioning',
 				leaseId: command.authority.leaseId,
 				leafGeneration: command.authority.leafGeneration,
-				policyExpiresAtMs: command.policyExpiresAtMs,
+				idleExpiresAtMs: command.idleExpiresAtMs,
 				principal: structuredClone(command.authority.principal),
 			});
 		}
@@ -204,6 +204,33 @@ export function reduceToolVmLeaseAuthorityState(
 				kind: 'current',
 				runtimeBinding: structuredClone(command.runtimeBinding),
 				sshBinding: structuredClone(command.sshBinding),
+			});
+		}
+		case 'renew-idle-expiry': {
+			requireAdmittingParent(state, command.authority.gateway);
+			const leaf = requireLiveLeaf(state, command.authority);
+			if (leaf.kind !== 'current') {
+				return transitionError(
+					'leaf-not-current',
+					`Leaf is '${leaf.kind}' and cannot renew idle expiry.`,
+				);
+			}
+			if (command.nowMs >= leaf.idleExpiresAtMs && !nonTerminalActiveUseExists(leaf.activeUses)) {
+				return transitionError('lease-expired', 'Lease idle expiry has already elapsed.');
+			}
+			if (
+				!Number.isSafeInteger(command.nextIdleExpiresAtMs) ||
+				command.nextIdleExpiresAtMs <= command.nowMs ||
+				command.nextIdleExpiresAtMs <= leaf.idleExpiresAtMs
+			) {
+				return transitionError(
+					'idle-expiry-regressed',
+					'Lease idle expiry must advance beyond both the current deadline and observation time.',
+				);
+			}
+			return replaceLeaf(state, {
+				...leaf,
+				idleExpiresAtMs: command.nextIdleExpiresAtMs,
 			});
 		}
 		case 'mark-suspect': {
@@ -231,7 +258,7 @@ export function reduceToolVmLeaseAuthorityState(
 				kind: 'current',
 				leaseId: leaf.leaseId,
 				leafGeneration: leaf.leafGeneration,
-				policyExpiresAtMs: leaf.policyExpiresAtMs,
+				idleExpiresAtMs: leaf.idleExpiresAtMs,
 				principal: leaf.principal,
 				runtimeBinding: leaf.runtimeBinding,
 				sshBinding: leaf.sshBinding,
@@ -583,7 +610,7 @@ export function reduceToolVmLeaseAuthorityState(
 				kind: 'destroying',
 				leaseId: leaf.leaseId,
 				leafGeneration: leaf.leafGeneration,
-				policyExpiresAtMs: leaf.policyExpiresAtMs,
+				idleExpiresAtMs: leaf.idleExpiresAtMs,
 				principal: leaf.principal,
 				...('runtimeBinding' in leaf ? { runtimeBinding: leaf.runtimeBinding } : {}),
 				...('sshBinding' in leaf ? { sshBinding: leaf.sshBinding } : {}),
@@ -603,7 +630,7 @@ export function reduceToolVmLeaseAuthorityState(
 				leaseId: leaf.leaseId,
 				leafGeneration: leaf.leafGeneration,
 				ownerUnsafeReason: command.reason,
-				policyExpiresAtMs: leaf.policyExpiresAtMs,
+				idleExpiresAtMs: leaf.idleExpiresAtMs,
 				principal: leaf.principal,
 				...(leaf.runtimeBinding === undefined ? {} : { runtimeBinding: leaf.runtimeBinding }),
 				...(leaf.sshBinding === undefined ? {} : { sshBinding: leaf.sshBinding }),
@@ -623,7 +650,7 @@ export function reduceToolVmLeaseAuthorityState(
 				kind: 'destroying',
 				leaseId: leaf.leaseId,
 				leafGeneration: leaf.leafGeneration,
-				policyExpiresAtMs: leaf.policyExpiresAtMs,
+				idleExpiresAtMs: leaf.idleExpiresAtMs,
 				principal: leaf.principal,
 				...(leaf.runtimeBinding === undefined ? {} : { runtimeBinding: leaf.runtimeBinding }),
 				...(leaf.sshBinding === undefined ? {} : { sshBinding: leaf.sshBinding }),

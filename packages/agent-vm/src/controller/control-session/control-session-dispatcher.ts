@@ -8,12 +8,14 @@ import { CONTROL_QUEUE_LIMITS } from '@agent-vm/control-protocol-contracts';
 import { assertControlSessionDispatchAllowed } from './control-session-client.js';
 import type {
 	GatewaySemanticJsonValue,
+	GatewaySemanticExecutionProof,
 	GatewaySemanticLedgerDecision,
 	GatewaySemanticOperationIdentity,
 	GatewaySemanticResultLedger,
 } from './gateway-semantic-result-ledger.js';
 
 export interface ControlSessionDispatchContext {
+	readonly attachmentGeneration?: number;
 	readonly envelope: ControlEnvelope;
 	readonly payload: unknown;
 }
@@ -33,12 +35,15 @@ export interface ControlSessionDomainHandler {
 	>[0]['policyByOperation'];
 	handle(context: ControlSessionDispatchContext): Promise<unknown>;
 	messageIdentity(context: ControlSessionDispatchContext): DomainControlMessageIdentity;
-	semanticMutation?(context: ControlSessionDispatchContext):
-		| {
-				readonly identity: GatewaySemanticOperationIdentity;
-				readonly payload: GatewaySemanticJsonValue;
-		  }
-		| undefined;
+	prepareSemanticMutation?(
+		context: ControlSessionDispatchContext,
+	): Promise<PreparedControlSessionSemanticMutation | undefined>;
+}
+
+export interface PreparedControlSessionSemanticMutation {
+	readonly execute: (proof: GatewaySemanticExecutionProof) => Promise<unknown>;
+	readonly identity: GatewaySemanticOperationIdentity;
+	readonly payload: GatewaySemanticJsonValue;
 }
 
 export interface ControlSessionFence {
@@ -245,13 +250,13 @@ export function createControlSessionDispatcher(
 					? {}
 					: { sessionFenceRegistry: options.sessionFenceRegistry }),
 			});
-			const semanticMutation = handler.semanticMutation?.(context);
+			const semanticMutation = await handler.prepareSemanticMutation?.(context);
 			if (semanticMutation !== undefined) {
 				if (options.semanticLedger === undefined) {
 					throw new Error('gateway semantic mutation has no configured semantic ledger');
 				}
 				const semanticDecision = await options.semanticLedger.executeMutating({
-					handler: async () => await handleControlSessionDispatch({ context, handler }),
+					handler: semanticMutation.execute,
 					identity: semanticMutation.identity,
 					payload: semanticMutation.payload,
 				});

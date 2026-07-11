@@ -58,6 +58,12 @@ export interface GatewaySemanticPayloadDigest {
 	readonly digest: string;
 }
 
+export interface GatewaySemanticExecutionProof {
+	readonly identity: GatewaySemanticOperationIdentity;
+	readonly operationPayloadDigest: GatewaySemanticPayloadDigest;
+	readonly semanticOperationId: string;
+}
+
 export type GatewaySemanticLedgerDecision<TResult> =
 	| { readonly kind: 'capacity_exhausted' }
 	| { readonly kind: 'completed'; readonly value: TResult }
@@ -69,7 +75,7 @@ export type GatewaySemanticLedgerDecision<TResult> =
 
 export interface GatewaySemanticResultLedger {
 	executeMutating(options: {
-		readonly handler: () => Promise<unknown>;
+		readonly handler: (proof: GatewaySemanticExecutionProof) => Promise<unknown>;
 		readonly identity: GatewaySemanticOperationIdentity;
 		readonly payload: GatewaySemanticJsonValue;
 	}): Promise<GatewaySemanticLedgerDecision<unknown>>;
@@ -278,6 +284,22 @@ function meaningKeyForIdentity(options: {
 	});
 }
 
+export function canonicalGatewaySemanticOperationId(
+	identity: GatewaySemanticOperationIdentity,
+): string {
+	const canonicalIdentityMeaning = canonicalizeJsonValue({
+		commandId: identity.commandId,
+		gateway: gatewaySemanticEpochValue(identity.gateway),
+		idempotencyKey: identity.idempotencyKey,
+		operation: identity.operation,
+		profile: generationProfileValue(identity.profile),
+		target: identity.target,
+	});
+	return createHash('sha256')
+		.update(`agent-vm-gateway-semantic-operation-v1\n${canonicalIdentityMeaning}`, 'utf8')
+		.digest('hex');
+}
+
 function requirePositiveInteger(name: string, value: number): number {
 	if (!Number.isSafeInteger(value) || value <= 0) {
 		throw new RangeError(`${name} must be a positive safe integer.`);
@@ -366,7 +388,7 @@ export function createGatewaySemanticResultLedger(
 
 	return {
 		async executeMutating(executeOptions: {
-			readonly handler: () => Promise<unknown>;
+			readonly handler: (proof: GatewaySemanticExecutionProof) => Promise<unknown>;
 			readonly identity: GatewaySemanticOperationIdentity;
 			readonly payload: GatewaySemanticJsonValue;
 		}): Promise<GatewaySemanticLedgerDecision<unknown>> {
@@ -379,6 +401,11 @@ export function createGatewaySemanticResultLedger(
 			}
 			pruneExpiredTombstones(nowMs);
 			const payloadDigest = canonicalGatewaySemanticPayloadDigest(executeOptions.payload);
+			const executionProof = {
+				identity: structuredClone(executeOptions.identity),
+				operationPayloadDigest: payloadDigest,
+				semanticOperationId: canonicalGatewaySemanticOperationId(executeOptions.identity),
+			} satisfies GatewaySemanticExecutionProof;
 			const correlationKey = correlationKeyForIdentity(executeOptions.identity);
 			const meaningKey = meaningKeyForIdentity({
 				identity: executeOptions.identity,
@@ -423,7 +450,7 @@ export function createGatewaySemanticResultLedger(
 			activeEntries.set(correlationKey, entry);
 			entry.promise = (async (): Promise<GatewaySemanticLedgerDecision<unknown>> => {
 				try {
-					const value = await executeOptions.handler();
+					const value = await executeOptions.handler(executionProof);
 					if (activeEntries.get(correlationKey) !== entry || entry.status !== 'pending') {
 						return { kind: 'unknown_side_effect' };
 					}

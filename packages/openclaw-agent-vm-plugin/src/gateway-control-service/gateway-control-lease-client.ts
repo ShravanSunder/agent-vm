@@ -477,25 +477,6 @@ export function createGatewayControlLeaseClient(
 		return response;
 	};
 
-	const sendCommandWithSingleRetry = async (
-		operation: GatewayControlRpcOperation,
-		payload: unknown,
-		retryIdentity: GatewayControlCommandRetryIdentity,
-		admissionPrincipal: string,
-	): Promise<GatewayControlCommandResultResponse> => {
-		try {
-			return await sendCommandUnchecked(operation, payload, {
-				admissionPrincipal,
-				retryIdentity,
-			});
-		} catch {
-			return await sendCommandUnchecked(operation, payload, {
-				admissionPrincipal,
-				retryIdentity,
-			});
-		}
-	};
-
 	const registerCallerContext = async (
 		request: OpenClawGondolinLeaseRequest,
 		cacheOptions: { readonly forceRefresh?: boolean } = {},
@@ -725,6 +706,55 @@ export function createGatewayControlLeaseClient(
 		return leaseCallerContext;
 	};
 
+	const sendLeaseMutationWithReconnectRetry = async <
+		TCallerContext extends { readonly admissionPrincipal: string },
+	>(commandOptions: {
+		readonly buildPayload: (callerContext: TCallerContext) => unknown;
+		readonly operation: GatewayControlRpcOperation;
+		readonly resolveCallerContext: () => Promise<TCallerContext>;
+		readonly retryIdentity?: GatewayControlCommandRetryIdentity;
+	}): Promise<{
+		readonly hadUncertainResult: boolean;
+		readonly leaseCallerContext: TCallerContext;
+		readonly result: GatewayControlCommandResultResponse;
+		readonly retryIdentity: GatewayControlCommandRetryIdentity;
+	}> => {
+		const retryIdentity =
+			commandOptions.retryIdentity ?? createCommandRetryIdentity(commandOptions.operation);
+		let leaseCallerContext = await commandOptions.resolveCallerContext();
+		try {
+			return {
+				hadUncertainResult: false,
+				leaseCallerContext,
+				result: await sendCommandUnchecked(
+					commandOptions.operation,
+					commandOptions.buildPayload(leaseCallerContext),
+					{
+						admissionPrincipal: leaseCallerContext.admissionPrincipal,
+						retryIdentity,
+					},
+				),
+				retryIdentity,
+			};
+		} catch {
+			await options.controlService.waitForAcceptedSession();
+			leaseCallerContext = await commandOptions.resolveCallerContext();
+			return {
+				hadUncertainResult: true,
+				leaseCallerContext,
+				result: await sendCommandUnchecked(
+					commandOptions.operation,
+					commandOptions.buildPayload(leaseCallerContext),
+					{
+						admissionPrincipal: leaseCallerContext.admissionPrincipal,
+						retryIdentity,
+					},
+				),
+				retryIdentity,
+			};
+		}
+	};
+
 	const sendLeaseCommandWithCallerContextRefresh = async (commandOptions: {
 		readonly buildPayload: (
 			callerContextPayload: ReturnType<typeof callerContextPayloadForContext>,
@@ -733,17 +763,19 @@ export function createGatewayControlLeaseClient(
 		readonly leaseId: string;
 		readonly operation: GatewayControlRpcOperation;
 	}): Promise<GatewayControlCommandResultMessage> => {
-		let leaseCallerContext = await requireCurrentAttachmentCallerContextForLease(
-			commandOptions.leaseId,
-			commandOptions.context,
-		);
-		let result = await sendCommandUnchecked(
-			commandOptions.operation,
-			commandOptions.buildPayload(
-				callerContextPayloadForContext(leaseCallerContext.callerContextId),
-			),
-			{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
-		);
+		let attempt = await sendLeaseMutationWithReconnectRetry({
+			buildPayload: (leaseCallerContext) =>
+				commandOptions.buildPayload(
+					callerContextPayloadForContext(leaseCallerContext.callerContextId),
+				),
+			operation: commandOptions.operation,
+			resolveCallerContext: async () =>
+				await requireCurrentAttachmentCallerContextForLease(
+					commandOptions.leaseId,
+					commandOptions.context,
+				),
+		});
+		let { leaseCallerContext, result } = attempt;
 		if (
 			result.response.payload.result !== 'ok' &&
 			shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
@@ -761,13 +793,17 @@ export function createGatewayControlLeaseClient(
 				commandOptions.leaseId,
 				commandOptions.context,
 			);
-			result = await sendCommandUnchecked(
-				commandOptions.operation,
-				commandOptions.buildPayload(
-					callerContextPayloadForContext(leaseCallerContext.callerContextId),
-				),
-				{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
-			);
+			attempt = await sendLeaseMutationWithReconnectRetry({
+				buildPayload: (currentCallerContext) =>
+					commandOptions.buildPayload(
+						callerContextPayloadForContext(currentCallerContext.callerContextId),
+					),
+				operation: commandOptions.operation,
+				resolveCallerContext: async () =>
+					requireCallerContextForLease(commandOptions.leaseId, commandOptions.context),
+				...(attempt.hadUncertainResult ? { retryIdentity: attempt.retryIdentity } : {}),
+			});
+			({ leaseCallerContext, result } = attempt);
 			if (
 				result.response.payload.result !== 'ok' &&
 				shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
@@ -815,20 +851,19 @@ export function createGatewayControlLeaseClient(
 		readonly leaseCallerContext: LeaseCallerContextRef;
 		readonly response: GatewayControlCommandResultMessage;
 	}> => {
-		let leaseCallerContext = await registerReacquireCallerContext(
+		const buildPayload = (leaseCallerContext: LeaseCallerContextRef): unknown => ({
+			callerContext: { callerContextId: leaseCallerContext.callerContextId },
+			...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
 			oldLeaseId,
-			'Gateway control lease_reacquire',
-		);
-		let result = await sendCommandUnchecked(
-			'lease_reacquire',
-			{
-				callerContext: { callerContextId: leaseCallerContext.callerContextId },
-				...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
-				oldLeaseId,
-				staleEvidence: staleEvidencePayloadForReacquireRequest(request),
-			},
-			{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
-		);
+			staleEvidence: staleEvidencePayloadForReacquireRequest(request),
+		});
+		let attempt = await sendLeaseMutationWithReconnectRetry({
+			buildPayload,
+			operation: 'lease_reacquire',
+			resolveCallerContext: async () =>
+				await registerReacquireCallerContext(oldLeaseId, 'Gateway control lease_reacquire'),
+		});
+		let { leaseCallerContext, result } = attempt;
 		if (
 			result.response.payload.result !== 'ok' &&
 			shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
@@ -844,16 +879,13 @@ export function createGatewayControlLeaseClient(
 				callerContextId: refreshedCallerContext.callerContextId,
 				request: leaseCallerContext.request,
 			};
-			result = await sendCommandUnchecked(
-				'lease_reacquire',
-				{
-					callerContext: { callerContextId: leaseCallerContext.callerContextId },
-					...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
-					oldLeaseId,
-					staleEvidence: staleEvidencePayloadForReacquireRequest(request),
-				},
-				{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
-			);
+			attempt = await sendLeaseMutationWithReconnectRetry({
+				buildPayload,
+				operation: 'lease_reacquire',
+				resolveCallerContext: async () => leaseCallerContext,
+				...(attempt.hadUncertainResult ? { retryIdentity: attempt.retryIdentity } : {}),
+			});
+			({ leaseCallerContext, result } = attempt);
 			if (
 				result.response.payload.result !== 'ok' &&
 				shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
@@ -896,11 +928,17 @@ export function createGatewayControlLeaseClient(
 			},
 			leaseId,
 		});
-		let result = await sendCommandUnchecked(
-			'lease_release',
-			buildReleasePayload(leaseCallerContext),
-			{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
-		);
+		let attempt = await sendLeaseMutationWithReconnectRetry({
+			buildPayload: buildReleasePayload,
+			operation: 'lease_release',
+			resolveCallerContext: async () =>
+				await requireCurrentAttachmentCallerContextForLease(
+					leaseId,
+					'Gateway control lease_release',
+				),
+		});
+		let { result } = attempt;
+		leaseCallerContext = attempt.leaseCallerContext;
 		if (
 			result.response.payload.result !== 'ok' &&
 			shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)
@@ -915,11 +953,15 @@ export function createGatewayControlLeaseClient(
 				request: leaseCallerContext.request,
 			});
 			leaseCallerContext = requireCallerContextForLease(leaseId, 'Gateway control lease_release');
-			result = await sendCommandUnchecked(
-				'lease_release',
-				buildReleasePayload(leaseCallerContext),
-				{ admissionPrincipal: leaseCallerContext.admissionPrincipal },
-			);
+			attempt = await sendLeaseMutationWithReconnectRetry({
+				buildPayload: buildReleasePayload,
+				operation: 'lease_release',
+				resolveCallerContext: async () =>
+					requireCallerContextForLease(leaseId, 'Gateway control lease_release'),
+				...(attempt.hadUncertainResult ? { retryIdentity: attempt.retryIdentity } : {}),
+			});
+			result = attempt.result;
+			leaseCallerContext = attempt.leaseCallerContext;
 		}
 		const reacquireRequest =
 			releaseOptions?.staleEvidence === undefined
@@ -1076,19 +1118,17 @@ export function createGatewayControlLeaseClient(
 			);
 		},
 		requestLease: async (request) => {
-			let registeredCallerContext = await registerCallerContext(request);
-			const leaseCreateRetryIdentity = createCommandRetryIdentity('lease_create');
-			let result = await sendCommandWithSingleRetry(
-				'lease_create',
-				{
-					callerContext: {
-						callerContextId: registeredCallerContext.callerContextId,
-					},
-					...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
-				},
-				leaseCreateRetryIdentity,
-				registeredCallerContext.admissionPrincipal,
-			);
+			const buildPayload = (callerContext: RegisteredCallerContextRef): unknown => ({
+				callerContext: { callerContextId: callerContext.callerContextId },
+				...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
+			});
+			let attempt = await sendLeaseMutationWithReconnectRetry({
+				buildPayload,
+				operation: 'lease_create',
+				resolveCallerContext: async () => await registerCallerContext(request),
+			});
+			let registeredCallerContext = attempt.leaseCallerContext;
+			let { result } = attempt;
 			if (
 				result.response.payload.result !== 'ok' &&
 				shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason) &&
@@ -1096,17 +1136,14 @@ export function createGatewayControlLeaseClient(
 			) {
 				forgetRegisteredCallerContext(request, registeredCallerContext);
 				registeredCallerContext = await registerCallerContext(request, { forceRefresh: true });
-				result = await sendCommandWithSingleRetry(
-					'lease_create',
-					{
-						callerContext: {
-							callerContextId: registeredCallerContext.callerContextId,
-						},
-						...(request.idleTtlMs === undefined ? {} : { idleTtlHintMs: request.idleTtlMs }),
-					},
-					createCommandRetryIdentity('lease_create'),
-					registeredCallerContext.admissionPrincipal,
-				);
+				attempt = await sendLeaseMutationWithReconnectRetry({
+					buildPayload,
+					operation: 'lease_create',
+					resolveCallerContext: async () => registeredCallerContext,
+					...(attempt.hadUncertainResult ? { retryIdentity: attempt.retryIdentity } : {}),
+				});
+				registeredCallerContext = attempt.leaseCallerContext;
+				result = attempt.result;
 				if (
 					result.response.payload.result !== 'ok' &&
 					shouldRefreshCallerContextForLeaseRejection(result.response.payload.leaseRejectionReason)

@@ -47,7 +47,7 @@ const COMPATIBILITY = {
 	workMountDir: '/home/openclaw/work',
 } satisfies ToolVmLeaseCompatibility;
 
-const AUTHORITY_REFERENCE_EXCLUDES_POLICY_EXPIRY: 'policyExpiresAtMs' extends keyof ToolVmLeafAuthorityReference
+const AUTHORITY_REFERENCE_EXCLUDES_IDLE_EXPIRY: 'idleExpiresAtMs' extends keyof ToolVmLeafAuthorityReference
 	? false
 	: true = true;
 
@@ -84,7 +84,7 @@ function beginProvisioning(
 		readonly gateway?: GatewayEpochIdentity;
 		readonly leaseId?: string;
 		readonly leafGeneration?: string;
-		readonly policyExpiresAtMs?: number;
+		readonly idleExpiresAtMs?: number;
 		readonly principal?: StableToolVmLeasePrincipal;
 	} = {},
 ): ToolVmLeaseAuthorityState {
@@ -99,7 +99,7 @@ function beginProvisioning(
 			vmId: `tool-vm-${leafGeneration}`,
 		},
 		kind: 'begin-provisioning',
-		policyExpiresAtMs: options.policyExpiresAtMs ?? 10_000,
+		idleExpiresAtMs: options.idleExpiresAtMs ?? 10_000,
 	});
 }
 
@@ -139,7 +139,7 @@ function createCurrentLeaf(
 		readonly gateway?: GatewayEpochIdentity;
 		readonly leaseId?: string;
 		readonly leafGeneration?: string;
-		readonly policyExpiresAtMs?: number;
+		readonly idleExpiresAtMs?: number;
 		readonly principal?: StableToolVmLeasePrincipal;
 	} = {},
 ): ToolVmLeaseAuthorityState {
@@ -345,11 +345,11 @@ describe('Tool VM lease authority state', () => {
 		);
 	});
 
-	it('authorizes only the exact current lease before the half-open policy expiry boundary', () => {
+	it('authorizes only the exact current lease before the half-open idle-expiry boundary', () => {
 		const authority = authorityReference({ leaseId: 'lease-current' });
 		const state = createCurrentLeaf({
 			leaseId: authority.leaseId,
-			policyExpiresAtMs: 500,
+			idleExpiresAtMs: 500,
 		});
 		const authorized = authorizeCurrentToolVmLeafBinding(state, {
 			authority,
@@ -359,7 +359,7 @@ describe('Tool VM lease authority state', () => {
 		});
 		expect(authorized).toMatchObject({
 			leaseId: 'lease-current',
-			policyExpiresAtMs: 500,
+			idleExpiresAtMs: 500,
 			runtimeBinding: { vmId: 'tool-vm-leaf-generation-1' },
 		});
 		expect(
@@ -394,9 +394,191 @@ describe('Tool VM lease authority state', () => {
 		}
 	});
 
-	it('does not carry controller-owned policy expiry in a caller authority reference', () => {
-		expect(AUTHORITY_REFERENCE_EXCLUDES_POLICY_EXPIRY).toBe(true);
-		expect(authorityReference()).not.toHaveProperty('policyExpiresAtMs');
+	it('does not carry controller-owned idle expiry in a caller authority reference', () => {
+		expect(AUTHORITY_REFERENCE_EXCLUDES_IDLE_EXPIRY).toBe(true);
+		expect(authorityReference()).not.toHaveProperty('idleExpiresAtMs');
+	});
+
+	it('advances the idle-expiry deadline monotonically on renewal', () => {
+		const authority = authorityReference();
+		const state = createCurrentLeaf({ idleExpiresAtMs: 500 });
+
+		const renewed = reduceToolVmLeaseAuthorityState(state, {
+			authority,
+			kind: 'renew-idle-expiry',
+			nextIdleExpiresAtMs: 1_000,
+			nowMs: 400,
+		});
+
+		expect(renewed.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+			idleExpiresAtMs: 1_000,
+			kind: 'current',
+		});
+	});
+
+	it.each([
+		{ name: 'equal to the current deadline', nextIdleExpiresAtMs: 500, nowMs: 400 },
+		{ name: 'behind the current deadline', nextIdleExpiresAtMs: 499, nowMs: 400 },
+	])('rejects an idle-expiry renewal $name', ({ nextIdleExpiresAtMs, nowMs }) => {
+		const authority = authorityReference();
+		const state = createCurrentLeaf({ idleExpiresAtMs: 500 });
+
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(state, {
+					authority,
+					kind: 'renew-idle-expiry',
+					nextIdleExpiresAtMs,
+					nowMs,
+				}),
+			'idle-expiry-regressed',
+		);
+	});
+
+	it('rejects an idle-expiry deadline not later than the observation even during active use', () => {
+		const authority = authorityReference();
+		const running = reduceToolVmLeaseAuthorityState(createCurrentLeaf({ idleExpiresAtMs: 500 }), {
+			authority,
+			kind: 'start-active-use',
+			use: activeUseInput(),
+		});
+
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(running, {
+					authority,
+					kind: 'renew-idle-expiry',
+					nextIdleExpiresAtMs: 750,
+					nowMs: 1_000,
+				}),
+			'idle-expiry-regressed',
+		);
+	});
+
+	it('rejects renewal after idle expiry when no non-terminal use holds the leaf', () => {
+		const authority = authorityReference();
+		const idle = createCurrentLeaf({ idleExpiresAtMs: 500 });
+
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(idle, {
+					authority,
+					kind: 'renew-idle-expiry',
+					nextIdleExpiresAtMs: 1_100,
+					nowMs: 600,
+				}),
+			'lease-expired',
+		);
+	});
+
+	it.each(['running', 'observation-gap'] as const)(
+		'permits renewal after idle expiry while an exact %s use remains non-terminal',
+		(activeUseKind) => {
+			const authority = authorityReference();
+			let state = reduceToolVmLeaseAuthorityState(createCurrentLeaf({ idleExpiresAtMs: 500 }), {
+				authority,
+				kind: 'start-active-use',
+				use: activeUseInput(),
+			});
+			if (activeUseKind === 'observation-gap') {
+				state = reduceToolVmLeaseAuthorityState(state, {
+					gateway: GATEWAY_ONE,
+					kind: 'session-disconnected',
+					observedAtMs: 550,
+					processEpoch: 'process-1',
+					sessionAttachmentGeneration: 7,
+				});
+			}
+
+			const renewed = reduceToolVmLeaseAuthorityState(state, {
+				authority,
+				kind: 'renew-idle-expiry',
+				nextIdleExpiresAtMs: 1_100,
+				nowMs: 600,
+			});
+
+			expect(renewed.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+				activeUses: new Map([['use-1', expect.objectContaining({ kind: activeUseKind })]]),
+				idleExpiresAtMs: 1_100,
+				kind: 'current',
+			});
+		},
+	);
+
+	it('keeps a current binding authorized after its idle deadline while use remains non-terminal', () => {
+		const authority = authorityReference();
+		const running = reduceToolVmLeaseAuthorityState(createCurrentLeaf({ idleExpiresAtMs: 500 }), {
+			authority,
+			kind: 'start-active-use',
+			use: activeUseInput(),
+		});
+
+		expect(
+			authorizeCurrentToolVmLeafBinding(running, {
+				authority,
+				compatibility: COMPATIBILITY,
+				nowMs: 600,
+				sshBindingId: 'ssh-leaf-generation-1',
+			}),
+		).toMatchObject({ idleExpiresAtMs: 500, leaseId: authority.leaseId });
+	});
+
+	it('advances idle expiry after an exact active-use heartbeat and renewal', () => {
+		const authority = authorityReference();
+		const running = reduceToolVmLeaseAuthorityState(createCurrentLeaf({ idleExpiresAtMs: 500 }), {
+			authority,
+			kind: 'start-active-use',
+			use: activeUseInput(),
+		});
+		const heartbeated = reduceToolVmLeaseAuthorityState(running, {
+			authority,
+			heartbeatAtMs: 600,
+			kind: 'heartbeat-active-use',
+			processEpoch: 'process-1',
+			sessionAttachmentGeneration: 7,
+			useId: 'use-1',
+		});
+
+		const renewed = reduceToolVmLeaseAuthorityState(heartbeated, {
+			authority,
+			kind: 'renew-idle-expiry',
+			nextIdleExpiresAtMs: 1_100,
+			nowMs: 600,
+		});
+
+		expect(renewed.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+			activeUses: new Map([
+				['use-1', expect.objectContaining({ kind: 'running', lastHeartbeatAtMs: 600 })],
+			]),
+			idleExpiresAtMs: 1_100,
+			kind: 'current',
+		});
+	});
+
+	it('denies same-zone successor Gateway mutation and binding authority over the current leaf', () => {
+		const state = createCurrentLeaf({ idleExpiresAtMs: 500 });
+		const successorAuthority = authorityReference({ gateway: GATEWAY_TWO });
+
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(state, {
+					authority: successorAuthority,
+					kind: 'renew-idle-expiry',
+					nextIdleExpiresAtMs: 1_000,
+					nowMs: 400,
+				}),
+			'parent-identity-mismatch',
+		);
+		expectTransitionError(
+			() =>
+				authorizeCurrentToolVmLeafBinding(state, {
+					authority: successorAuthority,
+					compatibility: COMPATIBILITY,
+					nowMs: 400,
+					sshBindingId: 'ssh-leaf-generation-1',
+				}),
+			'parent-identity-mismatch',
+		);
 	});
 
 	it('blocks conflicting use through a disconnect observation gap and allows exact-process resume', () => {
@@ -620,4 +802,69 @@ describe('Tool VM lease authority state', () => {
 			).toMatchObject({ runtimeBinding: { vmId: 'tool-vm-leaf-generation-sibling' } });
 		},
 	);
+
+	it('marks only exact-P active uses ambiguous when another process epoch remains active', () => {
+		const mainAuthority = authorityReference();
+		const siblingAuthority = authorityReference({
+			leafGeneration: 'leaf-generation-sibling',
+			principal: PRINCIPAL_SIBLING,
+		});
+		let state = createCurrentLeaf();
+		state = commitCurrent(
+			beginProvisioning(state, {
+				leafGeneration: siblingAuthority.leafGeneration,
+				principal: siblingAuthority.principal,
+			}),
+			{
+				leafGeneration: siblingAuthority.leafGeneration,
+				principal: siblingAuthority.principal,
+			},
+		);
+		state = reduceToolVmLeaseAuthorityState(state, {
+			authority: mainAuthority,
+			kind: 'start-active-use',
+			use: activeUseInput({ processEpoch: 'process-1', useId: 'use-process-1' }),
+		});
+		state = reduceToolVmLeaseAuthorityState(state, {
+			authority: siblingAuthority,
+			kind: 'start-active-use',
+			use: activeUseInput({
+				operationPayloadDigest: 'payload-digest-2',
+				processEpoch: 'process-2',
+				semanticOperationId: 'operation-2',
+				useId: 'use-process-2',
+			}),
+		});
+		const siblingBefore = state.leavesByPrincipal.get('shravan\0sibling');
+
+		const transitioned = reduceToolVmLeaseAuthorityState(state, {
+			ambiguousAtMs: 200,
+			gateway: GATEWAY_ONE,
+			kind: 'process-epoch-lost',
+			processEpoch: 'process-1',
+		});
+
+		expect(transitioned.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+			activeUses: new Map([
+				[
+					'use-process-1',
+					expect.objectContaining({
+						kind: 'ambiguous',
+						processEpoch: 'process-1',
+						reason: 'process-epoch-lost',
+					}),
+				],
+			]),
+			kind: 'quarantined',
+		});
+		expect(transitioned.leavesByPrincipal.get('shravan\0sibling')).toBe(siblingBefore);
+		expect(
+			authorizeCurrentToolVmLeafBinding(transitioned, {
+				authority: siblingAuthority,
+				compatibility: COMPATIBILITY,
+				nowMs: 200,
+				sshBindingId: 'ssh-leaf-generation-sibling',
+			}),
+		).toMatchObject({ leaseId: siblingAuthority.leaseId });
+	});
 });

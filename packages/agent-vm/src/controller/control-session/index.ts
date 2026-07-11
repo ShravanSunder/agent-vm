@@ -8,5 +8,6 @@ export * from './gateway-control-process-admission-coordinator.js';
 export * from './gateway-control-session-material-store.js';
 export * from './gateway-control-session.js';
 export * from './gateway-disposable-control-session-client.js';
+export * from './gateway-semantic-result-ledger.js';
 export * from './worker-control-domain-handler.js';
 export * from './worker-control-session.js';

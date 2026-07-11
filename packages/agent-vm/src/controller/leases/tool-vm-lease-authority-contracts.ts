@@ -103,7 +103,7 @@ interface ToolVmLeaseLeafBase {
 	readonly destructionIdentity: ToolVmExactDestructionIdentity;
 	readonly leaseId: string;
 	readonly leafGeneration: string;
-	readonly policyExpiresAtMs: number;
+	readonly idleExpiresAtMs: number;
 	readonly principal: StableToolVmLeasePrincipal;
 }
 
@@ -226,6 +226,7 @@ export type ToolVmLeaseAuthorityTransitionErrorCode =
 	| 'leaf-not-destroying'
 	| 'leaf-not-found'
 	| 'leaf-not-provisioning'
+	| 'idle-expiry-regressed'
 	| 'lease-expired'
 	| 'lease-identity-mismatch'
 	| 'parent-already-registered'
@@ -269,13 +270,19 @@ export type ToolVmLeaseAuthorityCommand =
 			readonly compatibility: ToolVmLeaseCompatibility;
 			readonly destructionIdentity: ToolVmExactDestructionIdentity;
 			readonly kind: 'begin-provisioning';
-			readonly policyExpiresAtMs: number;
+			readonly idleExpiresAtMs: number;
 	  }
 	| {
 			readonly authority: ToolVmLeafAuthorityReference;
 			readonly kind: 'commit-current';
 			readonly runtimeBinding: ToolVmRuntimeBinding;
 			readonly sshBinding: ToolVmSshBinding;
+	  }
+	| {
+			readonly authority: ToolVmLeafAuthorityReference;
+			readonly kind: 'renew-idle-expiry';
+			readonly nextIdleExpiresAtMs: number;
+			readonly nowMs: number;
 	  }
 	| {
 			readonly authority: ToolVmLeafAuthorityReference;
@@ -371,7 +378,7 @@ export type ToolVmLeaseAuthorityCommand =
 export interface AuthorizedToolVmLeafBinding {
 	readonly leaseId: string;
 	readonly leafGeneration: string;
-	readonly policyExpiresAtMs: number;
+	readonly idleExpiresAtMs: number;
 	readonly runtimeBinding: ToolVmRuntimeBinding;
 	readonly sshBinding: ToolVmSshBinding;
 }

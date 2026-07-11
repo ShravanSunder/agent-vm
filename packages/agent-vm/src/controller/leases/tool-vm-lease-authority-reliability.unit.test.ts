@@ -73,7 +73,7 @@ function beginProvisioning(
 		readonly gateway?: GatewayEpochIdentity;
 		readonly leaseId?: string;
 		readonly leafGeneration?: string;
-		readonly policyExpiresAtMs?: number;
+		readonly idleExpiresAtMs?: number;
 		readonly principal?: StableToolVmLeasePrincipal;
 	} = {},
 ): ToolVmLeaseAuthorityState {
@@ -88,7 +88,7 @@ function beginProvisioning(
 			vmId: `tool-vm-${leafGeneration}`,
 		},
 		kind: 'begin-provisioning',
-		policyExpiresAtMs: options.policyExpiresAtMs ?? 10_000,
+		idleExpiresAtMs: options.idleExpiresAtMs ?? 10_000,
 	});
 }
 
@@ -128,7 +128,7 @@ function createCurrentLeaf(
 		readonly gateway?: GatewayEpochIdentity;
 		readonly leaseId?: string;
 		readonly leafGeneration?: string;
-		readonly policyExpiresAtMs?: number;
+		readonly idleExpiresAtMs?: number;
 		readonly principal?: StableToolVmLeasePrincipal;
 	} = {},
 ): ToolVmLeaseAuthorityState {

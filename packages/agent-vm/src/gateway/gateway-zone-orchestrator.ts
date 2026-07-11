@@ -33,6 +33,7 @@ import {
 	createGatewayControlCallerContextRegistry,
 	createGatewayControlDomainHandler,
 	createGatewayControlSessionMaterial,
+	createGatewaySemanticResultLedger,
 	writeGatewayControlSessionMaterial,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlSessionMaterial,
@@ -1363,8 +1364,20 @@ export async function startGatewayZone(
 			controlSessionMaterial === undefined
 				? undefined
 				: await runTaskWithResult(runTaskStep, 'Connecting gateway control session', async () => {
+						const gatewayIdentity = vmOwnership.gatewayIdentity;
+						if (gatewayIdentity === undefined) {
+							throw new Error(
+								`OpenClaw zone '${zone.id}' cannot bind semantic control authority without an exact Gateway identity.`,
+							);
+						}
 						const sessionFenceRegistry = createControlSessionFenceRegistry();
-						const dispatcher = createControlSessionDispatcher({ sessionFenceRegistry });
+						const dispatcher = createControlSessionDispatcher({
+							semanticLedger: createGatewaySemanticResultLedger({
+								gateway: gatewayIdentity,
+								nowMs: Date.now,
+							}),
+							sessionFenceRegistry,
+						});
 						dispatcher.register(
 							'gateway_control',
 							createGatewayControlDomainHandler({

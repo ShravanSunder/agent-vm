@@ -420,6 +420,136 @@ describe('Gateway disposable control session client', () => {
 		client.close();
 	});
 
+	it('dispatches each accepted attempt with its exact immutable attachment generation', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const second = createFakeSocket({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		const sockets = [first.socket, second.socket];
+		const firstHandler = deferred();
+		const firstContextSeen = deferred<{
+			readonly attachmentGeneration?: number;
+			readonly envelope: ControlEnvelope;
+		}>();
+		const secondContextSeen = deferred<{
+			readonly attachmentGeneration?: number;
+			readonly envelope: ControlEnvelope;
+		}>();
+		const reconnectCallbacks: Array<() => void> = [];
+		let attachmentGeneration = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => {
+				const socket = sockets.shift();
+				if (socket === undefined) {
+					throw new Error('unexpected socket attempt');
+				}
+				return socket;
+			},
+			dispatcher: {
+				dispatch: async (context) => {
+					if (context.envelope.messageId === '55555555-5555-4555-8555-555555555555') {
+						firstContextSeen.resolve(context);
+						await firstHandler.promise;
+					} else {
+						secondContextSeen.resolve(context);
+					}
+					return undefined;
+				},
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => {
+				attachmentGeneration += 1;
+				return attachmentGeneration;
+			},
+			policyByOperation: { control_ping: 'acked_idempotent' },
+			reconnectJitterRandom: () => 0.5,
+			refreshExtraHeaders: async () => ({}),
+			scheduleImmediate: (callback) => callback(),
+			scheduleReconnectTimer: (callback) => {
+				reconnectCallbacks.push(callback);
+				return { cancel: () => undefined };
+			},
+		});
+		await client.ready;
+		expect(
+			await first.control.receive(
+				inboundEnvelope({
+					connectionId: '11111111-1111-4111-8111-111111111111',
+					kind: 'command',
+					messageId: '55555555-5555-4555-8555-555555555555',
+					operation: 'control_ping',
+					sequence: 1,
+					sessionId: '22222222-2222-4222-8222-222222222222',
+				}),
+				{ kind: 'command', operation: 'control_ping', payload: {} },
+			),
+		).toEqual({ received: true });
+		const capturedFirstContext = await firstContextSeen.promise;
+
+		expect(
+			client.fenceCurrentSession({
+				expectedAttachmentGeneration: 1,
+				expectedSessionId: '22222222-2222-4222-8222-222222222222',
+				reason: 'reliability_test_disconnect',
+			}),
+		).toMatchObject({ attachmentGeneration: 1, status: 'fenced' });
+		expect(reconnectCallbacks).toHaveLength(1);
+		reconnectCallbacks.shift()?.();
+		await Promise.resolve();
+		await second.control.accept();
+		expect(
+			await second.control.receive(
+				inboundEnvelope({
+					connectionId: '33333333-3333-4333-8333-333333333333',
+					kind: 'command',
+					messageId: '66666666-6666-4666-8666-666666666666',
+					operation: 'control_ping',
+					sequence: 1,
+					sessionId: '44444444-4444-4444-8444-444444444444',
+				}),
+				{ kind: 'command', operation: 'control_ping', payload: {} },
+			),
+		).toEqual({ received: true });
+		const capturedSecondContext = await secondContextSeen.promise;
+
+		expect(capturedFirstContext.attachmentGeneration).toBe(1);
+		expect(capturedSecondContext.attachmentGeneration).toBe(2);
+		expect(capturedSecondContext.attachmentGeneration).toBeGreaterThan(
+			capturedFirstContext.attachmentGeneration ?? Number.MAX_SAFE_INTEGER,
+		);
+		expect(capturedFirstContext).not.toBe(capturedSecondContext);
+		expect(capturedFirstContext).toMatchObject({
+			attachmentGeneration: 1,
+			envelope: { sessionId: '22222222-2222-4222-8222-222222222222' },
+		});
+		expect(capturedSecondContext).toMatchObject({
+			attachmentGeneration: 2,
+			envelope: { sessionId: '44444444-4444-4444-8444-444444444444' },
+		});
+
+		firstHandler.resolve(undefined);
+		await flushImmediate();
+		expect(capturedFirstContext).toMatchObject({
+			attachmentGeneration: 1,
+			envelope: { sessionId: '22222222-2222-4222-8222-222222222222' },
+		});
+		client.close();
+	});
+
 	it('fences only the exact current session and reconnects with a fresh attachment', async () => {
 		const first = createFakeSocket({
 			connectionId: '11111111-1111-4111-8111-111111111111',
