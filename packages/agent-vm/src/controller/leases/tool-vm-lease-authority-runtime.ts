@@ -6,6 +6,7 @@ import {
 } from '../vm-ownership/vm-ownership-contracts.js';
 import {
 	RejectedToolVmProvisioningCleanupError,
+	type ToolVmExactDestructionOptions,
 	type ToolVmLeaseAuthorityRuntime,
 	type ToolVmLeaseRuntimeResource,
 	type ToolVmRuntimeLeaseIdentity,
@@ -32,6 +33,9 @@ import {
 
 export {
 	RejectedToolVmProvisioningCleanupError,
+	type ToolVmExactDestructionAdmission,
+	type ToolVmExactDestructionAdmissionPolicy,
+	type ToolVmExactDestructionOptions,
 	type ToolVmLeaseAuthorityRuntime,
 	type ToolVmLeaseRuntimeResource,
 	type ToolVmRuntimeLeaseIdentity,
@@ -198,14 +202,118 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 		);
 	}
 
+	function startExactDestruction(
+		destroyOptions: ToolVmExactDestructionOptions,
+	): Promise<ToolVmLeaseRuntimeResource<TLease>> {
+		const resource = requireResource(destroyOptions.authority);
+		if (resource.destructionInFlight !== undefined) {
+			return resource.destructionInFlight;
+		}
+		if (resource.commitInFlight !== undefined) {
+			const destructionAfterCommit = resource.commitInFlight
+				.catch(() => undefined)
+				.then(() => {
+					delete resource.destructionInFlight;
+					return startExactDestruction(destroyOptions);
+				});
+			resource.destructionInFlight = destructionAfterCommit;
+			return destructionAfterCommit;
+		}
+		const currentState = requireAuthorityState(destroyOptions.authority.gateway);
+		const currentLeaf = requireLiveLeaf(currentState, destroyOptions.authority);
+		const destructionState = reduceToolVmLeaseAuthorityState(
+			currentState,
+			currentLeaf.kind === 'owner-unsafe'
+				? {
+						authority: destroyOptions.authority,
+						kind: 'retry-destruction',
+						reason: destroyOptions.reason,
+					}
+				: {
+						authority: destroyOptions.authority,
+						kind: 'begin-destruction',
+						reason: destroyOptions.reason,
+					},
+		);
+		reserveDestructionTombstone(currentState, destroyOptions.authority);
+		replaceAuthorityState(destroyOptions.authority.gateway, destructionState);
+		const destruction = (async (): Promise<ToolVmLeaseRuntimeResource<TLease>> => {
+			try {
+				const receipt =
+					destroyOptions.mode.kind === 'detached'
+						? await resource.ownership.destroyDetached()
+						: await resource.ownership.destroyLive(destroyOptions.mode.closeLiveVm);
+				assertVmDestroyReceiptMatchesTarget(
+					receipt,
+					resource.ownershipProof.verifiedDestroyTarget,
+					`Tool VM leaf '${destroyOptions.authority.leafGeneration}' destruction receipt`,
+				);
+				const completedState = reduceToolVmLeaseAuthorityState(
+					requireAuthorityState(destroyOptions.authority.gateway),
+					{
+						authority: destroyOptions.authority,
+						destroyedAtMs: destroyOptions.destroyedAtMs,
+						kind: 'destruction-completed',
+						reason: destroyOptions.reason,
+						receipt: {
+							complete: true,
+							reservationId: resource.ownershipProof.destructionIdentity.reservationId,
+							reservationPath: resource.ownershipProof.destructionIdentity.reservationPath,
+							vmId: resource.ownershipProof.destructionIdentity.vmId,
+						},
+					},
+				);
+				replaceAuthorityState(destroyOptions.authority.gateway, completedState);
+				resourcesByAuthority.delete(authorityResourceKey(destroyOptions.authority));
+				authorityResourceKeysByLeaseId.delete(destroyOptions.authority.leaseId);
+				releaseDestructionTombstone(destroyOptions.authority);
+				return resource;
+			} catch (error) {
+				recordDestructionIncomplete(destroyOptions.authority, 'exact-destruction-unproven');
+				throw error;
+			}
+		})();
+		resource.destructionInFlight = destruction;
+		void destruction.then(
+			() => {
+				delete resource.destructionInFlight;
+			},
+			() => {
+				delete resource.destructionInFlight;
+			},
+		);
+		return destruction;
+	}
+
 	return {
 		activeUseCount(leaseId): number {
 			const resource = resourceForLeaseId(leaseId);
 			return resource === undefined ? 0 : leafSnapshotForResource(resource).activeUses.size;
 		},
 		activeUseSnapshots(leaseId): readonly ToolVmActiveUse[] {
-			const leaf = this.leafSnapshotForLease(leaseId);
+			const resource = resourceForLeaseId(leaseId);
+			const leaf = resource === undefined ? undefined : leafSnapshotForResource(resource);
 			return leaf === undefined ? [] : [...leaf.activeUses.values()];
+		},
+		admitExactDestruction(admissionOptions) {
+			const resource = requireResource(admissionOptions.authority);
+			if (resource.destructionInFlight !== undefined) {
+				return { completion: resource.destructionInFlight, kind: 'started' };
+			}
+			if (admissionOptions.policy.kind === 'require-no-active-use') {
+				const leaf = leafSnapshotForResource(resource);
+				if (leaf.activeUses.size > 0) {
+					return { kind: 'blocked-active-use' };
+				}
+				if (
+					admissionOptions.policy.ifLastUsedAtBeforeOrAt !== undefined &&
+					resource.lease !== undefined &&
+					resource.lease.lastUsedAt > admissionOptions.policy.ifLastUsedAtBeforeOrAt
+				) {
+					return { kind: 'skip-recently-used' };
+				}
+			}
+			return { completion: startExactDestruction(admissionOptions), kind: 'started' };
 		},
 		applyAuthorityCommand(command): ToolVmLeaseLeafState | undefined {
 			if (command.kind === 'prune-tombstones') {
@@ -360,84 +468,7 @@ export function createToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLe
 			return await commit;
 		},
 		destroyExact(destroyOptions): Promise<ToolVmLeaseRuntimeResource<TLease>> {
-			const resource = requireResource(destroyOptions.authority);
-			if (resource.destructionInFlight !== undefined) {
-				return resource.destructionInFlight;
-			}
-			if (resource.commitInFlight !== undefined) {
-				const destructionAfterCommit = resource.commitInFlight
-					.catch(() => undefined)
-					.then(async () => {
-						delete resource.destructionInFlight;
-						return await this.destroyExact(destroyOptions);
-					});
-				resource.destructionInFlight = destructionAfterCommit;
-				return destructionAfterCommit;
-			}
-			const currentState = requireAuthorityState(destroyOptions.authority.gateway);
-			const currentLeaf = requireLiveLeaf(currentState, destroyOptions.authority);
-			const destructionState = reduceToolVmLeaseAuthorityState(
-				currentState,
-				currentLeaf.kind === 'owner-unsafe'
-					? {
-							authority: destroyOptions.authority,
-							kind: 'retry-destruction',
-							reason: destroyOptions.reason,
-						}
-					: {
-							authority: destroyOptions.authority,
-							kind: 'begin-destruction',
-							reason: destroyOptions.reason,
-						},
-			);
-			reserveDestructionTombstone(currentState, destroyOptions.authority);
-			replaceAuthorityState(destroyOptions.authority.gateway, destructionState);
-			const destruction = (async (): Promise<ToolVmLeaseRuntimeResource<TLease>> => {
-				try {
-					const receipt =
-						destroyOptions.mode.kind === 'detached'
-							? await resource.ownership.destroyDetached()
-							: await resource.ownership.destroyLive(destroyOptions.mode.closeLiveVm);
-					assertVmDestroyReceiptMatchesTarget(
-						receipt,
-						resource.ownershipProof.verifiedDestroyTarget,
-						`Tool VM leaf '${destroyOptions.authority.leafGeneration}' destruction receipt`,
-					);
-					const completedState = reduceToolVmLeaseAuthorityState(
-						requireAuthorityState(destroyOptions.authority.gateway),
-						{
-							authority: destroyOptions.authority,
-							destroyedAtMs: destroyOptions.destroyedAtMs,
-							kind: 'destruction-completed',
-							reason: destroyOptions.reason,
-							receipt: {
-								complete: true,
-								reservationId: resource.ownershipProof.destructionIdentity.reservationId,
-								reservationPath: resource.ownershipProof.destructionIdentity.reservationPath,
-								vmId: resource.ownershipProof.destructionIdentity.vmId,
-							},
-						},
-					);
-					replaceAuthorityState(destroyOptions.authority.gateway, completedState);
-					resourcesByAuthority.delete(authorityResourceKey(destroyOptions.authority));
-					authorityResourceKeysByLeaseId.delete(destroyOptions.authority.leaseId);
-					releaseDestructionTombstone(destroyOptions.authority);
-					return resource;
-				} catch (error) {
-					recordDestructionIncomplete(destroyOptions.authority, 'exact-destruction-unproven');
-					throw error;
-				}
-			})();
-			resource.destructionInFlight = destruction;
-			void destruction.then(
-				() => {
-					delete resource.destructionInFlight;
-				},
-				() => {
-					delete resource.destructionInFlight;
-				},
-			);
-			return destruction;
+			return startExactDestruction(destroyOptions);
 		},
 		findCurrentLeaseByPrincipal(findOptions): TLease | undefined {
 			const state = authorityStatesByGateway.get(gatewayAuthorityKey(findOptions.gateway));

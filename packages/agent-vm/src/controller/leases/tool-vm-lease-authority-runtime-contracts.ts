@@ -19,9 +19,37 @@ import type {
 export interface ToolVmRuntimeLeaseIdentity {
 	readonly agentId: string;
 	readonly id: string;
+	readonly lastUsedAt: number;
 	readonly vm: { readonly id: string };
 	readonly zoneId: string;
 }
+
+export type ToolVmExactDestructionAdmissionPolicy =
+	| { readonly kind: 'force' }
+	| {
+			readonly ifLastUsedAtBeforeOrAt?: number;
+			readonly kind: 'require-no-active-use';
+	  };
+
+export interface ToolVmExactDestructionOptions {
+	readonly authority: ToolVmLeafAuthorityReference;
+	readonly destroyedAtMs: number;
+	readonly mode:
+		| { readonly kind: 'detached' }
+		| {
+				readonly closeLiveVm: () => Promise<ManagedVmDestroyReceiptV1>;
+				readonly kind: 'live';
+		  };
+	readonly reason: string;
+}
+
+export type ToolVmExactDestructionAdmission<TLease extends ToolVmRuntimeLeaseIdentity> =
+	| { readonly kind: 'blocked-active-use' }
+	| { readonly kind: 'skip-recently-used' }
+	| {
+			readonly completion: Promise<ToolVmLeaseRuntimeResource<TLease>>;
+			readonly kind: 'started';
+	  };
 
 export type RuntimeForwardedAuthorityCommand = Exclude<
 	ToolVmLeaseAuthorityCommand,
@@ -62,6 +90,11 @@ export class RejectedToolVmProvisioningCleanupError extends AggregateError {
 export interface ToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLeaseIdentity> {
 	activeUseCount(leaseId: string): number;
 	activeUseSnapshots(leaseId: string): readonly ToolVmActiveUse[];
+	admitExactDestruction(
+		options: ToolVmExactDestructionOptions & {
+			readonly policy: ToolVmExactDestructionAdmissionPolicy;
+		},
+	): ToolVmExactDestructionAdmission<TLease>;
 	applyAuthorityCommand(
 		command: RuntimeForwardedAuthorityCommand,
 	): ToolVmLeaseLeafState | undefined;
@@ -78,17 +111,7 @@ export interface ToolVmLeaseAuthorityRuntime<TLease extends ToolVmRuntimeLeaseId
 		readonly runtimeBinding: ToolVmRuntimeBinding;
 		readonly sshBinding: ToolVmSshBinding;
 	}): Promise<void>;
-	destroyExact(options: {
-		readonly authority: ToolVmLeafAuthorityReference;
-		readonly destroyedAtMs: number;
-		readonly mode:
-			| { readonly kind: 'detached' }
-			| {
-					readonly closeLiveVm: () => Promise<ManagedVmDestroyReceiptV1>;
-					readonly kind: 'live';
-			  };
-		readonly reason: string;
-	}): Promise<ToolVmLeaseRuntimeResource<TLease>>;
+	destroyExact(options: ToolVmExactDestructionOptions): Promise<ToolVmLeaseRuntimeResource<TLease>>;
 	findCurrentLeaseByPrincipal(options: {
 		readonly gateway: GatewayEpochIdentity;
 		readonly principal: StableToolVmLeasePrincipal;

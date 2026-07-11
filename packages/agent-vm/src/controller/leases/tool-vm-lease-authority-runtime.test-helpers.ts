@@ -27,6 +27,7 @@ export interface TestLease {
 	readonly agentId: string;
 	readonly id: string;
 	readonly idleExpiresAtMs: number;
+	readonly lastUsedAt: number;
 	readonly label: string;
 	readonly vm: { readonly id: string };
 	readonly zoneId: string;
@@ -102,6 +103,7 @@ export function createLease(overrides: Partial<TestLease> = {}): TestLease {
 		agentId: PRINCIPAL_MAIN.agentId,
 		id: 'lease-1',
 		idleExpiresAtMs: 10_000,
+		lastUsedAt: 1_000,
 		label: 'primary lease',
 		vm: { id: RUNTIME_BINDING.vmId },
 		zoneId: PRINCIPAL_MAIN.zoneId,
