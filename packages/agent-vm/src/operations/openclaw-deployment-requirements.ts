@@ -2,13 +2,13 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-	effectiveOpenClawGondolinSandboxValue,
-	formatOpenClawGondolinRequirementFieldPath,
-	formatOpenClawGondolinRequirementFindingId,
-	formatOpenClawGondolinRequirementHint,
-	OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS,
-	type OpenClawGondolinSandboxRequirement,
-	type OpenClawGondolinSandboxRequirementKey,
+	effectiveOpenClawAgentVmSandboxValue,
+	formatOpenClawAgentVmRequirementFieldPath,
+	formatOpenClawAgentVmRequirementFindingId,
+	formatOpenClawAgentVmRequirementHint,
+	OPENCLAW_AGENT_VM_SANDBOX_REQUIREMENTS,
+	type OpenClawAgentVmSandboxRequirement,
+	type OpenClawAgentVmSandboxRequirementKey,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -173,9 +173,9 @@ function readAgentConfigEntries(config: OpenClawDeploymentConfig): readonly {
 function effectiveSandboxValue(
 	defaults: OpenClawAgentConfig,
 	agentConfig: OpenClawAgentConfig,
-	key: OpenClawGondolinSandboxRequirementKey,
+	key: OpenClawAgentVmSandboxRequirementKey,
 ): unknown {
-	return effectiveOpenClawGondolinSandboxValue(defaults, agentConfig, key);
+	return effectiveOpenClawAgentVmSandboxValue(defaults, agentConfig, key);
 }
 
 function readSandboxToolPolicy(
@@ -298,22 +298,22 @@ function effectiveWorkspace(
 function requirementFinding(options: {
 	readonly actualValue: unknown;
 	readonly label: string;
-	readonly requirement: OpenClawGondolinSandboxRequirement;
+	readonly requirement: OpenClawAgentVmSandboxRequirement;
 	readonly zoneId: string;
 }): OpenClawDeploymentRequirementFinding {
-	const fieldPath = formatOpenClawGondolinRequirementFieldPath(
+	const fieldPath = formatOpenClawAgentVmRequirementFieldPath(
 		options.label,
 		options.requirement.key,
 	);
 	const ok = options.actualValue === options.requirement.expectedValue;
 	return {
-		id: formatOpenClawGondolinRequirementFindingId({
+		id: formatOpenClawAgentVmRequirementFindingId({
 			fieldPath,
 			label: options.label,
 			zoneId: options.zoneId,
 		}),
 		ok,
-		hint: formatOpenClawGondolinRequirementHint({
+		hint: formatOpenClawAgentVmRequirementHint({
 			expectedValue: options.requirement.expectedValue,
 			fieldPath,
 			ok,
@@ -350,7 +350,7 @@ export function evaluateOpenClawDeploymentRequirements(
 		buildSandboxPluginToolPolicyFinding(target),
 		...readAgentConfigEntries(target.config).flatMap(({ config, label }) => {
 			const workspace = effectiveWorkspace(defaults, config);
-			const sandboxRequirementFindings = OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS.map((requirement) =>
+			const sandboxRequirementFindings = OPENCLAW_AGENT_VM_SANDBOX_REQUIREMENTS.map((requirement) =>
 				requirementFinding({
 					actualValue: effectiveSandboxValue(defaults, config, requirement.key),
 					requirement,
