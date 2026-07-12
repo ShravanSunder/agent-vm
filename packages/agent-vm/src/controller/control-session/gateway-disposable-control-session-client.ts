@@ -27,6 +27,7 @@ import {
 	type GatewayControlAdmissionExecutionRequest,
 	type GatewayControlAdmissionExecutor,
 	type GatewayControlAdmissionSubmission,
+	type GatewayControlLeaseRejectionReason,
 	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
 import { io, type Socket } from 'socket.io-client';
@@ -107,7 +108,13 @@ export interface GatewayDisposableControlSessionClientOptions {
 	readonly resolveInboundStablePrincipal?: (context: {
 		readonly envelope: ControlEnvelope;
 		readonly message: GatewayControlRpcMessage;
-	}) => string | undefined;
+	}) =>
+		| string
+		| {
+				readonly leaseRejectionReason: GatewayControlLeaseRejectionReason;
+				readonly status: 'rejected';
+		  }
+		| undefined;
 	readonly refreshExtraHeaders: () => Promise<Readonly<Record<string, string>>>;
 	readonly scheduleImmediate?: (callback: () => void) => void;
 }
@@ -331,6 +338,22 @@ function buildGatewayAdmissionFailureResponse(options: {
 			},
 			responseToMessageId: options.responseToMessageId,
 			result: 'failed',
+		},
+	});
+}
+
+function buildGatewayCallerContextRejectionResponse(options: {
+	readonly leaseRejectionReason: GatewayControlLeaseRejectionReason;
+	readonly message: Extract<GatewayControlRpcMessage, { readonly kind: 'command' }>;
+	readonly responseToMessageId: string;
+}): GatewayControlRpcMessage {
+	return GatewayControlRpcMessageSchema.parse({
+		kind: 'command_result',
+		operation: options.message.operation,
+		payload: {
+			leaseRejectionReason: options.leaseRejectionReason,
+			responseToMessageId: options.responseToMessageId,
+			result: 'rejected',
 		},
 	});
 }
@@ -787,10 +810,38 @@ export function createGatewayDisposableControlSessionClient(
 						pendingResult !== undefined &&
 						pendingResult.attempt === attempt &&
 						pendingResult.expectedOperation === message.operation;
-					const stablePrincipal = options.resolveInboundStablePrincipal?.({
+					const inboundPrincipalResolution = options.resolveInboundStablePrincipal?.({
 						envelope,
 						message,
 					});
+					if (
+						typeof inboundPrincipalResolution === 'object' &&
+						inboundPrincipalResolution.status === 'rejected'
+					) {
+						attempt.lastSeenPeerSequence = sequenceDecision.nextLastSeenSequence;
+						acknowledge(buildControlMessageReceipt());
+						if (message.kind === 'command') {
+							void sendGatewayCommandResponse({
+								attempt,
+								requestEnvelope: envelope,
+								responsePayload: buildGatewayCallerContextRejectionResponse({
+									leaseRejectionReason: inboundPrincipalResolution.leaseRejectionReason,
+									message,
+									responseToMessageId: envelope.messageId,
+								}),
+							}).catch((error: unknown) => {
+								fenceAttempt(
+									attempt,
+									error instanceof Error
+										? error.message
+										: 'gateway caller-context rejection failed',
+								);
+							});
+						}
+						return;
+					}
+					const stablePrincipal =
+						typeof inboundPrincipalResolution === 'string' ? inboundPrincipalResolution : undefined;
 					const classification = classifyGatewayControlAdmission({
 						direction: 'gateway_to_controller',
 						matchedPendingResult,

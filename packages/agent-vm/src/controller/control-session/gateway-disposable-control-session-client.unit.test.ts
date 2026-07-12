@@ -1549,6 +1549,73 @@ describe('Gateway disposable control session client', () => {
 		client.close();
 	});
 
+	it('returns a typed stale caller-context rejection before lease renewal admission', async () => {
+		const connectionId = '11111111-1111-4111-8111-111111111111';
+		const sessionId = '22222222-2222-4222-8222-222222222222';
+		const fake = createFakeSocket({ connectionId, sessionId });
+		let dispatchCount = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => fake.socket,
+			dispatcher: {
+				dispatch: async () => {
+					dispatchCount += 1;
+					return undefined;
+				},
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => 1,
+			policyByOperation: { lease_renew: 'single_use_critical' },
+			refreshExtraHeaders: async () => ({}),
+			resolveInboundStablePrincipal: () => ({
+				leaseRejectionReason: 'caller_context_stale',
+				status: 'rejected',
+			}),
+		});
+		await client.ready;
+		const messageId = '55555555-5555-4555-8555-555555555555';
+
+		expect(
+			await fake.control.receive(
+				{
+					...inboundEnvelope({
+						connectionId,
+						kind: 'command',
+						messageId,
+						operation: 'lease_renew',
+						sequence: 1,
+						sessionId,
+					}),
+					deliveryPolicy: 'single_use_critical',
+				},
+				leaseRenewMessage('lease-a'),
+			),
+		).toEqual({ received: true });
+		await flushImmediate();
+
+		expect(dispatchCount).toBe(0);
+		expect(fake.control.acknowledgedPayloads).toContainEqual({
+			kind: 'command_result',
+			operation: 'lease_renew',
+			payload: {
+				leaseRejectionReason: 'caller_context_stale',
+				responseToMessageId: messageId,
+				result: 'rejected',
+			},
+		});
+		expect(fake.control.clientDisconnectCount).toBe(0);
+		client.close();
+	});
+
 	it('fences an exact-session command result without a matching pending command', async () => {
 		const first = createFakeSocket({
 			connectionId: '11111111-1111-4111-8111-111111111111',

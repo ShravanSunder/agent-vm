@@ -179,7 +179,7 @@ describe('gateway control caller context registry', () => {
 				envelope: createInboundEnvelope('lease_get', 3),
 				message: unregisteredLeaseGetMessage,
 			}),
-		).toBeUndefined();
+		).toEqual({ leaseRejectionReason: 'caller_context_absent', status: 'rejected' });
 		expect(() =>
 			resolveGatewayControlInboundStablePrincipal({
 				callerContexts,
@@ -369,6 +369,21 @@ describe('gateway control caller context registry', () => {
 				session: acceptedSession,
 			}).status,
 		).toBe('stale');
+		const expiredLeaseRenew = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_renew',
+			payload: {
+				callerContext: { callerContextId: context.callerContextId },
+				leaseId: 'lease-main',
+			},
+		});
+		expect(
+			resolveGatewayControlInboundStablePrincipal({
+				callerContexts: registry,
+				envelope: createInboundEnvelope('lease_renew', 2),
+				message: expiredLeaseRenew,
+			}),
+		).toEqual({ leaseRejectionReason: 'caller_context_stale', status: 'rejected' });
 	});
 
 	it('issues an opaque context id and stores only a sessionKey digest', () => {

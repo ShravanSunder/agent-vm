@@ -231,7 +231,13 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 	readonly validateCallerContextRegistration?: (
 		payload: GatewayControlCallerContextRegisterPayload,
 	) => void;
-}): string | undefined {
+}):
+	| string
+	| {
+			readonly leaseRejectionReason: GatewayControlLeaseRejectionReason;
+			readonly status: 'rejected';
+	  }
+	| undefined {
 	if (options.message.kind !== 'command') {
 		return undefined;
 	}
@@ -268,7 +274,21 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 		return undefined;
 	}
 	const resolution = options.callerContexts.resolveForSession({ callerContextId, session });
-	return resolution.status === 'ok' ? resolution.callerContext.stablePrincipal : undefined;
+	if (resolution.status === 'ok') {
+		return resolution.callerContext.stablePrincipal;
+	}
+	if (!options.message.operation.startsWith('lease_')) {
+		return undefined;
+	}
+	switch (resolution.status) {
+		case 'absent':
+			return { leaseRejectionReason: 'caller_context_absent', status: 'rejected' };
+		case 'session_mismatch':
+			return { leaseRejectionReason: 'caller_context_session_mismatch', status: 'rejected' };
+		case 'stale':
+			return { leaseRejectionReason: 'caller_context_stale', status: 'rejected' };
+	}
+	return assertUnreachableCallerContextResolution(resolution);
 }
 
 type ToolVmLeaseCallerContextResolution =
