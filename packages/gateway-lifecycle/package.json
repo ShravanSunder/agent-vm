@@ -1,7 +1,7 @@
 {
-	"name": "@agent-vm/gateway-interface",
+	"name": "@agent-vm/gateway-lifecycle",
 	"version": "0.0.114",
-	"description": "Shared TypeScript interfaces for VM gateway lifecycles, VmSpec, and ProcessSpec.",
+	"description": "Shared gateway lifecycle contracts, workload intent, and cross-gateway policies.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
 		"url": "https://github.com/ShravanSunder/agent-vm/issues"
@@ -11,7 +11,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
-		"directory": "packages/gateway-interface"
+		"directory": "packages/gateway-lifecycle"
 	},
 	"files": [
 		"dist"
@@ -31,11 +31,17 @@
 	"scripts": {
 		"build": "tsdown",
 		"prepack": "pnpm -C ../.. build",
-		"typecheck": "tsc -p tsconfig.json --noEmit"
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "pnpm test:unit",
+		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/gateway-lifecycle/src"
 	},
 	"dependencies": {
-		"@agent-vm/gondolin-adapter": "workspace:*",
+		"@agent-vm/managed-vm": "workspace:*",
 		"@agent-vm/secret-management": "workspace:*",
 		"uuid": "^11.1.1"
+	},
+	"devDependencies": {
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.5"
 	}
 }

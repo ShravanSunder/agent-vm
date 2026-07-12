@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { writeFileAtomically } from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
+import { writeFileAtomically } from '../../shared/write-file-atomically.js';
 import {
 	deserializeGatewayControlSessionMaterial,
 	serializeGatewayControlSessionMaterial,

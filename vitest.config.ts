@@ -83,7 +83,8 @@ export default defineConfig({
 			'@agent-vm/gateway-control-contracts': repoPath(
 				'packages/gateway-control-contracts/src/index.ts',
 			),
-			'@agent-vm/gateway-interface': repoPath('packages/gateway-interface/src/index.ts'),
+			'@agent-vm/gateway-lifecycle': repoPath('packages/gateway-lifecycle/src/index.ts'),
+			'@agent-vm/managed-vm': repoPath('packages/managed-vm/src/index.ts'),
 			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
 				'packages/openclaw-agent-vm-plugin/src/index.ts',
 			),

@@ -2,12 +2,12 @@
  * Canonical NODE_OPTIONS value for forcing IPv4-preference egress
  * in agent-vm VMs.
  *
- * Background: Gondolin's synthetic DNS (when tcpHosts is enabled)
+ * Background: the managed VM synthetic DNS path (when tcpHosts is enabled)
  * returns a per-host IPv4 (reverse-lookable) and a single shared
  * IPv4-mapped IPv6 (::ffff:198.18.0.1, NOT reverse-lookable). Node
  * 20+'s fetch (via undici, autoSelectFamily: true) races both
  * families; when the IPv6 race wins (~5-20% under sequential load),
- * gondolin cannot route it and the request fails with a non-JSON
+ * the VM egress router cannot route it and the request fails with a non-JSON
  * 400 (HTTP) or 403 (TLS). The two flags below stop the race:
  *
  *   --dns-result-order=ipv4first       changes dns.lookup() so

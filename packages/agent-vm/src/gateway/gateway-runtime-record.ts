@@ -7,7 +7,7 @@ import {
 	type GatewayProcessSpec,
 	type GatewayType,
 } from '@agent-vm/gateway-interface';
-import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 
 import {
@@ -15,6 +15,7 @@ import {
 	type GatewayEpochIdentity,
 } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import { readProcessIdentity as defaultReadProcessIdentity } from '../shared/managed-vm-process.js';
+import { writeFileAtomically } from '../shared/write-file-atomically.js';
 
 const gatewayTypeSchema = z.enum(gatewayTypeValues);
 

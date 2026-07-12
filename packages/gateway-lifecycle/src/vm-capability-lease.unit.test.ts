@@ -22,7 +22,7 @@ describe('VM capability lease primitives', () => {
 			isVmCapabilityLease(
 				{
 					leaseId: 'lease-123',
-					transport: 'gondolin-rpc',
+					transport: 'vm-rpc',
 				},
 				'ssh-sandbox',
 			),

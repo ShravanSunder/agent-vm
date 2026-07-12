@@ -2,10 +2,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
-import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 
 import { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
+import { writeFileAtomically } from '../../shared/write-file-atomically.js';
 import {
 	gatewayEpochIdentitySchema,
 	type GatewayEpochIdentity,

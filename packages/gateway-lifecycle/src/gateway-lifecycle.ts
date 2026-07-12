@@ -4,7 +4,7 @@ import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayControlPrivateEnvironmentName } from './gateway-control-private-environment.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
-import type { GatewayVmSpec } from './gateway-vm-spec.js';
+import type { GatewayVmRequirements } from './gateway-vm-spec.js';
 import type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 
 /**
@@ -219,7 +219,7 @@ export interface GatewayZoneMcpServerConfig {
 	readonly url: string;
 }
 
-export interface BuildGatewayVmSpecOptions {
+export interface BuildGatewayVmRequirementsOptions {
 	readonly controllerPort: number;
 	readonly gatewayCacheDir: string;
 	readonly projectNamespace: string;
@@ -240,10 +240,10 @@ export interface GatewayLifecycle {
 	readonly authConfig?: GatewayAuthConfig | undefined;
 
 	/**
-	 * Build the full VM spec — everything Gondolin needs to create the VM.
-	 * Pure data assembly — no side effects.
+	 * Build backend-neutral guest workload requirements.
+	 * Pure data assembly — no side effects or controller authority.
 	 */
-	buildVmSpec(options: BuildGatewayVmSpecOptions): GatewayVmSpec;
+	buildVmRequirements(options: BuildGatewayVmRequirementsOptions): GatewayVmRequirements;
 
 	/**
 	 * Build the process spec — everything about startup, health, and logging.

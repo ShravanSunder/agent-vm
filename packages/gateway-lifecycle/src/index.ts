@@ -78,7 +78,7 @@ export type {
 	GenericControllerRequestEventOperation,
 } from './health/controller-request-policy.js';
 export type {
-	BuildGatewayVmSpecOptions,
+	BuildGatewayVmRequirementsOptions,
 	GatewayAuthConfig,
 	GatewayIngressConfig,
 	GatewayLifecycle,
@@ -91,7 +91,7 @@ export type {
 	HttpMediatedGatewaySecretConfig,
 } from './gateway-lifecycle.js';
 export type { GatewayHealthCheck, GatewayProcessSpec } from './gateway-process-spec.js';
-export type { GatewayVmSpec } from './gateway-vm-spec.js';
+export type { GatewayVmRequirements } from './gateway-vm-spec.js';
 export {
 	mergeRuntimeGatewaySecrets,
 	splitResolvedGatewaySecrets,

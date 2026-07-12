@@ -8,7 +8,7 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
-			"@agent-vm/gondolin-adapter": ["../gondolin-adapter/dist/index.d.ts"],
+			"@agent-vm/managed-vm": ["../managed-vm/dist/index.d.ts"],
 			"@agent-vm/secret-management": ["../secret-management/dist/index.d.ts"]
 		}
 	}

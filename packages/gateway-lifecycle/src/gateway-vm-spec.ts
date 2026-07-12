@@ -1,18 +1,20 @@
-import type { ManagedSshEgressOptions, VfsMountSpec } from '@agent-vm/gondolin-adapter';
+import type { ManagedVmGitReadOnlySshEgress, ManagedVmMount } from '@agent-vm/managed-vm';
 import type { MediatedSecretSpec } from '@agent-vm/secret-management';
 
 import type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 
 /**
- * Everything the controller needs to create the Gondolin VM.
- * Lifecycle implementations own the full Gondolin-facing contract.
+ * Guest workload requirements produced by a gateway lifecycle.
+ *
+ * Image selection, resources, VM construction, and backend translation remain
+ * controller/composition responsibilities.
  */
-export interface GatewayVmSpec {
+export interface GatewayVmRequirements {
 	readonly environment: Record<string, string>;
-	readonly vfsMounts: Record<string, VfsMountSpec>;
+	readonly mounts: Record<string, ManagedVmMount>;
 	readonly mediatedSecrets: Record<string, MediatedSecretSpec>;
 	readonly tcpHosts: Record<string, string>;
-	readonly sshEgress?: ManagedSshEgressOptions;
+	readonly sshEgress?: ManagedVmGitReadOnlySshEgress;
 	readonly allowedHosts: readonly string[];
 	readonly websocketUpgrades?: readonly WebSocketUpgradeConfig[];
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';

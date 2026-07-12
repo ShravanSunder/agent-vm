@@ -212,6 +212,8 @@ Write scope:
 
 - new `packages/managed-vm/**`;
 - package-local compile/unit fixtures;
+- `scripts/verify-managed-vm-contracts.ts`, its unit test, and isolated fixture
+  projects used only by that verifier;
 - no shared root path-map, workspace, lockfile, or cross-package manifest edits;
   those belong to the I0 integration owner.
 
@@ -263,14 +265,25 @@ Behavior/capability:
 - preserve the intentional gateway-domain umbrella and shared policies;
 - replace adapter-owned mount/SSH types with `managed-vm` intent types;
 - keep gateway workload intent separate from image/resource/backend authority;
-- move Node/OpenClaw-specific helpers to their concrete owner rather than the
-  shared gateway contract;
-- add a Hermes-shaped compile fixture and retain exhaustive `GatewayType`
-  registry coverage;
+- retain optional language-specific runtime policies when they are shared
+  across gateway kinds or gateway-managed VM surfaces, including the current
+  Node IPv4-egress policy and future shared Python policy;
+- retain gateway-kind configuration projections and shared path policy without
+  making Node, Python, OpenClaw, Worker, or Hermes mandatory for every
+  `GatewayLifecycle` implementation;
+- move only concrete gateway implementation behavior, backend translation, or
+  controller authority to its truthful owner;
+- add a Python-guest lifecycle compile fixture and retain exhaustive shipping
+  `GatewayType` registry coverage;
 - remove the old package completely—no shim or forwarding export.
 
-Test-first proof: retarget policy tests and add compile/import failures for the
-old name and concrete-adapter dependency before completing the rename.
+Test-first proof: retarget policy tests; add a permanent package-local compiler
+verifier that observes compile/import failures for the old name and
+concrete-adapter dependency before completing the rename; prove a Python-guest
+lifecycle implementation satisfies the shared host contract without using
+optional Node helpers or OpenClaw-only fields while those shared runtime helpers
+remain available to consumers that select them. This cut does not add a
+shipping Hermes `GatewayType` or configuration projection.
 
 Green gate: gateway-lifecycle build/unit/compile fixtures pass; package depends
 on managed-vm but not a concrete adapter or controller.
@@ -291,6 +304,8 @@ Write scope:
 - `packages/agent-vm/src/shared/write-file-atomically.ts` and focused tests for
   Gateway runtime records, Tool VM runtime records, and control-session
   material;
+- deletion of `packages/gondolin-adapter/src/write-file-atomically.ts` and its
+  export from `packages/gondolin-adapter/src/index.ts`;
 - the four current consumers only:
   `openclaw-lifecycle.ts`, `gateway-runtime-record.ts`,
   `tool-vm-runtime-record.ts`, and

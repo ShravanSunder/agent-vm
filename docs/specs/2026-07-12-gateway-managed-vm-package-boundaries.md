@@ -109,6 +109,9 @@ R2. `gateway-lifecycle` owns:
 - `GatewayZoneConfig` and gateway-kind configuration projections;
 - gateway VM requirements and gateway process specifications;
 - gateway auth configuration;
+- optional language-specific runtime policies shared across gateway kinds or
+  gateway-managed VM surfaces, including Node policy today and future Python
+  policy when it is genuinely shared;
 - gateway health, lease, path, audience, secret-routing, request, and WebSocket
   policies currently shared across gateway kinds.
 
@@ -401,16 +404,31 @@ R30. A future `hermes-gateway` is a TypeScript host package implementing
 
 R31. Hermes may run Python inside the Gateway VM and may use a Python guest
 plugin or Tool Portal SDK. That guest language does not create a Python host
-lifecycle API or dynamic cross-language lifecycle loader.
+lifecycle API or dynamic cross-language lifecycle loader. This cut proves that
+a Python-guest lifecycle implementation can satisfy the shared host contract
+without using optional Node helpers or OpenClaw-only fields; it does not add a
+shipping Hermes `GatewayType` or configuration projection before Hermes is
+implemented.
 
-R32. `gateway-lifecycle` and `managed-vm` contain no Node/OpenClaw-specific
-assumptions that belong to concrete gateway packages.
+R32. `gateway-lifecycle` may own optional language-specific runtime policies
+shared across gateway kinds or gateway-managed VM surfaces, including Node
+policy today and future Python policy when it is genuinely shared. It may also
+own gateway-kind configuration projections for OpenClaw, Worker, and future
+Hermes implementations. These optional policies and projections must not make
+one guest language or gateway kind mandatory for every `GatewayLifecycle`
+implementation.
+
+`gateway-lifecycle` and `managed-vm` contain no concrete gateway
+implementation, VM-backend translation, or controller-authority behavior.
+Language- or gateway-kind-specific behavior that operates private files,
+processes, or implementation state belongs to the concrete gateway package.
 
 ## Spec boundary and separability map
 
 ```text
 gateway-lifecycle
-  owns: gateway-kind vocabulary, shared policy, lifecycle semantics
+  owns: gateway-kind vocabulary and config projections, shared optional
+        language-runtime policy, lifecycle semantics
   exposes: GatewayLifecycle, GatewayVmRequirements, GatewayProcessSpec
   excludes: concrete VM creation and controller authority
 
@@ -471,7 +489,10 @@ injection by deployment code.
 ### Required security invariants
 
 1. Raw secret resolution remains host-only.
-2. Host-only secrets never enter a VM creation request.
+2. Controller-only secrets never enter a VM creation request. Resolved
+   mediated-secret values may enter the trusted host-side provider request only
+   for outbound HTTP mediation; they never enter guest environment or image
+   state.
 3. Tool VM secrets remain HTTP-mediated and audience/agent-access filtered.
 4. Gateway raw environment secrets remain explicit exceptions, not a generic
    managed VM default.

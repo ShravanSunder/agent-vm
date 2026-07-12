@@ -3,7 +3,7 @@ const VM_SSH_PUBLIC_ENDPOINT_KEYS = new Set(['host', 'port', 'user']);
 /**
  * Small host-issued capability envelope shared by VM-backed transports. The
  * transport tag keeps SSH Tool VM leases distinct from future host-side
- * Gondolin RPC or bridge capabilities without inventing a transport object.
+ * VM RPC or bridge capabilities without inventing a transport object.
  */
 export interface VmCapabilityLease<TTransport extends string> {
 	readonly leaseId: string;

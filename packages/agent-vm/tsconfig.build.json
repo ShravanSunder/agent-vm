@@ -10,8 +10,9 @@
 		"paths": {
 			"@agent-vm/agent-vm-worker": ["../agent-vm-worker/dist/index.d.ts"],
 			"@agent-vm/config-contracts": ["../config-contracts/dist/index.d.ts"],
-			"@agent-vm/gateway-interface": ["../gateway-interface/dist/index.d.ts"],
+			"@agent-vm/gateway-lifecycle": ["../gateway-lifecycle/dist/index.d.ts"],
 			"@agent-vm/gondolin-adapter": ["../gondolin-adapter/dist/index.d.ts"],
+			"@agent-vm/managed-vm": ["../managed-vm/dist/index.d.ts"],
 			"@agent-vm/mcp-portal": ["../mcp-portal/dist/index.d.ts"],
 			"@agent-vm/openclaw-agent-vm-plugin": ["../openclaw-agent-vm-plugin/dist/index.d.ts"],
 			"@agent-vm/openclaw-gateway": ["../openclaw-gateway/dist/index.d.ts"],

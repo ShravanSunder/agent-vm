@@ -23,13 +23,14 @@ import {
 import {
 	createGitReadOnlySshEgressOptions,
 	type ManagedSshEgressOptions,
-	writeFileAtomically,
 } from '@agent-vm/gondolin-adapter';
 import {
 	redactOnePasswordReferences,
 	type SecretRef,
 	type SecretResolver,
 } from '@agent-vm/secret-management';
+
+import { writeFileAtomically } from './write-file-atomically.js';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
