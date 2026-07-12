@@ -6,6 +6,7 @@ import type { SystemConfig } from '../config/system-config.js';
 import {
 	buildControllerStatus,
 	buildControllerZoneStatus,
+	type ControllerObservabilityStatus,
 	type ControllerRuntimeStatus,
 } from '../operations/controller-status.js';
 import type {
@@ -87,6 +88,7 @@ export function createControllerRuntimeOperations(options: {
 	}>;
 	readonly getRuntimeStatusByZone: () => ControllerRuntimeStatus['zones'];
 	readonly getRuntimeDiagnosisByZone?: () => ControllerRuntimeStatus['diagnoses'];
+	readonly getObservabilityStatus?: (() => ControllerObservabilityStatus) | undefined;
 	readonly secretResolver: SecretResolver;
 	readonly systemConfig: SystemConfig;
 }): ControllerRuntimeOperations {
@@ -138,7 +140,12 @@ export function createControllerRuntimeOperations(options: {
 			});
 			return await options.getOpenClawRuntime(targetZoneId).exec(command);
 		},
-		getStatus: async () => buildControllerStatus(options.systemConfig, buildRuntimeStatus()),
+		getStatus: async () =>
+			buildControllerStatus(
+				options.systemConfig,
+				buildRuntimeStatus(),
+				options.getObservabilityStatus?.(),
+			),
 		getZoneHealth: async (targetZoneId) =>
 			await options.getOpenClawRuntime(targetZoneId).getHealth(),
 		getZoneServiceHealth: async (targetZoneId) =>

@@ -1,23 +1,18 @@
-import { assertVmDestroyReceiptMatchesTarget } from '../../shared/vm-destruction-receipt.js';
-import type { ToolVmProvisionalOwnershipProof } from '../vm-ownership/gateway-ownership-coordinator.js';
 import {
 	gatewayIdentitiesEqual,
 	type GatewayEpochIdentity,
 } from '../vm-ownership/vm-ownership-contracts.js';
 import {
-	RejectedToolVmProvisioningCleanupError,
 	type ToolVmExactDestructionOptions,
 	type ToolVmLeaseAuthorityRuntime,
 	type ToolVmLeaseRuntimeResource,
 	type ToolVmRuntimeLeaseIdentity,
 } from './tool-vm-lease-authority-runtime-contracts.js';
 import {
-	assertDestroyTargetMatchesAuthority,
 	assertLeaseMatchesRuntime,
 	authorityResourceKey,
 	commitIdentity,
 	gatewayAuthorityKey,
-	rejectedCleanupId,
 } from './tool-vm-lease-authority-runtime-identity.js';
 import { requireLiveLeaf, stablePrincipalKey } from './tool-vm-lease-authority-state-helpers.js';
 import {
@@ -32,7 +27,6 @@ import {
 } from './tool-vm-lease-authority-state.js';
 
 export {
-	RejectedToolVmProvisioningCleanupError,
 	type ToolVmExactDestructionAdmission,
 	type ToolVmExactDestructionAdmissionPolicy,
 	type ToolVmExactDestructionOptions,
@@ -44,18 +38,11 @@ export {
 interface MutableToolVmLeaseRuntimeResource<
 	TLease extends ToolVmRuntimeLeaseIdentity,
 > extends ToolVmLeaseRuntimeResource<TLease> {
-	commitDisposition: 'complete' | 'failed' | 'in-flight' | 'not-started';
+	commitDisposition: 'complete' | 'not-started';
 	commitIdentity?: string;
-	commitInFlight?: Promise<void>;
 	commitLease?: TLease;
 	destructionInFlight?: Promise<ToolVmLeaseRuntimeResource<TLease>>;
 	lease?: TLease;
-}
-
-interface RejectedToolVmProvisioningCleanupResource<
-	TLease extends ToolVmRuntimeLeaseIdentity,
-> extends ToolVmLeaseRuntimeResource<TLease> {
-	destructionInFlight?: Promise<ToolVmLeaseRuntimeResource<TLease>>;
 }
 
 export function createToolVmLeaseAuthorityRuntime<
@@ -68,13 +55,8 @@ export function createToolVmLeaseAuthorityRuntime<
 ): ToolVmLeaseAuthorityRuntime<TLease, TCleanupContext> {
 	const authorityStatesByGateway = new Map<string, ToolVmLeaseAuthorityState>();
 	const resourcesByAuthority = new Map<string, MutableToolVmLeaseRuntimeResource<TLease>>();
-	const rejectedCleanupResourcesByAuthority = new Map<
-		string,
-		RejectedToolVmProvisioningCleanupResource<TLease>
-	>();
 	const authorityResourceKeysByLeaseId = new Map<string, string>();
 	const cleanupContextsByAuthority = new Map<string, TCleanupContext>();
-	const rejectedCleanupContextsById = new Map<string, TCleanupContext>();
 	const reservedDestructionTombstonesByGateway = new Map<string, Set<string>>();
 
 	function requireAuthorityState(gateway: GatewayEpochIdentity): ToolVmLeaseAuthorityState {
@@ -146,13 +128,6 @@ export function createToolVmLeaseAuthorityRuntime<
 			.map((resource) => resource.authority.leaseId);
 	}
 
-	function rejectedCleanupIdsForGateway(gateway: GatewayEpochIdentity): readonly string[] {
-		const gatewayKey = gatewayAuthorityKey(gateway);
-		return [...rejectedCleanupResourcesByAuthority.entries()]
-			.filter(([, resource]) => gatewayAuthorityKey(resource.authority.gateway) === gatewayKey)
-			.map(([cleanupId]) => cleanupId);
-	}
-
 	function reserveDestructionTombstone(
 		state: ToolVmLeaseAuthorityState,
 		authority: ToolVmLeafAuthorityReference,
@@ -169,7 +144,7 @@ export function createToolVmLeaseAuthorityRuntime<
 		) {
 			throw new ToolVmLeaseAuthorityTransitionError(
 				'tombstone-capacity-exhausted',
-				'Tool VM leaf tombstone capacity is exhausted before exact destruction.',
+				'Tool VM leaf tombstone capacity is exhausted before controller destruction.',
 			);
 		}
 		reserved.add(resourceKey);
@@ -214,16 +189,6 @@ export function createToolVmLeaseAuthorityRuntime<
 		if (resource.destructionInFlight !== undefined) {
 			return resource.destructionInFlight;
 		}
-		if (resource.commitInFlight !== undefined) {
-			const destructionAfterCommit = resource.commitInFlight
-				.catch(() => undefined)
-				.then(() => {
-					delete resource.destructionInFlight;
-					return startExactDestruction(destroyOptions);
-				});
-			resource.destructionInFlight = destructionAfterCommit;
-			return destructionAfterCommit;
-		}
 		const currentState = requireAuthorityState(destroyOptions.authority.gateway);
 		const currentLeaf = requireLiveLeaf(currentState, destroyOptions.authority);
 		const destructionState = reduceToolVmLeaseAuthorityState(
@@ -244,15 +209,7 @@ export function createToolVmLeaseAuthorityRuntime<
 		replaceAuthorityState(destroyOptions.authority.gateway, destructionState);
 		const destruction = (async (): Promise<ToolVmLeaseRuntimeResource<TLease>> => {
 			try {
-				const receipt =
-					destroyOptions.mode.kind === 'detached'
-						? await resource.ownership.destroyDetached()
-						: await resource.ownership.destroyLive(destroyOptions.mode.closeLiveVm);
-				assertVmDestroyReceiptMatchesTarget(
-					receipt,
-					resource.ownershipProof.verifiedDestroyTarget,
-					`Tool VM leaf '${destroyOptions.authority.leafGeneration}' destruction receipt`,
-				);
+				await destroyOptions.destroy();
 				const completedState = reduceToolVmLeaseAuthorityState(
 					requireAuthorityState(destroyOptions.authority.gateway),
 					{
@@ -260,12 +217,7 @@ export function createToolVmLeaseAuthorityRuntime<
 						destroyedAtMs: destroyOptions.destroyedAtMs,
 						kind: 'destruction-completed',
 						reason: destroyOptions.reason,
-						receipt: {
-							complete: true,
-							reservationId: resource.ownershipProof.destructionIdentity.reservationId,
-							reservationPath: resource.ownershipProof.destructionIdentity.reservationPath,
-							vmId: resource.ownershipProof.destructionIdentity.vmId,
-						},
+						...(resource.lease === undefined ? {} : { vmId: resource.lease.vm.id }),
 					},
 				);
 				replaceAuthorityState(destroyOptions.authority.gateway, completedState);
@@ -275,7 +227,7 @@ export function createToolVmLeaseAuthorityRuntime<
 				releaseDestructionTombstone(destroyOptions.authority);
 				return resource;
 			} catch (error) {
-				recordDestructionIncomplete(destroyOptions.authority, 'exact-destruction-unproven');
+				recordDestructionIncomplete(destroyOptions.authority, 'controller-destruction-failed');
 				throw error;
 			}
 		})();
@@ -331,7 +283,6 @@ export function createToolVmLeaseAuthorityRuntime<
 						prunedState.terminalUseTombstones.size === 0 &&
 						prunedState.tombstonesByGeneration.size === 0 &&
 						leaseIdsForGateway(prunedState.parent.gateway).length === 0 &&
-						rejectedCleanupIdsForGateway(prunedState.parent.gateway).length === 0 &&
 						(reservedDestructionTombstonesByGateway.get(gatewayKey)?.size ?? 0) === 0;
 					if (canEvictRetiredState) {
 						authorityStatesByGateway.delete(gatewayKey);
@@ -364,13 +315,7 @@ export function createToolVmLeaseAuthorityRuntime<
 			if (resource !== undefined) {
 				return structuredClone(resource.authority);
 			}
-			const rejectedResource = [...rejectedCleanupResourcesByAuthority.values()].find(
-				(candidateResource) =>
-					stablePrincipalKey(candidateResource.authority.principal) === principalKey,
-			);
-			return rejectedResource === undefined
-				? undefined
-				: structuredClone(rejectedResource.authority);
+			return undefined;
 		},
 		cleanupContextForAuthority(authority): TCleanupContext | undefined {
 			return cleanupContextsByAuthority.get(authorityResourceKey(authority));
@@ -381,56 +326,23 @@ export function createToolVmLeaseAuthorityRuntime<
 				? undefined
 				: cleanupContextsByAuthority.get(authorityResourceKey(resource.authority));
 		},
-		async beginProvisioning(beginOptions): Promise<ToolVmProvisionalOwnershipProof> {
-			const ownershipProof = await beginOptions.ownership.ready;
+		beginProvisioning(beginOptions): void {
 			const resourceKey = authorityResourceKey(beginOptions.authority);
-			let state: ToolVmLeaseAuthorityState;
-			try {
-				assertDestroyTargetMatchesAuthority({
-					authority: beginOptions.authority,
-					ownershipProof,
-				});
-				state = reduceToolVmLeaseAuthorityState(
-					requireAuthorityState(beginOptions.authority.gateway),
-					{
-						authority: beginOptions.authority,
-						compatibility: beginOptions.compatibility,
-						destructionIdentity: ownershipProof.destructionIdentity,
-						idleExpiresAtMs: beginOptions.idleExpiresAtMs,
-						kind: 'begin-provisioning',
-					},
-				);
-				if (
-					resourcesByAuthority.has(resourceKey) ||
-					authorityResourceKeysByLeaseId.has(beginOptions.authority.leaseId)
-				) {
-					throw new Error('Tool VM lease authority already has a retained runtime resource.');
-				}
-			} catch (authorityError) {
-				try {
-					const receipt = await beginOptions.ownership.destroyDetached();
-					assertVmDestroyReceiptMatchesTarget(
-						receipt,
-						ownershipProof.verifiedDestroyTarget,
-						`Rejected Tool VM leaf '${beginOptions.authority.leafGeneration}' cleanup receipt`,
-					);
-				} catch (cleanupError) {
-					const cleanupId = rejectedCleanupId({
-						authority: beginOptions.authority,
-						ownershipProof,
-					});
-					rejectedCleanupResourcesByAuthority.set(cleanupId, {
-						authority: structuredClone(beginOptions.authority),
-						ownership: beginOptions.ownership,
-						ownershipProof: structuredClone(ownershipProof),
-					});
-					if (beginOptions.cleanupContext !== undefined) {
-						rejectedCleanupContextsById.set(cleanupId, beginOptions.cleanupContext);
-					}
-					throw new RejectedToolVmProvisioningCleanupError(cleanupId, authorityError, cleanupError);
-				}
-				throw authorityError;
+			if (
+				resourcesByAuthority.has(resourceKey) ||
+				authorityResourceKeysByLeaseId.has(beginOptions.authority.leaseId)
+			) {
+				throw new Error('Tool VM lease authority already has a retained runtime resource.');
 			}
+			const state = reduceToolVmLeaseAuthorityState(
+				requireAuthorityState(beginOptions.authority.gateway),
+				{
+					authority: beginOptions.authority,
+					compatibility: beginOptions.compatibility,
+					idleExpiresAtMs: beginOptions.idleExpiresAtMs,
+					kind: 'begin-provisioning',
+				},
+			);
 			replaceAuthorityState(beginOptions.authority.gateway, state);
 			if (beginOptions.cleanupContext !== undefined) {
 				cleanupContextsByAuthority.set(resourceKey, beginOptions.cleanupContext);
@@ -438,11 +350,8 @@ export function createToolVmLeaseAuthorityRuntime<
 			resourcesByAuthority.set(resourceKey, {
 				authority: structuredClone(beginOptions.authority),
 				commitDisposition: 'not-started',
-				ownership: beginOptions.ownership,
-				ownershipProof: structuredClone(ownershipProof),
 			});
 			authorityResourceKeysByLeaseId.set(beginOptions.authority.leaseId, resourceKey);
-			return structuredClone(ownershipProof);
 		},
 		async commitCurrent(commitOptions): Promise<void> {
 			const resource = requireResource(commitOptions.authority);
@@ -450,7 +359,6 @@ export function createToolVmLeaseAuthorityRuntime<
 				authority: commitOptions.authority,
 				lease: commitOptions.lease,
 				runtimeBinding: commitOptions.runtimeBinding,
-				verifiedDestroyTarget: resource.ownershipProof.verifiedDestroyTarget,
 			});
 			const requestedCommitIdentity = commitIdentity(commitOptions);
 			if (resource.commitLease !== undefined && resource.commitLease !== commitOptions.lease) {
@@ -461,12 +369,6 @@ export function createToolVmLeaseAuthorityRuntime<
 				resource.commitIdentity !== requestedCommitIdentity
 			) {
 				throw new Error('Tool VM current-commit retry changed lease or binding identity.');
-			}
-			if (resource.commitInFlight !== undefined) {
-				return await resource.commitInFlight;
-			}
-			if (resource.commitDisposition === 'failed') {
-				throw new Error('Tool VM ownership commit is uncertain and requires exact destruction.');
 			}
 			if (resource.commitDisposition === 'complete') {
 				return;
@@ -480,30 +382,17 @@ export function createToolVmLeaseAuthorityRuntime<
 			resource.lease = commitOptions.lease;
 			resource.commitIdentity = requestedCommitIdentity;
 			resource.commitLease = commitOptions.lease;
-			resource.commitDisposition = 'in-flight';
-			const commit = (async (): Promise<void> => {
-				try {
-					await resource.ownership.commitCurrent();
-					const state = reduceToolVmLeaseAuthorityState(
-						requireAuthorityState(commitOptions.authority.gateway),
-						{
-							authority: commitOptions.authority,
-							kind: 'commit-current',
-							runtimeBinding: commitOptions.runtimeBinding,
-							sshBinding: commitOptions.sshBinding,
-						},
-					);
-					replaceAuthorityState(commitOptions.authority.gateway, state);
-					resource.commitDisposition = 'complete';
-				} catch (error) {
-					resource.commitDisposition = 'failed';
-					throw error;
-				} finally {
-					delete resource.commitInFlight;
-				}
-			})();
-			resource.commitInFlight = commit;
-			return await commit;
+			const state = reduceToolVmLeaseAuthorityState(
+				requireAuthorityState(commitOptions.authority.gateway),
+				{
+					authority: commitOptions.authority,
+					kind: 'commit-current',
+					runtimeBinding: commitOptions.runtimeBinding,
+					sshBinding: commitOptions.sshBinding,
+				},
+			);
+			replaceAuthorityState(commitOptions.authority.gateway, state);
+			resource.commitDisposition = 'complete';
 		},
 		destroyExact(destroyOptions): Promise<ToolVmLeaseRuntimeResource<TLease>> {
 			return startExactDestruction(destroyOptions);
@@ -550,19 +439,6 @@ export function createToolVmLeaseAuthorityRuntime<
 				return lease === undefined ? [] : [lease];
 			});
 		},
-		rejectedCleanupIdsOwnedByGateway(gateway): readonly string[] {
-			return rejectedCleanupIdsForGateway(gateway);
-		},
-		rejectedCleanupAuthority(cleanupId): ToolVmLeafAuthorityReference | undefined {
-			const authority = rejectedCleanupResourcesByAuthority.get(cleanupId)?.authority;
-			return authority === undefined ? undefined : structuredClone(authority);
-		},
-		rejectedCleanupIdForPrincipal(principal): string | undefined {
-			const principalKey = stablePrincipalKey(principal);
-			return [...rejectedCleanupResourcesByAuthority.entries()].find(
-				([, resource]) => stablePrincipalKey(resource.authority.principal) === principalKey,
-			)?.[0];
-		},
 		registerGateway(gateway): void {
 			const key = gatewayAuthorityKey(gateway);
 			if (authorityStatesByGateway.has(key)) {
@@ -579,7 +455,6 @@ export function createToolVmLeaseAuthorityRuntime<
 		retireGateway(gateway): void {
 			if (
 				leaseIdsForGateway(gateway).length > 0 ||
-				rejectedCleanupIdsForGateway(gateway).length > 0 ||
 				(reservedDestructionTombstonesByGateway.get(gatewayAuthorityKey(gateway))?.size ?? 0) > 0
 			) {
 				throw new ToolVmLeaseAuthorityTransitionError(
@@ -594,37 +469,6 @@ export function createToolVmLeaseAuthorityRuntime<
 					kind: 'retire-parent',
 				}),
 			);
-		},
-		async retryRejectedProvisioningCleanup(cleanupId): Promise<TCleanupContext | undefined> {
-			const resource = rejectedCleanupResourcesByAuthority.get(cleanupId);
-			if (resource === undefined) {
-				return undefined;
-			}
-			if (resource.destructionInFlight !== undefined) {
-				await resource.destructionInFlight;
-				const cleanupContext = rejectedCleanupContextsById.get(cleanupId);
-				rejectedCleanupContextsById.delete(cleanupId);
-				return cleanupContext;
-			}
-			const cleanup = (async (): Promise<ToolVmLeaseRuntimeResource<TLease>> => {
-				const receipt = await resource.ownership.destroyDetached();
-				assertVmDestroyReceiptMatchesTarget(
-					receipt,
-					resource.ownershipProof.verifiedDestroyTarget,
-					`Rejected Tool VM cleanup '${cleanupId}' receipt`,
-				);
-				rejectedCleanupResourcesByAuthority.delete(cleanupId);
-				return resource;
-			})();
-			resource.destructionInFlight = cleanup;
-			try {
-				await cleanup;
-			} finally {
-				delete resource.destructionInFlight;
-			}
-			const cleanupContext = rejectedCleanupContextsById.get(cleanupId);
-			rejectedCleanupContextsById.delete(cleanupId);
-			return cleanupContext;
 		},
 		sealGateway(gateway): void {
 			const parent = requireAuthorityState(gateway).parent;
@@ -658,7 +502,6 @@ export function createToolVmLeaseAuthorityRuntime<
 				authority,
 				lease: updatedLease,
 				runtimeBinding: currentLeaf.runtimeBinding,
-				verifiedDestroyTarget: resource.ownershipProof.verifiedDestroyTarget,
 			});
 			const state = reduceToolVmLeaseAuthorityState(requireAuthorityState(authority.gateway), {
 				authority,

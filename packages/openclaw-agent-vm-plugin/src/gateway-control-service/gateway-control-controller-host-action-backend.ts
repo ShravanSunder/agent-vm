@@ -31,6 +31,7 @@ import {
 	GatewayControlRpcMessageSchema,
 	GatewayControlToolPortalControllerHostActionPayloadSchema,
 	gatewayControlDeliveryPolicyByOperation,
+	gatewayControlCommandExecutionTimeoutMsByOperation,
 } from '@agent-vm/gateway-control-contracts';
 import type { ToolPortalCapabilityBackend } from '@agent-vm/tool-portal';
 import { z } from 'zod/v4';
@@ -545,16 +546,20 @@ export function createGatewayControlControllerHostActionBackend(
 				result: GatewayControlRpcCommandResultMessageSchema.parse(
 					await options.controlService.emitApplicationMessage(
 						{
-							buildEnvelope: ({ acceptedSession, sequence }) =>
-								({
+							buildEnvelope: ({ acceptedSession, sequence }) => {
+								const createdAtMs = Math.max(1, now());
+								return {
 									bootId: acceptedSession.bootId,
 									commandId: commandIdentity.commandId,
 									connectionId: acceptedSession.connectionId,
 									controllerEpoch: options.identity.controllerEpoch,
-									createdAtMs: Math.max(1, now()),
+									createdAtMs,
 									deliveryPolicy:
 										gatewayControlDeliveryPolicyByOperation.tool_portal_controller_host_action as ControlDeliveryPolicy,
 									domain: 'gateway_control',
+									expiresAtMs:
+										createdAtMs +
+										gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_host_action,
 									idempotencyKey: commandIdentity.idempotencyKey,
 									kind: 'command',
 									messageId: commandIdentity.messageId,
@@ -564,7 +569,8 @@ export function createGatewayControlControllerHostActionBackend(
 									sequence,
 									sessionId: acceptedSession.sessionId,
 									zoneId: options.identity.zoneId,
-								}) satisfies ControlEnvelope,
+								} satisfies ControlEnvelope;
+							},
 							domainMessage,
 							payload: message,
 						},

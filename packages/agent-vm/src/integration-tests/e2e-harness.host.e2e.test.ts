@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { buildImageAssetFileNames, type ManagedVm } from '@agent-vm/gondolin-adapter';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import {
@@ -11,15 +11,13 @@ import {
 	writePreparedGondolinImage,
 } from '../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
+import { createOpenClawProcessReliabilityFaultTargetRegistry } from '../controller/reliability/testing/openclaw-process-reliability-fault-target-registry.js';
+import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
-	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	collectE2eDockerImageTags,
@@ -247,6 +245,71 @@ describe('resolveLocalPackagePackArgs', () => {
 });
 
 describe('startE2eControllerRuntime', () => {
+	it('forwards only the exact optional OpenClaw reliability target registry factory', async () => {
+		const { startE2eControllerRuntime } = await import('./e2e-harness.js');
+		const systemConfig = createMinimalOpenClawSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected smoke system config to contain a zone.');
+		}
+		const gatewayIdentity = {
+			bootId: 'gateway-boot-smoke',
+			controllerEpoch: 'controller-epoch-smoke',
+			gatewayEpochId: 'gateway-epoch-smoke',
+			gatewayVmId: 'vm-smoke-test',
+			generationId: 'gateway-generation-smoke',
+			zoneId: zone.id,
+		};
+		const createReliabilityTargetRegistry = vi.fn(
+			createOpenClawProcessReliabilityFaultTargetRegistry,
+		);
+		const harness = await startE2eControllerRuntime({
+			createOpenClawProcessReliabilityFaultTargetRegistry: createReliabilityTargetRegistry,
+			secrets: {
+				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
+				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
+			},
+			startGatewayZone: async (options) => {
+				options.onOpenClawProcessReliabilityFaultTarget?.({
+					gateway: gatewayIdentity,
+					processEpoch: 'process-epoch-smoke',
+					reliabilityFaultActuator: {
+						terminateOwnedProcess: vi.fn(async () => {
+							throw new Error('harness forwarding test must not actuate a fault');
+						}),
+					},
+				});
+				return {
+					image: { built: false, fingerprint: 'test', imagePath: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18789 },
+					processEpoch: 'process-epoch-smoke',
+					processSpec: {
+						bootstrapCommand: '',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+						logPath: '/tmp/gateway.log',
+						startCommand: '',
+					},
+					terminateVm: async () => {},
+					vm: createManagedVmStub(),
+					vmOwnership: {
+						...createExactVmOwnershipStub('vm-smoke-test'),
+						gatewayIdentity,
+					},
+					zone,
+				};
+			},
+			startHttpServer: async () => ({ close: async () => undefined }),
+			startOptions: { systemConfig, zoneIds: [zone.id] },
+		});
+
+		try {
+			expect(createReliabilityTargetRegistry).toHaveBeenCalledOnce();
+		} finally {
+			await harness.close();
+		}
+	});
+
 	it('preserves smoke Docker images by default so one suite can reuse the built cache', () => {
 		expect(shouldCleanupE2eDockerImages({ env: {} })).toBe(false);
 		expect(
@@ -291,6 +354,7 @@ describe('startE2eControllerRuntime', () => {
 						logPath: '/tmp/gateway.log',
 						startCommand: '',
 					},
+					terminateVm: async () => {},
 					vm: createManagedVmStub(),
 					vmOwnership: createExactVmOwnershipStub('vm-smoke-test'),
 					zone,
@@ -353,6 +417,7 @@ describe('startE2eControllerRuntime', () => {
 					logPath: '/tmp/gateway.log',
 					startCommand: '',
 				},
+				terminateVm: async () => {},
 				vm: createManagedVmStub(),
 				vmOwnership: createExactVmOwnershipStub('vm-smoke-test'),
 				zone,
@@ -369,6 +434,49 @@ describe('startE2eControllerRuntime', () => {
 		await harness.close();
 
 		await expect(fs.access(temporaryRoot)).rejects.toThrow();
+	});
+
+	it('preserves an owned smoke temp root only when close requests it explicitly', async () => {
+		const { startE2eControllerRuntime } = await import('./e2e-harness.js');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const systemConfig = createMinimalOpenClawSystemConfig(temporaryRoot);
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected smoke system config to contain an OpenClaw zone.');
+		}
+
+		const harness = await startE2eControllerRuntime({
+			secrets: {
+				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
+				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
+			},
+			startGatewayZone: async () => ({
+				image: { built: false, fingerprint: 'test', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18789 },
+				processSpec: {
+					bootstrapCommand: '',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/tmp/gateway.log',
+					startCommand: '',
+				},
+				terminateVm: async () => {},
+				vm: createManagedVmStub(),
+				vmOwnership: createExactVmOwnershipStub('vm-smoke-test'),
+				zone,
+			}),
+			startHttpServer: async () => ({
+				close: async () => undefined,
+			}),
+			startOptions: {
+				systemConfig,
+				zoneIds: ['smoke'],
+			},
+		});
+
+		await harness.close({ preserveTempRoot: true });
+
+		await expect(fs.access(temporaryRoot)).resolves.toBeUndefined();
 	});
 
 	it('removes OpenClaw control-link smoke temp roots', async () => {
@@ -1160,36 +1268,43 @@ describe('prepareLocalWorkerPackageForGatewayImage', () => {
 function createManagedVmStub(): ManagedVm {
 	const managedVm: ManagedVm = {
 		id: 'vm-smoke-test',
-		close: async () => createCompleteVmDestroyReceipt('vm-smoke-test'),
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18789 }),
+		close: async () => {},
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18789 }),
 		enableSsh: async () => ({
+			close: async () => {},
+			command: 'ssh vm-smoke-test',
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			host: '127.0.0.1',
+			identityFile: '/tmp/vm-smoke-test-identity',
 			port: 2222,
 			user: 'root',
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => createTestVmDestroyTarget('vm-smoke-test'),
 		getHostPid: () => null,
-		getVmInstance: () => managedVm,
+		/* oxlint-disable-next-line typescript/no-unsafe-type-assertion, typescript-eslint/no-unsafe-type-assertion -- the smoke double exposes only the ManagedVmInstance surface exercised by this host test. */
+		getVmInstance: () => managedVm as unknown as ReturnType<ManagedVm['getVmInstance']>,
 		setIngressRoutes: () => undefined,
+		start: async () => {},
 	};
 	return managedVm;
 }
 
-function createExactVmOwnershipStub(vmId: string): VmCreationOwnership {
-	const ownershipReservation = createTestVmOwnershipReservationReference(vmId);
+function createExactVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: 'boot-smoke-test',
+		controllerEpoch: 'controller-smoke-test',
+		gatewayEpochId: 'gateway-epoch-smoke-test',
+		generationId: 'generation-smoke-test',
+		zoneId: 'smoke',
+	};
+	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
 	return {
-		ownershipReservation,
-		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId),
-		destroyLive: async (closeLiveVm) => {
-			const receipt = await closeLiveVm();
-			if (receipt.vmId !== vmId || receipt.reservationId !== ownershipReservation.reservationId) {
-				throw new Error(`Expected exact destruction receipt for VM '${vmId}'.`);
-			}
-			return receipt;
-		},
+		attachGatewayVm: () => gatewayIdentity,
+		containPendingCreate: async () => {},
+		destroyLive: async (destroyVm) => await destroyVm(),
+		gatewayIdentity,
+		gatewaySeed,
 	};
 }
 

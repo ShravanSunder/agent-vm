@@ -4,11 +4,21 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 
 import {
+	createGatewayControlAdmissionExecutor,
+	type GatewayControlRpcMessage,
+} from '@agent-vm/gateway-control-contracts';
+import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
 } from '@agent-vm/gateway-interface';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+	AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV,
+	createGatewayControlAdmissionPressureE2eActuator,
+	registerGatewayControlAdmissionPressureE2eActuator,
+} from './gateway-control-service/gateway-control-admission-pressure-e2e-testing.js';
+import type { GatewayControlAcceptedSession } from './gateway-control-service/gateway-control-service-contracts.js';
 import e2ePlugin from './openclaw-plugin-registration.e2e.js';
 import defaultPlugin, {
 	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
@@ -22,10 +32,9 @@ import type {
 } from './sandbox-backend-factory.js';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
 	registerToolVmWriteReadE2eRoute,
 	testExports as toolVmWriteReadE2eToolTestExports,
@@ -70,10 +79,9 @@ beforeEach(() => {
 			second: 'test-second-agent-authority-key-with-enough-length',
 		}),
 	);
-	vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV, 'beta');
 	vi.stubEnv(
-		AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
-		'agent:beta:tool-vm-write-read:test-session',
+		AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+		JSON.stringify([{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:test-session' }]),
 	);
 });
 
@@ -177,9 +185,10 @@ function createToolVmWriteReadProbeBody(options?: {
 	readonly agentId?: string;
 	readonly filePath?: string;
 	readonly marker?: string;
-	readonly scenario?: 'stale-reacquire' | 'write-read';
+	readonly scenario?: 'active-operation-containment' | 'stale-reacquire' | 'write-read';
 	readonly secondFilePath?: string;
 	readonly secondMarker?: string;
+	readonly sentinelFilePath?: string;
 	readonly sessionKey?: string;
 }): string {
 	return JSON.stringify({
@@ -189,6 +198,9 @@ function createToolVmWriteReadProbeBody(options?: {
 		...(options?.scenario === undefined ? {} : { scenario: options.scenario }),
 		...(options?.secondFilePath === undefined ? {} : { secondFilePath: options.secondFilePath }),
 		...(options?.secondMarker === undefined ? {} : { secondMarker: options.secondMarker }),
+		...(options?.sentinelFilePath === undefined
+			? {}
+			: { sentinelFilePath: options.sentinelFilePath }),
 		sessionKey: options?.sessionKey ?? 'agent:beta:tool-vm-write-read:test-session',
 	});
 }
@@ -201,6 +213,47 @@ function createToolVmWriteReadProbeHeaders(bodyText: string): Readonly<Record<st
 				'test-tool-vm-write-read-proof-key',
 			),
 	};
+}
+
+function createControlAdmissionPressureBody(
+	action: 'hold' | 'release' | 'snapshot' | 'submitBatch',
+	fields: Readonly<Record<string, unknown>> = {},
+): string {
+	return JSON.stringify({
+		action,
+		agentId: 'beta',
+		attachmentGeneration: 7,
+		scenario: 'control-admission-pressure',
+		sessionKey: 'agent:beta:tool-vm-write-read:test-session',
+		...fields,
+	});
+}
+
+function registerControlAdmissionPressureTestActuator(options?: {
+	readonly acceptedAttachmentGeneration?: number;
+	readonly getAcceptedSession?: () => GatewayControlAcceptedSession | undefined;
+}): () => void {
+	const acceptedSession = {
+		attachmentGeneration: options?.acceptedAttachmentGeneration ?? 7,
+		bootId: 'process-a',
+		connectionId: 'connection-a',
+		controllerEpoch: 'controller-a',
+		gatewayEpoch: 'gateway-a',
+		generationId: 'gateway-a',
+		peerId: 'peer-a',
+		processEpoch: 'process-a',
+		sessionId: 'session-a',
+		zoneId: 'zone-a',
+	} satisfies GatewayControlAcceptedSession;
+	const ingress = createGatewayControlAdmissionExecutor<GatewayControlRpcMessage>();
+	const egress = createGatewayControlAdmissionExecutor<GatewayControlRpcMessage>();
+	return registerGatewayControlAdmissionPressureE2eActuator(
+		createGatewayControlAdmissionPressureE2eActuator({
+			getAcceptedSession: options?.getAcceptedSession ?? (() => acceptedSession),
+			getEgress: () => egress,
+			getIngress: () => ingress,
+		}),
+	);
 }
 
 function createMockToolVmWriteReadBackend(options?: {
@@ -592,6 +645,155 @@ describe('createGondolinPlugin', () => {
 		expect(backendFactory).not.toHaveBeenCalled();
 	});
 
+	it('authenticates the signed route before looking up or actuating control admission pressure', async () => {
+		const registerHttpRoute = vi.fn();
+		const getAcceptedSession = vi.fn(() => undefined);
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		const unregister = registerControlAdmissionPressureTestActuator({ getAcceptedSession });
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+		});
+
+		try {
+			const response = await invokeRegisteredRoute({
+				bodyText: createControlAdmissionPressureBody('snapshot'),
+				route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			});
+
+			expect(response.statusCode).toBe(401);
+			expect(getAcceptedSession).not.toHaveBeenCalled();
+		} finally {
+			unregister();
+		}
+	});
+
+	it('fences a signed control admission action to the exact attachment generation', async () => {
+		const registerHttpRoute = vi.fn();
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		const unregister = registerControlAdmissionPressureTestActuator({
+			acceptedAttachmentGeneration: 8,
+		});
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+		});
+		const bodyText = createControlAdmissionPressureBody('snapshot');
+
+		try {
+			const response = await invokeRegisteredRoute({
+				bodyText,
+				headers: createToolVmWriteReadProbeHeaders(bodyText),
+				route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			});
+
+			expect(response.statusCode).toBe(409);
+			expect(JSON.parse(response.bodyText)).toMatchObject({
+				error: { message: expect.stringContaining('generation is stale') },
+				ok: false,
+			});
+		} finally {
+			unregister();
+		}
+	});
+
+	it('rejects a signed control admission batch above the hard route bound', async () => {
+		const registerHttpRoute = vi.fn();
+		const getAcceptedSession = vi.fn(() => undefined);
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		const unregister = registerControlAdmissionPressureTestActuator({ getAcceptedSession });
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+		});
+		const bodyText = createControlAdmissionPressureBody('submitBatch', {
+			batchSize: 81,
+			byteLength: 1,
+			coalesceKeyPrefix: 'bounded-pressure',
+			direction: 'ingress',
+			messageClass: 'diagnostic',
+		});
+
+		try {
+			const response = await invokeRegisteredRoute({
+				bodyText,
+				headers: createToolVmWriteReadProbeHeaders(bodyText),
+				route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			});
+
+			expect(response.statusCode).toBe(400);
+			expect(getAcceptedSession).not.toHaveBeenCalled();
+		} finally {
+			unregister();
+		}
+	});
+
+	it('dispatches signed snapshot, hold, bounded batch, and release admission actions', async () => {
+		const registerHttpRoute = vi.fn();
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		const unregister = registerControlAdmissionPressureTestActuator();
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+		});
+		const route = expectRegisteredRoute(
+			registerHttpRoute,
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
+		);
+		const invokeAction = async (
+			action: 'hold' | 'release' | 'snapshot' | 'submitBatch',
+			fields: Readonly<Record<string, unknown>> = {},
+		): Promise<
+			ReturnType<typeof invokeRegisteredRoute> extends Promise<infer TResult> ? TResult : never
+		> => {
+			const bodyText = createControlAdmissionPressureBody(action, fields);
+			return await invokeRegisteredRoute({
+				bodyText,
+				headers: createToolVmWriteReadProbeHeaders(bodyText),
+				route,
+			});
+		};
+
+		try {
+			const snapshot = await invokeAction('snapshot');
+			const hold = await invokeAction('hold', {
+				direction: 'ingress',
+				messageClass: 'diagnostic',
+			});
+			const holdId = (JSON.parse(hold.bodyText) as { details: { holdId: string } }).details.holdId;
+			const batch = await invokeAction('submitBatch', {
+				batchSize: 2,
+				byteLength: 1,
+				coalesceKeyPrefix: 'route-pressure',
+				direction: 'egress',
+				messageClass: 'liveness',
+			});
+			const release = await invokeAction('release', { holdId });
+
+			expect([snapshot, hold, batch, release].map((response) => response.statusCode)).toEqual([
+				200, 200, 200, 200,
+			]);
+			expect(JSON.parse(snapshot.bodyText)).toMatchObject({
+				details: { acceptedAttachmentGeneration: 7 },
+				ok: true,
+			});
+			expect(JSON.parse(batch.bodyText)).toMatchObject({
+				details: { admissions: [{ status: 'admitted' }, { status: 'admitted' }] },
+				ok: true,
+			});
+			expect(JSON.parse(release.bodyText)).toMatchObject({
+				details: { released: true },
+				ok: true,
+			});
+		} finally {
+			unregister();
+		}
+	});
+
 	it('rejects the private e2e Tool VM write/read route when body agent does not match the session key', async () => {
 		const registerHttpRoute = vi.fn();
 		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
@@ -625,11 +827,6 @@ describe('createGondolinPlugin', () => {
 		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
 		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
 		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
-		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV, 'beta');
-		vi.stubEnv(
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
-			'agent:beta:tool-vm-write-read:test-session',
-		);
 
 		registerToolVmWriteReadE2eRoute({
 			api: { registerHttpRoute },
@@ -649,10 +846,111 @@ describe('createGondolinPlugin', () => {
 		expect(JSON.parse(response.bodyText)).toMatchObject({
 			error: {
 				message:
-					'tool-vm-write-read-e2e: request identity does not match the configured probe identity.',
+					'tool-vm-write-read-e2e: request identity does not match the configured probe identity set.',
 			},
 			ok: false,
 		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['malformed JSON', '{', /identity set.*JSON/iu],
+		['an empty set', '[]', /identity set.*between 1 and 4/iu],
+		[
+			'an oversized set',
+			JSON.stringify(
+				Array.from({ length: 5 }, (_, index) => ({
+					agentId: `agent-${String(index)}`,
+					sessionKey: `agent:agent-${String(index)}:tool-vm-write-read:test`,
+				})),
+			),
+			/identity set.*between 1 and 4/iu,
+		],
+		[
+			'duplicate tuples',
+			JSON.stringify([
+				{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:test' },
+				{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:test' },
+			]),
+			/identity set.*duplicate/iu,
+		],
+		[
+			'an agent/session mismatch',
+			JSON.stringify([{ agentId: 'main', sessionKey: 'agent:beta:tool-vm-write-read:test' }]),
+			/configured.*session key.*agent id/iu,
+		],
+	] as const)('rejects configured probe identities with %s', (_label, configuredValue, message) => {
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV, configuredValue);
+
+		expect(() =>
+			registerToolVmWriteReadE2eRoute({
+				api: { registerHttpRoute: vi.fn() },
+				factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+			}),
+		).toThrow(message);
+	});
+
+	it('accepts either of two configured signed identity tuples', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		vi.stubEnv(
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+			JSON.stringify([
+				{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:beta-session' },
+				{ agentId: 'main', sessionKey: 'agent:main:tool-vm-write-read:main-session' },
+			]),
+		);
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			agentId: 'main',
+			sessionKey: 'agent:main:tool-vm-write-read:main-session',
+		});
+
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(200);
+		expect(backendFactory).toHaveBeenCalledOnce();
+	});
+
+	it('rejects a signed body identity outside the configured tuple set', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		vi.stubEnv(
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+			JSON.stringify([
+				{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:beta-session' },
+				{ agentId: 'main', sessionKey: 'agent:main:tool-vm-write-read:main-session' },
+			]),
+		);
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			agentId: 'foreign',
+			sessionKey: 'agent:foreign:tool-vm-write-read:foreign-session',
+		});
+
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(403);
 		expect(backendFactory).not.toHaveBeenCalled();
 	});
 
@@ -729,6 +1027,117 @@ describe('createGondolinPlugin', () => {
 				script: expect.stringContaining("proof_file='.agent-vm/proof.txt'"),
 			}),
 		);
+	});
+
+	it('rejects unsafe active-operation containment sentinel paths before acquiring a backend', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			scenario: 'active-operation-containment',
+			sentinelFilePath: '../outside-sentinel.txt',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(400);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message: 'tool-vm-write-read-e2e: sentinelFilePath must stay under .agent-vm/.',
+			},
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('rejects unbounded active-operation markers before acquiring a backend', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			marker: 'marker-with-a-newline\nnot-a-single-token',
+			scenario: 'active-operation-containment',
+			sentinelFilePath: '.agent-vm/active-operation-committed.txt',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(400);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message: 'tool-vm-write-read-e2e: active-operation marker must be a bounded token.',
+			},
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('orders active-operation marker commit before sentinel publication and blocking', async () => {
+		const registerHttpRoute = vi.fn();
+		const runShellCommand = vi
+			.fn()
+			.mockRejectedValue(new Error('Connection to tool-1.vm.host closed by remote host.'));
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend({ runShellCommand }));
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '.agent-vm/active-operation.txt',
+			marker: 'active-operation-marker-1',
+			scenario: 'active-operation-containment',
+			sentinelFilePath: '.agent-vm/active-operation-committed.txt',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(503);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message: 'tool-vm-write-read-e2e: active operation lost its Tool VM connection.',
+			},
+			ok: false,
+		});
+		const script = runShellCommand.mock.calls[0]?.[0].script as string;
+		expect(script).toContain("proof_file='/workspace/.agent-vm/active-operation.txt'");
+		expect(script).toContain("sentinel_file='/workspace/.agent-vm/active-operation-committed.txt'");
+		const replayGuardIndex = script.indexOf('grep -Fqx');
+		const markerAppendIndex = script.indexOf('>>"$proof_file"');
+		const markerSyncIndex = script.indexOf('sync "$proof_file"');
+		const sentinelPublishIndex = script.indexOf('mv "$sentinel_temp_file" "$sentinel_file"');
+		const sentinelSyncIndex = script.indexOf('sync "$sentinel_file"');
+		const blockingIndex = script.indexOf('while :; do');
+		expect(replayGuardIndex).toBeGreaterThanOrEqual(0);
+		expect(markerAppendIndex).toBeGreaterThan(replayGuardIndex);
+		expect(markerSyncIndex).toBeGreaterThan(markerAppendIndex);
+		expect(sentinelPublishIndex).toBeGreaterThan(markerSyncIndex);
+		expect(sentinelSyncIndex).toBeGreaterThan(sentinelPublishIndex);
+		expect(blockingIndex).toBeGreaterThan(sentinelSyncIndex);
+		expect(script.match(/>>"\$proof_file"/gu)).toHaveLength(1);
 	});
 
 	it('runs the private e2e route stale-reacquire scenario by resetting Tool VM SSH on one backend handle', async () => {

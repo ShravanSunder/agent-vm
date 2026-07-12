@@ -1,18 +1,5 @@
-import type {
-	ManagedVmDestroyReceiptV1,
-	ManagedVmDestroyTargetV1,
-} from '@agent-vm/gondolin-adapter';
-import { expect, vi } from 'vitest';
+import { expect } from 'vitest';
 
-import {
-	createCompleteVmDestroyReceipt,
-	createTestVmDestroyTarget,
-	createTestVmOwnershipReservationReference,
-} from '../../testing/managed-vm-test-helpers.js';
-import type {
-	ProvisionalToolVmOwnershipHandle,
-	ToolVmProvisionalOwnershipProof,
-} from '../vm-ownership/gateway-ownership-coordinator.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import {
 	ToolVmLeaseAuthorityTransitionError,
@@ -111,51 +98,6 @@ export function createLease(overrides: Partial<TestLease> = {}): TestLease {
 	};
 }
 
-export function createVerifiedDestroyTarget(
-	vmId = 'tool-vm-1',
-	overrides: {
-		readonly gateway?: GatewayEpochIdentity;
-		readonly reservationId?: string;
-	} = {},
-): ManagedVmDestroyTargetV1 {
-	const gateway = overrides.gateway ?? GATEWAY_ONE;
-	return createTestVmDestroyTarget(vmId, {
-		controllerEpoch: gateway.controllerEpoch,
-		parentGateway: {
-			epoch: gateway.gatewayEpochId,
-			vmId: gateway.gatewayVmId,
-		},
-		...(overrides.reservationId === undefined ? {} : { reservationId: overrides.reservationId }),
-		role: 'tool',
-	});
-}
-
-export function createOwnershipHandle(
-	verifiedDestroyTarget: ManagedVmDestroyTargetV1,
-	overrides: Partial<ProvisionalToolVmOwnershipHandle> = {},
-): ProvisionalToolVmOwnershipHandle {
-	const proof = {
-		destructionIdentity: {
-			reservationId: verifiedDestroyTarget.reservationId,
-			reservationPath: verifiedDestroyTarget.reservationPath,
-			vmId: verifiedDestroyTarget.vmId,
-		},
-		ownershipReservation: createTestVmOwnershipReservationReference(verifiedDestroyTarget.vmId, {
-			reservationId: verifiedDestroyTarget.reservationId,
-		}),
-		verifiedDestroyTarget,
-	} satisfies ToolVmProvisionalOwnershipProof;
-	return {
-		ready: Promise.resolve(proof),
-		commitCurrent: vi.fn(async () => {}),
-		destroyDetached: vi.fn(async () => createMatchingDestroyReceipt(verifiedDestroyTarget)),
-		destroyLive: vi.fn<ProvisionalToolVmOwnershipHandle['destroyLive']>(
-			async (closeLiveVm) => await closeLiveVm(),
-		),
-		...overrides,
-	};
-}
-
 export interface Deferred<TValue> {
 	readonly promise: Promise<TValue>;
 	resolve(value: TValue): void;
@@ -173,24 +115,6 @@ export function createDeferred<TValue>(): Deferred<TValue> {
 				throw new Error('deferred promise resolver was not initialized');
 			}
 			resolvePromise(value);
-		},
-	};
-}
-
-export function createMatchingDestroyReceipt(
-	verifiedDestroyTarget: ManagedVmDestroyTargetV1,
-): ManagedVmDestroyReceiptV1 {
-	return {
-		...createCompleteVmDestroyReceipt(verifiedDestroyTarget.vmId, {
-			controllerEpoch: verifiedDestroyTarget.controllerEpoch,
-			parentGateway: verifiedDestroyTarget.parentGateway,
-			reservationId: verifiedDestroyTarget.reservationId,
-			role: verifiedDestroyTarget.role,
-		}),
-		requestedRunner: {
-			backend: verifiedDestroyTarget.runner.backend,
-			discoveryIdentity: verifiedDestroyTarget.runner.discoveryIdentity,
-			executableName: 'qemu-system-aarch64',
 		},
 	};
 }

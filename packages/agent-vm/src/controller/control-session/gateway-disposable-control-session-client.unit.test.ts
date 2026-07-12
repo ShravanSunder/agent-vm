@@ -5,7 +5,10 @@ import {
 	type ControlEnvelope,
 	type ControlMessageReceipt,
 } from '@agent-vm/control-protocol-contracts';
-import type { GatewayControlHello } from '@agent-vm/gateway-control-contracts';
+import type {
+	GatewayControlHello,
+	GatewayControlHelloResponse,
+} from '@agent-vm/gateway-control-contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGatewayControlProcessAdmissionCoordinator } from './gateway-control-process-admission-coordinator.js';
@@ -26,6 +29,17 @@ interface FakeSocketControl {
 	readonly volatileSequences: number[];
 }
 
+type ExpectedGatewayControlAttemptOutcome =
+	| {
+			readonly attachmentGeneration: number;
+			readonly kind: 'connect_error';
+	  }
+	| {
+			readonly attachmentGeneration: number;
+			readonly kind: 'hello_response';
+			readonly outcome: GatewayControlHelloResponse['outcome'];
+	  };
+
 function deferred<TValue = void>(): {
 	readonly promise: Promise<TValue>;
 	resolve(value: TValue): void;
@@ -42,6 +56,7 @@ async function flushImmediate(): Promise<void> {
 }
 
 function createFakeSocket(options: {
+	readonly connectError?: Error;
 	readonly connectionId: string;
 	readonly helloControllerEpoch?: string;
 	readonly messageReceiptFailure?: Error;
@@ -61,6 +76,10 @@ function createFakeSocket(options: {
 	const managerEvents = new EventEmitter();
 	const socket = {
 		connect(): void {
+			if (options.connectError !== undefined) {
+				events.emit('connect_error', options.connectError);
+				return;
+			}
 			connected = true;
 			events.emit('connect');
 		},
@@ -196,6 +215,66 @@ function inboundEnvelope(options: {
 	};
 }
 
+async function receiveHeartbeat(options: {
+	readonly connectionId: string;
+	readonly control: FakeSocketControl;
+	readonly messageId: string;
+	readonly observedAtMs: number;
+	readonly sequence: number;
+	readonly sessionId: string;
+}): Promise<void> {
+	expect(
+		await options.control.receive(
+			{
+				...inboundEnvelope({
+					connectionId: options.connectionId,
+					kind: 'heartbeat',
+					messageId: options.messageId,
+					sequence: options.sequence,
+					sessionId: options.sessionId,
+				}),
+				deliveryPolicy: 'critical_idempotent',
+			},
+			{ kind: 'heartbeat', payload: { observedAtMs: options.observedAtMs } },
+		),
+	).toEqual({ received: true });
+	await Promise.resolve();
+}
+
+function createFakeReconnectTimerQueue(): {
+	readonly schedule: (callback: () => void, delayMs: number) => { cancel(): void; unref(): void };
+	takeNextActive(): (() => void) | undefined;
+} {
+	const records: Array<{
+		readonly callback: () => void;
+		cancelled: boolean;
+		readonly delayMs: number;
+	}> = [];
+	return {
+		schedule: (callback, delayMs) => {
+			const record = { callback, cancelled: false, delayMs };
+			records.push(record);
+			return {
+				cancel: () => {
+					record.cancelled = true;
+				},
+				unref: () => undefined,
+			};
+		},
+		takeNextActive: () => {
+			for (;;) {
+				const record = records.shift();
+				if (record === undefined) {
+					return undefined;
+				}
+				if (!record.cancelled) {
+					return record.callback;
+				}
+			}
+		},
+	};
+}
+
 function leaseGetMessage(leaseId: string): unknown {
 	return {
 		kind: 'command',
@@ -221,6 +300,82 @@ function leaseRenewMessage(leaseId: string): unknown {
 describe('Gateway disposable control session client', () => {
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	it('reports one sanitized connect error outcome for an attachment attempt', async () => {
+		const failed = createFakeSocket({
+			connectError: new Error('Bearer private-credential must never escape'),
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const attemptOutcomes: ExpectedGatewayControlAttemptOutcome[] = [];
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => failed.socket,
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: { authorization: 'Bearer private-credential' },
+			nextAttachmentGeneration: () => 7,
+			onAttemptOutcome: (outcome: ExpectedGatewayControlAttemptOutcome) => {
+				attemptOutcomes.push(outcome);
+			},
+			policyByOperation: {},
+			refreshExtraHeaders: async () => ({ authorization: 'Bearer private-credential' }),
+			scheduleReconnectTimer: () => ({ cancel: () => undefined }),
+		});
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(attemptOutcomes).toEqual([
+			{
+				attachmentGeneration: 7,
+				kind: 'connect_error',
+			},
+		]);
+		expect(JSON.stringify(attemptOutcomes)).not.toContain('private-credential');
+		client.close();
+	});
+
+	it('reports a parsed hello outcome without letting observer failure affect readiness', async () => {
+		const accepted = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const attemptOutcomes: ExpectedGatewayControlAttemptOutcome[] = [];
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => accepted.socket,
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => 11,
+			onAttemptOutcome: (outcome: ExpectedGatewayControlAttemptOutcome) => {
+				attemptOutcomes.push(outcome);
+				throw new Error('attempt observer failed');
+			},
+			policyByOperation: {},
+			refreshExtraHeaders: async () => ({}),
+		});
+
+		await expect(client.ready).resolves.toMatchObject({ outcome: 'accepted' });
+		expect(attemptOutcomes).toEqual([
+			{
+				attachmentGeneration: 11,
+				kind: 'hello_response',
+				outcome: 'accepted',
+			},
+		]);
+		client.close();
 	});
 
 	it('keeps replacement S2 registered when stale S1 closes afterward', async () => {
@@ -560,6 +715,7 @@ describe('Gateway disposable control session client', () => {
 			sessionId: '44444444-4444-4444-8444-444444444444',
 		});
 		const sockets = [first.socket, second.socket];
+		const attachmentGapTransitions: unknown[] = [];
 		const reconnectCallbacks: Array<() => void> = [];
 		let attachmentGeneration = 0;
 		const client = createGatewayDisposableControlSessionClient({
@@ -583,6 +739,10 @@ describe('Gateway disposable control session client', () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
 			},
+			now: () => 1_000,
+			onAttachmentGap: (transition: unknown) => {
+				attachmentGapTransitions.push(transition);
+			},
 			policyByOperation: {},
 			reconnectJitterRandom: () => 0.5,
 			refreshExtraHeaders: async () => ({}),
@@ -601,6 +761,7 @@ describe('Gateway disposable control session client', () => {
 			}),
 		).toEqual({ status: 'not-current' });
 		expect(first.control.clientDisconnectCount).toBe(0);
+		expect(attachmentGapTransitions).toEqual([]);
 		expect(reconnectCallbacks).toEqual([]);
 
 		expect(
@@ -615,6 +776,17 @@ describe('Gateway disposable control session client', () => {
 			status: 'fenced',
 		});
 		expect(first.control.clientDisconnectCount).toBe(1);
+		expect(attachmentGapTransitions).toEqual([
+			{
+				attachmentGeneration: 1,
+				gapReason: 'reliability_test_disconnect',
+				gatewayEpoch: 'gateway-a',
+				kind: 'attachment_gap',
+				observedAtMs: 1_000,
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+		]);
 		expect(reconnectCallbacks).toHaveLength(1);
 
 		reconnectCallbacks.shift()?.();
@@ -628,6 +800,521 @@ describe('Gateway disposable control session client', () => {
 			},
 		});
 		client.close();
+	});
+
+	it('reports max-attempt reconnect exhaustion exactly once for one accepted-session gap', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const failingReconnect = createFakeSocket({
+			connectError: new Error('reconnect authentication unavailable'),
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		const reconnectCallbacks: Array<() => void> = [];
+		const reconnectExhaustedTransitions: unknown[] = [];
+		let socketCreateCount = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => {
+				socketCreateCount += 1;
+				return socketCreateCount === 1 ? first.socket : failingReconnect.socket;
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => 1,
+			onReconnectExhausted: (transition: unknown) => {
+				reconnectExhaustedTransitions.push(transition);
+			},
+			policyByOperation: {},
+			reconnectJitterRandom: () => 0.5,
+			refreshExtraHeaders: async () => ({}),
+			scheduleReconnectTimer: (callback) => {
+				reconnectCallbacks.push(callback);
+				return { cancel: () => undefined };
+			},
+		});
+		await client.ready;
+
+		first.control.disconnectFromPeer();
+		let lastReconnectCallback: (() => void) | undefined;
+		/* oxlint-disable no-await-in-loop -- each failed attempt synchronously schedules the next bounded reconnect */
+		for (let attempt = 0; attempt < 16; attempt += 1) {
+			const reconnectCallback = reconnectCallbacks.shift();
+			expect(reconnectCallback).toBeDefined();
+			lastReconnectCallback = reconnectCallback;
+			reconnectCallback?.();
+			await flushImmediate();
+		}
+		/* oxlint-enable no-await-in-loop */
+
+		expect(reconnectExhaustedTransitions).toEqual([
+			{
+				attempts: 16,
+				exhaustionReason: 'attempt_limit',
+				gapReason: 'gateway control attachment disconnected',
+				gatewayEpoch: 'gateway-a',
+				kind: 'reconnect_exhausted',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+		]);
+		expect(client.getDiagnostics()).toMatchObject({ reconnectExhausted: true });
+
+		lastReconnectCallback?.();
+		await Promise.resolve();
+		expect(reconnectExhaustedTransitions).toHaveLength(1);
+		client.close();
+	});
+
+	it('keeps the original reconnect deadline after S2 accepts with fewer than three heartbeats', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const second = createFakeSocket({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		const sockets = [first.socket, second.socket];
+		const reconnectTimers = createFakeReconnectTimerQueue();
+		const reconnectExhaustedTransitions: unknown[] = [];
+		let attachmentGeneration = 0;
+		let nowMs = 1_000;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => {
+				const socket = sockets.shift();
+				if (socket === undefined) {
+					throw new Error('unexpected socket attempt');
+				}
+				return socket;
+			},
+			dispatcher: {
+				dispatch: async () => undefined,
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => {
+				attachmentGeneration += 1;
+				return attachmentGeneration;
+			},
+			now: () => nowMs,
+			onReconnectExhausted: (transition: unknown) => {
+				reconnectExhaustedTransitions.push(transition);
+			},
+			policyByKind: { heartbeat: 'critical_idempotent' },
+			policyByOperation: {},
+			reconnectJitterRandom: () => 0.5,
+			refreshExtraHeaders: async () => ({}),
+			scheduleReconnectTimer: reconnectTimers.schedule,
+		});
+		await client.ready;
+
+		nowMs = 1_000;
+		first.control.disconnectFromPeer();
+		reconnectTimers.takeNextActive()?.();
+		await Promise.resolve();
+		await second.control.accept();
+		expect(client.getDiagnostics()).toMatchObject({ reconnectAttempts: 1 });
+		await receiveHeartbeat({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			control: second.control,
+			messageId: '55555555-5555-4555-8555-555555555555',
+			observedAtMs: 2_000,
+			sequence: 1,
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		await receiveHeartbeat({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			control: second.control,
+			messageId: '66666666-6666-4666-8666-666666666666',
+			observedAtMs: 3_000,
+			sequence: 2,
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		expect(client.getDiagnostics()).toMatchObject({
+			accepted: true,
+			attachmentGeneration: 2,
+			reconnectAttempts: 1,
+			reconnectExhausted: false,
+		});
+
+		nowMs = 61_000;
+		const originalGapDeadlineCallback = reconnectTimers.takeNextActive();
+		expect(originalGapDeadlineCallback).toBeDefined();
+		originalGapDeadlineCallback?.();
+		await Promise.resolve();
+
+		expect(reconnectExhaustedTransitions).toEqual([
+			{
+				attempts: 1,
+				exhaustionReason: 'deadline',
+				gapReason: 'gateway control attachment disconnected',
+				gatewayEpoch: 'gateway-a',
+				kind: 'reconnect_exhausted',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+		]);
+
+		originalGapDeadlineCallback?.();
+		await Promise.resolve();
+		expect(reconnectExhaustedTransitions).toHaveLength(1);
+		client.close();
+	});
+
+	it('does not reset the reconnect episode when three S2 heartbeats arrive before 30 seconds', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const second = createFakeSocket({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		const sockets = [first.socket, second.socket];
+		const reconnectTimers = createFakeReconnectTimerQueue();
+		const reconnectExhaustedTransitions: unknown[] = [];
+		let attachmentGeneration = 0;
+		let nowMs = 1_000;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => {
+				const socket = sockets.shift();
+				if (socket === undefined) {
+					throw new Error('unexpected socket attempt');
+				}
+				return socket;
+			},
+			dispatcher: {
+				dispatch: async () => undefined,
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => {
+				attachmentGeneration += 1;
+				return attachmentGeneration;
+			},
+			now: () => nowMs,
+			onReconnectExhausted: (transition: unknown) => {
+				reconnectExhaustedTransitions.push(transition);
+			},
+			policyByKind: { heartbeat: 'critical_idempotent' },
+			policyByOperation: {},
+			reconnectJitterRandom: () => 0.5,
+			refreshExtraHeaders: async () => ({}),
+			scheduleReconnectTimer: reconnectTimers.schedule,
+		});
+		await client.ready;
+
+		first.control.disconnectFromPeer();
+		reconnectTimers.takeNextActive()?.();
+		await Promise.resolve();
+		nowMs = 2_000;
+		await second.control.accept();
+		/* oxlint-disable no-await-in-loop -- heartbeat sequence and injected clock must advance serially */
+		for (const [index, messageId] of [
+			'55555555-5555-4555-8555-555555555555',
+			'66666666-6666-4666-8666-666666666666',
+			'77777777-7777-4777-8777-777777777777',
+		].entries()) {
+			nowMs = 3_000 + index * 1_000;
+			await receiveHeartbeat({
+				connectionId: '33333333-3333-4333-8333-333333333333',
+				control: second.control,
+				messageId,
+				observedAtMs: nowMs,
+				sequence: index + 1,
+				sessionId: '44444444-4444-4444-8444-444444444444',
+			});
+		}
+		/* oxlint-enable no-await-in-loop */
+		expect(client.getDiagnostics()).toMatchObject({ reconnectAttempts: 1 });
+
+		nowMs = 61_000;
+		const originalGapDeadlineCallback = reconnectTimers.takeNextActive();
+		expect(originalGapDeadlineCallback).toBeDefined();
+		originalGapDeadlineCallback?.();
+		await Promise.resolve();
+		expect(reconnectExhaustedTransitions).toMatchObject([
+			{
+				attempts: 1,
+				exhaustionReason: 'deadline',
+				gapReason: 'gateway control attachment disconnected',
+			},
+		]);
+		client.close();
+	});
+
+	it('resets the reconnect episode only after three heartbeats and 30 seconds of S2 stability', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const second = createFakeSocket({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		const failingThird = createFakeSocket({
+			connectError: new Error('third attachment unavailable'),
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			sessionId: '66666666-6666-4666-8666-666666666666',
+		});
+		const sockets = [first.socket, second.socket, failingThird.socket];
+		const reconnectTimers = createFakeReconnectTimerQueue();
+		const reconnectExhaustedTransitions: unknown[] = [];
+		let attachmentGeneration = 0;
+		let nowMs = 1_000;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => {
+				const socket = sockets.shift();
+				if (socket === undefined) {
+					return failingThird.socket;
+				}
+				return socket;
+			},
+			dispatcher: {
+				dispatch: async () => undefined,
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => {
+				attachmentGeneration += 1;
+				return attachmentGeneration;
+			},
+			now: () => nowMs,
+			onReconnectExhausted: (transition: unknown) => {
+				reconnectExhaustedTransitions.push(transition);
+			},
+			policyByKind: { heartbeat: 'critical_idempotent' },
+			policyByOperation: {},
+			reconnectJitterRandom: () => 0.5,
+			refreshExtraHeaders: async () => ({}),
+			scheduleImmediate: (callback) => callback(),
+			scheduleReconnectTimer: reconnectTimers.schedule,
+		});
+		await client.ready;
+
+		first.control.disconnectFromPeer();
+		reconnectTimers.takeNextActive()?.();
+		await Promise.resolve();
+		nowMs = 2_000;
+		await second.control.accept();
+		/* oxlint-disable no-await-in-loop -- heartbeat sequence and injected clock must advance serially */
+		for (const [index, messageId] of [
+			'77777777-7777-4777-8777-777777777777',
+			'88888888-8888-4888-8888-888888888888',
+			'99999999-9999-4999-8999-999999999999',
+		].entries()) {
+			nowMs = 3_000 + index * 1_000;
+			await receiveHeartbeat({
+				connectionId: '33333333-3333-4333-8333-333333333333',
+				control: second.control,
+				messageId,
+				observedAtMs: nowMs,
+				sequence: index + 1,
+				sessionId: '44444444-4444-4444-8444-444444444444',
+			});
+		}
+		/* oxlint-enable no-await-in-loop */
+		expect(client.getDiagnostics()).toMatchObject({ reconnectAttempts: 1 });
+
+		nowMs = 32_000;
+		await receiveHeartbeat({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			control: second.control,
+			messageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			observedAtMs: nowMs,
+			sequence: 4,
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		expect(client.getDiagnostics()).toMatchObject({
+			reconnectAttempts: 0,
+			reconnectExhausted: false,
+		});
+
+		nowMs = 40_000;
+		second.control.disconnectFromPeer();
+		const firstThirdGapCallback = reconnectTimers.takeNextActive();
+		nowMs = 70_000;
+		firstThirdGapCallback?.();
+		await Promise.resolve();
+		const secondThirdGapCallback = reconnectTimers.takeNextActive();
+		nowMs = 100_000;
+		secondThirdGapCallback?.();
+		await Promise.resolve();
+		expect(reconnectExhaustedTransitions).toMatchObject([
+			{
+				attempts: 1,
+				exhaustionReason: 'deadline',
+				gapReason: 'gateway control attachment disconnected',
+			},
+		]);
+		client.close();
+	});
+
+	it('does not report reconnect exhaustion after the client is closed', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const reconnectCallbacks: Array<() => void> = [];
+		const reconnectExhaustedTransitions: unknown[] = [];
+		let nowMs = 1_000;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => first.socket,
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => 1,
+			now: () => nowMs,
+			onReconnectExhausted: (transition: unknown) => {
+				reconnectExhaustedTransitions.push(transition);
+			},
+			policyByOperation: {},
+			refreshExtraHeaders: async () => ({}),
+			scheduleReconnectTimer: (callback) => {
+				reconnectCallbacks.push(callback);
+				return { cancel: () => undefined };
+			},
+		});
+		await client.ready;
+
+		first.control.disconnectFromPeer();
+		const reconnectCallback = reconnectCallbacks.shift();
+		client.close();
+		nowMs = 61_000;
+		reconnectCallback?.();
+		await Promise.resolve();
+
+		expect(reconnectExhaustedTransitions).toEqual([]);
+	});
+
+	it('does not create a reconnect socket when closed during header refresh', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const second = createFakeSocket({
+			connectError: new Error('reconnect authentication expired'),
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		const third = createFakeSocket({
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			sessionId: '66666666-6666-4666-8666-666666666666',
+		});
+		const reconnectHeaders = deferred<Readonly<Record<string, string>>>();
+		const reconnectCallbacks: Array<() => void> = [];
+		const helloResponses: unknown[] = [];
+		const attachmentGaps: unknown[] = [];
+		const reconnectExhaustedTransitions: unknown[] = [];
+		let socketCreateCount = 0;
+		let refreshCount = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => {
+				socketCreateCount += 1;
+				return socketCreateCount === 1
+					? first.socket
+					: socketCreateCount === 2
+						? second.socket
+						: third.socket;
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => socketCreateCount + 1,
+			onAttachmentGap: (transition: unknown) => {
+				attachmentGaps.push(transition);
+			},
+			onHelloResponse: (response: unknown) => {
+				helloResponses.push(response);
+			},
+			onReconnectExhausted: (transition: unknown) => {
+				reconnectExhaustedTransitions.push(transition);
+			},
+			policyByOperation: {},
+			refreshExtraHeaders: () => {
+				refreshCount += 1;
+				return reconnectHeaders.promise;
+			},
+			scheduleReconnectTimer: (callback) => {
+				reconnectCallbacks.push(callback);
+				return { cancel: () => undefined };
+			},
+		});
+		await client.ready;
+
+		first.control.disconnectFromPeer();
+		expect(reconnectCallbacks).toHaveLength(1);
+		reconnectCallbacks.shift()?.();
+		await Promise.resolve();
+		expect(reconnectCallbacks).toHaveLength(1);
+		reconnectCallbacks.shift()?.();
+		expect(refreshCount).toBe(1);
+		expect(socketCreateCount).toBe(2);
+		const callbackCountsBeforeClose = {
+			attachmentGaps: attachmentGaps.length,
+			helloResponses: helloResponses.length,
+			reconnectExhaustedTransitions: reconnectExhaustedTransitions.length,
+		};
+
+		client.close();
+		reconnectHeaders.resolve({ authorization: 'refreshed' });
+		await flushImmediate();
+
+		expect(socketCreateCount).toBe(2);
+		expect(third.control.clientDisconnectCount).toBe(0);
+		expect({
+			attachmentGaps: attachmentGaps.length,
+			helloResponses: helloResponses.length,
+			reconnectExhaustedTransitions: reconnectExhaustedTransitions.length,
+		}).toEqual(callbackCountsBeforeClose);
 	});
 
 	it('bounds authority handlers while an exact pending safety result still completes', async () => {

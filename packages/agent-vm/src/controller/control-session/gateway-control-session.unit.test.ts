@@ -1,15 +1,48 @@
 import { CONTROL_PROTOCOL_VERSION } from '@agent-vm/control-protocol-contracts';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const disposableClientMocks = vi.hoisted(() => ({
+	create: vi.fn(),
+}));
+
+vi.mock('./gateway-disposable-control-session-client.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./gateway-disposable-control-session-client.js')>()),
+	createGatewayDisposableControlSessionClient: disposableClientMocks.create,
+}));
 
 import {
 	buildGatewayControlEndpoint,
 	buildGatewayControlReadyHeaders,
+	connectGatewayControlSession,
 	createGatewayControlSessionMaterial,
+	deriveGatewayControlSessionMaterialForProcess,
 	deserializeGatewayControlSessionMaterial,
 	fetchGatewayControlCredential,
 	nextGatewayControlAttachmentGeneration,
 	serializeGatewayControlSessionMaterial,
 } from './gateway-control-session.js';
+
+function buildReadyCredentialResponse(
+	material: ReturnType<typeof createGatewayControlSessionMaterial>,
+): Response {
+	const issuedAtMs = Date.now();
+	return new Response(
+		JSON.stringify({
+			audience: 'gateway_control',
+			bootId: material.bootId,
+			controllerEpoch: material.controllerEpoch,
+			credentialId: '11111111-1111-4111-8111-111111111111',
+			expiresAtMs: issuedAtMs + 1_000,
+			generationId: material.generationId,
+			issuedAtMs,
+			nonce: 'gateway-ready-nonce',
+			peerId: material.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+			zoneId: material.zoneId,
+		}),
+		{ headers: { 'content-type': 'application/json' }, status: 200 },
+	);
+}
 
 describe('gateway control session material', () => {
 	it('preserves caller-supplied Gateway identity while minting fresh session authority', () => {
@@ -53,6 +86,63 @@ describe('gateway control session material', () => {
 		expect(secondMaterial.bootId).not.toBe(firstMaterial.bootId);
 		expect(secondMaterial.generationId).not.toBe(firstMaterial.generationId);
 		expect(secondMaterial.processEpoch).not.toBe(firstMaterial.processEpoch);
+	});
+
+	it('derives P2 material by preserving exact G-scoped authority and changing only processEpoch', () => {
+		const previousMaterial = createGatewayControlSessionMaterial({
+			agentIds: ['agent-a', 'agent-b'],
+			bootId: 'gateway-boot-a',
+			controllerEpoch: 'controller-epoch-a',
+			generationId: 'gateway-generation-a',
+			processEpoch: 'process-epoch-1',
+			zoneId: 'zone-a',
+		});
+
+		const successorMaterial = deriveGatewayControlSessionMaterialForProcess(
+			previousMaterial,
+			'process-epoch-2',
+		);
+
+		expect(successorMaterial).toEqual({
+			...previousMaterial,
+			processEpoch: 'process-epoch-2',
+		});
+		expect(successorMaterial).not.toBe(previousMaterial);
+		expect(successorMaterial.privateKey).toBe(previousMaterial.privateKey);
+		expect(successorMaterial.privateKey.export({ format: 'pem', type: 'pkcs8' })).toBe(
+			previousMaterial.privateKey.export({ format: 'pem', type: 'pkcs8' }),
+		);
+		expect(successorMaterial.verifierPublicKeyPem).toBe(previousMaterial.verifierPublicKeyPem);
+		expect(successorMaterial.callerContextProofKey).toBe(previousMaterial.callerContextProofKey);
+		expect(successorMaterial.agentAuthorityKeys).toBe(previousMaterial.agentAuthorityKeys);
+		expect(successorMaterial.agentAuthorityKeys).toEqual(previousMaterial.agentAuthorityKeys);
+		expect(successorMaterial).toMatchObject({
+			bootId: previousMaterial.bootId,
+			controllerEpoch: previousMaterial.controllerEpoch,
+			generationId: previousMaterial.generationId,
+			peerId: previousMaterial.peerId,
+			processEpoch: 'process-epoch-2',
+			zoneId: previousMaterial.zoneId,
+		});
+	});
+
+	it.each([
+		['empty', ''],
+		['unchanged', 'process-epoch-1'],
+	])('rejects a %s selected process epoch', (_label, selectedProcessEpoch) => {
+		const previousMaterial = createGatewayControlSessionMaterial({
+			bootId: 'gateway-boot-a',
+			controllerEpoch: 'controller-epoch-a',
+			generationId: 'gateway-generation-a',
+			processEpoch: 'process-epoch-1',
+			zoneId: 'zone-a',
+		});
+
+		expect(() =>
+			deriveGatewayControlSessionMaterialForProcess(previousMaterial, selectedProcessEpoch),
+		).toThrow(
+			'Gateway control selected process epoch must be nonempty and differ from the previous process epoch.',
+		);
 	});
 
 	it('keeps attachment generation monotonic across process material in one Gateway epoch', () => {
@@ -150,5 +240,100 @@ describe('gateway control session material', () => {
 		});
 
 		expect(observedFetchInit[0]?.signal).toBeInstanceOf(AbortSignal);
+	});
+
+	it('aborts a pending credential wait with the owner reason before creating a client', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'epoch-a',
+			zoneId: 'zone-a',
+		});
+		const abortController = new AbortController();
+		const addEventListener = vi.spyOn(abortController.signal, 'addEventListener');
+		const removeEventListener = vi.spyOn(abortController.signal, 'removeEventListener');
+		let markFetchStarted: (() => void) | undefined;
+		const fetchStarted = new Promise<void>((resolve) => {
+			markFetchStarted = resolve;
+		});
+		const fetchImpl: typeof fetch = async () => {
+			markFetchStarted?.();
+			return await new Promise<Response>(() => undefined);
+		};
+		const abortReason = new Error('successor attachment deadline expired');
+
+		const connectPromise = connectGatewayControlSession({
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: 18791 }),
+			fetchImpl,
+			material,
+			signal: abortController.signal,
+		});
+		await fetchStarted;
+		abortController.abort(abortReason);
+
+		await expect(connectPromise).rejects.toBe(abortReason);
+		expect(disposableClientMocks.create).not.toHaveBeenCalled();
+		expect(removeEventListener).toHaveBeenCalledTimes(addEventListener.mock.calls.length);
+	});
+
+	it('aborts a pending client readiness wait, closes the client, and removes its listener', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'epoch-a',
+			zoneId: 'zone-a',
+		});
+		const abortController = new AbortController();
+		const addEventListener = vi.spyOn(abortController.signal, 'addEventListener');
+		const removeEventListener = vi.spyOn(abortController.signal, 'removeEventListener');
+		const close = vi.fn();
+		let markClientCreated: (() => void) | undefined;
+		const clientCreated = new Promise<void>((resolve) => {
+			markClientCreated = resolve;
+		});
+		disposableClientMocks.create.mockImplementation(() => {
+			markClientCreated?.();
+			return {
+				close,
+				ready: new Promise<void>(() => undefined),
+			};
+		});
+		const abortReason = new Error('successor attachment deadline expired');
+
+		const connectPromise = connectGatewayControlSession({
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: 18791 }),
+			fetchImpl: async () => buildReadyCredentialResponse(material),
+			material,
+			signal: abortController.signal,
+		});
+		await clientCreated;
+		abortController.abort(abortReason);
+
+		await expect(connectPromise).rejects.toBe(abortReason);
+		expect(close).toHaveBeenCalledOnce();
+		expect(removeEventListener).toHaveBeenCalledTimes(addEventListener.mock.calls.length);
+	});
+
+	it('removes cancellation listeners when the disposable client becomes ready', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'epoch-a',
+			zoneId: 'zone-a',
+		});
+		const abortController = new AbortController();
+		const addEventListener = vi.spyOn(abortController.signal, 'addEventListener');
+		const removeEventListener = vi.spyOn(abortController.signal, 'removeEventListener');
+		const close = vi.fn();
+		const disposableClient = {
+			close,
+			ready: Promise.resolve(),
+		};
+		disposableClientMocks.create.mockReturnValue(disposableClient);
+
+		const connectedClient = await connectGatewayControlSession({
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: 18791 }),
+			fetchImpl: async () => buildReadyCredentialResponse(material),
+			material,
+			signal: abortController.signal,
+		});
+
+		expect(connectedClient).toBe(disposableClient);
+		expect(close).not.toHaveBeenCalled();
+		expect(removeEventListener).toHaveBeenCalledTimes(addEventListener.mock.calls.length);
 	});
 });

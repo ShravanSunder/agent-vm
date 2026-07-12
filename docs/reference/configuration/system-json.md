@@ -248,8 +248,8 @@ the defaults.
 | --- | --- | --- |
 | `enabled` | `true` | Enables periodic health monitors. Health routes remain available when disabled. |
 | `gatewayServiceIntervalMs` | `10000` | Host-side interval for the agent-vm controller to probe each running gateway-service through the gateway VM service liveness check. |
-| `gatewayServiceAutoRestart.enabled` | `true` | Enables automatic restart for a running OpenClaw gateway VM after repeated gateway-service or gateway control-session health failures. |
-| `gatewayServiceAutoRestart.consecutiveFailureThreshold` | `10` | Consecutive degraded observations required before restart. A healthy observation resets that boundary's counter. |
+| `gatewayServiceAutoRestart.enabled` | `true` | Enables bounded recovery from repeated gateway-service or gateway control-session degradation. Dead control with a live Gateway service first requests same-Gateway OpenClaw process recovery; Gateway VM restart is outward escalation. |
+| `gatewayServiceAutoRestart.consecutiveFailureThreshold` | `10` | Consecutive degraded observations required before the relevant recovery boundary is eligible. A healthy observation resets that boundary's counter. |
 | `gatewayServiceAutoRestart.cooldownMs` | `3660000` | Minimum time between automatic restart attempts for one zone. This is 61 minutes by default. |
 | `gatewayServiceAutoRestart.maxConsecutiveFailedRecoveries` | `3` | Failed automatic restart attempts allowed before the controller suspends further auto-recovery for that zone. |
 | `gatewayServiceAutoRestart.failedRecoveryResetMs` | `86400000` | Suspension reset window after the latest failed recovery attempt. This is 24 hours by default. |

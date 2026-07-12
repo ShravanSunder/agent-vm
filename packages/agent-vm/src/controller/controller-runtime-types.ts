@@ -1,7 +1,6 @@
 import type {
 	configureHostNetworkDefaults,
 	HostNetworkDefaultsResult,
-	ManagedVmOwnershipReservationReferenceV1,
 } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
@@ -9,18 +8,21 @@ import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
 import type {
 	preflightGatewayZoneStart,
-	startGatewayZone,
+	startGatewayZoneForController,
 } from '../gateway/gateway-zone-orchestrator.js';
 import type { resolveControllerTelemetryIdentity } from '../observability/controller-telemetry-identity.js';
 import type { startControllerTelemetry } from '../observability/controller-telemetry.js';
 import type { checkObservabilityStackReadiness } from '../observability/observability-readiness.js';
+import type { reconcileRecordedVmTree } from '../operations/controller-offline-cleanup.js';
 import type { ControllerRuntimeZoneStatus } from '../operations/controller-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import type { appendDurableHealthEvent } from './health/durable-health-event-log.js';
 import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
+import type { ToolVmProvisioningHandle } from './leases/lease-manager.js';
 import type { ObservedControllerLeaseCreateRequest } from './leases/observed-lease-create-request.js';
+import type { createOpenClawProcessReliabilityFaultTargetRegistry } from './reliability/testing/openclaw-process-reliability-fault-target-registry.js';
 import type { acquireControllerOwnershipLock } from './vm-ownership/controller-ownership-lock.js';
 import type { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
 import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
@@ -47,16 +49,18 @@ export interface ControllerRuntimeDependencies {
 	readonly resolveControllerTelemetryServiceVersion?: () => Promise<string>;
 	readonly startControllerTelemetry?: typeof startControllerTelemetry;
 	readonly createGatewayOwnershipCoordinator?: typeof createGatewayOwnershipCoordinator;
+	readonly createOpenClawProcessReliabilityFaultTargetRegistry?:
+		| typeof createOpenClawProcessReliabilityFaultTargetRegistry
+		| undefined;
 	readonly createManagedToolVm?: (options: {
 		readonly agentId: string;
-		readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 		readonly secretResolver: SecretResolver;
-	}) => Promise<import('@agent-vm/gondolin-adapter').ManagedVm>;
+	}) => Promise<import('@agent-vm/gondolin-adapter').ManagedVm | ToolVmProvisioningHandle>;
 	readonly createSecretResolver?: (options: {
 		readonly serviceAccountToken: string;
 	}) => Promise<SecretResolver>;
@@ -81,13 +85,14 @@ export interface ControllerRuntimeDependencies {
 	) => void | Promise<void>;
 	readonly onWorkerTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly reconcileRecordedVmTree?: typeof reconcileRecordedVmTree;
 	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStart;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
 		delayMs: number,
 	) => NodeJS.Timeout;
 	readonly setTimeoutImpl?: (callback: () => void, delayMs: number) => NodeJS.Timeout;
-	readonly startGatewayZone?: typeof startGatewayZone;
+	readonly startGatewayZone?: typeof startGatewayZoneForController;
 	readonly startHttpServer?: (options: {
 		readonly app: ReturnType<typeof createControllerService>;
 		readonly port: number;

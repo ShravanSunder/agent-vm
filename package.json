@@ -14,6 +14,7 @@
 		"test:portal-architecture": "tsx scripts/audit-portal-architecture.ts",
 		"test:portal-exports": "tsx scripts/verify-portal-package-exports.ts",
 		"test:vm-ownership-boundaries": "tsx scripts/audit-vm-ownership-boundaries.ts",
+		"test:reliability-fault-boundaries": "tsx scripts/audit-reliability-fault-boundaries.ts",
 		"lint": "oxlint .",
 		"lint:fix": "oxlint --fix",
 		"lint:types": "oxlint --type-aware .",
@@ -42,6 +43,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^25.6.2",
+		"@vitest/utils": "4.1.5",
 		"oxfmt": "^0.48.0",
 		"oxlint": "^1.63.0",
 		"oxlint-tsgolint": "^0.22.1",
@@ -59,9 +61,6 @@
 	"pnpm": {
 		"onlyBuiltDependencies": [
 			"esbuild"
-		],
-		"patchedDependencies": {
-			"@earendil-works/gondolin@0.12.0": "patches/@earendil-works__gondolin@0.12.0.patch"
-		}
+		]
 	}
 }

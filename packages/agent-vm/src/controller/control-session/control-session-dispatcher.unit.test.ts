@@ -4,7 +4,10 @@ import {
 } from '@agent-vm/control-protocol-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createControlSessionDispatcher } from './control-session-dispatcher.js';
+import {
+	createControlSessionDispatcher,
+	createControlSessionFenceRegistry,
+} from './control-session-dispatcher.js';
 import {
 	createGatewaySemanticResultLedger,
 	type GatewaySemanticExecutionProof,
@@ -222,43 +225,53 @@ describe('Control session semantic dispatch', () => {
 		expect(buildSemanticFailureResult).toHaveBeenCalledTimes(2);
 	});
 
-	it('executes with the request state captured before a newer session becomes current', async () => {
+	it('refuses a prepared semantic mutation after a newer session becomes current', async () => {
 		const ledger = createGatewaySemanticResultLedger({ gateway, nowMs: () => 1 });
-		const dispatcher = createControlSessionDispatcher({ semanticLedger: ledger });
-		let currentSession = {
-			attachmentGeneration: 1,
-			processEpoch: 'process-a',
-			sessionId: 'session-s1',
-		};
-		let observedProof: GatewaySemanticExecutionProof | undefined;
-		const execute = vi.fn(
-			async (proof: GatewaySemanticExecutionProof, capturedSession: typeof currentSession) => {
-				observedProof = proof;
-				return { capturedSession };
-			},
-		);
+		const sessionFenceRegistry = createControlSessionFenceRegistry();
+		const dispatcher = createControlSessionDispatcher({
+			semanticLedger: ledger,
+			sessionFenceRegistry,
+		});
+		const execute = vi.fn(async (_proof: GatewaySemanticExecutionProof) => ({ result: 'mutated' }));
+		const envelope = commandEnvelope({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			messageId: '22222222-2222-4222-8222-222222222222',
+			sessionId: '33333333-3333-4333-8333-333333333333',
+		});
+		sessionFenceRegistry.acceptSession({
+			bootId: envelope.bootId,
+			connectionId: envelope.connectionId,
+			controllerEpoch: envelope.controllerEpoch,
+			domain: envelope.domain,
+			peerId: envelope.peerId,
+			sessionId: envelope.sessionId,
+			zoneId: envelope.zoneId,
+		});
 		dispatcher.register('gateway_control', {
-			handle: async () => ({ currentSession }),
+			handle: async () => ({ result: 'non-semantic-handler-must-not-run' }),
 			messageIdentity: () => ({ kind: 'command', operation: 'mutate' }),
 			policyByOperation: { mutate: 'critical_idempotent' },
-			prepareSemanticMutation: async ({ envelope }) => {
-				const capturedSession = structuredClone(currentSession);
-				currentSession = {
-					attachmentGeneration: 2,
-					processEpoch: 'process-a',
-					sessionId: 'session-s2',
-				};
+			prepareSemanticMutation: async ({ envelope: preparedEnvelope }) => {
+				sessionFenceRegistry.acceptSession({
+					bootId: preparedEnvelope.bootId,
+					connectionId: '44444444-4444-4444-8444-444444444444',
+					controllerEpoch: preparedEnvelope.controllerEpoch,
+					domain: preparedEnvelope.domain,
+					peerId: preparedEnvelope.peerId,
+					sessionId: '55555555-5555-4555-8555-555555555555',
+					zoneId: preparedEnvelope.zoneId,
+				});
 				return {
-					execute: async (proof) => await execute(proof, capturedSession),
+					execute,
 					identity: {
-						commandId: envelope.commandId ?? envelope.messageId,
+						commandId: preparedEnvelope.commandId ?? preparedEnvelope.messageId,
 						gateway,
-						idempotencyKey: envelope.idempotencyKey ?? envelope.messageId,
+						idempotencyKey: preparedEnvelope.idempotencyKey ?? preparedEnvelope.messageId,
 						operation: 'mutate',
 						profile: {
 							kind: 'active_use',
 							leafGeneration: 'leaf-a',
-							processEpoch: capturedSession.processEpoch,
+							processEpoch: preparedEnvelope.bootId,
 							stablePrincipal: 'principal-a',
 							useId: 'use-a',
 						},
@@ -271,27 +284,8 @@ describe('Control session semantic dispatch', () => {
 		});
 
 		await expect(
-			dispatcher.dispatch({
-				envelope: commandEnvelope({
-					connectionId: '11111111-1111-4111-8111-111111111111',
-					messageId: '22222222-2222-4222-8222-222222222222',
-					sessionId: '33333333-3333-4333-8333-333333333333',
-				}),
-				payload: { value: 'captured-s1' },
-			}),
-		).resolves.toEqual({
-			capturedSession: {
-				attachmentGeneration: 1,
-				processEpoch: 'process-a',
-				sessionId: 'session-s1',
-			},
-		});
-
-		expect(currentSession).toMatchObject({ attachmentGeneration: 2, sessionId: 'session-s2' });
-		expect(observedProof?.identity.profile).toMatchObject({
-			kind: 'active_use',
-			processEpoch: 'process-a',
-		});
-		expect(execute).toHaveBeenCalledOnce();
+			dispatcher.dispatch({ envelope, payload: { value: 'captured-s1' } }),
+		).rejects.toThrow(/sessionId mismatch/u);
+		expect(execute).not.toHaveBeenCalled();
 	});
 });

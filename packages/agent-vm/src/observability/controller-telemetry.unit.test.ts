@@ -190,4 +190,139 @@ describe('startControllerTelemetry', () => {
 		]);
 		expect(JSON.stringify({ logs, metrics, spans })).not.toContain('lease-secret-canary');
 	});
+
+	it('contains synchronous driver failures outside controller and health mutation', () => {
+		const driver: ControllerTelemetryDriver = {
+			emitLog: vi.fn(() => {
+				throw new Error('log sink failed');
+			}),
+			emitMetric: vi.fn(() => {
+				throw new Error('metric sink failed');
+			}),
+			emitSpan: vi.fn(() => {
+				throw new Error('span sink failed');
+			}),
+			forceFlush: vi.fn(async () => {}),
+			shutdown: vi.fn(async () => {}),
+		};
+		const telemetry = startControllerTelemetry({
+			createDriver: () => driver,
+			identity: {
+				branchName: 'main',
+				repositoryIdentity: 'repo',
+				serviceVersion: '0.0.99',
+				worktreeIdentity: 'worktree',
+			},
+			observabilityConfig: createObservabilityConfig(),
+			projectNamespace: 'beta',
+		});
+
+		expect(() => {
+			telemetry?.recordControllerLifecycleEvent({
+				eventName: 'controller-started',
+				observedAtMs: 1,
+			});
+		}).not.toThrow();
+		expect(() => {
+			telemetry?.healthEventSink.record({
+				domain: 'gateway_control',
+				elapsedMs: 1,
+				kind: 'gateway-control-session',
+				observedAtMs: 2,
+				operation: 'control-session-disconnect',
+				peerId: 'gateway-beta',
+				result: 'failed',
+				zoneId: 'beta',
+			});
+		}).not.toThrow();
+		expect(telemetry?.getDiagnostics?.()).toMatchObject({
+			emissionFailures: 6,
+			operationFailures: 0,
+		});
+	});
+
+	it('bounds flush and shutdown when the telemetry driver never resolves', async () => {
+		vi.useFakeTimers();
+		try {
+			const neverResolve = new Promise<void>(() => {});
+			const driver: ControllerTelemetryDriver = {
+				emitLog: vi.fn(),
+				emitMetric: vi.fn(),
+				emitSpan: vi.fn(),
+				forceFlush: vi.fn(async () => await neverResolve),
+				shutdown: vi.fn(async () => await neverResolve),
+			};
+			const telemetry = startControllerTelemetry({
+				createDriver: () => driver,
+				driverOperationTimeoutMs: 25,
+				identity: {
+					branchName: 'main',
+					repositoryIdentity: 'repo',
+					serviceVersion: '0.0.99',
+					worktreeIdentity: 'worktree',
+				},
+				observabilityConfig: createObservabilityConfig(),
+				projectNamespace: 'beta',
+			});
+
+			let flushSettled = 0;
+			const firstFlush = telemetry?.forceFlush().then(() => {
+				flushSettled += 1;
+			});
+			const secondFlush = telemetry?.forceFlush().then(() => {
+				flushSettled += 1;
+			});
+			await vi.advanceTimersByTimeAsync(24);
+			expect(flushSettled).toBe(0);
+			await vi.advanceTimersByTimeAsync(1);
+			await Promise.all([firstFlush, secondFlush]);
+			expect(flushSettled).toBe(2);
+			expect(driver.forceFlush).toHaveBeenCalledTimes(1);
+
+			let shutdownSettled = false;
+			const shutdown = telemetry?.shutdown().then(() => {
+				shutdownSettled = true;
+			});
+			await vi.advanceTimersByTimeAsync(25);
+			await shutdown;
+			expect(shutdownSettled).toBe(true);
+			expect(telemetry?.getDiagnostics?.()).toEqual({
+				emissionFailures: 0,
+				operationFailures: 0,
+				operationTimeouts: 3,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('accounts rejected driver operations without exposing them to controller shutdown', async () => {
+		const driver: ControllerTelemetryDriver = {
+			emitLog: vi.fn(),
+			emitMetric: vi.fn(),
+			emitSpan: vi.fn(),
+			forceFlush: vi.fn(async () => {
+				throw new Error('exporter rejected flush');
+			}),
+			shutdown: vi.fn(async () => {}),
+		};
+		const telemetry = startControllerTelemetry({
+			createDriver: () => driver,
+			identity: {
+				branchName: 'main',
+				repositoryIdentity: 'repo',
+				serviceVersion: '0.0.99',
+				worktreeIdentity: 'worktree',
+			},
+			observabilityConfig: createObservabilityConfig(),
+			projectNamespace: 'beta',
+		});
+
+		await expect(telemetry?.forceFlush()).resolves.toBeUndefined();
+		expect(telemetry?.getDiagnostics?.()).toEqual({
+			emissionFailures: 0,
+			operationFailures: 1,
+			operationTimeouts: 0,
+		});
+	});
 });

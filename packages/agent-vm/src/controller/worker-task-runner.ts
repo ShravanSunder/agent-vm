@@ -27,6 +27,10 @@ import {
 	type WorkerTaskControllerRequestInput,
 } from '../config/resource-contracts/index.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import {
+	deleteGatewayRuntimeRecord,
+	loadGatewayRuntimeRecord,
+} from '../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type {
 	GatewayManagedVmFactoryOptions,
@@ -41,10 +45,7 @@ import {
 } from '../resources/repo-resource-provider-runner.js';
 import { compileResourceOverlay } from '../resources/resource-compiler.js';
 import { resolveTaskResources } from '../resources/resource-resolver.js';
-import {
-	assertVmDestructionComplete,
-	VmDestructionUnprovenError,
-} from '../shared/vm-destruction-receipt.js';
+import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import {
@@ -62,19 +63,65 @@ import {
 	type ControlSessionClient,
 	type WorkerControlRpcOperations,
 } from './control-session/index.js';
-import { createStandaloneVmCreationOwnership } from './vm-ownership/vm-creation-ownership.js';
-import { vmOwnershipDeploymentIdentityForSystemConfig } from './vm-ownership/vm-ownership-deployment-identity.js';
-import { standaloneVmOwnershipReservationRoot } from './vm-ownership/vm-ownership-reservation-inventory.js';
-
-type WorkerTaskZoneConfig = LoadedSystemConfig['zones'][number];
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
 	buildResolvedRuntimeResources,
 	buildRuntimeInstructions,
 } from './runtime-instructions-builder.js';
 import { buildTaskConfigFromPreparedInput } from './task-config-builder.js';
+import type { GatewayVmLifecycleAuthority } from './vm-ownership/gateway-vm-lifecycle-authority.js';
+import type {
+	GatewayEpochIdentity,
+	GatewayEpochSeed,
+} from './vm-ownership/vm-ownership-contracts.js';
+
+type WorkerTaskZoneConfig = LoadedSystemConfig['zones'][number];
 
 const workerPackageTarballsEnv = 'AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON';
+
+function createStandaloneWorkerVmLifecycleAuthority(options: {
+	readonly controllerEpoch: string;
+	readonly taskId: string;
+	readonly zoneId: string;
+}): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: `worker-task-${options.taskId}`,
+		controllerEpoch: options.controllerEpoch,
+		gatewayEpochId: crypto.randomUUID(),
+		generationId: crypto.randomUUID(),
+		zoneId: options.zoneId,
+	} satisfies GatewayEpochSeed;
+	let gatewayIdentity: GatewayEpochIdentity | undefined;
+	let destroyed = false;
+
+	return {
+		gatewaySeed,
+		get gatewayIdentity(): GatewayEpochIdentity | undefined {
+			return gatewayIdentity === undefined ? undefined : structuredClone(gatewayIdentity);
+		},
+		attachGatewayVm(gatewayVmId): GatewayEpochIdentity {
+			if (gatewayIdentity !== undefined) {
+				throw new Error(`Worker task '${options.taskId}' VM lifecycle is already attached.`);
+			}
+			gatewayIdentity = { ...gatewaySeed, gatewayVmId };
+			return structuredClone(gatewayIdentity);
+		},
+		async containPendingCreate(containmentOptions): Promise<void> {
+			const unstartedVm = await containmentOptions.pendingCreate;
+			await containmentOptions.closeLateCreatedVm(unstartedVm);
+		},
+		async destroyLive(destroyWorkerVm): Promise<void> {
+			if (gatewayIdentity === undefined) {
+				throw new Error(`Worker task '${options.taskId}' VM lifecycle is not attached.`);
+			}
+			if (destroyed) {
+				return;
+			}
+			await destroyWorkerVm();
+			destroyed = true;
+		},
+	};
+}
 
 const workerPackageTarballSchema = z
 	.object({
@@ -865,6 +912,7 @@ export interface ExecuteWorkerTaskOptions {
 		readonly operations: WorkerControlRpcOperations;
 	};
 	readonly connectWorkerControlSession?: typeof connectWorkerControlSessionDefault;
+	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
 	readonly timeoutMs?: number;
@@ -1023,40 +1071,38 @@ export async function executeWorkerTask(
 				});
 
 	try {
-		gateway = await startGatewayZone({
-			createVmOwnership: async (ownershipOptions) => {
-				if (ownershipOptions.kind !== 'standalone') {
-					throw new Error(
-						`Worker task '${prepared.taskId}' cannot reserve Gateway-epoch ownership.`,
-					);
-				}
-				return await createStandaloneVmCreationOwnership({
-					controllerEpoch: options.controllerEpoch,
-					createId: crypto.randomUUID,
-					principal: {
-						...vmOwnershipDeploymentIdentityForSystemConfig(options.systemConfig),
-						kind: 'worker-task',
+		gateway = await startGatewayZone(
+			{
+				createVmOwnership: async (ownershipOptions): Promise<GatewayVmLifecycleAuthority> => {
+					if (ownershipOptions.kind !== 'standalone') {
+						throw new Error(
+							`Worker task '${prepared.taskId}' cannot create Gateway-epoch ownership.`,
+						);
+					}
+					return createStandaloneWorkerVmLifecycleAuthority({
+						controllerEpoch: options.controllerEpoch,
 						taskId: prepared.taskId,
-						zoneId: prepared.zoneId,
-					},
-					reservationRoot: standaloneVmOwnershipReservationRoot(options.systemConfig.runtimeDir),
-					sessionLabel: ownershipOptions.sessionLabel,
-				});
+						zoneId: ownershipOptions.zoneId,
+					});
+				},
+				environmentOverride: {
+					...prepared.preStartResult.environment,
+					...(workerControlMaterial === undefined
+						? {}
+						: buildWorkerControlEnvironment(workerControlMaterial)),
+				},
+				secretResolver: options.secretResolver,
+				gitReadAllowlistRepos: prepared.preStartResult.repos.map((repo) => repo.repoUrl),
+				systemConfig: options.systemConfig,
+				tcpHostsOverride: prepared.preStartResult.tcpHosts,
+				vfsMountsOverride: prepared.preStartResult.vfsMounts,
+				zoneId: prepared.zoneId,
+				zoneOverride: prepared.taskZoneConfig,
 			},
-			environmentOverride: {
-				...prepared.preStartResult.environment,
-				...(workerControlMaterial === undefined
-					? {}
-					: buildWorkerControlEnvironment(workerControlMaterial)),
-			},
-			secretResolver: options.secretResolver,
-			gitReadAllowlistRepos: prepared.preStartResult.repos.map((repo) => repo.repoUrl),
-			systemConfig: options.systemConfig,
-			tcpHostsOverride: prepared.preStartResult.tcpHosts,
-			vfsMountsOverride: prepared.preStartResult.vfsMounts,
-			zoneId: prepared.zoneId,
-			zoneOverride: prepared.taskZoneConfig,
-		});
+			options.managedVmKillDependencies === undefined
+				? {}
+				: { managedVmKillDependencies: options.managedVmKillDependencies },
+		);
 		await options.onWorkerTaskIngress?.(prepared.zoneId, prepared.taskId, gateway.ingress);
 
 		const baseUrl = `http://${gateway.ingress.host}:${gateway.ingress.port}`;
@@ -1196,18 +1242,23 @@ export async function executeWorkerTask(
 	try {
 		if (gateway) {
 			try {
-				const destroyReceipt = await gateway.vmOwnership.destroyLive(
-					async () => await gateway.vm.close(),
+				const runtimeRecord = await loadGatewayRuntimeRecord(
+					prepared.taskZoneConfig.gateway.stateDir,
 				);
-				assertVmDestructionComplete(destroyReceipt, `Worker VM '${gateway.vm.id}' cleanup`);
+				if (runtimeRecord === null && gateway.vm.getHostPid() !== null) {
+					throw new Error(
+						`Worker VM '${gateway.vm.id}' has a live runner but no runtime record; refusing unverified cleanup.`,
+					);
+				}
+				await gateway.vmOwnership.destroyLive(gateway.terminateVm);
+				if (runtimeRecord !== null) {
+					await deleteGatewayRuntimeRecord(prepared.taskZoneConfig.gateway.stateDir);
+				}
 				vmDestructionComplete = true;
 			} catch (error) {
-				throw error instanceof VmDestructionUnprovenError
-					? error
-					: new VmDestructionUnprovenError(
-							`Worker VM '${gateway.vm.id}' cleanup did not prove exact destruction`,
-							{ cause: error },
-						);
+				throw new Error(`Worker VM '${gateway.vm.id}' cleanup did not prove exact destruction`, {
+					cause: error,
+				});
 			}
 		}
 	} catch (error) {

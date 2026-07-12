@@ -5,16 +5,9 @@ import path from 'node:path';
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
-import {
-	readManagedVmDestroyTarget,
-	readManagedVmOwnershipReservation,
-	type ManagedVm,
-	type ManagedVmDestroyReceiptV1,
-	type ManagedVmInstance,
-	type ManagedVmOwnershipReservationReferenceV1,
-} from '@agent-vm/gondolin-adapter';
+import { type ManagedVm, type ManagedVmInstance } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ControllerTelemetry } from '../observability/controller-telemetry.js';
@@ -22,28 +15,28 @@ import { stableTelemetryHash } from '../observability/health-event-telemetry.js'
 import type { CheckObservabilityStackReadinessOptions } from '../observability/observability-readiness.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
-	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 import type { GatewayControlTrustedCallerContext } from './control-session/gateway-control-caller-context.js';
 import type { GatewayControlPreparedLeaseSemanticMutation } from './control-session/gateway-control-domain-handler.js';
 import type { GatewaySemanticExecutionProof } from './control-session/gateway-semantic-result-ledger.js';
 import { createStopControllerOperation } from './controller-runtime-operations.js';
-import type { ControllerRuntimeDependencies } from './controller-runtime-types.js';
+import type {
+	ControllerRuntime,
+	ControllerRuntimeDependencies,
+} from './controller-runtime-types.js';
 import {
 	classifyGatewayRecoveryRestartError,
 	startControllerRuntime as startControllerRuntimeProduction,
 } from './controller-runtime.js';
-import type { HealthEventStore } from './health/health-event-store.js';
+import type { HealthEventSink, HealthEventStore } from './health/health-event-store.js';
 import type { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { ControllerOwnershipLockError } from './vm-ownership/controller-ownership-lock.js';
 import { GatewayDestructionTimeoutError } from './vm-ownership/gateway-destruction-budget.js';
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
 import { GatewayOwnershipCoordinatorError } from './vm-ownership/gateway-ownership-errors.js';
-import type { VmCreationOwnership } from './vm-ownership/vm-creation-ownership.js';
+import type { GatewayVmLifecycleAuthority } from './vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayEpochIdentity } from './vm-ownership/vm-ownership-contracts.js';
 import type {
 	ExecuteWorkerTaskOptions,
@@ -62,19 +55,23 @@ const controllerRuntimeTestRoot = path.join(
 
 function createManagedVmInstanceStub(vmId: string, hostPid: number | null): ManagedVmInstance {
 	return {
-		close: async () => createCompleteVmDestroyReceipt(vmId),
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
+		close: async () => {},
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			close: async () => {},
+			command: 'ssh ...',
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			host: '127.0.0.1',
+			identityFile: '/tmp/key',
 			port: 19_000,
+			user: 'sandbox',
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => createTestVmDestroyTarget(vmId),
 		getHostPid: () => hostPid,
 		id: vmId,
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
@@ -104,39 +101,17 @@ async function executePreparedGatewayLeaseMutation(options: {
 	return await options.preparedMutation.execute(proof);
 }
 
-async function createManagedVmStubFromOwnershipReservation(
-	ownershipReservation: ManagedVmOwnershipReservationReferenceV1,
+function createManagedVmStub(
+	vmId: string,
 	hostPid: number,
-): Promise<ManagedVm> {
-	const reservation = await readManagedVmOwnershipReservation(ownershipReservation.reservationPath);
-	const identityOptions = {
-		controllerEpoch: reservation.controllerEpoch,
-		parentGateway: reservation.parentGateway,
-		reservationId: reservation.reservationId,
-		role: reservation.role,
-	} as const;
-	const createExactDestroyReceipt = async (): Promise<ManagedVmDestroyReceiptV1> => {
-		const target = await readManagedVmDestroyTarget(ownershipReservation.reservationPath);
-		const targetExecutableName = path.basename(target.runner.executable);
-		return {
-			...createCompleteVmDestroyReceipt(reservation.vmId, identityOptions),
-			requestedRunner: {
-				backend: target.runner.backend,
-				discoveryIdentity: target.runner.discoveryIdentity,
-				executableName: /^[A-Za-z0-9._+-]{1,128}$/u.test(targetExecutableName)
-					? targetExecutableName
-					: 'runner',
-				...(target.runner.pid === undefined ? {} : { pid: target.runner.pid }),
-				...(target.runner.startCookie === undefined
-					? {}
-					: { startCookie: target.runner.startCookie }),
-			},
-		};
-	};
+	options: { readonly detachAfterFirstPidRead?: boolean } = {},
+): ManagedVm {
+	let hasReportedHostPid = false;
 	return {
-		close: createExactDestroyReceipt,
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
+		close: async () => {},
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			close: async () => {},
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh ...',
 			host: '127.0.0.1',
@@ -146,26 +121,71 @@ async function createManagedVmStubFromOwnershipReservation(
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => createTestVmDestroyTarget(reservation.vmId, identityOptions),
-		getHostPid: () => hostPid,
-		getVmInstance: () => createManagedVmInstanceStub(reservation.vmId, hostPid),
-		id: reservation.vmId,
+		getHostPid: () => {
+			if (options.detachAfterFirstPidRead === true && hasReportedHostPid) {
+				return null;
+			}
+			hasReportedHostPid = true;
+			return hostPid;
+		},
+		getVmInstance: () => createManagedVmInstanceStub(vmId, hostPid),
+		id: vmId,
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
-function createExactVmCreationOwnershipStub(vmId: string): VmCreationOwnership {
-	const ownershipReservation = createTestVmOwnershipReservationReference(vmId);
-	return {
-		ownershipReservation,
-		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId),
-		destroyLive: async (closeLiveVm) => {
-			const receipt = await closeLiveVm();
-			if (receipt.vmId !== vmId || receipt.reservationId !== ownershipReservation.reservationId) {
-				throw new Error(`Expected an exact destruction receipt for VM '${vmId}'.`);
-			}
-			return receipt;
+async function createAttachedGatewayVmLifecycleAuthority(options: {
+	readonly bootId?: string;
+	readonly generationId?: string;
+	readonly startOptions: {
+		readonly createVmOwnership: (ownershipOptions: {
+			readonly controlIdentity?: { readonly bootId: string; readonly generationId: string };
+			readonly kind: 'gateway-epoch' | 'standalone';
+			readonly sessionLabel: string;
+			readonly zoneId: string;
+		}) => Promise<GatewayVmLifecycleAuthority>;
+		readonly zoneId: string;
+	};
+	readonly vmId: string;
+}): Promise<GatewayVmLifecycleAuthority> {
+	const vmOwnership = await options.startOptions.createVmOwnership({
+		controlIdentity: {
+			bootId: options.bootId ?? `${options.vmId}-boot`,
+			generationId: options.generationId ?? `${options.vmId}-generation`,
 		},
+		kind: 'gateway-epoch',
+		sessionLabel: `${options.vmId}-session`,
+		zoneId: options.startOptions.zoneId,
+	});
+	vmOwnership.attachGatewayVm(options.vmId);
+	return vmOwnership;
+}
+
+function createGatewayVmLifecycleAuthorityStub(vmId: string): GatewayVmLifecycleAuthority {
+	const gatewayIdentity = {
+		bootId: `${vmId}-boot`,
+		controllerEpoch: 'controller-runtime-test-epoch',
+		gatewayEpochId: `${vmId}-epoch`,
+		gatewayVmId: vmId,
+		generationId: `${vmId}-generation`,
+		zoneId: 'shravan',
+	} satisfies GatewayEpochIdentity;
+	return {
+		attachGatewayVm: (attachedVmId) => {
+			if (attachedVmId !== vmId) {
+				throw new Error(`Expected Gateway VM '${vmId}', received '${attachedVmId}'.`);
+			}
+			return structuredClone(gatewayIdentity);
+		},
+		containPendingCreate: async ({ closeLateCreatedVm, pendingCreate }) => {
+			await closeLateCreatedVm(await pendingCreate);
+		},
+		destroyLive: async (destroyGatewayVm) => {
+			await destroyGatewayVm();
+		},
+		gatewayIdentity: structuredClone(gatewayIdentity),
+		gatewaySeed: structuredClone(gatewayIdentity),
 	};
 }
 
@@ -196,6 +216,17 @@ const preflightGatewayZoneStart: NonNullable<
 > = async (startOptions) => ({
 	image: preflightedGatewayImage,
 	secretResolver: startOptions.secretResolver,
+});
+
+describe('controller private OpenClaw reliability composition', () => {
+	it('keeps the optional registry factory private from ControllerRuntime', () => {
+		expectTypeOf<'createOpenClawProcessReliabilityFaultTargetRegistry'>().toMatchTypeOf<
+			keyof ControllerRuntimeDependencies
+		>();
+		expectTypeOf<ControllerRuntime>().not.toMatchTypeOf<{
+			readonly openClawProcessReliabilityFaultTargetRegistries: unknown;
+		}>();
+	});
 });
 
 const acquireControllerOwnershipLockForUnitTest: NonNullable<
@@ -653,7 +684,58 @@ describe('startControllerRuntime', () => {
 		expect(createSecretResolver).not.toHaveBeenCalled();
 	});
 
-	it('reconciles every configured OpenClaw zone before secret resolution even when a selected-zone startup fails', async () => {
+	it('reconciles the selected recorded VM tree after locking and fails closed before Gateway start', async () => {
+		// Arrange
+		const startupEvents: string[] = [];
+		const releaseControllerOwnershipLock = vi.fn(async () => {});
+		const reconciliationFailure = new GatewayOwnershipCoordinatorError('owner-unsafe', {
+			cause: new Error('recorded VM tree reconciliation refused unsafe ownership evidence'),
+		});
+		const reconcileRecordedVmTree: NonNullable<
+			ControllerRuntimeDependencies['reconcileRecordedVmTree']
+		> = vi.fn(async ({ systemConfig: reconciledSystemConfig, zoneId }) => {
+			startupEvents.push(`reconcile:${zoneId}`);
+			expect(reconciledSystemConfig).toBe(systemConfig);
+			throw reconciliationFailure;
+		});
+		const startGatewayZone: NonNullable<ControllerRuntimeDependencies['startGatewayZone']> = vi.fn(
+			async () => {
+				startupEvents.push('gateway-start');
+				throw new Error('Gateway start must not run after reconciliation rejection.');
+			},
+		);
+
+		// Act
+		const startupError = await startControllerRuntime(
+			{ systemConfig, zoneIds: ['shravan'] },
+			{
+				acquireControllerOwnershipLock: vi.fn(async () => {
+					startupEvents.push('ownership-lock-acquired');
+					return { release: releaseControllerOwnershipLock };
+				}),
+				createSecretResolver: vi.fn(async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				})),
+				preflightGatewayZoneStart,
+				reconcileRecordedVmTree,
+				startGatewayZone,
+				startHttpServer: vi.fn(async () => ({ close: async () => {} })),
+			},
+		).catch((error: unknown) => error);
+
+		// Assert
+		expect(startupError).toBe(reconciliationFailure);
+		expect(reconcileRecordedVmTree).toHaveBeenCalledExactlyOnceWith({
+			systemConfig,
+			zoneId: 'shravan',
+		});
+		expect(startupEvents).toEqual(['ownership-lock-acquired', 'reconcile:shravan']);
+		expect(startGatewayZone).not.toHaveBeenCalled();
+		expect(releaseControllerOwnershipLock).not.toHaveBeenCalled();
+	});
+
+	it('creates controller-owned Gateway authority before secret resolution even when startup fails', async () => {
 		const sourceZone = systemConfig.zones[0];
 		if (!sourceZone || sourceZone.gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw test zone.');
@@ -673,7 +755,6 @@ describe('startControllerRuntime', () => {
 			zones: [sourceZone, secondaryZone],
 		} satisfies LoadedSystemConfig;
 		const startupEvents: string[] = [];
-		const reconciledZoneIds: string[][] = [];
 		const secretFailure = new Error('secret resolver unavailable');
 		const releaseControllerOwnershipLock = vi.fn(async () => {});
 
@@ -688,15 +769,8 @@ describe('startControllerRuntime', () => {
 						release: releaseControllerOwnershipLock,
 					})),
 					createGatewayOwnershipCoordinator: (coordinatorOptions) => {
-						const coordinator = createGatewayOwnershipCoordinator(coordinatorOptions);
-						const reconcileControllerStartup =
-							coordinator.reconcileControllerStartup.bind(coordinator);
-						coordinator.reconcileControllerStartup = async (zoneIds, reconciliationOptions) => {
-							startupEvents.push('ownership-reconciliation');
-							reconciledZoneIds.push([...zoneIds]);
-							await reconcileControllerStartup(zoneIds, reconciliationOptions);
-						};
-						return coordinator;
+						startupEvents.push('ownership-coordinator-created');
+						return createGatewayOwnershipCoordinator(coordinatorOptions);
 					},
 					createSecretResolver: vi.fn(async () => {
 						startupEvents.push('secret-resolution');
@@ -706,12 +780,11 @@ describe('startControllerRuntime', () => {
 			),
 		).rejects.toBe(secretFailure);
 
-		expect(reconciledZoneIds).toEqual([['shravan', 'secondary']]);
-		expect(startupEvents).toEqual(['ownership-reconciliation', 'secret-resolution']);
+		expect(startupEvents).toEqual(['ownership-coordinator-created', 'secret-resolution']);
 		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
 	});
 
-	it('retains the deployment ownership lock when startup reconciliation is owner-unsafe with cleanup still running', async () => {
+	it('retains the deployment ownership lock when controller-owned startup is owner-unsafe', async () => {
 		// Arrange
 		const lockConflict = new ControllerOwnershipLockError('controller-already-active');
 		const unexpectedSecondAcquisition = new Error(
@@ -733,13 +806,6 @@ describe('startControllerRuntime', () => {
 			ownershipLockHeld = true;
 			return { release: releaseControllerOwnershipLock };
 		});
-		let finishPostTimeoutCleanup: (() => void) | undefined;
-		let postTimeoutCleanupSettled = false;
-		const postTimeoutCleanup = new Promise<void>((resolve) => {
-			finishPostTimeoutCleanup = resolve;
-		}).then(() => {
-			postTimeoutCleanupSettled = true;
-		});
 		const timeoutError = new GatewayDestructionTimeoutError(
 			'GATEWAY_SUBTREE_DESTRUCTION_TIMEOUT',
 			'Gateway subtree',
@@ -748,23 +814,14 @@ describe('startControllerRuntime', () => {
 		const ownerUnsafeStartup = new GatewayOwnershipCoordinatorError('owner-unsafe', {
 			cause: timeoutError,
 		});
-		const createGatewayOwnershipCoordinatorForTest: NonNullable<
-			ControllerRuntimeDependencies['createGatewayOwnershipCoordinator']
-		> = (coordinatorOptions) => {
-			const coordinator = createGatewayOwnershipCoordinator(coordinatorOptions);
-			coordinator.reconcileControllerStartup = async () => {
-				void postTimeoutCleanup;
-				throw ownerUnsafeStartup;
-			};
-			return coordinator;
-		};
-
 		// Act
 		const startupError = await startControllerRuntime(
 			{ systemConfig, zoneIds: ['shravan'] },
 			{
 				acquireControllerOwnershipLock,
-				createGatewayOwnershipCoordinator: createGatewayOwnershipCoordinatorForTest,
+				createSecretResolver: vi.fn(async () => {
+					throw ownerUnsafeStartup;
+				}),
 			},
 		).catch((error: unknown) => error);
 		const secondControllerError = await startControllerRuntime(
@@ -775,7 +832,6 @@ describe('startControllerRuntime', () => {
 		// Assert
 		expect(startupError).toBe(ownerUnsafeStartup);
 		expect(ownerUnsafeStartup.cause).toBe(timeoutError);
-		expect(postTimeoutCleanupSettled).toBe(false);
 		expect({
 			releaseCount: releaseControllerOwnershipLock.mock.calls.length,
 			secondControllerError,
@@ -783,9 +839,6 @@ describe('startControllerRuntime', () => {
 			releaseCount: 0,
 			secondControllerError: lockConflict,
 		});
-
-		finishPostTimeoutCleanup?.();
-		await postTimeoutCleanup;
 	});
 
 	it('builds a fresh resolver for controller credentials refresh and replacement gateway start', async () => {
@@ -860,9 +913,14 @@ describe('startControllerRuntime', () => {
 				},
 				processSpec: openClawProcessSpec,
 				vm: {
-					close: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -872,13 +930,14 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget(gatewayVmId),
 					getHostPid: () => 48_284,
 					getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, 48_284),
 					id: gatewayVmId,
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				},
-				vmOwnership: createExactVmCreationOwnershipStub(gatewayVmId),
+				terminateVm: async () => {},
+				vmOwnership: createGatewayVmLifecycleAuthorityStub(gatewayVmId),
 				zone: onePasswordGatewayZone,
 			};
 		});
@@ -897,9 +956,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -909,11 +973,11 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1'),
 					getHostPid: () => 12_345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-1', 12_345),
 					id: 'tool-vm-1',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				})),
 				createSecretResolver,
 				isProcessAlive: () => true,
@@ -985,12 +1049,7 @@ describe('startControllerRuntime', () => {
 				...systemConfig.zones.filter((candidateZone) => candidateZone.id !== zone.id),
 			],
 		} satisfies LoadedSystemConfig;
-		const closeGatewayVm = vi.fn(
-			async (ownershipReservation: ManagedVmOwnershipReservationReferenceV1) =>
-				await (
-					await createManagedVmStubFromOwnershipReservation(ownershipReservation, 48_282)
-				).close(),
-		);
+		const closeGatewayVm = vi.fn(async () => {});
 		let capturedHealthEventStore: HealthEventStore | undefined;
 		let capturedOpenClawRuntimeStatusStore: OpenClawRuntimeStatusStore | undefined;
 		let capturedGatewayIdentity: GatewayEpochIdentity | undefined;
@@ -998,21 +1057,15 @@ describe('startControllerRuntime', () => {
 			capturedHealthEventStore = startOptions.healthEventStore;
 			capturedOpenClawRuntimeStatusStore = startOptions.openClawRuntimeStatusStore;
 			const startOrdinal = startGatewayZone.mock.calls.length;
-			const vmOwnership = await startOptions.createVmOwnership({
-				controlIdentity: {
-					bootId: startOrdinal === 1 ? 'gateway-boot-a' : `gateway-boot-${startOrdinal}`,
-					generationId:
-						startOrdinal === 1 ? 'gateway-generation-a' : `gateway-generation-${startOrdinal}`,
-				},
-				kind: 'gateway-epoch',
-				sessionLabel: `gateway-runtime-test-${startOrdinal}`,
-				zoneId: absoluteLeaseZone.id,
+			const managedGatewayVm = createManagedVmStub(`gateway-vm-${startOrdinal}`, 48_282);
+			const vmOwnership = await createAttachedGatewayVmLifecycleAuthority({
+				bootId: startOrdinal === 1 ? 'gateway-boot-a' : `gateway-boot-${startOrdinal}`,
+				generationId:
+					startOrdinal === 1 ? 'gateway-generation-a' : `gateway-generation-${startOrdinal}`,
+				startOptions,
+				vmId: managedGatewayVm.id,
 			});
 			capturedGatewayIdentity = vmOwnership.gatewayIdentity;
-			const managedGatewayVm = await createManagedVmStubFromOwnershipReservation(
-				vmOwnership.ownershipReservation,
-				48_282,
-			);
 			return {
 				image: {
 					built: true,
@@ -1026,8 +1079,9 @@ describe('startControllerRuntime', () => {
 				processSpec: openClawProcessSpec,
 				vm: {
 					...managedGatewayVm,
-					close: async () => await closeGatewayVm(vmOwnership.ownershipReservation),
+					close: closeGatewayVm,
 				},
+				terminateVm: closeGatewayVm,
 				vmOwnership,
 				zone: absoluteLeaseZone,
 			};
@@ -1064,9 +1118,10 @@ describe('startControllerRuntime', () => {
 			return { release: releaseControllerOwnershipLock };
 		});
 		let statusNowMs = 10_000;
-		const createManagedToolVm = vi.fn(
-			async ({ ownershipReservation }) =>
-				await createManagedVmStubFromOwnershipReservation(ownershipReservation, 12_345),
+		const createManagedToolVm = vi.fn(async () =>
+			createManagedVmStub(`tool-vm-${createManagedToolVm.mock.calls.length}`, 12_345, {
+				detachAfterFirstPidRead: true,
+			}),
 		);
 		const configureHostNetworkDefaults = vi.fn(() => {
 			startupEvents.push('host-network-defaults');
@@ -1085,19 +1140,11 @@ describe('startControllerRuntime', () => {
 				acquireControllerOwnershipLock,
 				controllerEpoch: 'controller-epoch-a',
 				createGatewayOwnershipCoordinator: (coordinatorOptions) => {
-					const coordinator = createGatewayOwnershipCoordinator({
+					startupEvents.push('ownership-coordinator-created');
+					return createGatewayOwnershipCoordinator({
 						...coordinatorOptions,
-						createId: () => String((ownershipIdentityOrdinal += 1)),
+						createGatewayEpochId: () => `gateway-epoch-${String((ownershipIdentityOrdinal += 1))}`,
 					});
-					const reconcileControllerStartup =
-						coordinator.reconcileControllerStartup.bind(coordinator);
-					coordinator.reconcileControllerStartup = async (
-						...reconcileArguments: Parameters<typeof reconcileControllerStartup>
-					): Promise<void> => {
-						startupEvents.push('ownership-reconciliation');
-						await reconcileControllerStartup(...reconcileArguments);
-					};
-					return coordinator;
 				},
 				createManagedToolVm,
 				configureHostNetworkDefaults,
@@ -1157,12 +1204,12 @@ describe('startControllerRuntime', () => {
 			startupEvents.indexOf('secrets'),
 		);
 		expect(startupEvents.indexOf('ownership-lock-acquired')).toBeLessThan(
-			startupEvents.indexOf('ownership-reconciliation'),
+			startupEvents.indexOf('ownership-coordinator-created'),
 		);
-		expect(startupEvents.indexOf('ownership-reconciliation')).toBeLessThan(
+		expect(startupEvents.indexOf('ownership-coordinator-created')).toBeLessThan(
 			startupEvents.indexOf('host-network-defaults'),
 		);
-		expect(startupEvents.indexOf('ownership-reconciliation')).toBeLessThan(
+		expect(startupEvents.indexOf('ownership-coordinator-created')).toBeLessThan(
 			startupEvents.indexOf('secrets'),
 		);
 		expect(releaseControllerOwnershipLock).not.toHaveBeenCalled();
@@ -1254,27 +1301,13 @@ describe('startControllerRuntime', () => {
 		if (oldLease === undefined || 'result' in oldLease || !('leaseId' in oldLease)) {
 			throw new Error(`Expected created lease, got ${JSON.stringify(oldLease)}.`);
 		}
-		const forwardedToolReservation = createManagedToolVm.mock.calls[0]?.[0].ownershipReservation;
-		if (forwardedToolReservation === undefined) {
-			throw new Error('Expected exact Tool VM ownership reservation to reach VM creation.');
-		}
-		expect(forwardedToolReservation).toMatchObject({
-			expectedContractVersion: 1,
-			expectedRevision: 1,
-			reservationId: 'tool-reservation-2',
-		});
-		await expect(
-			readManagedVmOwnershipReservation(forwardedToolReservation.reservationPath),
-		).resolves.toMatchObject({
-			controllerEpoch: 'controller-epoch-a',
-			parentGateway: {
-				epoch: expect.any(String),
-				vmId: 'gateway-vm-1',
-			},
-			reservationId: forwardedToolReservation.reservationId,
-			role: 'tool',
-			vmId: 'tool-vm-2',
-		});
+		expect(createManagedToolVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'main',
+				tcpSlot: expect.any(Number),
+				zoneId: 'shravan',
+			}),
+		);
 		const refreshedControllerLeaseCallerContext = {
 			...controllerLeaseCallerContext,
 			callerContextId: '99999999-9999-4999-8999-999999999999',
@@ -1450,7 +1483,7 @@ describe('startControllerRuntime', () => {
 		if (!observabilityZone) {
 			throw new Error('Expected observability test zone.');
 		}
-		const closeGatewayVm = vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-1'));
+		const closeGatewayVm = vi.fn(async () => {});
 		const startGatewayZone = vi.fn(async () => {
 			startupEvents.push('gateway-start');
 			return {
@@ -1466,8 +1499,13 @@ describe('startControllerRuntime', () => {
 				processSpec: openClawProcessSpec,
 				vm: {
 					close: closeGatewayVm,
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -1477,13 +1515,14 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-1'),
 					getHostPid: vi.fn(() => 48_282),
 					id: 'gateway-vm-1',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-1', 48_282),
 				},
-				vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-1'),
+				terminateVm: closeGatewayVm,
+				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
 				zone: observabilityZone,
 			};
 		});
@@ -1542,9 +1581,14 @@ describe('startControllerRuntime', () => {
 			},
 			processSpec: openClawProcessSpec,
 			vm: {
-				close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-1')),
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				close: vi.fn(async () => {}),
+				enableIngress: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					host: '127.0.0.1',
+					port: 18791,
+				})),
 				enableSsh: vi.fn(async () => ({
+					close: async () => {},
 					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh ...',
 					host: '127.0.0.1',
@@ -1554,13 +1598,14 @@ describe('startControllerRuntime', () => {
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-1'),
 				getHostPid: vi.fn(() => 48_282),
 				id: 'gateway-vm-1',
 				setIngressRoutes: vi.fn(),
+				start: async () => {},
 				getVmInstance: () => createManagedVmInstanceStub('gateway-vm-1', 48_282),
 			},
-			vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-1'),
+			terminateVm: async () => {},
+			vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
 			zone: observabilityZone,
 		}));
 		const checkObservabilityStackReadiness = vi.fn(
@@ -1630,15 +1675,29 @@ describe('startControllerRuntime', () => {
 		const telemetryHealthEvents: AgentVmHealthEvent[] = [];
 		const telemetryLifecycleEvents: string[] = [];
 		const telemetryCloseOrder: string[] = [];
+		let stallTelemetrySink = false;
+		let releaseStalledTelemetrySink: (() => void) | undefined;
+		const stalledTelemetrySink = new Promise<void>((resolve) => {
+			releaseStalledTelemetrySink = resolve;
+		});
+		const telemetryHealthEventSink: HealthEventSink = {
+			record: vi.fn(async (event) => {
+				telemetryHealthEvents.push(event);
+				if (stallTelemetrySink) {
+					await stalledTelemetrySink;
+				}
+			}),
+		};
 		const telemetry: ControllerTelemetry = {
 			forceFlush: vi.fn(async () => {
 				telemetryCloseOrder.push('forceFlush');
 			}),
-			healthEventSink: {
-				record: vi.fn((event) => {
-					telemetryHealthEvents.push(event);
-				}),
-			},
+			healthEventSink: telemetryHealthEventSink,
+			getDiagnostics: () => ({
+				emissionFailures: 0,
+				operationFailures: 0,
+				operationTimeouts: 0,
+			}),
 			recordControllerLifecycleEvent: vi.fn((event) => {
 				telemetryLifecycleEvents.push(event.eventName);
 			}),
@@ -1656,39 +1715,58 @@ describe('startControllerRuntime', () => {
 		}[] = [];
 		const fakeInterval = setTimeout(() => undefined, 0);
 		clearTimeout(fakeInterval);
-		const startGatewayZone = vi.fn(async () => ({
-			image: {
-				built: true,
-				fingerprint: 'gateway-image',
-				imagePath: '/tmp/gateway-image',
-			},
-			ingress: {
-				host: '127.0.0.1',
-				port: 18791,
-			},
-			processSpec: openClawProcessSpec,
-			vm: {
-				close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-telemetry')),
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-				enableSsh: vi.fn(async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					command: 'ssh ...',
+		let capturedHealthEventStore: HealthEventStore | undefined;
+		const startGatewayZone = vi.fn(async (startOptions) => {
+			capturedHealthEventStore = startOptions.healthEventStore;
+			return {
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
+				},
+				ingress: {
 					host: '127.0.0.1',
-					identityFile: '/tmp/key',
-					port: 19000,
-					user: 'sandbox',
-				})),
-				exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '200' })),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-telemetry'),
-				getHostPid: vi.fn(() => 48_282),
-				getVmInstance: () => createManagedVmInstanceStub('gateway-vm-telemetry', 48_282),
-				id: 'gateway-vm-telemetry',
-				setIngressRoutes: vi.fn(),
-			},
-			vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-telemetry'),
-			zone: observabilityZone,
-		}));
+					port: 18791,
+				},
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
+					enableSsh: vi.fn(async () => ({
+						close: async () => {},
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(() =>
+						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '200' }),
+					),
+					fs: createManagedVmFsStub(),
+					getHostPid: vi.fn(() => 48_282),
+					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-telemetry', 48_282),
+					id: 'gateway-vm-telemetry',
+					setIngressRoutes: vi.fn(),
+					start: async () => {},
+				},
+				terminateVm: async () => {},
+				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-telemetry'),
+				zone: observabilityZone,
+			};
+		});
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+			  }
+			| undefined;
 
 		const runtime = await startControllerRuntime(
 			{
@@ -1700,14 +1778,8 @@ describe('startControllerRuntime', () => {
 					async () => ({ ok: true, status: 'ready' }) as const,
 				),
 				createGatewayOwnershipCoordinator: (coordinatorOptions) => {
-					const coordinator = createGatewayOwnershipCoordinator(coordinatorOptions);
-					const reconcileControllerStartup =
-						coordinator.reconcileControllerStartup.bind(coordinator);
-					coordinator.reconcileControllerStartup = async (zoneIds, reconciliationOptions) => {
-						startupEvents.push('ownership-reconciliation');
-						await reconcileControllerStartup(zoneIds, reconciliationOptions);
-					};
-					return coordinator;
+					startupEvents.push('ownership-coordinator-created');
+					return createGatewayOwnershipCoordinator(coordinatorOptions);
 				},
 				createSecretResolver: async () => {
 					startupEvents.push('secret-resolver');
@@ -1749,9 +1821,10 @@ describe('startControllerRuntime', () => {
 				},
 				startControllerTelemetry,
 				startGatewayZone,
-				startHttpServer: vi.fn(async () => ({
-					close: async () => {},
-				})),
+				startHttpServer: vi.fn(async (serverOptions) => {
+					startHttpServerArgs = serverOptions;
+					return { close: async () => {} };
+				}),
 			},
 		);
 		const gatewayServiceIntervalMs =
@@ -1768,6 +1841,70 @@ describe('startControllerRuntime', () => {
 
 		await monitorTick();
 		nowMs += 100;
+		if (capturedHealthEventStore === undefined || startHttpServerArgs === undefined) {
+			throw new Error('Expected health store and controller HTTP app.');
+		}
+		stallTelemetrySink = true;
+		recordControllerHealthEvent(capturedHealthEventStore, {
+			domain: 'gateway_control',
+			elapsedMs: 1,
+			kind: 'gateway-control-session',
+			observedAtMs: nowMs,
+			operation: 'control-session-disconnect',
+			peerId: 'gateway-shravan',
+			result: 'failed',
+			zoneId: 'shravan',
+		});
+		await Promise.resolve();
+		await Promise.resolve();
+		for (let eventIndex = 0; eventIndex < 257; eventIndex += 1) {
+			recordControllerHealthEvent(capturedHealthEventStore, {
+				domain: 'gateway_control',
+				elapsedMs: 1,
+				kind: 'gateway-control-session',
+				observedAtMs: nowMs + eventIndex + 1,
+				operation: 'control-session-disconnect',
+				peerId: 'gateway-shravan',
+				result: 'failed',
+				zoneId: 'shravan',
+			});
+		}
+		const controllerStatusMicrotaskDeadline = 10;
+		const controllerStatusDeadline = Array.from(
+			{ length: controllerStatusMicrotaskDeadline },
+			() => undefined,
+		)
+			.reduce<Promise<void>>((deadline) => deadline.then(() => undefined), Promise.resolve())
+			.then((): never => {
+				throw new Error('Controller status exceeded its 10-microtask product deadline.');
+			});
+		const statusResponse = await Promise.race([
+			Promise.resolve(startHttpServerArgs.app.request('/controller-status')),
+			controllerStatusDeadline,
+		]);
+		expect(statusResponse.status).toBe(200);
+		const controllerStatus = await statusResponse.json();
+		expect(controllerStatus).toMatchObject({
+			observability: {
+				evidence: {
+					healthEventSinks: {
+						activeOperations: 1,
+						droppedRecords: 1,
+						highWaterPendingRecords: 256,
+						pendingRecords: 256,
+					},
+				},
+				telemetry: {
+					emissionFailures: 0,
+					operationFailures: 0,
+					operationTimeouts: 0,
+				},
+			},
+		});
+		expect(JSON.stringify(controllerStatus)).not.toContain('controller-github-token');
+		expect(JSON.stringify(controllerStatus)).not.toContain('op://');
+		stallTelemetrySink = false;
+		releaseStalledTelemetrySink?.();
 		await runtime.close();
 
 		expect(startControllerTelemetry).toHaveBeenCalledWith(
@@ -1790,18 +1927,19 @@ describe('startControllerRuntime', () => {
 			'telemetry-identity',
 			'telemetry-start',
 		]) {
-			expect(startupEvents.indexOf('ownership-reconciliation')).toBeLessThan(
+			expect(startupEvents.indexOf('ownership-coordinator-created')).toBeLessThan(
 				startupEvents.indexOf(dependentStartupEvent),
 			);
 		}
 		expect(telemetryLifecycleEvents).toEqual(['controller-started', 'controller-stopping']);
-		expect(telemetryHealthEvents).toEqual([
+		expect(telemetryHealthEvents).toHaveLength(258);
+		expect(telemetryHealthEvents[0]).toEqual(
 			expect.objectContaining({
 				kind: 'gateway-service-health',
 				result: 'ok',
 				zoneId: 'shravan',
 			}),
-		]);
+		);
 		expect(telemetryCloseOrder).toEqual(['forceFlush', 'shutdown']);
 	});
 
@@ -1881,9 +2019,14 @@ describe('startControllerRuntime', () => {
 				},
 				processSpec: openClawProcessSpec,
 				vm: {
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-1')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -1893,13 +2036,14 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-1'),
 					getHostPid: () => 48_282,
 					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-1', 48_282),
 					id: 'gateway-vm-1',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				},
-				vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-1'),
+				terminateVm: async () => {},
+				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
 				zone,
 			};
 		});
@@ -1916,9 +2060,14 @@ describe('startControllerRuntime', () => {
 			{ systemConfig, zoneIds: ['shravan'] },
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -1928,11 +2077,11 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1'),
 					getHostPid: () => 12_345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-1', 12_345),
 					id: 'tool-vm-1',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -2099,9 +2248,14 @@ describe('startControllerRuntime', () => {
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: openClawProcessSpec,
 				vm: {
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-1')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2111,13 +2265,14 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-1'),
 					getHostPid: () => 48_282,
 					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-1', 48_282),
 					id: 'gateway-vm-1',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				},
-				vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-1'),
+				terminateVm: async () => {},
+				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
 				zone,
 			};
 		});
@@ -2135,9 +2290,14 @@ describe('startControllerRuntime', () => {
 				{ systemConfig: runtimeSystemConfig, zoneIds: ['shravan'] },
 				{
 					createManagedToolVm: vi.fn(async () => ({
-						close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-1')),
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
 						enableSsh: vi.fn(async () => ({
+							close: async () => {},
 							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
@@ -2149,11 +2309,11 @@ describe('startControllerRuntime', () => {
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
 						fs: createManagedVmFsStub(),
-						getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1'),
 						getHostPid: () => 12_345,
 						getVmInstance: () => createManagedVmInstanceStub('tool-vm-1', 12_345),
 						id: 'tool-vm-1',
 						setIngressRoutes: vi.fn(),
+						start: async () => {},
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => '',
@@ -2224,7 +2384,7 @@ describe('startControllerRuntime', () => {
 		}
 		let nowMs = Date.parse('2026-05-27T13:00:00.000Z');
 		let gatewayStartCount = 0;
-		const firstGatewayClose = vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-1'));
+		const firstGatewayClose = vi.fn(async () => {});
 		const healthProbeCommands: string[] = [];
 		const intervalCallbacks: {
 			readonly callback: () => void | Promise<void>;
@@ -2266,12 +2426,14 @@ describe('startControllerRuntime', () => {
 				},
 				processSpec: openClawProcessSpec,
 				vm: {
-					close:
-						gatewayStartCount === 1
-							? firstGatewayClose
-							: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: gatewayStartCount === 1 ? firstGatewayClose : vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2284,13 +2446,14 @@ describe('startControllerRuntime', () => {
 						return createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '502' });
 					}),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget(gatewayVmId),
 					getHostPid: vi.fn(() => gatewayHostPid),
 					getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, gatewayHostPid),
 					id: gatewayVmId,
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				},
-				vmOwnership: createExactVmCreationOwnershipStub(gatewayVmId),
+				terminateVm: gatewayStartCount === 1 ? firstGatewayClose : async (): Promise<void> => {},
+				vmOwnership: createGatewayVmLifecycleAuthorityStub(gatewayVmId),
 				zone,
 			};
 		});
@@ -2301,9 +2464,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-auto-recovery')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2313,11 +2481,11 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-auto-recovery'),
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-auto-recovery', 12345),
 					id: 'tool-vm-auto-recovery',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -2420,9 +2588,7 @@ describe('startControllerRuntime', () => {
 			throw new Error('Expected test zone.');
 		}
 		let nowMs = Date.parse('2026-05-27T13:00:00.000Z');
-		const closeGatewayVm = vi.fn(async () =>
-			createCompleteVmDestroyReceipt('gateway-vm-readiness-red-service-green'),
-		);
+		const closeGatewayVm = vi.fn(async () => {});
 		const healthProbeCommands: string[] = [];
 		const intervalCallbacks: {
 			readonly callback: () => void | Promise<void>;
@@ -2447,8 +2613,13 @@ describe('startControllerRuntime', () => {
 			},
 			vm: {
 				close: closeGatewayVm,
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableIngress: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					host: '127.0.0.1',
+					port: 18791,
+				})),
 				enableSsh: vi.fn(async () => ({
+					close: async () => {},
 					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					command: 'ssh ...',
 					host: '127.0.0.1',
@@ -2465,14 +2636,15 @@ describe('startControllerRuntime', () => {
 					});
 				}),
 				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-readiness-red-service-green'),
 				getHostPid: vi.fn(() => 48_000),
 				getVmInstance: () =>
 					createManagedVmInstanceStub('gateway-vm-readiness-red-service-green', 48_000),
 				id: 'gateway-vm-readiness-red-service-green',
 				setIngressRoutes: vi.fn(),
+				start: async () => {},
 			},
-			vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-readiness-red-service-green'),
+			terminateVm: closeGatewayVm,
+			vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-readiness-red-service-green'),
 			zone,
 		}));
 		const runtime = await startControllerRuntime(
@@ -2482,11 +2654,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () =>
-						createCompleteVmDestroyReceipt('tool-vm-readiness-red-service-green'),
-					),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2496,12 +2671,12 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-readiness-red-service-green'),
 					getHostPid: () => 12345,
 					getVmInstance: () =>
 						createManagedVmInstanceStub('tool-vm-readiness-red-service-green', 12345),
 					id: 'tool-vm-readiness-red-service-green',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -2598,9 +2773,14 @@ describe('startControllerRuntime', () => {
 				},
 				processSpec: openClawProcessSpec,
 				vm: {
-					close: vi.fn(async () => createCompleteVmDestroyReceipt(gatewayVmId)),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2612,13 +2792,14 @@ describe('startControllerRuntime', () => {
 						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '502' }),
 					),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget(gatewayVmId),
 					getHostPid: vi.fn(() => gatewayHostPid),
 					getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, gatewayHostPid),
 					id: gatewayVmId,
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				},
-				vmOwnership: createExactVmCreationOwnershipStub(gatewayVmId),
+				terminateVm: async () => {},
+				vmOwnership: createGatewayVmLifecycleAuthorityStub(gatewayVmId),
 				zone,
 			};
 		});
@@ -2629,9 +2810,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-auto-cold-start')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2641,11 +2827,11 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-auto-cold-start'),
 					getHostPid: () => 12_345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-auto-cold-start', 12_345),
 					id: 'tool-vm-auto-cold-start',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -2769,9 +2955,14 @@ describe('startControllerRuntime', () => {
 				},
 				processSpec: openClawProcessSpec,
 				vm: {
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-secret-refresh')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2783,13 +2974,14 @@ describe('startControllerRuntime', () => {
 						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '200' }),
 					),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-secret-refresh'),
 					getHostPid: () => 48_002,
 					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-secret-refresh', 48_002),
 					id: 'gateway-vm-secret-refresh',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				},
-				vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-secret-refresh'),
+				terminateVm: async () => {},
+				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-secret-refresh'),
 				zone,
 			});
 		const runtime = await startControllerRuntime(
@@ -2799,9 +2991,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-secret-refresh')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2811,11 +3008,11 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-secret-refresh'),
 					getHostPid: () => 12_345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-secret-refresh', 12_345),
 					id: 'tool-vm-secret-refresh',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				})),
 				createSecretResolver,
 				now: () => nowMs,
@@ -2926,9 +3123,14 @@ describe('startControllerRuntime', () => {
 				},
 				processSpec: openClawProcessSpec,
 				vm: {
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-same')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2940,11 +3142,11 @@ describe('startControllerRuntime', () => {
 						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '502' }),
 					),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-same'),
 					getHostPid: vi.fn(() => gatewayHostPid),
 					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-same', gatewayHostPid),
 					id: 'gateway-vm-same',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				},
 				controlSessionRecoverySourceKey: {
 					bootId: `gateway-boot-${gatewayStartCount}`,
@@ -2953,7 +3155,8 @@ describe('startControllerRuntime', () => {
 					generationId: `gateway-generation-${gatewayStartCount}`,
 					zoneId: zone.id,
 				},
-				vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-same'),
+				terminateVm: async () => {},
+				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-same'),
 				zone,
 			};
 		});
@@ -2964,9 +3167,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-auto-recovery')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -2976,11 +3184,11 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-auto-recovery'),
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-auto-recovery', 12345),
 					id: 'tool-vm-auto-recovery',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -3069,9 +3277,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-boot-fail')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -3081,9 +3294,9 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-boot-fail'),
 					id: 'tool-vm-boot-fail',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-boot-fail', 12345),
 				})),
@@ -3157,9 +3370,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-worker-stop')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -3169,9 +3387,9 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-worker-stop'),
 					id: 'tool-vm-worker-stop',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-worker-stop', 12345),
 				})),
@@ -3196,9 +3414,14 @@ describe('startControllerRuntime', () => {
 					},
 					processSpec: workerProcessSpec,
 					vm: {
-						close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-worker')),
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
 						enableSsh: vi.fn(async () => ({
+							close: async () => {},
 							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
@@ -3210,13 +3433,14 @@ describe('startControllerRuntime', () => {
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
 						fs: createManagedVmFsStub(),
-						getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-worker'),
 						id: 'gateway-vm-worker',
 						setIngressRoutes: vi.fn(),
+						start: async () => {},
 						getHostPid: () => 12345,
 						getVmInstance: () => createManagedVmInstanceStub('gateway-vm-worker', 12345),
 					},
-					vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-worker'),
+					terminateVm: async () => {},
+					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-worker'),
 					zone: workerZone,
 				})),
 				startHttpServer,
@@ -3288,9 +3512,14 @@ describe('startControllerRuntime', () => {
 				},
 				{
 					createManagedToolVm: vi.fn(async () => ({
-						close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-worker-task')),
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
 						enableSsh: vi.fn(async () => ({
+							close: async () => {},
 							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
@@ -3302,9 +3531,9 @@ describe('startControllerRuntime', () => {
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
 						fs: createManagedVmFsStub(),
-						getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-worker-task'),
 						id: 'tool-vm-worker-task',
 						setIngressRoutes: vi.fn(),
+						start: async () => {},
 						getHostPid: () => 12345,
 						getVmInstance: () => createManagedVmInstanceStub('tool-vm-worker-task', 12345),
 					})),
@@ -3613,9 +3842,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-worker-capacity')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -3625,9 +3859,9 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-worker-capacity'),
 					id: 'tool-vm-worker-capacity',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-worker-capacity', 12345),
 				})),
@@ -3707,7 +3941,6 @@ describe('startControllerRuntime', () => {
 		});
 		const closeGatewayVm = vi.fn(async () => {
 			callOrder.push('close-gateway');
-			return createCompleteVmDestroyReceipt('gateway-vm-cleanup-test');
 		});
 		const startGatewayZone = vi.fn(async () => {
 			callOrder.push('start-gateway');
@@ -3724,8 +3957,13 @@ describe('startControllerRuntime', () => {
 				processSpec: openClawProcessSpec,
 				vm: {
 					close: closeGatewayVm,
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -3735,13 +3973,14 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-cleanup-test'),
 					id: 'gateway-vm-cleanup-test',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-cleanup-test', 12345),
 				},
-				vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-cleanup-test'),
+				terminateVm: closeGatewayVm,
+				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-cleanup-test'),
 				zone,
 			};
 		});
@@ -3753,9 +3992,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-cleanup-test')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -3765,9 +4009,9 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-cleanup-test'),
 					id: 'tool-vm-cleanup-test',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-cleanup-test', 12345),
 				})),
@@ -3825,25 +4069,25 @@ describe('startControllerRuntime', () => {
 			return { release: releaseControllerOwnershipLock };
 		});
 		const childDestructionFailure = new Error('Tool VM destruction remained incomplete');
-		const ownershipJournalFailure = new Error('ownership journal unavailable');
+		const gatewayTerminationProofFailure = new Error(
+			'recorded Gateway process identity did not match during termination',
+		);
 		const ownershipIncomplete = new GatewayOwnershipCoordinatorError('owner-unsafe', {
-			cause: ownershipJournalFailure,
+			cause: gatewayTerminationProofFailure,
 		});
 		const gatewayDestructionFailure = new AggregateError(
 			[childDestructionFailure, ownershipIncomplete],
 			'Gateway VM close failed and its exact disposition is owner-unsafe.',
 			{ cause: childDestructionFailure },
 		);
-		const closeGatewayVm = vi.fn(async () =>
-			createCompleteVmDestroyReceipt('gateway-vm-owner-unsafe'),
-		);
-		const destroyGatewayLive = vi.fn(async (): Promise<ManagedVmDestroyReceiptV1> => {
+		const closeGatewayVm = vi.fn(async () => {});
+		const destroyGatewayLive = vi.fn(async (): Promise<void> => {
 			throw gatewayDestructionFailure;
 		});
 		const gatewayVmOwnership = {
-			...createExactVmCreationOwnershipStub('gateway-vm-owner-unsafe'),
+			...createGatewayVmLifecycleAuthorityStub('gateway-vm-owner-unsafe'),
 			destroyLive: destroyGatewayLive,
-		} satisfies VmCreationOwnership;
+		} satisfies GatewayVmLifecycleAuthority;
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig,
@@ -3876,8 +4120,13 @@ describe('startControllerRuntime', () => {
 					processSpec: openClawProcessSpec,
 					vm: {
 						close: closeGatewayVm,
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
 						enableSsh: vi.fn(async () => ({
+							close: async () => {},
 							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
@@ -3889,12 +4138,13 @@ describe('startControllerRuntime', () => {
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
 						fs: createManagedVmFsStub(),
-						getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-owner-unsafe'),
 						id: 'gateway-vm-owner-unsafe',
 						setIngressRoutes: vi.fn(),
+						start: async () => {},
 						getHostPid: () => 12345,
 						getVmInstance: () => createManagedVmInstanceStub('gateway-vm-owner-unsafe', 12345),
 					},
+					terminateVm: async () => {},
 					vmOwnership: gatewayVmOwnership,
 					zone,
 				})),
@@ -3917,7 +4167,7 @@ describe('startControllerRuntime', () => {
 
 		expect(shutdownError).toBeInstanceOf(AggregateError);
 		expect(shutdownError).toMatchObject({ errors: [gatewayDestructionFailure] });
-		expect(ownershipIncomplete.cause).toBe(ownershipJournalFailure);
+		expect(ownershipIncomplete.cause).toBe(gatewayTerminationProofFailure);
 		expect(secondControllerError).toBe(lockConflict);
 		expect(destroyGatewayLive).toHaveBeenCalledOnce();
 		expect(closeGatewayVm).not.toHaveBeenCalled();
@@ -3984,9 +4234,14 @@ describe('startControllerRuntime', () => {
 					},
 					processSpec: openClawProcessSpec,
 					vm: {
-						close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-cleanup-failure')),
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
 						enableSsh: vi.fn(async () => ({
+							close: async () => {},
 							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
@@ -3998,13 +4253,14 @@ describe('startControllerRuntime', () => {
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
 						fs: createManagedVmFsStub(),
-						getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-cleanup-failure'),
 						id: 'gateway-vm-cleanup-failure',
 						setIngressRoutes: vi.fn(),
+						start: async () => {},
 						getHostPid: () => 12345,
 						getVmInstance: () => createManagedVmInstanceStub('gateway-vm-cleanup-failure', 12345),
 					},
-					vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-cleanup-failure'),
+					terminateVm: async () => {},
+					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-cleanup-failure'),
 					zone,
 				})),
 				startHttpServer: vi.fn(async () => ({
@@ -4026,7 +4282,7 @@ describe('startControllerRuntime', () => {
 		if (!zone) {
 			throw new Error('Expected test zone.');
 		}
-		const closeGatewayVm = vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-clean'));
+		const closeGatewayVm = vi.fn(async () => {});
 		const releaseControllerOwnershipLock = vi.fn(async () => {
 			throw new Error('ownership lock release failed');
 		});
@@ -4041,9 +4297,14 @@ describe('startControllerRuntime', () => {
 					release: releaseControllerOwnershipLock,
 				})),
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-clean')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -4053,9 +4314,9 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-clean'),
 					id: 'tool-vm-clean',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-clean', 12345),
 				})),
@@ -4084,8 +4345,13 @@ describe('startControllerRuntime', () => {
 					processSpec: openClawProcessSpec,
 					vm: {
 						close: closeGatewayVm,
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
 						enableSsh: vi.fn(async () => ({
+							close: async () => {},
 							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 							command: 'ssh ...',
 							host: '127.0.0.1',
@@ -4097,13 +4363,14 @@ describe('startControllerRuntime', () => {
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
 						fs: createManagedVmFsStub(),
-						getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-clean'),
 						id: 'gateway-vm-clean',
 						setIngressRoutes: vi.fn(),
+						start: async () => {},
 						getHostPid: () => 12345,
 						getVmInstance: () => createManagedVmInstanceStub('gateway-vm-clean', 12345),
 					},
-					vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-clean'),
+					terminateVm: closeGatewayVm,
+					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-clean'),
 					zone,
 				})),
 				startHttpServer: vi.fn(async () => ({
@@ -4135,9 +4402,7 @@ describe('startControllerRuntime', () => {
 		if (!zone) {
 			throw new Error('Expected test zone.');
 		}
-		const closeGatewayVm = vi.fn(async () =>
-			createCompleteVmDestroyReceipt('gateway-vm-close-after-failed-restart'),
-		);
+		const closeGatewayVm = vi.fn(async () => {});
 		const closeHttpServer = vi.fn(async () => {});
 		const startGatewayZone = vi
 			.fn()
@@ -4154,8 +4419,13 @@ describe('startControllerRuntime', () => {
 				processSpec: openClawProcessSpec,
 				vm: {
 					close: closeGatewayVm,
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -4165,15 +4435,15 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () =>
-						createTestVmDestroyTarget('gateway-vm-close-after-failed-restart'),
 					id: 'gateway-vm-close-after-failed-restart',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () =>
 						createManagedVmInstanceStub('gateway-vm-close-after-failed-restart', 12345),
 				},
-				vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-close-after-failed-restart'),
+				terminateVm: closeGatewayVm,
+				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-close-after-failed-restart'),
 				zone,
 			})
 			.mockRejectedValueOnce(new Error('restart failed'));
@@ -4193,11 +4463,14 @@ describe('startControllerRuntime', () => {
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () =>
-						createCompleteVmDestroyReceipt('tool-vm-close-after-failed-restart'),
-					),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -4207,9 +4480,9 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-close-after-failed-restart'),
 					id: 'tool-vm-close-after-failed-restart',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () =>
 						createManagedVmInstanceStub('tool-vm-close-after-failed-restart', 12345),
@@ -4279,9 +4552,14 @@ describe('startControllerRuntime', () => {
 						}),
 				),
 				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-close-flush')),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
 					enableSsh: vi.fn(async () => ({
+						close: async () => {},
 						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -4291,9 +4569,9 @@ describe('startControllerRuntime', () => {
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
 					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-close-flush'),
 					id: 'tool-vm-close-flush',
 					setIngressRoutes: vi.fn(),
+					start: async () => {},
 					getHostPid: () => 12345,
 					getVmInstance: () => createManagedVmInstanceStub('tool-vm-close-flush', 12345),
 				})),
@@ -4320,9 +4598,14 @@ describe('startControllerRuntime', () => {
 						},
 						processSpec: openClawProcessSpec,
 						vm: {
-							close: vi.fn(async () => createCompleteVmDestroyReceipt('gateway-vm-close-flush')),
-							enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+							close: vi.fn(async () => {}),
+							enableIngress: vi.fn(async () => ({
+								close: vi.fn(async () => {}),
+								host: '127.0.0.1',
+								port: 18791,
+							})),
 							enableSsh: vi.fn(async () => ({
+								close: async () => {},
 								serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 								command: 'ssh ...',
 								host: '127.0.0.1',
@@ -4334,13 +4617,14 @@ describe('startControllerRuntime', () => {
 								createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 							),
 							fs: createManagedVmFsStub(),
-							getDestroyTarget: () => createTestVmDestroyTarget('gateway-vm-close-flush'),
 							id: 'gateway-vm-close-flush',
 							setIngressRoutes: vi.fn(),
+							start: async () => {},
 							getHostPid: () => 12345,
 							getVmInstance: () => createManagedVmInstanceStub('gateway-vm-close-flush', 12345),
 						},
-						vmOwnership: createExactVmCreationOwnershipStub('gateway-vm-close-flush'),
+						terminateVm: async () => {},
+						vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-close-flush'),
 						zone,
 					};
 				}),

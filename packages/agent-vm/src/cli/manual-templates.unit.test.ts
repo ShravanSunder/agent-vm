@@ -396,7 +396,13 @@ describe('manual templates', () => {
 			'acquires <runtimeDir>/vm-ownership/controller-ownership.lock before secret resolution',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'persisted pids are diagnostic evidence, not cleanup authority',
+			'<stateDir>/tool-leases/<recordId>.json',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'Controller restart adopts no VM',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'HTTP health and telemetry remain diagnostic only',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'persistent zone files live at /zone',
@@ -438,11 +444,10 @@ describe('manual templates', () => {
 		expect(operationsManual).toContain('agent-vm controller health-snapshot --config');
 		expect(operationsManual).toContain('gateway-recovery');
 		expect(operationsManual).toContain('gateway-recovery-suspended');
-		expect(operationsManual).toContain(
-			'10 consecutive gateway-service or gateway-control-session failures',
-		);
+		expect(operationsManual).toContain('same-Gateway OpenClaw process recovery');
+		expect(operationsManual).toContain('Gateway VM restart is the outward escalation');
 		expect(operationsManual).toContain('61 minute cooldown');
-		expect(operationsManual).toContain('3 consecutive failed automatic recoveries');
+		expect(operationsManual).toContain('3 consecutive failed automatic Gateway recoveries');
 		expect(operationsManual).toContain(
 			'gateway infrastructure, gateway service, channel-provider, and Tool VM lease health',
 		);
@@ -452,8 +457,9 @@ describe('manual templates', () => {
 		expect(operationsManual).toContain('secret-resolution-failed is a recovery blocker');
 		expect(operationsManual).toContain('<runtimeDir>/controller-health/events.jsonl');
 		expect(operationsManual).toContain(
-			'VM ownership membership and reservation journals plus exact destruction receipts',
+			'schema-v2 runtime records plus revalidated process and endpoint identity',
 		);
+		expect(operationsManual).toContain('exported telemetry are not lifecycle authority');
 		expect(operationsManual).toContain('controller_final');
 		expect(operationsManual).toContain('stale_to_reacquired');
 		expect(operationsManual).toContain(
@@ -538,13 +544,19 @@ describe('manual templates', () => {
 		expect(operations?.content).toContain(
 			'never bypasses the ownership lock or exact-evidence checks',
 		);
-		expect(operations?.content).toContain('private Gateway membership journal');
-		expect(operations?.content).toContain('complete resource-by-resource destruction receipts');
 		expect(operations?.content).toContain(
-			'Legacy runtime records and PID matching are not cleanup authority',
+			'<stateDir>/tool-leases/<recordId>.json first, then <stateDir>/gateway-runtime.json',
+		);
+		expect(operations?.content).toContain(
+			'never adopts an old VM, and deletes a record only after exact process and endpoint absence is proven',
+		);
+		expect(operations?.content).toContain(
+			'Unknown identity preserves the evidence and prevents Gateway replacement or Tool TCP-slot reuse',
 		);
 		expect(operations?.content).toContain('at most four child destroys concurrently');
 		expect(operations?.content).toContain('whole subtree has a 300 second deadline');
+		expect(operations?.content).not.toContain('private Gateway membership journal');
+		expect(operations?.content).not.toContain('resource-by-resource destruction receipts');
 		expect(operations?.content).not.toContain('pkill -f qemu-system');
 	});
 });

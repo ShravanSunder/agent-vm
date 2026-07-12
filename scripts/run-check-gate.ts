@@ -12,6 +12,7 @@ export type CheckGateCommandId =
 	| 'zod-version'
 	| 'test-taxonomy'
 	| 'vm-ownership-boundaries'
+	| 'reliability-fault-boundaries'
 	| 'format'
 	| 'type-aware-lint'
 	| 'typecheck';
@@ -110,6 +111,12 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					command: 'pnpm',
 					id: 'vm-ownership-boundaries',
 					label: 'VM ownership boundary audit',
+				},
+				{
+					args: ['run', 'test:reliability-fault-boundaries'],
+					command: 'pnpm',
+					id: 'reliability-fault-boundaries',
+					label: 'reliability fault boundary audit',
 				},
 				{
 					args: ['run', 'lint'],

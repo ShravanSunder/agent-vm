@@ -11,6 +11,15 @@ const managedBaseDockerfiles = [
 
 describe('managed base Dockerfiles', () => {
 	it.each(managedBaseDockerfiles)(
+		'provides guest rootfs growth tooling in %s',
+		async (_baseName: string, dockerfilePath: string) => {
+			const dockerfile = await fs.readFile(path.join(process.cwd(), dockerfilePath), 'utf8');
+
+			expect(dockerfile).toMatch(/^\s+e2fsprogs(?: \\| &&)/mu);
+		},
+	);
+
+	it.each(managedBaseDockerfiles)(
 		'provides Linux file descriptor compatibility in %s',
 		async (_baseName: string, dockerfilePath: string) => {
 			const dockerfile = await fs.readFile(path.join(process.cwd(), dockerfilePath), 'utf8');
@@ -62,6 +71,21 @@ describe('managed base Dockerfiles', () => {
 		expect(dockerfile).not.toContain('python3 \\');
 		expect(dockerfile).not.toContain('nano \\');
 		expect(dockerfile).not.toContain('vim-tiny');
+	});
+
+	it('removes image-build SSH host keys from the Tool VM base', async () => {
+		const dockerfile = await fs.readFile(
+			path.join(process.cwd(), 'docker', 'base-images', 'tool-vm', 'Dockerfile'),
+			'utf8',
+		);
+		const openSshInstallIndex = dockerfile.indexOf('openssh-server');
+		const packageInstallCompletionIndex = dockerfile.indexOf('zip && \\', openSshInstallIndex);
+		const hostKeyRemovalIndex = dockerfile.indexOf('rm -f /etc/ssh/ssh_host_*');
+
+		expect(openSshInstallIndex).toBeGreaterThan(-1);
+		expect(packageInstallCompletionIndex).toBeGreaterThan(openSshInstallIndex);
+		expect(hostKeyRemovalIndex).toBeGreaterThan(packageInstallCompletionIndex);
+		expect(dockerfile).not.toContain('ssh-keygen -A');
 	});
 
 	it('installs GitHub CLI from GitHub stable apt instead of Debian apt', async () => {

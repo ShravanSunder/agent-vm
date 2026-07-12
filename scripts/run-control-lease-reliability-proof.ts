@@ -177,6 +177,7 @@ export async function runControlLeaseReliabilityScenarios(
 		const counts = await executeScenario({
 			args: ['tsx', 'scripts/run-vitest-evidence-project.ts', scenario.project, scenario.testFile],
 			environment: {
+				AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1',
 				AGENT_VM_RELIABILITY_DIRTY_HASH: bindings.dirtyHash,
 				AGENT_VM_RELIABILITY_EVIDENCE_FILE: evidenceFilePath,
 				AGENT_VM_RELIABILITY_HEAD_SHA: bindings.headSha,
@@ -269,6 +270,10 @@ async function readGitIdentity(args: readonly string[]): Promise<string> {
 }
 
 async function main(): Promise<void> {
+	const buildResult = await spawnAndCapture(['build']);
+	if (buildResult.exitCode !== 0) {
+		throw new Error('Control/lease reliability proof workspace build failed.');
+	}
 	const runId = randomUUID();
 	const headSha = await readGitIdentity(['rev-parse', 'HEAD']);
 	const dirtyHash = sha256(await readGitIdentity(['status', '--short']));

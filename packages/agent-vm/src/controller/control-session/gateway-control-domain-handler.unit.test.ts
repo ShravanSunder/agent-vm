@@ -1350,6 +1350,155 @@ describe('gateway control domain handler', () => {
 		expect(callerContexts.resolve('44444444-4444-4444-8444-444444444444')).toBeUndefined();
 	});
 
+	it('refuses changed zone_git_push meaning for the same semantic identity without a second push', async () => {
+		const pushZoneGit = vi.fn(async () => ({
+			branch: 'main',
+			localHead: 'abc123',
+			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
+			remoteHead: 'abc123',
+		}));
+		const callerContexts = createRegisteredCallerContexts({
+			purpose: 'tool_portal_controller_host_action',
+		});
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts,
+				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
+				session: acceptedSession,
+			}),
+		);
+		const semanticEnvelope = createEnvelope('tool_portal_controller_host_action', {
+			commandId: '77777777-7777-4777-8777-777777777777',
+			idempotencyKey: 'zone-git-push-semantic-identity',
+		});
+
+		await dispatcher.dispatch({
+			envelope: semanticEnvelope,
+			payload: {
+				kind: 'command',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					actionId: 'zone_git_push',
+					...callerContextPayload,
+					correlation: {
+						capability: {
+							name: 'zone_git_push',
+							namespace: 'controller_host_action',
+						},
+					},
+					expectedHead: 'abc123',
+				},
+			},
+		});
+		const collisionMessageId = '88888888-8888-4888-8888-888888888888';
+		const collisionResponse = await dispatcher.dispatch({
+			envelope: {
+				...semanticEnvelope,
+				messageId: collisionMessageId,
+				sequence: semanticEnvelope.sequence + 1,
+			},
+			payload: {
+				kind: 'command',
+				operation: 'tool_portal_controller_host_action',
+				payload: {
+					actionId: 'zone_git_push',
+					...callerContextPayload,
+					correlation: {
+						capability: {
+							name: 'zone_git_push',
+							namespace: 'controller_host_action',
+						},
+					},
+					expectedHead: 'def456',
+				},
+			},
+		});
+
+		expect(collisionResponse).toMatchObject({
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				error: { errorClass: 'gateway_semantic_idempotency_collision' },
+				responseToMessageId: collisionMessageId,
+				result: 'failed',
+			},
+		});
+		expect(pushZoneGit).toHaveBeenCalledOnce();
+	});
+
+	it('fences a lost zone_git_push result as unknown without replaying its side effect', async () => {
+		let remotePushCount = 0;
+		const pushZoneGit = vi.fn(async () => {
+			remotePushCount += 1;
+			throw new Error('simulated result loss after remote push');
+		});
+		const callerContexts = createRegisteredCallerContexts({
+			purpose: 'tool_portal_controller_host_action',
+		});
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts,
+				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
+				session: acceptedSession,
+			}),
+		);
+		const semanticEnvelope = createEnvelope('tool_portal_controller_host_action', {
+			commandId: '99999999-9999-4999-8999-999999999999',
+			idempotencyKey: 'zone-git-push-result-loss',
+		});
+		const message = {
+			kind: 'command' as const,
+			operation: 'tool_portal_controller_host_action' as const,
+			payload: {
+				actionId: 'zone_git_push' as const,
+				...callerContextPayload,
+				correlation: {
+					capability: {
+						name: 'zone_git_push',
+						namespace: 'controller_host_action',
+					},
+				},
+				expectedHead: 'abc123',
+			},
+		};
+
+		const firstResponse = await dispatcher.dispatch({
+			envelope: semanticEnvelope,
+			payload: message,
+		});
+		const retryMessageId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		const retryResponse = await dispatcher.dispatch({
+			envelope: {
+				...semanticEnvelope,
+				messageId: retryMessageId,
+				sequence: semanticEnvelope.sequence + 1,
+			},
+			payload: message,
+		});
+
+		expect(firstResponse).toMatchObject({
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				error: { errorClass: 'gateway_semantic_unknown_side_effect' },
+				responseToMessageId: semanticEnvelope.messageId,
+				result: 'failed',
+			},
+		});
+		expect(retryResponse).toMatchObject({
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				error: { errorClass: 'gateway_semantic_unknown_side_effect' },
+				responseToMessageId: retryMessageId,
+				result: 'failed',
+			},
+		});
+		expect(remotePushCount).toBe(1);
+		expect(pushZoneGit).toHaveBeenCalledOnce();
+	});
+
 	it('routes controller_host_probe through the fixed host probe handler without a shell command', async () => {
 		const pushZoneGit = vi.fn(async () => ({
 			branch: 'main',

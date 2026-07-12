@@ -48,6 +48,8 @@ import type {
 
 export const GATEWAY_CONTROL_RECONNECT_DEADLINE_MS = 60_000;
 export const GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS = 16;
+export const GATEWAY_CONTROL_RECONNECT_STABILITY_HEARTBEATS = 3;
+export const GATEWAY_CONTROL_RECONNECT_STABILITY_MS = 30_000;
 
 interface PendingGatewayCommandResult {
 	readonly attempt: GatewayControlAttempt;
@@ -90,7 +92,10 @@ export interface GatewayDisposableControlSessionClientOptions {
 	readonly identity: GatewayDisposableControlSessionIdentity;
 	readonly nextAttachmentGeneration: () => number;
 	readonly now?: () => number;
+	readonly onAttemptOutcome?: (outcome: GatewayControlAttemptOutcome) => void;
+	readonly onAttachmentGap?: (transition: GatewayControlAttachmentGapTransition) => void;
 	readonly onHelloResponse?: (response: GatewayControlHelloResponse) => void;
+	readonly onReconnectExhausted?: (transition: GatewayControlReconnectExhaustedTransition) => void;
 	readonly policyByKind?: Partial<Record<ControlEnvelope['kind'], ControlDeliveryPolicy>>;
 	readonly policyByOperation: Readonly<Record<string, ControlDeliveryPolicy>>;
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
@@ -106,6 +111,17 @@ export interface GatewayDisposableControlSessionClientOptions {
 	readonly refreshExtraHeaders: () => Promise<Readonly<Record<string, string>>>;
 	readonly scheduleImmediate?: (callback: () => void) => void;
 }
+
+export type GatewayControlAttemptOutcome =
+	| {
+			readonly attachmentGeneration: number;
+			readonly kind: 'connect_error';
+	  }
+	| {
+			readonly attachmentGeneration: number;
+			readonly kind: 'hello_response';
+			readonly outcome: GatewayControlHelloResponse['outcome'];
+	  };
 
 export interface GatewayControlReconnectTimer {
 	cancel(): void;
@@ -123,6 +139,26 @@ export interface GatewayDisposableControlSessionDiagnostics {
 	readonly reconnectAttempts: number;
 	readonly reconnectExhausted: boolean;
 	readonly transportName?: string;
+}
+
+export interface GatewayControlReconnectExhaustedTransition {
+	readonly attempts: number;
+	readonly exhaustionReason: 'attempt_limit' | 'deadline';
+	readonly gapReason: string;
+	readonly gatewayEpoch: string;
+	readonly kind: 'reconnect_exhausted';
+	readonly processEpoch: string;
+	readonly zoneId: string;
+}
+
+export interface GatewayControlAttachmentGapTransition {
+	readonly attachmentGeneration: number;
+	readonly gapReason: string;
+	readonly gatewayEpoch: string;
+	readonly kind: 'attachment_gap';
+	readonly observedAtMs: number;
+	readonly processEpoch: string;
+	readonly zoneId: string;
 }
 
 export interface GatewayDisposableControlSessionClient extends ControlSessionClient<GatewayControlHelloResponse> {
@@ -151,6 +187,12 @@ interface GatewayControlAttempt {
 	readonly attachmentGeneration: number;
 	readonly socket: GatewayDisposableControlSocket;
 	sessionId?: string;
+}
+
+interface GatewayControlStabilizingAttempt {
+	acceptedAtMs: number;
+	heartbeatCount: number;
+	readonly attempt: GatewayControlAttempt;
 }
 
 export function createGatewayDisposableControlSocket(
@@ -317,12 +359,23 @@ export function createGatewayDisposableControlSessionClient(
 	let reservedInitialAttachmentGeneration: number | undefined = options.nextAttachmentGeneration();
 	let currentAttempt: GatewayControlAttempt | undefined;
 	let closed = false;
+	let hasAcceptedSession = false;
 	let helloCount = 0;
 	let lastHelloResponse: GatewayControlHelloResponse | undefined;
 	let reconnectAttempts = 0;
+	let reconnectEpisodeGeneration = 0;
 	let reconnectGapStartedAtMs: number | undefined = now();
+	let reconnectGapReason = 'initial connection';
 	let reconnectExhausted = false;
 	let reconnectTimer: GatewayControlReconnectTimer | undefined;
+	let pendingAttemptStartIdentity:
+		| {
+				readonly attemptNumber: number;
+				readonly reconnectEpisodeGeneration: number;
+		  }
+		| undefined;
+	let stabilizationDeadlineTimer: GatewayControlReconnectTimer | undefined;
+	let stabilizingAttempt: GatewayControlStabilizingAttempt | undefined;
 	let initialHeaders = options.initialExtraHeaders;
 	let resolveReady!: (response: GatewayControlHelloResponse) => void;
 	let rejectReady!: (error: Error) => void;
@@ -337,6 +390,14 @@ export function createGatewayDisposableControlSessionClient(
 			clearTimeout(pendingResult.timeout);
 			pendingResults.delete(messageId);
 			pendingResult.reject(error);
+		}
+	}
+
+	function notifyAttemptOutcome(outcome: GatewayControlAttemptOutcome): void {
+		try {
+			options.onAttemptOutcome?.(outcome);
+		} catch {
+			// Diagnostics cannot affect control-session ownership or reconnect behavior.
 		}
 	}
 
@@ -378,14 +439,107 @@ export function createGatewayDisposableControlSessionClient(
 		rejectPendingResults(new Error(reason));
 	}
 
-	function reconnectBudgetAvailable(): boolean {
+	function reconnectExhaustionReason():
+		| GatewayControlReconnectExhaustedTransition['exhaustionReason']
+		| undefined {
 		const gapStartedAtMs = reconnectGapStartedAtMs;
+		if (closed || gapStartedAtMs === undefined) {
+			return undefined;
+		}
+		if (reconnectAttempts >= GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS) {
+			return 'attempt_limit';
+		}
+		return now() - gapStartedAtMs >= GATEWAY_CONTROL_RECONNECT_DEADLINE_MS ? 'deadline' : undefined;
+	}
+
+	function reconnectBudgetAvailable(): boolean {
 		return (
-			!closed &&
-			gapStartedAtMs !== undefined &&
-			reconnectAttempts < GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS &&
-			now() - gapStartedAtMs < GATEWAY_CONTROL_RECONNECT_DEADLINE_MS
+			!closed && reconnectGapStartedAtMs !== undefined && reconnectExhaustionReason() === undefined
 		);
+	}
+
+	function cancelStabilizationDeadline(): void {
+		stabilizationDeadlineTimer?.cancel();
+		stabilizationDeadlineTimer = undefined;
+	}
+
+	function resetReconnectRecoveryEpisode(): void {
+		cancelStabilizationDeadline();
+		reconnectEpisodeGeneration += 1;
+		reconnectAttempts = 0;
+		reconnectExhausted = false;
+		reconnectGapStartedAtMs = undefined;
+		reconnectGapReason = '';
+		stabilizingAttempt = undefined;
+	}
+
+	function recordStabilizingHeartbeat(attempt: GatewayControlAttempt): void {
+		const stabilization = stabilizingAttempt;
+		if (stabilization === undefined || stabilization.attempt !== attempt) {
+			return;
+		}
+		stabilization.heartbeatCount += 1;
+		if (
+			stabilization.heartbeatCount >= GATEWAY_CONTROL_RECONNECT_STABILITY_HEARTBEATS &&
+			now() - stabilization.acceptedAtMs >= GATEWAY_CONTROL_RECONNECT_STABILITY_MS
+		) {
+			resetReconnectRecoveryEpisode();
+		}
+	}
+
+	function beginReconnectStabilization(attempt: GatewayControlAttempt): void {
+		cancelStabilizationDeadline();
+		stabilizingAttempt = {
+			acceptedAtMs: now(),
+			attempt,
+			heartbeatCount: 0,
+		};
+		const gapStartedAtMs = reconnectGapStartedAtMs;
+		if (gapStartedAtMs === undefined) {
+			return;
+		}
+		const remainingDeadlineMs = Math.max(
+			0,
+			GATEWAY_CONTROL_RECONNECT_DEADLINE_MS - (now() - gapStartedAtMs),
+		);
+		stabilizationDeadlineTimer = scheduleReconnectTimer(() => {
+			stabilizationDeadlineTimer = undefined;
+			if (
+				currentAttempt === attempt &&
+				attempt.accepted &&
+				stabilizingAttempt?.attempt === attempt &&
+				reconnectGapStartedAtMs !== undefined
+			) {
+				notifyReconnectExhausted('deadline');
+			}
+		}, remainingDeadlineMs);
+		stabilizationDeadlineTimer.unref?.();
+	}
+
+	function notifyReconnectExhausted(
+		exhaustionReason: GatewayControlReconnectExhaustedTransition['exhaustionReason'],
+	): void {
+		if (reconnectExhausted) {
+			return;
+		}
+		if (reconnectGapStartedAtMs === undefined) {
+			return;
+		}
+		reconnectExhausted = true;
+		const transition = {
+			attempts: reconnectAttempts,
+			exhaustionReason,
+			gapReason: reconnectGapReason,
+			gatewayEpoch: options.identity.gatewayEpoch,
+			kind: 'reconnect_exhausted',
+			processEpoch: options.identity.processEpoch,
+			zoneId: options.identity.zoneId,
+		} satisfies GatewayControlReconnectExhaustedTransition;
+		try {
+			options.onReconnectExhausted?.(transition);
+		} catch {
+			// The observer cannot prevent the control owner from committing exhaustion.
+		}
 	}
 
 	function scheduleReconnect(): void {
@@ -394,8 +548,9 @@ export function createGatewayDisposableControlSessionClient(
 			currentAttempt !== undefined ||
 			!reconnectBudgetAvailable()
 		) {
-			if (!reconnectBudgetAvailable()) {
-				reconnectExhausted = true;
+			const exhaustionReason = reconnectExhaustionReason();
+			if (exhaustionReason !== undefined) {
+				notifyReconnectExhausted(exhaustionReason);
 				if (!readySettled) {
 					readySettled = true;
 					rejectReady(new Error('gateway control reconnect budget exhausted'));
@@ -423,8 +578,35 @@ export function createGatewayDisposableControlSessionClient(
 		if (currentAttempt !== attempt) {
 			return;
 		}
+		const acceptedAttachmentGeneration = attempt.accepted
+			? attempt.attachmentGeneration
+			: undefined;
+		if (stabilizingAttempt?.attempt === attempt) {
+			cancelStabilizationDeadline();
+			stabilizingAttempt = undefined;
+		}
 		destroyAttempt(attempt, reason);
-		reconnectGapStartedAtMs ??= now();
+		if (acceptedAttachmentGeneration !== undefined) {
+			const transition = {
+				attachmentGeneration: acceptedAttachmentGeneration,
+				gapReason: reason,
+				gatewayEpoch: options.identity.gatewayEpoch,
+				kind: 'attachment_gap',
+				observedAtMs: now(),
+				processEpoch: options.identity.processEpoch,
+				zoneId: options.identity.zoneId,
+			} satisfies GatewayControlAttachmentGapTransition;
+			try {
+				options.onAttachmentGap?.(transition);
+			} catch {
+				// The observer cannot prevent the control owner from fencing the attachment.
+			}
+		}
+		if (reconnectGapStartedAtMs === undefined) {
+			reconnectEpisodeGeneration += 1;
+			reconnectGapStartedAtMs = now();
+			reconnectGapReason = reason;
+		}
 		scheduleReconnect();
 	}
 
@@ -522,6 +704,11 @@ export function createGatewayDisposableControlSessionClient(
 						return;
 					}
 					const response = GatewayControlHelloResponseSchema.parse(payload);
+					notifyAttemptOutcome({
+						attachmentGeneration: attempt.attachmentGeneration,
+						kind: 'hello_response',
+						outcome: response.outcome,
+					});
 					helloCount += 1;
 					lastHelloResponse = response;
 					if (response.controllerEpoch !== options.identity.controllerEpoch) {
@@ -539,9 +726,12 @@ export function createGatewayDisposableControlSessionClient(
 					attempt.accepted = true;
 					attempt.connectionId = response.connectionId;
 					attempt.sessionId = response.sessionId;
-					reconnectAttempts = 0;
-					reconnectExhausted = false;
-					reconnectGapStartedAtMs = undefined;
+					if (hasAcceptedSession && reconnectGapStartedAtMs !== undefined) {
+						beginReconnectStabilization(attempt);
+					} else {
+						hasAcceptedSession = true;
+						resetReconnectRecoveryEpisode();
+					}
 					if (!readySettled) {
 						readySettled = true;
 						resolveReady(response);
@@ -555,6 +745,10 @@ export function createGatewayDisposableControlSessionClient(
 				});
 		});
 		attempt.socket.once('connect_error', (error: Error) => {
+			notifyAttemptOutcome({
+				attachmentGeneration: attempt.attachmentGeneration,
+				kind: 'connect_error',
+			});
 			fenceAttempt(attempt, `gateway control connect failed: ${error.message}`);
 		});
 		attempt.socket.once('disconnect', () => {
@@ -608,6 +802,9 @@ export function createGatewayDisposableControlSessionClient(
 						return;
 					}
 					attempt.lastSeenPeerSequence = sequenceDecision.nextLastSeenSequence;
+					if (message.kind === 'heartbeat') {
+						recordStabilizingHeartbeat(attempt);
+					}
 					if (classification.status === 'refused') {
 						acknowledge?.(buildControlMessageReceipt());
 						if (message.kind === 'command') {
@@ -768,16 +965,47 @@ export function createGatewayDisposableControlSessionClient(
 
 	async function startAttempt(): Promise<void> {
 		reconnectGapStartedAtMs ??= now();
-		if (!reconnectBudgetAvailable() || currentAttempt !== undefined) {
+		if (
+			!reconnectBudgetAvailable() ||
+			currentAttempt !== undefined ||
+			pendingAttemptStartIdentity !== undefined
+		) {
 			scheduleReconnect();
 			return;
 		}
 		const attemptNumber = reconnectAttempts;
+		const attemptStartIdentity = {
+			attemptNumber,
+			reconnectEpisodeGeneration,
+		} as const;
+		pendingAttemptStartIdentity = attemptStartIdentity;
 		reconnectAttempts += 1;
 		let extraHeaders: Readonly<Record<string, string>>;
 		try {
 			extraHeaders = attemptNumber === 0 ? initialHeaders : await options.refreshExtraHeaders();
 		} catch {
+			if (pendingAttemptStartIdentity !== attemptStartIdentity) {
+				return;
+			}
+			pendingAttemptStartIdentity = undefined;
+			if (
+				closed ||
+				reconnectEpisodeGeneration !== attemptStartIdentity.reconnectEpisodeGeneration
+			) {
+				return;
+			}
+			scheduleReconnect();
+			return;
+		}
+		if (pendingAttemptStartIdentity !== attemptStartIdentity) {
+			return;
+		}
+		pendingAttemptStartIdentity = undefined;
+		if (
+			closed ||
+			reconnectEpisodeGeneration !== attemptStartIdentity.reconnectEpisodeGeneration ||
+			currentAttempt !== undefined
+		) {
 			scheduleReconnect();
 			return;
 		}
@@ -809,6 +1037,8 @@ export function createGatewayDisposableControlSessionClient(
 			return;
 		}
 		closed = true;
+		pendingAttemptStartIdentity = undefined;
+		cancelStabilizationDeadline();
 		if (reconnectTimer !== undefined) {
 			reconnectTimer.cancel();
 			reconnectTimer = undefined;

@@ -15,59 +15,41 @@ import {
 	buildImageAssetFileNames,
 	type CreateVmOptions,
 	type ManagedVm,
-	type ManagedVmOwnershipReservationReferenceV1,
+	type ManagedVmInstance,
+	type ManagedVmSshAccess,
 	type PinnedRealFsRoot,
-	type VmDestroyTargetV1,
-	type VmDestroyReceiptV1,
 } from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { writePreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
 } from '../testing/managed-vm-test-helpers.js';
 import { createToolVm } from './tool-vm-lifecycle.js';
 
 const createdDirectories: string[] = [];
+const testToolVmProcessIdentity = {
+	command: 'qemu-system-aarch64 -name tool-vm-test',
+	lstart: 'Sat Jul 11 18:00:00 2026',
+} as const;
 
-const TEST_TOOL_VM_OWNERSHIP_RESERVATION = {
-	expectedContractVersion: 1,
-	expectedRevision: 1,
-	reservationId: 'reservation-tool-vm-lifecycle',
-	reservationPath: '/tmp/agent-vm-tests/reservation-tool-vm-lifecycle/reservation-v1.json',
-} satisfies ManagedVmOwnershipReservationReferenceV1;
-
-const incompleteVmDestroyReceipt = {
-	contractVersion: 1,
-	reservationId: 'reservation-incomplete',
-	vmId: 'tool-vm-incomplete',
-	controllerEpoch: 'controller-epoch-1',
-	parentGateway: { vmId: 'gateway-vm-1', epoch: 'gateway-epoch-1' },
-	role: 'tool',
-	requestedRunner: {
-		backend: 'qemu',
-		executableName: 'qemu-system-aarch64',
-		discoveryIdentity: 'runner-incomplete',
-	},
-	complete: false,
-	completedAt: '2026-07-10T00:00:00.000Z',
-	resources: {
-		exactRunner: { status: 'unproven', reason: 'runner-resistant' },
-		ingressListener: { status: 'already-absent' },
-		ingressSockets: { status: 'already-absent' },
-		sshListener: { status: 'destroyed' },
-		sshSessions: { status: 'destroyed' },
-		sessionIpc: { status: 'destroyed' },
-		qmp: { status: 'destroyed' },
-		disposableStorage: { status: 'destroyed' },
-	},
-} satisfies VmDestroyReceiptV1;
+function createManagedVmKillDependencies(
+	overrides: Partial<ManagedVmKillDependencies> = {},
+): ManagedVmKillDependencies {
+	return {
+		isProcessAlive: () => false,
+		killProcess: vi.fn(),
+		readProcessCommand: async () => testToolVmProcessIdentity.command,
+		readProcessIdentity: async () => testToolVmProcessIdentity,
+		sleep: async () => {},
+		...overrides,
+	};
+}
 
 afterEach(async () => {
 	vi.restoreAllMocks();
@@ -200,10 +182,6 @@ function createPinnedRealFsRoot(hostPath: string): PinnedRealFsRoot {
 	};
 }
 
-function createToolVmDestroyTarget(vmId: string): VmDestroyTargetV1 {
-	return createTestVmDestroyTarget(vmId, { role: 'tool' });
-}
-
 function createSecretResolver(values: Record<string, string>): SecretResolver {
 	return {
 		resolve: vi.fn(async (ref) => {
@@ -217,38 +195,73 @@ function createSecretResolver(values: Record<string, string>): SecretResolver {
 	};
 }
 
+function createSshAccessStub(): Awaited<ReturnType<ManagedVm['enableSsh']>> {
+	return {
+		close: vi.fn(async () => {}),
+		command: 'ssh -i /tmp/tool-vm-key root@127.0.0.1 -p 19000',
+		host: '127.0.0.1',
+		identityFile: '/tmp/tool-vm-key',
+		port: 19000,
+		serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		user: 'root',
+	};
+}
+
+function createManagedVmSshAccessStub(): ManagedVmSshAccess {
+	return {
+		close: vi.fn(async () => {}),
+		command: 'ssh -i /tmp/tool-vm-key root@127.0.0.1 -p 19000',
+		host: '127.0.0.1',
+		identityFile: '/tmp/tool-vm-key',
+		port: 19000,
+		user: 'root',
+	};
+}
+
+function createManagedVmStub(
+	options: {
+		readonly close?: ManagedVm['close'];
+		readonly enableSsh?: ManagedVm['enableSsh'];
+		readonly exec?: ManagedVm['exec'];
+		readonly getHostPid?: ManagedVm['getHostPid'];
+		readonly id?: string;
+		readonly start?: ManagedVm['start'];
+	} = {},
+): ManagedVm {
+	const close = options.close ?? vi.fn(async () => {});
+	const exec = options.exec ?? vi.fn(() => createManagedExecProcessStub());
+	const start = options.start ?? vi.fn(async () => {});
+	const fs = createManagedVmFsStub();
+	const id = options.id ?? 'managed-vm';
+	const vmInstance = {
+		close,
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
+		enableSsh: async () => createManagedVmSshAccessStub(),
+		exec,
+		fs,
+		getHostPid: options.getHostPid ?? (() => 28_282),
+		id,
+		setIngressRoutes: () => {},
+		start,
+	} satisfies ManagedVmInstance;
+	return {
+		close,
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
+		enableSsh: options.enableSsh ?? (async () => createSshAccessStub()),
+		exec,
+		fs,
+		getHostPid: options.getHostPid ?? (() => 28_282),
+		getVmInstance: () => vmInstance,
+		id,
+		setIngressRoutes: () => {},
+		start,
+	};
+}
+
 describe('createToolVm', () => {
 	it('mounts the lease host work mount directory at /workspace and leaves /work ephemeral', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
-		const managedVm = {
-			close: async () => createCompleteVmDestroyReceipt(),
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({
-				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-				host: '127.0.0.1',
-				port: 19000,
-			}),
-			exec,
-			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
-			getHostPid: () => 28282,
-			getVmInstance: () => ({
-				close: async () => createCompleteVmDestroyReceipt(),
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec: () => createManagedExecProcessStub(),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
-				id: 'vm-instance',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+		const managedVm = createManagedVmStub({ exec });
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
 			capturedCreateVmOptions = createVmOptions;
@@ -269,7 +282,6 @@ describe('createToolVm', () => {
 			{
 				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
-				ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -285,6 +297,7 @@ describe('createToolVm', () => {
 				}),
 				createManagedVm,
 				closePinnedRealFsRoot: () => {},
+				managedVmKillDependencies: createManagedVmKillDependencies(),
 				pinRealFsRoot: createPinnedRealFsRoot,
 			},
 		);
@@ -308,7 +321,6 @@ describe('createToolVm', () => {
 			}),
 		);
 		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/work');
-		expect(capturedCreateVmOptions?.ownershipReservation).toBe(TEST_TOOL_VM_OWNERSHIP_RESERVATION);
 		// IPv4-preference egress for Node consumers inside the Tool VM
 		// to defeat Happy Eyeballs racing on gondolin's synthetic AAAA.
 		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
@@ -318,37 +330,242 @@ describe('createToolVm', () => {
 		expect(capturedCreateVmOptions?.runtimeRootfsSize).toBe('16G');
 	});
 
+	it('starts the constructed Tool VM before bootstrap exec and SSH work', async () => {
+		// Arrange
+		const orderedEvents: string[] = [];
+		const systemConfig = await createToolVmSystemConfig();
+		const zone = systemConfig.zones[0];
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (zone === undefined || standardProfile === undefined) {
+			throw new Error('Expected Tool VM lifecycle test zone and profile.');
+		}
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
+		zone.secrets = {
+			TOOL_TOKEN: {
+				agentAccess: 'all',
+				audience: 'tool-vm',
+				envVar: 'TOOL_TOKEN',
+				hosts: ['api.github.com'],
+				injection: 'http-mediation',
+				source: 'environment',
+			},
+		};
+		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'start-ordering');
+		const managedVm = createManagedVmStub({
+			enableSsh: async () => {
+				orderedEvents.push('enable-ssh');
+				return createSshAccessStub();
+			},
+			exec: () => {
+				orderedEvents.push('exec');
+				return createManagedExecProcessStub();
+			},
+			start: async () => {
+				orderedEvents.push('start');
+			},
+		});
+
+		// Act
+		const createdVm = await createToolVm(
+			{
+				agentId: 'sun',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkMountDir: requestedWorkMountDir,
+				profile: standardProfile,
+				secretResolver: createSecretResolver({ TOOL_TOKEN: 'real-secret' }),
+				systemConfig,
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				closePinnedRealFsRoot: () => {},
+				createManagedVm: async () => managedVm,
+				managedVmKillDependencies: createManagedVmKillDependencies({
+					readProcessIdentity: async () => {
+						orderedEvents.push('capture-process-identity');
+						return testToolVmProcessIdentity;
+					},
+				}),
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+		await createdVm.enableSsh();
+
+		// Assert
+		expect(orderedEvents).toEqual([
+			'start',
+			'capture-process-identity',
+			'exec',
+			'exec',
+			'enable-ssh',
+		]);
+	});
+
+	it('closes the constructed Tool VM when stock start fails before bootstrap work', async () => {
+		// Arrange
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (standardProfile === undefined) {
+			throw new Error('Expected standard Tool VM profile.');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'start-failure');
+		const startError = new Error('stock Tool VM start failed');
+		const close = vi.fn(async () => {});
+		const exec = vi.fn<ManagedVm['exec']>(() => createManagedExecProcessStub());
+		const managedVm = createManagedVmStub({
+			close,
+			exec,
+			getHostPid: () => null,
+			start: async () => {
+				throw startError;
+			},
+		});
+
+		// Act
+		const creation = createToolVm(
+			{
+				agentId: 'sun',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkMountDir: requestedWorkMountDir,
+				profile: standardProfile,
+				secretResolver: createSecretResolver({}),
+				systemConfig,
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				closePinnedRealFsRoot: () => {},
+				createManagedVm: async () => managedVm,
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+
+		// Assert
+		await expect(creation).rejects.toBe(startError);
+		expect(close).toHaveBeenCalledOnce();
+		expect(exec).not.toHaveBeenCalled();
+	});
+
+	it('fails closed when stock start rejects but the runner identity is unknown', async () => {
+		// Arrange
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (standardProfile === undefined) {
+			throw new Error('Expected standard Tool VM profile.');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'unknown-runner-start-failure',
+		);
+		const startError = new Error('stock Tool VM start failed after runner spawn');
+		const close = vi.fn(async () => {});
+		const managedVm = createManagedVmStub({
+			close,
+			getHostPid: () => 28_282,
+			start: async () => {
+				throw startError;
+			},
+		});
+
+		// Act
+		const creation = createToolVm(
+			{
+				agentId: 'sun',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkMountDir: requestedWorkMountDir,
+				profile: standardProfile,
+				secretResolver: createSecretResolver({}),
+				systemConfig,
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				closePinnedRealFsRoot: () => {},
+				createManagedVm: async () => managedVm,
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+
+		// Assert
+		await expect(creation).rejects.toMatchObject({
+			errors: [
+				startError,
+				expect.objectContaining({
+					message: expect.stringMatching(/live runner without captured process identity/u),
+				}),
+			],
+		});
+		expect(close).not.toHaveBeenCalled();
+	});
+
+	it('does not double-close adapter-owned pinned roots when construction fails', async () => {
+		// Arrange
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (standardProfile === undefined) {
+			throw new Error('Expected standard Tool VM profile.');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'construction-failure',
+		);
+		const createError = new Error('stock Tool VM construction failed');
+		const closePinnedRealFsRoot = vi.fn();
+
+		// Act
+		const creation = createToolVm(
+			{
+				agentId: 'sun',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkMountDir: requestedWorkMountDir,
+				profile: standardProfile,
+				secretResolver: createSecretResolver({}),
+				systemConfig,
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				closePinnedRealFsRoot,
+				createManagedVm: async (createVmOptions) => {
+					const pinnedRoot = createVmOptions.vfsMounts['/workspace']?.pinnedHostRoot;
+					if (pinnedRoot === undefined) {
+						throw new Error('Expected adapter-owned pinned root.');
+					}
+					closePinnedRealFsRoot(pinnedRoot);
+					throw createError;
+				},
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+
+		// Assert
+		await expect(creation).rejects.toBe(createError);
+		expect(closePinnedRealFsRoot).toHaveBeenCalledOnce();
+	});
+
 	it('passes only Tool VM egress hosts and mediated secrets into the Tool VM', async () => {
 		const exec = vi.fn<ManagedVm['exec']>(() => createManagedExecProcessStub());
-		const managedVm = {
-			close: async () => createCompleteVmDestroyReceipt(),
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({
-				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-				host: '127.0.0.1',
-				port: 19000,
-			}),
-			exec,
-			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
-			getHostPid: () => null,
-			getVmInstance: () => ({
-				close: async () => createCompleteVmDestroyReceipt(),
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec: () => createManagedExecProcessStub(),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
-				id: 'vm-instance',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+		const managedVm = createManagedVmStub({ exec, getHostPid: () => null });
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
 			capturedCreateVmOptions = createVmOptions;
@@ -444,7 +661,6 @@ describe('createToolVm', () => {
 			{
 				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
-				ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -490,8 +706,9 @@ describe('createToolVm', () => {
 		expect(resolveSecret).not.toHaveBeenCalledWith(
 			expect.objectContaining({ ref: 'GATEWAY_ONLY_TOKEN' }),
 		);
-		expect(exec).toHaveBeenCalledOnce();
-		const bootstrapCommand = exec.mock.calls[0]?.[0];
+		expect(exec).toHaveBeenCalledTimes(2);
+		expect(exec.mock.calls[0]?.[0]).toBe('rm -f /etc/ssh/ssh_host_*');
+		const bootstrapCommand = exec.mock.calls[1]?.[0];
 		if (typeof bootstrapCommand !== 'string') {
 			throw new Error('Expected mediated placeholder bootstrap to use a shell command string.');
 		}
@@ -514,35 +731,7 @@ describe('createToolVm', () => {
 	});
 
 	it('uses Tool VM websocket upgrade policy for websocket request guarding', async () => {
-		const managedVm = {
-			close: async () => createCompleteVmDestroyReceipt(),
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({
-				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-				host: '127.0.0.1',
-				port: 19000,
-			}),
-			exec: vi.fn(() => createManagedExecProcessStub()),
-			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
-			getHostPid: () => null,
-			getVmInstance: () => ({
-				close: async () => createCompleteVmDestroyReceipt(),
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec: () => createManagedExecProcessStub(),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
-				id: 'vm-instance',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+		const managedVm = createManagedVmStub({ getHostPid: () => null });
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
 			capturedCreateVmOptions = createVmOptions;
@@ -584,7 +773,6 @@ describe('createToolVm', () => {
 			{
 				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
-				ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -629,35 +817,7 @@ describe('createToolVm', () => {
 		'rejects mediated Tool VM secret name %s because it collides with runtime bootstrap env',
 		async (reservedSecretName) => {
 			const exec = vi.fn<ManagedVm['exec']>(() => createManagedExecProcessStub());
-			const managedVm = {
-				close: async () => createCompleteVmDestroyReceipt(),
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec,
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
-				getHostPid: () => null,
-				getVmInstance: () => ({
-					close: async () => createCompleteVmDestroyReceipt(),
-					enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-					enableSsh: async () => ({
-						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-						host: '127.0.0.1',
-						port: 19000,
-					}),
-					exec: () => createManagedExecProcessStub(),
-					fs: createManagedVmFsStub(),
-					getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
-					id: 'vm-instance',
-					setIngressRoutes: () => {},
-				}),
-				id: 'managed-vm',
-				setIngressRoutes: () => {},
-			} satisfies ManagedVm;
+			const managedVm = createManagedVmStub({ exec, getHostPid: () => null });
 			const createManagedVm = vi.fn(async () => managedVm);
 			const systemConfig = await createToolVmSystemConfig();
 			const zone = systemConfig.zones[0];
@@ -689,7 +849,6 @@ describe('createToolVm', () => {
 					{
 						cacheDir: systemConfig.cacheDir,
 						agentId: 'sun',
-						ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 						profile: standardProfile,
 						systemConfig,
 						tcpSlot: 0,
@@ -713,7 +872,7 @@ describe('createToolVm', () => {
 		},
 	);
 
-	it('surfaces ownership-unsafe teardown when create rollback returns an incomplete receipt', async () => {
+	it('preserves the primary bootstrap failure when live-handle cleanup also fails', async () => {
 		const systemConfig = await createToolVmSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -736,49 +895,35 @@ describe('createToolVm', () => {
 		}
 		const requestedWorkMountDir = await createWorkMountDirectory(
 			systemConfig,
-			'incomplete-create-rollback',
+			'failed-create-rollback',
 		);
 		const closePinnedRealFsRoot = vi.fn();
 		let adapterOwnedPinnedRoot: PinnedRealFsRoot | undefined;
+		let runnerAttached = true;
+		const closeError = new Error('stock VM close failed');
 		const closeMock = vi.fn(async () => {
 			if (adapterOwnedPinnedRoot) {
 				closePinnedRealFsRoot(adapterOwnedPinnedRoot);
 			}
-			return incompleteVmDestroyReceipt;
+			throw closeError;
 		});
-		const managedVm = {
+		let execCount = 0;
+		const managedVm = createManagedVmStub({
 			close: closeMock,
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({
-				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-				host: '127.0.0.1',
-				port: 19000,
-			}),
-			exec: () =>
-				createManagedExecProcessStub({
-					exitCode: 1,
-					stderr: 'mediated env bootstrap failed',
-				}),
-			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm-incomplete-create-rollback'),
-			getHostPid: () => 28282,
-			getVmInstance: () => ({
-				close: async () => incompleteVmDestroyReceipt,
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec: () => createManagedExecProcessStub(),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance-incomplete-create-rollback'),
-				id: 'vm-instance-incomplete-create-rollback',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm-incomplete-create-rollback',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+			exec: () => {
+				execCount += 1;
+				return createManagedExecProcessStub(
+					execCount === 1
+						? {}
+						: {
+								exitCode: 1,
+								stderr: 'mediated env bootstrap failed',
+							},
+				);
+			},
+			id: 'managed-vm-failed-create-rollback',
+			getHostPid: () => (runnerAttached ? 28_282 : null),
+		});
 
 		let thrownError: unknown;
 		try {
@@ -786,7 +931,6 @@ describe('createToolVm', () => {
 				{
 					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
-					ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 					profile: standardProfile,
 					systemConfig,
 					tcpSlot: 0,
@@ -805,6 +949,12 @@ describe('createToolVm', () => {
 						return managedVm;
 					},
 					closePinnedRealFsRoot,
+					managedVmKillDependencies: createManagedVmKillDependencies({
+						isProcessAlive: () => runnerAttached,
+						killProcess: (_pid, _signal) => {
+							runnerAttached = false;
+						},
+					}),
 					pinRealFsRoot: createPinnedRealFsRoot,
 				},
 			);
@@ -818,43 +968,19 @@ describe('createToolVm', () => {
 			expect.objectContaining({
 				message: expect.stringMatching(/Failed to install Tool VM mediated secret placeholders/u),
 			}),
-			expect.objectContaining({ message: expect.stringMatching(/incomplete/u) }),
+			expect.objectContaining({
+				cause: closeError,
+				message: expect.stringMatching(/controller-managed termination.*not proven complete/iu),
+			}),
 		]);
+		expect(aggregateError.cause).toBe(aggregateError.errors[0]);
 		expect(closeMock).toHaveBeenCalledOnce();
 		expect(closePinnedRealFsRoot).toHaveBeenCalledOnce();
 	});
 
 	it('mounts zone Git leases at /zone and /agent-vm/zone-git', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
-		const managedVm = {
-			close: async () => createCompleteVmDestroyReceipt(),
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({
-				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-				host: '127.0.0.1',
-				port: 19000,
-			}),
-			exec,
-			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
-			getHostPid: () => null,
-			getVmInstance: () => ({
-				close: async () => createCompleteVmDestroyReceipt(),
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec: () => createManagedExecProcessStub(),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
-				id: 'vm-instance',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+		const managedVm = createManagedVmStub({ exec, getHostPid: () => null });
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
 			capturedCreateVmOptions = createVmOptions;
@@ -880,7 +1006,6 @@ describe('createToolVm', () => {
 			{
 				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
-				ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -958,7 +1083,6 @@ describe('createToolVm', () => {
 				{
 					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
-					ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 					profile: standardProfile,
 					systemConfig,
 					tcpSlot: 0,
@@ -984,35 +1108,7 @@ describe('createToolVm', () => {
 	});
 
 	it('persists tool writes through the RealFS /workspace backing directory', async () => {
-		const managedVm = {
-			close: async () => createCompleteVmDestroyReceipt(),
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({
-				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-				host: '127.0.0.1',
-				port: 19000,
-			}),
-			exec: () => createManagedExecProcessStub(),
-			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
-			getHostPid: () => null,
-			getVmInstance: () => ({
-				close: async () => createCompleteVmDestroyReceipt(),
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec: () => createManagedExecProcessStub(),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
-				id: 'vm-instance',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+		const managedVm = createManagedVmStub({ getHostPid: () => null });
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
@@ -1028,7 +1124,6 @@ describe('createToolVm', () => {
 			{
 				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
-				ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -1069,35 +1164,7 @@ describe('createToolVm', () => {
 
 	it('creates the tool VM without running redundant runtime setup commands', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
-		const managedVm = {
-			close: async () => createCompleteVmDestroyReceipt(),
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({
-				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-				host: '127.0.0.1',
-				port: 19000,
-			}),
-			exec,
-			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
-			getHostPid: () => null,
-			getVmInstance: () => ({
-				close: async () => createCompleteVmDestroyReceipt(),
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec: () => createManagedExecProcessStub(),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
-				id: 'vm-instance',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+		const managedVm = createManagedVmStub({ exec, getHostPid: () => null });
 
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
@@ -1118,7 +1185,6 @@ describe('createToolVm', () => {
 			{
 				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
-				ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -1139,39 +1205,12 @@ describe('createToolVm', () => {
 			buildConfigPath: '/project/vm-images/tool-vms/default/build-config.json',
 			cacheDir: path.join(systemConfig.cacheDir, 'tool-vm-images', 'default'),
 		});
-		expect(exec).not.toHaveBeenCalled();
+		expect(exec).toHaveBeenCalledOnce();
+		expect(exec).toHaveBeenCalledWith('rm -f /etc/ssh/ssh_host_*');
 	});
 
 	it('uses a prepared Tool VM image record without rebuilding Gondolin assets', async () => {
-		const managedVm = {
-			close: async () => createCompleteVmDestroyReceipt(),
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({
-				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-				host: '127.0.0.1',
-				port: 19000,
-			}),
-			exec: () => createManagedExecProcessStub(),
-			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createToolVmDestroyTarget('managed-vm'),
-			getHostPid: () => null,
-			getVmInstance: () => ({
-				close: async () => createCompleteVmDestroyReceipt(),
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 19000,
-				}),
-				exec: () => createManagedExecProcessStub(),
-				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createToolVmDestroyTarget('vm-instance'),
-				id: 'vm-instance',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+		const managedVm = createManagedVmStub({ getHostPid: () => null });
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
@@ -1202,7 +1241,6 @@ describe('createToolVm', () => {
 			{
 				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
-				ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
@@ -1243,7 +1281,6 @@ describe('createToolVm', () => {
 				{
 					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
-					ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),
 					systemConfig,
@@ -1289,7 +1326,6 @@ describe('createToolVm', () => {
 				{
 					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
-					ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),
 					systemConfig,
@@ -1338,7 +1374,6 @@ describe('createToolVm', () => {
 				{
 					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
-					ownershipReservation: TEST_TOOL_VM_OWNERSHIP_RESERVATION,
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),
 					systemConfig,

@@ -9,16 +9,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { createSecretResolverFromSystemConfig } from '../controller/controller-runtime-support.js';
-import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
+import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
-	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 
 type FakeManagedVmInstance = ManagedVmInstance & {
@@ -33,19 +30,21 @@ type FakeManagedVmInstance = ManagedVmInstance & {
 
 function createFakeManagedVmInstance(): FakeManagedVmInstance {
 	return {
-		close: async () => createCompleteVmDestroyReceipt('gateway-secret-resolution-smoke-vm'),
+		close: async () => {},
 		exec: () => createManagedExecProcessStub(),
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
+			close: async () => {},
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh fake',
 			host: '127.0.0.1',
+			identityFile: '/tmp/fake-key',
 			port: 2222,
 			privateKeyPath: '/tmp/fake-key',
 			user: 'root',
 		}),
 		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => createTestVmDestroyTarget('gateway-secret-resolution-smoke-vm'),
+		getHostPid: () => 12_345,
 		id: 'gateway-secret-resolution-smoke-vm',
 		server: {
 			controller: {
@@ -55,6 +54,7 @@ function createFakeManagedVmInstance(): FakeManagedVmInstance {
 			},
 		},
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
@@ -62,37 +62,42 @@ function createFakeManagedVm(): ManagedVm {
 	const fakeVmInstance = createFakeManagedVmInstance();
 	return {
 		id: 'gateway-secret-resolution-smoke-vm',
-		close: async () => createCompleteVmDestroyReceipt('gateway-secret-resolution-smoke-vm'),
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+		close: async () => {},
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
+			close: async () => {},
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh fake',
 			host: '127.0.0.1',
+			identityFile: '/tmp/fake-key',
 			port: 2222,
 			privateKeyPath: '/tmp/fake-key',
 			user: 'root',
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => createTestVmDestroyTarget('gateway-secret-resolution-smoke-vm'),
 		getHostPid: () => 12_345,
 		getVmInstance: () => fakeVmInstance,
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
-function createExactVmOwnershipStub(vmId: string): VmCreationOwnership {
-	const ownershipReservation = createTestVmOwnershipReservationReference(vmId);
+function createExactVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: 'worker-secret-smoke',
+		controllerEpoch: 'controller-secret-smoke',
+		gatewayEpochId: 'gateway-secret-smoke',
+		generationId: 'generation-secret-smoke',
+		zoneId: 'secret-smoke',
+	};
+	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
 	return {
-		ownershipReservation,
-		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId),
-		destroyLive: async (closeLiveVm) => {
-			const receipt = await closeLiveVm();
-			if (receipt.vmId !== vmId || receipt.reservationId !== ownershipReservation.reservationId) {
-				throw new Error(`Expected exact destruction receipt for VM '${vmId}'.`);
-			}
-			return receipt;
-		},
+		attachGatewayVm: () => gatewayIdentity,
+		containPendingCreate: async () => {},
+		destroyLive: async (destroyVm) => await destroyVm(),
+		gatewayIdentity,
+		gatewaySeed,
 	};
 }
 

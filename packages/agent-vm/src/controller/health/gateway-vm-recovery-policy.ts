@@ -11,6 +11,8 @@ export type GatewayVmRecoveryReason = GatewayRecoveryHealthReason;
 export type GatewayVmRecoveryBudgetClass = 'gateway-vm-cold-start' | 'gateway-vm-restart';
 export type GatewayVmRecoveryCorroborationState = 'connected' | 'recovery-due' | 'within-grace';
 
+export const GATEWAY_VM_RECOVERY_STABILITY_OBSERVATIONS = 3;
+
 export interface GatewayVmAutoRecoveryPolicy {
 	readonly channelProviderHealth?: GatewayVmChannelProviderRecoveryPolicy | undefined;
 	readonly consecutiveFailureThreshold: number;
@@ -82,6 +84,7 @@ export type GatewayVmRecoveryDecision =
 				| 'in-flight'
 				| 'missing-source-key'
 				| 'needs-corroboration'
+				| 'stabilizing'
 				| 'unobserved'
 				| 'within-grace'
 				| undefined;
@@ -96,6 +99,7 @@ export type GatewayVmRecoveryDecision =
 			readonly consecutiveFailedRecoveries: number;
 			readonly consecutiveFailures: number;
 			readonly kind: 'suspended';
+			readonly outwardEscalationRequired: boolean;
 			readonly reason: 'max-failed-recoveries';
 			readonly zoneId: string;
 	  };
@@ -112,6 +116,10 @@ export interface GatewayVmRecoveryTracker {
 	readonly recordGatewayServiceProbe: (
 		observation: GatewayVmRecoveryObservation,
 	) => GatewayVmRecoveryDecision;
+	readonly recordGatewaySourceChange: (event: {
+		readonly sourceKey: GatewayVmRecoverySourceKey;
+		readonly zoneId: string;
+	}) => void;
 }
 
 interface GatewayVmRecoveryTrackerState {
@@ -124,17 +132,28 @@ interface GatewayVmRecoveryTrackerState {
 	gatewayServiceLastFailureAtMs: number | undefined;
 	recoveryBudgets: Record<GatewayVmRecoveryBudgetClass, GatewayVmRecoveryBudgetState>;
 	recoveryInFlight: boolean;
+	stabilizingRecovery: StabilizingGatewayVmRecovery | undefined;
 }
 
 interface GatewayVmRecoveryBudgetState {
 	consecutiveFailedRecoveries: number;
 	lastRecoveryAttemptAtMs: number | undefined;
+	operatorEscalationEmitted: boolean;
+}
+
+interface StabilizingGatewayVmRecovery {
+	boundSourceKey: string | undefined;
+	controlSessionHealthyObservations: number;
+	recoveryBudgetClass: GatewayVmRecoveryBudgetClass;
+	serviceHealthyObservations: number;
+	startedAtMs: number;
 }
 
 function createInitialGatewayVmRecoveryBudgetState(): GatewayVmRecoveryBudgetState {
 	return {
 		consecutiveFailedRecoveries: 0,
 		lastRecoveryAttemptAtMs: undefined,
+		operatorEscalationEmitted: false,
 	};
 }
 
@@ -151,6 +170,7 @@ const createInitialGatewayVmRecoveryTrackerState = (): GatewayVmRecoveryTrackerS
 		'gateway-vm-restart': createInitialGatewayVmRecoveryBudgetState(),
 	},
 	recoveryInFlight: false,
+	stabilizingRecovery: undefined,
 });
 
 function recoveryBudgetClassForEvent(
@@ -201,6 +221,7 @@ function resetFailedRecoveriesIfSuspensionExpired(
 		observedAtMs - budgetState.lastRecoveryAttemptAtMs >= policy.failedRecoveryResetMs
 	) {
 		budgetState.consecutiveFailedRecoveries = 0;
+		budgetState.operatorEscalationEmitted = false;
 	}
 }
 
@@ -224,10 +245,35 @@ function recordGatewayRecoverySource(
 		state.gatewayControlSessionConsecutiveFailures = 0;
 		state.gatewayControlSessionRecoveryDue = false;
 		state.gatewayControlSessionRecoveryDueAtMs = undefined;
-		state.gatewayServiceConsecutiveFailures = 0;
-		state.gatewayServiceLastFailureAtMs = undefined;
 	}
 	state.gatewayRecoverySourceKey = serializedSourceKey;
+	const stabilizingRecovery = state.stabilizingRecovery;
+	if (stabilizingRecovery !== undefined && stabilizingRecovery.boundSourceKey === undefined) {
+		stabilizingRecovery.boundSourceKey = serializedSourceKey;
+	}
+}
+
+function maybeFinishGatewayRecoveryStabilization(props: {
+	readonly observedAtMs: number;
+	readonly policy: GatewayVmAutoRecoveryPolicy;
+	readonly state: GatewayVmRecoveryTrackerState;
+}): void {
+	const stabilizingRecovery = props.state.stabilizingRecovery;
+	if (
+		stabilizingRecovery === undefined ||
+		stabilizingRecovery.boundSourceKey === undefined ||
+		stabilizingRecovery.controlSessionHealthyObservations <
+			GATEWAY_VM_RECOVERY_STABILITY_OBSERVATIONS ||
+		stabilizingRecovery.serviceHealthyObservations < GATEWAY_VM_RECOVERY_STABILITY_OBSERVATIONS ||
+		props.observedAtMs - stabilizingRecovery.startedAtMs < props.policy.restartTimeoutMs
+	) {
+		return;
+	}
+	const budgetState = props.state.recoveryBudgets[stabilizingRecovery.recoveryBudgetClass];
+	budgetState.consecutiveFailedRecoveries = 0;
+	budgetState.lastRecoveryAttemptAtMs = props.observedAtMs;
+	budgetState.operatorEscalationEmitted = false;
+	props.state.stabilizingRecovery = undefined;
 }
 
 function gatewayRecoveryCorroborationWindowMs(policy: GatewayVmAutoRecoveryPolicy): number {
@@ -261,6 +307,9 @@ function decideRecovery(props: {
 	if (props.state.recoveryInFlight) {
 		return { consecutiveFailures: props.consecutiveFailures, kind: 'none', reason: 'in-flight' };
 	}
+	if (props.state.stabilizingRecovery !== undefined) {
+		return { consecutiveFailures: props.consecutiveFailures, kind: 'none', reason: 'stabilizing' };
+	}
 	if (props.consecutiveFailures < props.policy.consecutiveFailureThreshold) {
 		return { consecutiveFailures: props.consecutiveFailures, kind: 'none' };
 	}
@@ -270,10 +319,13 @@ function decideRecovery(props: {
 	}
 	resetFailedRecoveriesIfSuspensionExpired(budgetState, props.policy, props.observedAtMs);
 	if (hasActiveRecoverySuspension(budgetState, props.policy, props.observedAtMs)) {
+		const outwardEscalationRequired = !budgetState.operatorEscalationEmitted;
+		budgetState.operatorEscalationEmitted = true;
 		return {
 			consecutiveFailedRecoveries: budgetState.consecutiveFailedRecoveries,
 			consecutiveFailures: props.consecutiveFailures,
 			kind: 'suspended',
+			outwardEscalationRequired,
 			reason: 'max-failed-recoveries',
 			zoneId: props.zoneId,
 		};
@@ -385,25 +437,27 @@ export function createGatewayVmRecoveryTracker(
 			const state = getStateForZone(event.zoneId);
 			state.recoveryInFlight = false;
 			if (event.result === 'ok') {
-				state.agentChannelProviderConsecutiveFailuresById.clear();
-				state.gatewayControlSessionConsecutiveFailures = 0;
-				state.gatewayControlSessionRecoveryDue = false;
-				state.gatewayRecoverySourceKey = undefined;
-				state.gatewayServiceConsecutiveFailures = 0;
-				for (const budgetState of Object.values(state.recoveryBudgets)) {
-					budgetState.consecutiveFailedRecoveries = 0;
-				}
+				state.stabilizingRecovery = {
+					boundSourceKey: undefined,
+					controlSessionHealthyObservations: 0,
+					recoveryBudgetClass: recoveryBudgetClassForEvent(event),
+					serviceHealthyObservations: 0,
+					startedAtMs: event.observedAtMs,
+				};
 				return;
 			}
 			if (event.result === 'failed') {
-				state.recoveryBudgets[recoveryBudgetClassForEvent(event)].consecutiveFailedRecoveries += 1;
+				const budgetState = state.recoveryBudgets[recoveryBudgetClassForEvent(event)];
+				budgetState.consecutiveFailedRecoveries += 1;
+				budgetState.lastRecoveryAttemptAtMs = event.observedAtMs;
 			}
 		},
 		markRecoveryStarted(event): void {
 			const state = getStateForZone(event.zoneId);
-			state.recoveryBudgets[recoveryBudgetClassForEvent(event)].lastRecoveryAttemptAtMs =
-				event.observedAtMs;
 			state.recoveryInFlight = true;
+		},
+		recordGatewaySourceChange(event): void {
+			recordGatewayRecoverySource(getStateForZone(event.zoneId), event.sourceKey);
 		},
 		recordAgentChannelProviderObservation(observation): GatewayVmRecoveryDecision {
 			const channelProviderPolicy =
@@ -469,9 +523,23 @@ export function createGatewayVmRecoveryTracker(
 				if (observation.sourceKey !== undefined) {
 					recordGatewayRecoverySource(state, observation.sourceKey);
 				}
+				if (
+					state.stabilizingRecovery !== undefined &&
+					state.stabilizingRecovery.boundSourceKey === state.gatewayRecoverySourceKey
+				) {
+					state.stabilizingRecovery.controlSessionHealthyObservations += 1;
+					maybeFinishGatewayRecoveryStabilization({
+						observedAtMs: observation.observedAtMs,
+						policy: options.policy,
+						state,
+					});
+				}
 				return { consecutiveFailures: 0, kind: 'none' };
 			}
 			if (isDegradedObservation(observation.result)) {
+				if (state.stabilizingRecovery !== undefined) {
+					state.stabilizingRecovery.controlSessionHealthyObservations = 0;
+				}
 				if (observation.sourceKey === undefined) {
 					return {
 						consecutiveFailures: state.gatewayControlSessionConsecutiveFailures,
@@ -509,9 +577,26 @@ export function createGatewayVmRecoveryTracker(
 			if (isHealthyObservation(observation.result)) {
 				state.gatewayServiceConsecutiveFailures = 0;
 				state.gatewayServiceLastFailureAtMs = undefined;
+				if (observation.sourceKey !== undefined) {
+					recordGatewayRecoverySource(state, observation.sourceKey);
+				}
+				if (
+					state.stabilizingRecovery !== undefined &&
+					state.stabilizingRecovery.boundSourceKey === state.gatewayRecoverySourceKey
+				) {
+					state.stabilizingRecovery.serviceHealthyObservations += 1;
+					maybeFinishGatewayRecoveryStabilization({
+						observedAtMs: observation.observedAtMs,
+						policy: options.policy,
+						state,
+					});
+				}
 				return { consecutiveFailures: 0, kind: 'none' };
 			}
 			if (isDegradedObservation(observation.result)) {
+				if (state.stabilizingRecovery !== undefined) {
+					state.stabilizingRecovery.serviceHealthyObservations = 0;
+				}
 				state.gatewayServiceConsecutiveFailures += 1;
 				state.gatewayServiceLastFailureAtMs = observation.observedAtMs;
 			}

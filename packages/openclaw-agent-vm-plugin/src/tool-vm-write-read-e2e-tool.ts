@@ -1,5 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+import {
+	AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV,
+	GATEWAY_CONTROL_ADMISSION_PRESSURE_BATCH_LIMIT,
+	getGatewayControlAdmissionPressureE2eActuator,
+} from './gateway-control-service/gateway-control-admission-pressure-e2e-testing.js';
 import type {
 	OpenClawHttpRouteRegistrationApi,
 	OpenClawPluginToolContext,
@@ -9,14 +14,13 @@ import type { createGondolinSandboxBackendFactory } from './sandbox-backend-fact
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV = 'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE';
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV =
 	'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY';
-export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV =
-	'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID';
-export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV =
-	'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY';
+export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV =
+	'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES';
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH = '/__agent-vm/e2e/tool-vm-write-read';
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER =
 	'x-agent-vm-e2e-tool-vm-write-read-signature';
 const maxRouteBodyBytes = 16 * 1024;
+const maxConfiguredProbeIdentities = 4;
 const proofFilePathPrefix = '.agent-vm/';
 
 type GondolinSandboxBackendFactory = ReturnType<typeof createGondolinSandboxBackendFactory>;
@@ -33,6 +37,14 @@ type ToolVmWriteReadE2eRouteParams =
 			readonly agentId: string;
 			readonly filePath: string;
 			readonly marker: string;
+			readonly scenario: 'active-operation-containment';
+			readonly sentinelFilePath: string;
+			readonly sessionKey: string;
+	  }
+	| {
+			readonly agentId: string;
+			readonly filePath: string;
+			readonly marker: string;
 			readonly scenario: 'write-read';
 			readonly sessionKey: string;
 	  }
@@ -44,6 +56,36 @@ type ToolVmWriteReadE2eRouteParams =
 			readonly secondFilePath: string;
 			readonly secondMarker: string;
 			readonly sessionKey: string;
+	  };
+
+type ControlAdmissionPressureRouteParams =
+	| {
+			readonly action: 'snapshot';
+			readonly attachmentGeneration: number;
+			readonly scenario: 'control-admission-pressure';
+	  }
+	| {
+			readonly action: 'hold';
+			readonly attachmentGeneration: number;
+			readonly direction: 'egress' | 'ingress';
+			readonly messageClass: 'diagnostic' | 'liveness';
+			readonly scenario: 'control-admission-pressure';
+	  }
+	| {
+			readonly action: 'submitBatch';
+			readonly attachmentGeneration: number;
+			readonly batchSize: number;
+			readonly byteLength: number;
+			readonly coalesceKeyPrefix: string;
+			readonly direction: 'egress' | 'ingress';
+			readonly messageClass: 'diagnostic' | 'liveness';
+			readonly scenario: 'control-admission-pressure';
+	  }
+	| {
+			readonly action: 'release';
+			readonly attachmentGeneration: number;
+			readonly holdId: string;
+			readonly scenario: 'control-admission-pressure';
 	  };
 
 interface ToolVmWriteReadE2eProbeStepDetails {
@@ -134,28 +176,66 @@ function resolveProbeAgentIdFromSessionKey(sessionKey: string): string {
 	return match[1];
 }
 
-function readConfiguredProbeIdentityFromEnv(): ConfiguredToolVmWriteReadE2eProbeIdentity {
-	const agentId = process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV];
-	if (agentId === undefined || agentId.length === 0) {
+function readConfiguredProbeIdentitiesFromEnv(): readonly ConfiguredToolVmWriteReadE2eProbeIdentity[] {
+	const serializedIdentities = process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV];
+	if (serializedIdentities === undefined || serializedIdentities.length === 0) {
 		throw new Error(
-			`tool-vm-write-read-e2e: ${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV} is required.`,
+			`tool-vm-write-read-e2e: ${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV} is required.`,
 		);
 	}
-	const sessionKey = process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV];
-	if (sessionKey === undefined || sessionKey.length === 0) {
+	let untrustedIdentities: unknown;
+	try {
+		untrustedIdentities = JSON.parse(serializedIdentities);
+	} catch {
+		throw new Error('tool-vm-write-read-e2e: configured identity set must be valid JSON.');
+	}
+	if (
+		!Array.isArray(untrustedIdentities) ||
+		untrustedIdentities.length < 1 ||
+		untrustedIdentities.length > maxConfiguredProbeIdentities
+	) {
 		throw new Error(
-			`tool-vm-write-read-e2e: ${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV} is required.`,
+			`tool-vm-write-read-e2e: configured identity set must contain between 1 and ${String(maxConfiguredProbeIdentities)} entries.`,
 		);
 	}
-	if (resolveProbeAgentIdFromSessionKey(sessionKey) !== agentId) {
-		throw new Error(
-			'tool-vm-write-read-e2e: configured probe session key does not match configured agent id.',
-		);
+	const identities: ConfiguredToolVmWriteReadE2eProbeIdentity[] = [];
+	const identityTuples = new Set<string>();
+	for (const [identityIndex, untrustedIdentity] of untrustedIdentities.entries()) {
+		if (
+			!isObjectRecord(untrustedIdentity) ||
+			Object.keys(untrustedIdentity).toSorted().join(',') !== 'agentId,sessionKey' ||
+			typeof untrustedIdentity.agentId !== 'string' ||
+			untrustedIdentity.agentId.length === 0 ||
+			typeof untrustedIdentity.sessionKey !== 'string' ||
+			untrustedIdentity.sessionKey.length === 0
+		) {
+			throw new Error(
+				`tool-vm-write-read-e2e: configured identity set entry ${String(identityIndex)} must contain only non-empty agentId and sessionKey strings.`,
+			);
+		}
+		if (
+			resolveProbeAgentIdFromSessionKey(untrustedIdentity.sessionKey) !== untrustedIdentity.agentId
+		) {
+			throw new Error(
+				'tool-vm-write-read-e2e: configured probe session key does not match configured agent id.',
+			);
+		}
+		const identityTuple = `${untrustedIdentity.agentId}\0${untrustedIdentity.sessionKey}`;
+		if (identityTuples.has(identityTuple)) {
+			throw new Error(
+				'tool-vm-write-read-e2e: configured identity set contains a duplicate tuple.',
+			);
+		}
+		identityTuples.add(identityTuple);
+		identities.push({
+			agentId: untrustedIdentity.agentId,
+			sessionKey: untrustedIdentity.sessionKey,
+		});
 	}
-	return { agentId, sessionKey };
+	return identities;
 }
 
-function normalizeProofFilePath(filePath: string): string {
+function normalizeProofFilePath(filePath: string, fieldName = 'filePath'): string {
 	if (
 		filePath.startsWith('/') ||
 		filePath.includes('\0') ||
@@ -163,7 +243,7 @@ function normalizeProofFilePath(filePath: string): string {
 		!filePath.startsWith(proofFilePathPrefix)
 	) {
 		throw new ToolVmWriteReadE2eRouteError(
-			`tool-vm-write-read-e2e: filePath must stay under ${proofFilePathPrefix}.`,
+			`tool-vm-write-read-e2e: ${fieldName} must stay under ${proofFilePathPrefix}.`,
 			400,
 		);
 	}
@@ -213,7 +293,7 @@ function readProbeStepParams(options: {
 
 function readRouteParams(
 	params: unknown,
-	probeIdentity: ConfiguredToolVmWriteReadE2eProbeIdentity,
+	probeIdentities: readonly ConfiguredToolVmWriteReadE2eProbeIdentity[],
 ): ToolVmWriteReadE2eRouteParams {
 	if (!isObjectRecord(params)) {
 		throw new Error('tool-vm-write-read-e2e: request body must be an object.');
@@ -225,29 +305,15 @@ function readRouteParams(
 		throw new Error('tool-vm-write-read-e2e: agentId must be a string when provided.');
 	}
 	const probeParams = readProbeParams(params);
-	if (
-		params.agentId !== undefined &&
-		params.sessionKey !== undefined &&
-		params.agentId !== resolveProbeAgentIdFromSessionKey(params.sessionKey)
-	) {
-		throw new ToolVmWriteReadE2eRouteError(
-			'tool-vm-write-read-e2e: body agentId does not match sessionKey agent.',
-			403,
-		);
-	}
-	if (
-		(params.agentId !== undefined && params.agentId !== probeIdentity.agentId) ||
-		(params.sessionKey !== undefined && params.sessionKey !== probeIdentity.sessionKey)
-	) {
-		throw new ToolVmWriteReadE2eRouteError(
-			'tool-vm-write-read-e2e: request identity does not match the configured probe identity.',
-			403,
-		);
-	}
+	const probeIdentity = resolveConfiguredProbeIdentity(params, probeIdentities);
 	const scenario = params.scenario === undefined ? 'write-read' : params.scenario;
-	if (scenario !== 'write-read' && scenario !== 'stale-reacquire') {
+	if (
+		scenario !== 'write-read' &&
+		scenario !== 'stale-reacquire' &&
+		scenario !== 'active-operation-containment'
+	) {
 		throw new ToolVmWriteReadE2eRouteError(
-			'tool-vm-write-read-e2e: scenario must be write-read or stale-reacquire.',
+			'tool-vm-write-read-e2e: scenario must be write-read, stale-reacquire, active-operation-containment, or control-admission-pressure.',
 			400,
 		);
 	}
@@ -257,6 +323,35 @@ function readRouteParams(
 			filePath: probeParams.filePath,
 			marker: probeParams.marker,
 			scenario,
+			sessionKey: probeIdentity.sessionKey,
+		};
+	}
+	if (scenario === 'active-operation-containment') {
+		if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(probeParams.marker)) {
+			throw new ToolVmWriteReadE2eRouteError(
+				'tool-vm-write-read-e2e: active-operation marker must be a bounded token.',
+				400,
+			);
+		}
+		if (typeof params.sentinelFilePath !== 'string' || params.sentinelFilePath.length === 0) {
+			throw new ToolVmWriteReadE2eRouteError(
+				'tool-vm-write-read-e2e: sentinelFilePath is required for active-operation-containment.',
+				400,
+			);
+		}
+		const sentinelFilePath = normalizeProofFilePath(params.sentinelFilePath, 'sentinelFilePath');
+		if (sentinelFilePath === probeParams.filePath) {
+			throw new ToolVmWriteReadE2eRouteError(
+				'tool-vm-write-read-e2e: sentinelFilePath must differ from filePath.',
+				400,
+			);
+		}
+		return {
+			agentId: probeIdentity.agentId,
+			filePath: probeParams.filePath,
+			marker: probeParams.marker,
+			scenario,
+			sentinelFilePath,
 			sessionKey: probeIdentity.sessionKey,
 		};
 	}
@@ -274,6 +369,165 @@ function readRouteParams(
 		secondMarker: secondProbeParams.marker,
 		sessionKey: probeIdentity.sessionKey,
 	};
+}
+
+function resolveConfiguredProbeIdentity(
+	params: Readonly<Record<string, unknown>>,
+	probeIdentities: readonly ConfiguredToolVmWriteReadE2eProbeIdentity[],
+): ConfiguredToolVmWriteReadE2eProbeIdentity {
+	let probeIdentity: ConfiguredToolVmWriteReadE2eProbeIdentity | undefined;
+	if (
+		params.agentId === undefined &&
+		params.sessionKey === undefined &&
+		probeIdentities.length === 1
+	) {
+		probeIdentity = probeIdentities[0];
+	} else if (typeof params.agentId === 'string' && typeof params.sessionKey === 'string') {
+		if (params.agentId !== resolveProbeAgentIdFromSessionKey(params.sessionKey)) {
+			throw new ToolVmWriteReadE2eRouteError(
+				'tool-vm-write-read-e2e: body agentId does not match sessionKey agent.',
+				403,
+			);
+		}
+		probeIdentity = probeIdentities.find(
+			(candidate) =>
+				candidate.agentId === params.agentId && candidate.sessionKey === params.sessionKey,
+		);
+	}
+	if (probeIdentity === undefined) {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: request identity does not match the configured probe identity set.',
+			403,
+		);
+	}
+	return probeIdentity;
+}
+
+function requireControlAdmissionPressureInteger(
+	params: Readonly<Record<string, unknown>>,
+	fieldName: 'attachmentGeneration' | 'batchSize' | 'byteLength',
+): number {
+	const value = params[fieldName];
+	if (!Number.isSafeInteger(value) || typeof value !== 'number' || value <= 0) {
+		throw new ToolVmWriteReadE2eRouteError(
+			`tool-vm-write-read-e2e: ${fieldName} must be a positive safe integer.`,
+			400,
+		);
+	}
+	return value;
+}
+
+function readControlAdmissionPressureRouteParams(
+	params: Readonly<Record<string, unknown>>,
+	probeIdentities: readonly ConfiguredToolVmWriteReadE2eProbeIdentity[],
+): ControlAdmissionPressureRouteParams {
+	resolveConfiguredProbeIdentity(params, probeIdentities);
+	if (process.env[AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV] !== '1') {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: control admission pressure probe is disabled.',
+			404,
+		);
+	}
+	const attachmentGeneration = requireControlAdmissionPressureInteger(
+		params,
+		'attachmentGeneration',
+	);
+	if (params.action === 'snapshot') {
+		return { action: 'snapshot', attachmentGeneration, scenario: 'control-admission-pressure' };
+	}
+	if (params.action === 'release') {
+		if (typeof params.holdId !== 'string' || params.holdId.length === 0) {
+			throw new ToolVmWriteReadE2eRouteError(
+				'tool-vm-write-read-e2e: holdId is required for control admission release.',
+				400,
+			);
+		}
+		return {
+			action: 'release',
+			attachmentGeneration,
+			holdId: params.holdId,
+			scenario: 'control-admission-pressure',
+		};
+	}
+	if (params.action !== 'hold' && params.action !== 'submitBatch') {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: control admission action must be snapshot, hold, submitBatch, or release.',
+			400,
+		);
+	}
+	if (params.direction !== 'egress' && params.direction !== 'ingress') {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: control admission direction must be egress or ingress.',
+			400,
+		);
+	}
+	if (params.messageClass !== 'diagnostic' && params.messageClass !== 'liveness') {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: control admission messageClass must be diagnostic or liveness.',
+			400,
+		);
+	}
+	if (params.action === 'hold') {
+		return {
+			action: 'hold',
+			attachmentGeneration,
+			direction: params.direction,
+			messageClass: params.messageClass,
+			scenario: 'control-admission-pressure',
+		};
+	}
+	const batchSize = requireControlAdmissionPressureInteger(params, 'batchSize');
+	if (batchSize > GATEWAY_CONTROL_ADMISSION_PRESSURE_BATCH_LIMIT) {
+		throw new ToolVmWriteReadE2eRouteError(
+			`tool-vm-write-read-e2e: batchSize must not exceed ${String(GATEWAY_CONTROL_ADMISSION_PRESSURE_BATCH_LIMIT)}.`,
+			400,
+		);
+	}
+	const byteLength = requireControlAdmissionPressureInteger(params, 'byteLength');
+	if (typeof params.coalesceKeyPrefix !== 'string' || params.coalesceKeyPrefix.length === 0) {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: coalesceKeyPrefix is required for control admission batch.',
+			400,
+		);
+	}
+	return {
+		action: 'submitBatch',
+		attachmentGeneration,
+		batchSize,
+		byteLength,
+		coalesceKeyPrefix: params.coalesceKeyPrefix,
+		direction: params.direction,
+		messageClass: params.messageClass,
+		scenario: 'control-admission-pressure',
+	};
+}
+
+async function runControlAdmissionPressureAction(
+	params: ControlAdmissionPressureRouteParams,
+): Promise<unknown> {
+	const actuator = getGatewayControlAdmissionPressureE2eActuator();
+	if (actuator === undefined) {
+		throw new ToolVmWriteReadE2eRouteError(
+			'tool-vm-write-read-e2e: control admission pressure actuator is unavailable.',
+			503,
+		);
+	}
+	try {
+		switch (params.action) {
+			case 'snapshot':
+				return actuator.snapshot(params.attachmentGeneration);
+			case 'hold':
+				return await actuator.hold(params);
+			case 'submitBatch':
+				return await actuator.submitBatch(params);
+			case 'release':
+				await actuator.release(params);
+				return { released: true };
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new ToolVmWriteReadE2eRouteError(message, message.includes('stale') ? 409 : 500);
+	}
 }
 
 async function readRequestBodyText(request: AsyncIterable<Buffer | string>): Promise<string> {
@@ -403,6 +657,75 @@ async function runToolVmWriteReadE2eProbeStep(options: {
 	};
 }
 
+function buildActiveOperationContainmentScript(params: {
+	readonly filePath: string;
+	readonly marker: string;
+	readonly sentinelFilePath: string;
+	readonly workspaceDirectory: string;
+}): string {
+	const workspaceDirectory = params.workspaceDirectory.replace(/\/$/u, '');
+	return [
+		'set -eu',
+		'umask 077',
+		`proof_file=${shellSingleQuote(`${workspaceDirectory}/${params.filePath}`)}`,
+		`proof_marker=${shellSingleQuote(params.marker)}`,
+		`sentinel_file=${shellSingleQuote(`${workspaceDirectory}/${params.sentinelFilePath}`)}`,
+		'sentinel_temp_file="${sentinel_file}.tmp.$$"',
+		'mkdir -p "$(dirname "$proof_file")" "$(dirname "$sentinel_file")"',
+		'if [ -f "$proof_file" ] && grep -Fqx -- "$proof_marker" "$proof_file"; then',
+		'  printf "%s\\n" "agent-vm-e2e-active-operation: marker replay refused" >&2',
+		'  exit 91',
+		'fi',
+		'test ! -e "$sentinel_file"',
+		'printf "%s\\n" "$proof_marker" >>"$proof_file"',
+		'sync "$proof_file"',
+		'printf "%s\\n" "$proof_marker" >"$sentinel_temp_file"',
+		'sync "$sentinel_temp_file"',
+		'mv "$sentinel_temp_file" "$sentinel_file"',
+		'sync "$sentinel_file"',
+		'while :; do',
+		'  sleep 3600',
+		'done',
+	].join('\n');
+}
+
+function isExpectedActiveOperationConnectionLoss(error: unknown): boolean {
+	const message = errorMessageFromUnknown(error);
+	return sshResetFailureMessageFragments.some((fragment) => message.includes(fragment));
+}
+
+async function runActiveOperationContainmentProbe(options: {
+	readonly context: OpenClawPluginToolContext;
+	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
+	readonly params: {
+		readonly filePath: string;
+		readonly marker: string;
+		readonly sentinelFilePath: string;
+	};
+}): Promise<never> {
+	const backendContext = await createToolVmWriteReadE2eBackend({
+		context: options.context,
+		factoryProvider: options.factoryProvider,
+	});
+	try {
+		await backendContext.backend.runShellCommand({
+			script: buildActiveOperationContainmentScript({
+				...options.params,
+				workspaceDirectory: backendContext.backend.workdir,
+			}),
+		});
+	} catch (error) {
+		if (isExpectedActiveOperationConnectionLoss(error)) {
+			throw new ToolVmWriteReadE2eRouteError(
+				'tool-vm-write-read-e2e: active operation lost its Tool VM connection.',
+				503,
+			);
+		}
+		throw error instanceof Error ? error : new Error(String(error));
+	}
+	throw new Error('tool-vm-write-read-e2e: active operation completed before termination.');
+}
+
 function buildToolVmWriteReadE2eSshResetScript(): string {
 	return [
 		'set -eu',
@@ -529,7 +852,10 @@ export function registerToolVmWriteReadE2eRoute(options: {
 	};
 	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
 }): void {
-	if (process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV] !== '1') {
+	if (
+		process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV] !== '1' &&
+		process.env[AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV] !== '1'
+	) {
 		return;
 	}
 	const proofKey = process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV];
@@ -538,7 +864,7 @@ export function registerToolVmWriteReadE2eRoute(options: {
 			`tool-vm-write-read-e2e: ${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV} is required.`,
 		);
 	}
-	const probeIdentity = readConfiguredProbeIdentityFromEnv();
+	const probeIdentities = readConfiguredProbeIdentitiesFromEnv();
 	const registerHttpRoute = options.api.registerHttpRoute;
 	if (typeof registerHttpRoute !== 'function') {
 		throw new Error('tool-vm-write-read-e2e: OpenClaw did not provide registerHttpRoute.');
@@ -556,10 +882,20 @@ export function registerToolVmWriteReadE2eRoute(options: {
 						AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
 					),
 				});
-				const routeParams = readRouteParams(
-					bodyText.length === 0 ? {} : JSON.parse(bodyText),
-					probeIdentity,
-				);
+				const parsedBody: unknown = bodyText.length === 0 ? {} : JSON.parse(bodyText);
+				const controlAdmissionParams =
+					isObjectRecord(parsedBody) && parsedBody.scenario === 'control-admission-pressure'
+						? readControlAdmissionPressureRouteParams(parsedBody, probeIdentities)
+						: undefined;
+				if (controlAdmissionParams !== undefined) {
+					const details = await runControlAdmissionPressureAction(controlAdmissionParams);
+					response.statusCode = 200;
+					response.setHeader('cache-control', 'no-store');
+					response.setHeader('content-type', 'application/json; charset=utf-8');
+					response.end(JSON.stringify({ details, ok: true }));
+					return true;
+				}
+				const routeParams = readRouteParams(parsedBody, probeIdentities);
 				const context = {
 					agentDir: `/zone/agents/${routeParams.agentId}`,
 					agentId: routeParams.agentId,
@@ -567,22 +903,28 @@ export function registerToolVmWriteReadE2eRoute(options: {
 					workspaceDir: `/zone/agents/${routeParams.agentId}`,
 				} satisfies OpenClawPluginToolContext;
 				const details =
-					routeParams.scenario === 'stale-reacquire'
-						? await runToolVmStaleReacquireE2eProbe({
-								context,
-								factoryProvider: options.factoryProvider,
-								params: {
-									filePath: routeParams.filePath,
-									marker: routeParams.marker,
-									secondFilePath: routeParams.secondFilePath,
-									secondMarker: routeParams.secondMarker,
-								},
-							})
-						: await runToolVmWriteReadE2eProbe({
+					routeParams.scenario === 'active-operation-containment'
+						? await runActiveOperationContainmentProbe({
 								context,
 								factoryProvider: options.factoryProvider,
 								params: routeParams,
-							});
+							})
+						: routeParams.scenario === 'stale-reacquire'
+							? await runToolVmStaleReacquireE2eProbe({
+									context,
+									factoryProvider: options.factoryProvider,
+									params: {
+										filePath: routeParams.filePath,
+										marker: routeParams.marker,
+										secondFilePath: routeParams.secondFilePath,
+										secondMarker: routeParams.secondMarker,
+									},
+								})
+							: await runToolVmWriteReadE2eProbe({
+									context,
+									factoryProvider: options.factoryProvider,
+									params: routeParams,
+								});
 				response.statusCode = 200;
 				response.setHeader('cache-control', 'no-store');
 				response.setHeader('content-type', 'application/json; charset=utf-8');

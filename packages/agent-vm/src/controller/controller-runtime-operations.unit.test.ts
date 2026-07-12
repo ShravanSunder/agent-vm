@@ -156,10 +156,13 @@ describe('createControllerRuntimeOperations', () => {
 		const shravanRuntime = {
 			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
 			enableSsh: vi.fn(async () => ({
+				close: async () => {},
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh shravan',
 				host: '127.0.0.1',
+				identityFile: '/tmp/shravan-identity',
 				port: 22,
+				user: 'root',
 			})),
 			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'shravan' })),
 			getHealth: vi.fn(async () => ({
@@ -195,10 +198,13 @@ describe('createControllerRuntimeOperations', () => {
 				zoneId: 'alevtina',
 			})),
 			enableSsh: vi.fn(async () => ({
+				close: async () => {},
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh alevtina',
 				host: '127.0.0.1',
+				identityFile: '/tmp/alevtina-identity',
 				port: 22,
+				user: 'root',
 			})),
 			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'alevtina' })),
 			getHealth: vi.fn(async () => ({
@@ -278,10 +284,13 @@ describe('createControllerRuntimeOperations', () => {
 		const runtime = {
 			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
 			enableSsh: vi.fn(async () => ({
+				close: async () => {},
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh shravan',
 				host: '127.0.0.1',
+				identityFile: '/tmp/shravan-identity',
 				port: 22,
+				user: 'root',
 			})),
 			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'shravan' })),
 			getHealth: vi.fn(async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' })),
@@ -320,10 +329,13 @@ describe('createControllerRuntimeOperations', () => {
 
 	it('requires the configured zone admin token before enabling SSH', async () => {
 		const enableSsh = vi.fn(async () => ({
+			close: async () => {},
 			command: 'ssh shravan',
 			host: '127.0.0.1',
+			identityFile: '/tmp/shravan-identity',
 			port: 22,
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+			user: 'root',
 		}));
 		const runtime = {
 			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
@@ -409,10 +421,13 @@ describe('createControllerRuntimeOperations', () => {
 		const runtime = {
 			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
 			enableSsh: vi.fn(async () => ({
+				close: async () => {},
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh shravan',
 				host: '127.0.0.1',
+				identityFile: '/tmp/shravan-identity',
 				port: 22,
+				user: 'root',
 			})),
 			exec,
 			getHealth: vi.fn(async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' })),

@@ -1,5 +1,4 @@
 import { execFile, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -53,12 +52,6 @@ export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
 	'@agent-vm/mcp-portal',
 ] as const;
 
-export const GONDOLIN_EXACT_VM_PATCH_PACKAGE_KEY = '@earendil-works/gondolin@0.12.0';
-export const GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH =
-	'patches/@earendil-works__gondolin@0.12.0.patch';
-export const GONDOLIN_EXACT_VM_PATCH_SHA256 =
-	'842d798fa671945669a1a2150ba39bdd04f4d00ec610963b8df397c84ceeba7b';
-
 type AgentVmPackageName = (typeof AGENT_VM_PACKAGE_NAMES)[number];
 
 interface BetaTarballPackageEntry {
@@ -68,15 +61,7 @@ interface BetaTarballPackageEntry {
 	readonly specifier: string;
 }
 
-interface BetaGondolinPatchEntry {
-	readonly overlayFileName: string;
-	readonly packageKey: typeof GONDOLIN_EXACT_VM_PATCH_PACKAGE_KEY;
-	readonly sha256: string;
-	readonly workspaceRelativePath: typeof GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH;
-}
-
 export interface BetaTarballSyncPlan {
-	readonly gondolinPatch: BetaGondolinPatchEntry;
 	readonly gatewayPackages: readonly BetaTarballPackageEntry[];
 	readonly hostPackageSpecifier: string;
 	readonly packages: readonly BetaTarballPackageEntry[];
@@ -87,7 +72,6 @@ export interface BetaTarballSyncPlan {
 
 interface CreateBetaTarballSyncPlanOptions {
 	readonly cacheKey: string;
-	readonly gondolinPatchSha256?: string;
 	readonly tarballDirectoryReference: string;
 	readonly version: string;
 }
@@ -141,7 +125,6 @@ interface ResolvePnpmPackArgsOptions {
 
 interface RefreshBetaDeploymentTarballArtifactsOptions {
 	readonly deploymentDirectory: string;
-	readonly gondolinPatchFilePath: string;
 	readonly managedOpenClawGatewayPackageOverrides: PackageOverrides;
 	readonly plan: BetaTarballSyncPlan;
 	readonly tarballDirectory: string;
@@ -224,12 +207,6 @@ export function createBetaTarballSyncPlan(
 	}
 	return {
 		gatewayPackages,
-		gondolinPatch: {
-			overlayFileName: `agent-vm-gondolin-exact-vm-0.12.0-${(options.gondolinPatchSha256 ?? GONDOLIN_EXACT_VM_PATCH_SHA256).slice(0, 16)}.patch`,
-			packageKey: GONDOLIN_EXACT_VM_PATCH_PACKAGE_KEY,
-			sha256: options.gondolinPatchSha256 ?? GONDOLIN_EXACT_VM_PATCH_SHA256,
-			workspaceRelativePath: GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH,
-		},
 		hostPackageSpecifier: hostPackageEntry.specifier,
 		packages,
 		tarballDirectoryReference: options.tarballDirectoryReference,
@@ -247,11 +224,6 @@ export function renderBetaPnpmWorkspace(options: RenderBetaPnpmWorkspaceOptions)
 		}
 		lines.push('');
 	}
-	lines.push('patchedDependencies:');
-	lines.push(
-		`  '${options.plan.gondolinPatch.packageKey}': ${options.plan.gondolinPatch.workspaceRelativePath}`,
-	);
-	lines.push('');
 	lines.push('overrides:');
 	for (const packageEntry of options.plan.packages) {
 		lines.push(`  '${packageEntry.name}': ${packageEntry.specifier}`);
@@ -324,7 +296,6 @@ function renderLocalPackageManifest(packageEntries: readonly BetaTarballPackageE
 function renderLocalPackageCopyEntries(
 	existingCopyEntries: readonly OverlayCopyEntry[] | undefined,
 	packageEntries: readonly BetaTarballPackageEntry[],
-	gondolinPatch?: BetaGondolinPatchEntry,
 ): readonly OverlayCopyEntry[] {
 	return [
 		...(existingCopyEntries ?? []).filter((copyEntry) => !isAgentVmLocalCopyEntry(copyEntry)),
@@ -332,14 +303,6 @@ function renderLocalPackageCopyEntries(
 			from: `local-agent-vm/${packageEntry.overlayFileName}`,
 			to: `/tmp/${packageEntry.overlayFileName}`,
 		})),
-		...(gondolinPatch
-			? [
-					{
-						from: `local-agent-vm/${gondolinPatch.overlayFileName}`,
-						to: `/tmp/${gondolinPatch.overlayFileName}`,
-					},
-				]
-			: []),
 	];
 }
 
@@ -351,29 +314,19 @@ function renderLocalPackageTarballPaths(
 
 function renderLocalPackageInstallStartCommands(
 	packageEntries: readonly BetaTarballPackageEntry[],
-	gondolinPatch?: BetaGondolinPatchEntry,
 ): readonly string[] {
 	const localPackageManifest = renderLocalPackageManifest(packageEntries);
 	return [
 		'mkdir -p /opt/agent-vm/local-packages',
 		`cat > /opt/agent-vm/local-packages/package.json <<'JSON'\n${localPackageManifest}JSON`,
-		...(gondolinPatch
-			? [
-					`cat > /opt/agent-vm/local-packages/pnpm-workspace.yaml <<'YAML'\npackages: []\n\npatchedDependencies:\n  '${gondolinPatch.packageKey}': /tmp/${gondolinPatch.overlayFileName}\nYAML`,
-				]
-			: []),
 		'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
 	];
 }
 
 function renderLocalPackageCleanupCommand(
 	packageEntries: readonly BetaTarballPackageEntry[],
-	gondolinPatch?: BetaGondolinPatchEntry,
 ): string {
-	const cleanupPaths = [
-		...renderLocalPackageTarballPaths(packageEntries),
-		...(gondolinPatch ? [`/tmp/${gondolinPatch.overlayFileName}`] : []),
-	];
+	const cleanupPaths = renderLocalPackageTarballPaths(packageEntries);
 	return `rm -f ${cleanupPaths.join(' ')}`;
 }
 
@@ -499,18 +452,14 @@ export function renderOpenClawGatewayOverlay(
 	const copyEntries = renderLocalPackageCopyEntries(
 		options.existingOverlay.copy,
 		options.plan.gatewayPackages,
-		options.plan.gondolinPatch,
 	);
 	const runAfterBase = [
 		...(options.existingOverlay.runAfterBase ?? []).filter(
 			(command) => !isAgentVmLocalInstallCommand(command),
 		),
-		...renderLocalPackageInstallStartCommands(
-			options.plan.gatewayPackages,
-			options.plan.gondolinPatch,
-		),
+		...renderLocalPackageInstallStartCommands(options.plan.gatewayPackages),
 		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin "$package_root/@agent-vm/openclaw-agent-vm-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal"',
-		renderLocalPackageCleanupCommand(options.plan.gatewayPackages, options.plan.gondolinPatch),
+		renderLocalPackageCleanupCommand(options.plan.gatewayPackages),
 	];
 	return {
 		...baseOverlay,
@@ -743,44 +692,6 @@ async function pruneStaleLocalOverlayFiles(options: {
 	);
 }
 
-export function calculateGondolinPatchSha256(patchBytes: Uint8Array): string {
-	return createHash('sha256').update(patchBytes).digest('hex');
-}
-
-export function assertGondolinPatchIdentity(patchBytes: Uint8Array, expectedSha256: string): void {
-	const actualSha256 = calculateGondolinPatchSha256(patchBytes);
-	if (actualSha256 !== expectedSha256) {
-		throw new Error(
-			`Gondolin exact-VM patch SHA-256 mismatch: expected ${expectedSha256}, found ${actualSha256}`,
-		);
-	}
-}
-
-async function copyGondolinPatchArtifacts(options: {
-	readonly deploymentDirectory: string;
-	readonly gondolinPatch: BetaGondolinPatchEntry;
-	readonly gondolinPatchFilePath: string;
-	readonly overlayDirectory: string;
-}): Promise<void> {
-	const patchBytes = await readFile(options.gondolinPatchFilePath);
-	assertGondolinPatchIdentity(patchBytes, options.gondolinPatch.sha256);
-	const deploymentPatchPath = path.join(
-		options.deploymentDirectory,
-		options.gondolinPatch.workspaceRelativePath,
-	);
-	const overlayPatchPath = path.join(
-		options.overlayDirectory,
-		'local-agent-vm',
-		options.gondolinPatch.overlayFileName,
-	);
-	await mkdir(path.dirname(deploymentPatchPath), { recursive: true });
-	await mkdir(path.dirname(overlayPatchPath), { recursive: true });
-	await Promise.all([
-		writeFile(deploymentPatchPath, patchBytes),
-		writeFile(overlayPatchPath, patchBytes),
-	]);
-}
-
 export async function refreshBetaDeploymentTarballArtifacts(
 	options: RefreshBetaDeploymentTarballArtifactsOptions,
 ): Promise<void> {
@@ -804,19 +715,12 @@ export async function refreshBetaDeploymentTarballArtifacts(
 		'openclaw',
 	);
 	const overlayPath = path.join(overlayDirectory, 'overlay.jsonc');
-	await copyGondolinPatchArtifacts({
-		deploymentDirectory: options.deploymentDirectory,
-		gondolinPatch: options.plan.gondolinPatch,
-		gondolinPatchFilePath: options.gondolinPatchFilePath,
-		overlayDirectory,
-	});
 	await copyOverlayPackageTarballs({
 		overlayDirectory,
 		packageEntries: options.plan.gatewayPackages,
 		tarballDirectory: options.tarballDirectory,
 	});
 	await pruneStaleLocalOverlayFiles({
-		additionalCurrentFileNames: [options.plan.gondolinPatch.overlayFileName],
 		overlayDirectory,
 		packageEntries: options.plan.gatewayPackages,
 	});
@@ -881,10 +785,6 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 
 	await refreshBetaDeploymentTarballArtifacts({
 		deploymentDirectory: options.deploymentDirectory,
-		gondolinPatchFilePath: path.join(
-			options.repositoryDirectory,
-			GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH,
-		),
 		managedOpenClawGatewayPackageOverrides,
 		plan,
 		tarballDirectory,

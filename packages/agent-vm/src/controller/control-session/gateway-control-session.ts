@@ -92,9 +92,13 @@ export interface ConnectGatewayControlSessionOptions {
 	readonly endpoint: ControlSessionEndpoint;
 	readonly fetchImpl?: typeof fetch;
 	readonly material: GatewayControlSessionMaterial;
+	readonly onAttemptOutcome?: GatewayDisposableControlSessionClientOptions['onAttemptOutcome'];
+	readonly onAttachmentGap?: GatewayDisposableControlSessionClientOptions['onAttachmentGap'];
+	readonly onReconnectExhausted?: GatewayDisposableControlSessionClientOptions['onReconnectExhausted'];
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly resolveInboundStablePrincipal?: GatewayDisposableControlSessionClientOptions['resolveInboundStablePrincipal'];
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
+	readonly signal?: AbortSignal;
 }
 
 const attachmentGenerationByGatewayEpoch = new Map<string, number>();
@@ -137,6 +141,21 @@ export function createGatewayControlSessionMaterial(
 		privateKey,
 		verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
 		zoneId: options.zoneId,
+	};
+}
+
+export function deriveGatewayControlSessionMaterialForProcess(
+	currentMaterial: GatewayControlSessionMaterial,
+	selectedProcessEpoch: string,
+): GatewayControlSessionMaterial {
+	if (selectedProcessEpoch.trim() === '' || selectedProcessEpoch === currentMaterial.processEpoch) {
+		throw new Error(
+			'Gateway control selected process epoch must be nonempty and differ from the previous process epoch.',
+		);
+	}
+	return {
+		...currentMaterial,
+		processEpoch: selectedProcessEpoch,
 	};
 }
 
@@ -266,11 +285,19 @@ async function readSafeErrorResponseBody(response: Response): Promise<string | u
 	return trimmed.slice(0, 200);
 }
 
-function buildControlReadyTimeoutSignal(): {
+function buildControlReadyTimeoutSignal(ownerSignal?: AbortSignal): {
 	readonly clear: () => void;
 	readonly signal: AbortSignal;
 } {
 	const abortController = new AbortController();
+	const abortFromOwner = (): void => {
+		abortController.abort(ownerSignal?.reason);
+	};
+	if (ownerSignal?.aborted === true) {
+		abortFromOwner();
+	} else {
+		ownerSignal?.addEventListener('abort', abortFromOwner, { once: true });
+	}
 	const timeout = setTimeout(() => {
 		abortController.abort(
 			new Error(
@@ -282,9 +309,39 @@ function buildControlReadyTimeoutSignal(): {
 	return {
 		clear: () => {
 			clearTimeout(timeout);
+			ownerSignal?.removeEventListener('abort', abortFromOwner);
 		},
 		signal: abortController.signal,
 	};
+}
+
+async function waitForAbortablePromise<TResult>(
+	promise: Promise<TResult>,
+	signal?: AbortSignal,
+): Promise<TResult> {
+	if (signal === undefined) {
+		return await promise;
+	}
+	if (signal.aborted) {
+		throw signal.reason;
+	}
+	return await new Promise<TResult>((resolve, reject) => {
+		const rejectWithSignalReason = (): void => {
+			signal.removeEventListener('abort', rejectWithSignalReason);
+			reject(signal.reason);
+		};
+		signal.addEventListener('abort', rejectWithSignalReason, { once: true });
+		promise.then(
+			(result) => {
+				signal.removeEventListener('abort', rejectWithSignalReason);
+				resolve(result);
+			},
+			(error: unknown) => {
+				signal.removeEventListener('abort', rejectWithSignalReason);
+				reject(error);
+			},
+		);
+	});
 }
 
 export function buildGatewayControlReadyHeaders(options: {
@@ -340,27 +397,42 @@ export function buildGatewayControlHandshakeHeaders(options: {
 }
 
 export async function fetchGatewayControlCredential(
-	options: Pick<ConnectGatewayControlSessionOptions, 'endpoint' | 'fetchImpl' | 'material'>,
+	options: Pick<
+		ConnectGatewayControlSessionOptions,
+		'endpoint' | 'fetchImpl' | 'material' | 'signal'
+	>,
 ): Promise<ControlHandshakeCredential> {
 	const fetchImpl = options.fetchImpl ?? fetch;
-	const readyTimeout = buildControlReadyTimeoutSignal();
-	const response = await fetchImpl(buildReadyUrl(options.endpoint), {
-		headers: {
-			accept: 'application/json',
-			...buildGatewayControlReadyHeaders({ material: options.material }),
-		},
-		method: 'GET',
-		signal: readyTimeout.signal,
-	}).finally(readyTimeout.clear);
-	if (!response.ok) {
-		const responseBody = await readSafeErrorResponseBody(response);
-		throw new Error(
-			`Gateway control readiness failed with HTTP ${String(response.status)} ${response.statusText}${
-				responseBody === undefined ? '' : `: ${responseBody}`
-			}`,
+	const readyTimeout = buildControlReadyTimeoutSignal(options.signal);
+	try {
+		readyTimeout.signal.throwIfAborted();
+		const response = await waitForAbortablePromise(
+			fetchImpl(buildReadyUrl(options.endpoint), {
+				headers: {
+					accept: 'application/json',
+					...buildGatewayControlReadyHeaders({ material: options.material }),
+				},
+				method: 'GET',
+				signal: readyTimeout.signal,
+			}),
+			readyTimeout.signal,
 		);
+		if (!response.ok) {
+			const responseBody = await waitForAbortablePromise(
+				readSafeErrorResponseBody(response),
+				readyTimeout.signal,
+			);
+			throw new Error(
+				`Gateway control readiness failed with HTTP ${String(response.status)} ${response.statusText}${
+					responseBody === undefined ? '' : `: ${responseBody}`
+				}`,
+			);
+		}
+		const responseBody = await waitForAbortablePromise(response.json(), readyTimeout.signal);
+		return ControlHandshakeCredentialSchema.parse(responseBody);
+	} finally {
+		readyTimeout.clear();
 	}
-	return ControlHandshakeCredentialSchema.parse(await response.json());
 }
 
 export async function connectGatewayControlSession(
@@ -375,6 +447,7 @@ export async function connectGatewayControlSession(
 		});
 	};
 	const extraHeaders = await buildHeaders();
+	options.signal?.throwIfAborted();
 	const client = createGatewayDisposableControlSessionClient({
 		endpoint: {
 			host: options.endpoint.host,
@@ -391,6 +464,10 @@ export async function connectGatewayControlSession(
 			zoneId: options.material.zoneId,
 		},
 		nextAttachmentGeneration: () => nextGatewayControlAttachmentGeneration(options.material),
+		...(options.onAttemptOutcome === undefined
+			? {}
+			: { onAttemptOutcome: options.onAttemptOutcome }),
+		...(options.onAttachmentGap === undefined ? {} : { onAttachmentGap: options.onAttachmentGap }),
 		...(options.sessionFenceRegistry === undefined
 			? {}
 			: {
@@ -414,6 +491,9 @@ export async function connectGatewayControlSession(
 		connectTimeoutMs: CONTROL_SESSION_TIMING_MS.connectTimeout,
 		policyByKind: gatewayControlDeliveryPolicyByKind,
 		policyByOperation: gatewayControlDeliveryPolicyByOperation,
+		...(options.onReconnectExhausted === undefined
+			? {}
+			: { onReconnectExhausted: options.onReconnectExhausted }),
 		...(options.processAdmissionCoordinator === undefined
 			? {}
 			: { processAdmissionCoordinator: options.processAdmissionCoordinator }),
@@ -423,7 +503,7 @@ export async function connectGatewayControlSession(
 		refreshExtraHeaders: buildHeaders,
 	});
 	try {
-		await client.ready;
+		await waitForAbortablePromise(client.ready, options.signal);
 		return client;
 	} catch (error) {
 		client.close();

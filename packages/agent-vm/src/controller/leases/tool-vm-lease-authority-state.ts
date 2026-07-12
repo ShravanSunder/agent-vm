@@ -20,7 +20,6 @@ import {
 	stablePrincipalKey,
 	terminalUseTombstoneKey,
 	transitionError,
-	validateExactDestructionReceipt,
 	validateLatestReport,
 	validateRetentionPolicy,
 } from './tool-vm-lease-authority-state-helpers.js';
@@ -176,7 +175,6 @@ export function reduceToolVmLeaseAuthorityState(
 			return replaceLeaf(state, {
 				activeUses: new Map(),
 				compatibility: structuredClone(command.compatibility),
-				destructionIdentity: structuredClone(command.destructionIdentity),
 				kind: 'provisioning',
 				leaseId: command.authority.leaseId,
 				leafGeneration: command.authority.leafGeneration,
@@ -194,12 +192,6 @@ export function reduceToolVmLeaseAuthorityState(
 				return transitionError(
 					'leaf-not-provisioning',
 					`Leaf is '${leaf.kind}' and cannot accept a create result.`,
-				);
-			}
-			if (command.runtimeBinding.vmId !== leaf.destructionIdentity.vmId) {
-				return transitionError(
-					'destruction-receipt-mismatch',
-					'Runtime VM identity does not match the provisional destruction target.',
 				);
 			}
 			return replaceLeaf(state, {
@@ -257,7 +249,6 @@ export function reduceToolVmLeaseAuthorityState(
 			return replaceLeaf(state, {
 				activeUses: leaf.activeUses,
 				compatibility: leaf.compatibility,
-				destructionIdentity: leaf.destructionIdentity,
 				kind: 'current',
 				leaseId: leaf.leaseId,
 				leafGeneration: leaf.leafGeneration,
@@ -636,7 +627,6 @@ export function reduceToolVmLeaseAuthorityState(
 			return replaceLeaf(state, {
 				activeUses: leaf.activeUses,
 				compatibility: leaf.compatibility,
-				destructionIdentity: leaf.destructionIdentity,
 				destructionReason: command.reason,
 				kind: 'destroying',
 				leaseId: leaf.leaseId,
@@ -656,7 +646,6 @@ export function reduceToolVmLeaseAuthorityState(
 			return replaceLeaf(state, {
 				activeUses: leaf.activeUses,
 				compatibility: leaf.compatibility,
-				destructionIdentity: leaf.destructionIdentity,
 				kind: 'owner-unsafe',
 				leaseId: leaf.leaseId,
 				leafGeneration: leaf.leafGeneration,
@@ -676,7 +665,6 @@ export function reduceToolVmLeaseAuthorityState(
 			return replaceLeaf(state, {
 				activeUses: leaf.activeUses,
 				compatibility: leaf.compatibility,
-				destructionIdentity: leaf.destructionIdentity,
 				destructionReason: command.reason,
 				kind: 'destroying',
 				leaseId: leaf.leaseId,
@@ -693,7 +681,16 @@ export function reduceToolVmLeaseAuthorityState(
 			if (leaf.kind !== 'destroying') {
 				return transitionError('leaf-not-destroying', `Leaf is '${leaf.kind}', not destroying.`);
 			}
-			validateExactDestructionReceipt(leaf, command.receipt);
+			if (
+				command.vmId !== undefined &&
+				leaf.runtimeBinding !== undefined &&
+				command.vmId !== leaf.runtimeBinding.vmId
+			) {
+				return transitionError(
+					'lease-identity-mismatch',
+					'Destroyed VM identity does not match the controller runtime binding.',
+				);
+			}
 			if (
 				!state.tombstonesByGeneration.has(leaf.leafGeneration) &&
 				state.tombstonesByGeneration.size >= state.retentionPolicy.maxLeafTombstones

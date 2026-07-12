@@ -13,11 +13,6 @@ import {
 } from '@earendil-works/gondolin';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
-import type {
-	ManagedVmDestroyReceiptV1,
-	ManagedVmDestroyTargetV1,
-	ManagedVmOwnershipReservationReferenceV1,
-} from './exact-vm-lifecycle.js';
 import { configureHostNetworkDefaults } from './host-network-defaults.js';
 import type { PinnedRealFsRoot } from './pinned-realfs.js';
 import {
@@ -25,6 +20,7 @@ import {
 	SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 	createGitReadOnlySshEgressOptions,
 	createManagedVm,
+	parseSshServerHostKey,
 	type ManagedVmDependencies,
 	type ManagedVmInstance,
 	type SshAccess,
@@ -87,95 +83,47 @@ type TestManagedVmInstance = ManagedVmInstance & {
 	getHostPid(): number | null;
 };
 
-const TEST_OWNERSHIP_RESERVATION_REFERENCE = {
-	expectedContractVersion: 1,
-	expectedRevision: 1,
-	reservationId: 'reservation-vm-123',
-	reservationPath: '/tmp/agent-vm-tests/reservation-vm-123/reservation.json',
-} satisfies ManagedVmOwnershipReservationReferenceV1;
-
-const TEST_DESTROY_TARGET = {
-	contractVersion: 1,
-	controllerEpoch: 'controller-test',
-	ownerProcess: {
-		command: 'agent-vm-test',
-		pid: process.pid,
-		startCookie: 'test-cookie',
-	},
-	parentGateway: null,
-	reservationId: 'reservation-vm-123',
-	reservationPath: TEST_OWNERSHIP_RESERVATION_REFERENCE.reservationPath,
-	resources: {
-		disposableStoragePaths: [],
-		ingressListener: false,
-		ingressSockets: false,
-		retainedStoragePaths: [],
-		sshListener: false,
-		sshSessions: false,
-	},
-	role: 'standalone',
-	runner: {
-		backend: 'qemu',
-		discoveryIdentity: 'gondolin-exact-vm:test',
-		executable: '/usr/bin/qemu-system-aarch64',
-	},
-	sessionLabel: 'agent-vm-test',
-	vmId: 'vm-123',
-} satisfies ManagedVmDestroyTargetV1;
-
 const TEST_SSH_SERVER_HOST_KEY = {
 	algorithm: 'ssh-ed25519',
 	publicKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 } as const;
-
-function createTestDestroyReceipt(complete = true): ManagedVmDestroyReceiptV1 {
-	const resourceStatus = complete ? 'already-absent' : 'incomplete';
-	return {
-		complete,
-		completedAt: '2026-07-10T00:00:00.000Z',
-		contractVersion: 1,
-		controllerEpoch: 'controller-test',
-		parentGateway: null,
-		requestedRunner: {
-			backend: 'qemu',
-			discoveryIdentity: 'gondolin-exact-vm:test',
-			executableName: 'qemu-system-aarch64',
-		},
-		reservationId: 'reservation-vm-123',
-		resources: {
-			disposableStorage: { status: resourceStatus },
-			exactRunner: { status: resourceStatus },
-			ingressListener: { status: resourceStatus },
-			ingressSockets: { status: resourceStatus },
-			qmp: { status: resourceStatus },
-			sessionIpc: { status: resourceStatus },
-			sshListener: { status: resourceStatus },
-			sshSessions: { status: resourceStatus },
-		},
-		role: 'standalone',
-		vmId: 'vm-123',
-	};
-}
 
 function createFakeVmInstance(
 	options: {
 		readonly hostPid?: number | null;
 	} = {},
 ): TestManagedVmInstance {
+	const exec = vi.fn((command: string | string[]) =>
+		createFakeExecProcess({
+			exitCode: 0,
+			stderr: '',
+			stdout:
+				Array.isArray(command) && command[1] === '/etc/ssh/ssh_host_ed25519_key.pub'
+					? `${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}\n`
+					: 'ok',
+		}),
+	);
 	return {
 		fs: createFakeVmFs(),
 		id: 'vm-123',
-		exec: vi.fn(() => createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' })),
-		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-		enableSsh: vi.fn(async () => ({
+		exec,
+		enableIngress: vi.fn(async () => ({
+			close: async () => {},
 			host: '127.0.0.1',
-			port: 2222,
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+			port: 18791,
 		})),
-		getDestroyTarget: vi.fn(() => TEST_DESTROY_TARGET),
+		enableSsh: vi.fn(async () => ({
+			close: async () => {},
+			command: 'ssh root@127.0.0.1',
+			host: '127.0.0.1',
+			identityFile: '/tmp/id_ed25519',
+			port: 2222,
+			user: 'root',
+		})),
 		getHostPid: vi.fn(() => options.hostPid ?? null),
 		setIngressRoutes: vi.fn(),
-		close: vi.fn(async () => createTestDestroyReceipt()),
+		start: vi.fn(async () => {}),
+		close: vi.fn(async () => {}),
 	};
 }
 
@@ -229,6 +177,25 @@ describe('createManagedVm', () => {
 		}>();
 	});
 
+	it('parses one exact ssh-ed25519 public host key with an optional comment', () => {
+		expect(
+			parseSshServerHostKey(
+				`${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64} root@tool-vm\n`,
+			),
+		).toEqual(TEST_SSH_SERVER_HOST_KEY);
+	});
+
+	it('rejects ambiguous or malformed SSH server host-key output', () => {
+		expect(() => parseSshServerHostKey('ssh-rsa invalid\n')).toThrow(
+			'Tool VM did not expose a valid ssh-ed25519 server host key',
+		);
+		expect(() =>
+			parseSshServerHostKey(
+				`${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}\n${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}\n`,
+			),
+		).toThrow('Tool VM did not expose exactly one ssh-ed25519 server host key');
+	});
+
 	it('forces host Node DNS and family-autoselection defaults for Gondolin tcpHosts', () => {
 		const setDefaultResultOrder = vi.fn();
 		const setDefaultAutoSelectFamily = vi.fn();
@@ -276,7 +243,6 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -347,7 +313,6 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				env: {},
@@ -427,7 +392,6 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				env: {},
@@ -551,7 +515,6 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: ['api.openai.com'],
 				cpus: 1,
 				env: {},
@@ -579,25 +542,40 @@ describe('createManagedVm', () => {
 		const fakeFs = createFakeVmFs();
 		const execMock = vi.fn((command: string | string[]) => {
 			capturedExecCommand = command;
-			return createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' });
+			return createFakeExecProcess({
+				exitCode: 0,
+				stderr: '',
+				stdout:
+					Array.isArray(command) && command[1] === '/etc/ssh/ssh_host_ed25519_key.pub'
+						? `${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}\n`
+						: 'ok',
+			});
 		});
+		const closeSshAccessMock = vi.fn(async () => {});
 		const enableSshMock = vi.fn(async () => ({
+			close: closeSshAccessMock,
+			command: 'ssh root@127.0.0.1',
 			host: '127.0.0.1',
+			identityFile: '/tmp/id_ed25519',
 			port: 2222,
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+			user: 'root',
 		}));
-		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const enableIngressMock = vi.fn(async () => ({
+			close: async () => {},
+			host: '127.0.0.1',
+			port: 18791,
+		}));
 		const setIngressRoutesMock = vi.fn();
-		const closeReceipt = createTestDestroyReceipt();
-		const closeMock = vi.fn(async () => closeReceipt);
+		const startMock = vi.fn(async () => {});
+		const closeMock = vi.fn(async () => {});
 		const fakeVmInstance: ManagedVmInstance = {
 			fs: fakeFs,
 			id: 'vm-123',
 			exec: execMock,
 			enableSsh: enableSshMock,
 			enableIngress: enableIngressMock,
-			getDestroyTarget: vi.fn(() => TEST_DESTROY_TARGET),
 			setIngressRoutes: setIngressRoutesMock,
+			start: startMock,
 			close: closeMock,
 		};
 
@@ -610,7 +588,6 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: ['api.openai.com'],
 				cpus: 2,
 				env: { OPENCLAW_LOG_LEVEL: 'debug' },
@@ -671,6 +648,7 @@ describe('createManagedVm', () => {
 				fuseMount: '/data',
 			},
 		});
+		expect(capturedVmOptions).not.toHaveProperty('ownershipReservation');
 
 		const bufferedResult = await managedVm.exec('echo hi');
 		expect(bufferedResult.stdout).toBe('ok');
@@ -690,41 +668,47 @@ describe('createManagedVm', () => {
 			windowBytes: 32 * 1024,
 		});
 		expect(capturedExecCommand).not.toBe(readonlyCommand);
-		await expect(managedVm.enableSsh()).resolves.toMatchObject({
+		const managedSshAccess = await managedVm.enableSsh();
+		expect(managedSshAccess).toMatchObject({
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 		});
+		await managedSshAccess.close();
 		await managedVm.enableIngress();
 		expect(managedVm.getVmInstance()).toBe(fakeVmInstance);
-		expect(managedVm.getDestroyTarget()).toEqual(TEST_DESTROY_TARGET);
+		expect(managedVm).not.toHaveProperty('getDestroyTarget');
+		await managedVm.start();
 		managedVm.setIngressRoutes([{ port: 18789, prefix: '/', stripPrefix: true }]);
-		await expect(managedVm.close()).resolves.toEqual(closeReceipt);
+		await expect(managedVm.close()).resolves.toBeUndefined();
 
 		expect(enableSshMock).toHaveBeenCalled();
+		expect(closeSshAccessMock).toHaveBeenCalledOnce();
 		expect(enableIngressMock).toHaveBeenCalled();
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{ port: 18789, prefix: '/', stripPrefix: true },
 		]);
+		expect(startMock).toHaveBeenCalledOnce();
 		expect(closeMock).toHaveBeenCalled();
 	});
 
-	it('fails closed when Gondolin omits the required SSH server host identity', async () => {
-		const sshAccessWithoutServerHostKey = {
+	it('fails closed and closes SSH access when the live VM exposes an invalid server key', async () => {
+		const closeSshAccess = vi.fn(async () => {});
+		const vmInstance = createFakeVmInstance();
+		vmInstance.enableSsh = vi.fn(async () => ({
+			close: closeSshAccess,
+			command: 'ssh root@127.0.0.1',
 			host: '127.0.0.1',
+			identityFile: '/tmp/id_ed25519',
 			port: 2222,
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-		};
-		Reflect.deleteProperty(sshAccessWithoutServerHostKey, 'serverHostKey');
+			user: 'root',
+		}));
+		vmInstance.exec = vi.fn(() =>
+			createFakeExecProcess({ exitCode: 0, stderr: '', stdout: 'ssh-rsa invalid\n' }),
+		);
 		const dependencies = createBaseDependencies({
-			createVm: vi.fn(
-				async (): Promise<ManagedVmInstance> => ({
-					...createFakeVmInstance(),
-					enableSsh: vi.fn(async () => sshAccessWithoutServerHostKey),
-				}),
-			),
+			createVm: vi.fn(async (): Promise<ManagedVmInstance> => vmInstance),
 		});
 		const managedVm = await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/tool-vm',
@@ -737,45 +721,9 @@ describe('createManagedVm', () => {
 		);
 
 		await expect(managedVm.enableSsh()).rejects.toThrow(
-			'Gondolin SSH access did not include a valid ssh-ed25519 server host key',
+			'Tool VM did not expose a valid ssh-ed25519 server host key',
 		);
-	});
-
-	it('fails closed when Gondolin returns a malformed SSH server host identity', async () => {
-		const malformedSshAccess = {
-			host: '127.0.0.1',
-			port: 2222,
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-		};
-		Reflect.set(malformedSshAccess, 'serverHostKey', {
-			algorithm: 'ssh-rsa',
-			publicKeyBase64: 'not-base64!',
-		});
-		const dependencies = createBaseDependencies({
-			createVm: vi.fn(
-				async (): Promise<ManagedVmInstance> => ({
-					...createFakeVmInstance(),
-					enableSsh: vi.fn(async () => malformedSshAccess),
-				}),
-			),
-		});
-		const managedVm = await createManagedVm(
-			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
-				allowedHosts: [],
-				cpus: 1,
-				imagePath: '/vm-images/tool-vm',
-				memory: '1G',
-				rootfsMode: 'memory',
-				secrets: {},
-				vfsMounts: {},
-			},
-			dependencies,
-		);
-
-		await expect(managedVm.enableSsh()).rejects.toThrow(
-			'Gondolin SSH access did not include a valid ssh-ed25519 server host key',
-		);
+		expect(closeSshAccess).toHaveBeenCalledOnce();
 	});
 
 	it('passes Gondolin mediated secret placeholders into VM environment', async () => {
@@ -797,7 +745,6 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: ['api.perplexity.ai'],
 				cpus: 1,
 				env: { OPENCLAW_LOG_LEVEL: 'debug' },
@@ -832,7 +779,12 @@ describe('createManagedVm', () => {
 	});
 
 	it('applies managed ingress defaults when enabling ingress without explicit options', async () => {
-		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const closeIngressMock = vi.fn(async () => {});
+		const enableIngressMock = vi.fn(async () => ({
+			close: closeIngressMock,
+			host: '127.0.0.1',
+			port: 18791,
+		}));
 		const fakeVmInstance: ManagedVmInstance = {
 			...createFakeVmInstance(),
 			enableIngress: enableIngressMock,
@@ -843,7 +795,6 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -855,7 +806,8 @@ describe('createManagedVm', () => {
 			dependencies,
 		);
 
-		await managedVm.enableIngress();
+		const ingressAccess = await managedVm.enableIngress();
+		await ingressAccess.close();
 
 		expect(enableIngressMock).toHaveBeenCalledWith({
 			allowWebSockets: true,
@@ -864,10 +816,15 @@ describe('createManagedVm', () => {
 			upstreamHeaderTimeoutMs: 120_000,
 			upstreamResponseTimeoutMs: 120_000,
 		});
+		expect(closeIngressMock).toHaveBeenCalledOnce();
 	});
 
 	it('lets explicit ingress options override managed defaults', async () => {
-		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18891 }));
+		const enableIngressMock = vi.fn(async () => ({
+			close: async () => {},
+			host: '127.0.0.1',
+			port: 18891,
+		}));
 		const fakeVmInstance: ManagedVmInstance = {
 			...createFakeVmInstance(),
 			enableIngress: enableIngressMock,
@@ -878,7 +835,6 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -920,7 +876,6 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 2,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -948,7 +903,6 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 2,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -974,7 +928,6 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 2,
 				imagePath: '/vm-images/gateways/openclaw',
@@ -1015,7 +968,6 @@ describe('createManagedVm', () => {
 
 		await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				env: {
@@ -1054,7 +1006,6 @@ describe('createManagedVm', () => {
 
 		const managedVm = await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/tool',
@@ -1080,11 +1031,10 @@ describe('createManagedVm', () => {
 		expect(closePinnedRealFsRoot).toHaveBeenCalledWith(pinnedRoot);
 	});
 
-	it('preserves an incomplete VM destruction receipt after pinned-root cleanup', async () => {
+	it('returns the stock void close result after pinned-root cleanup', async () => {
 		const pinnedRoot = createPinnedRoot(151);
-		const incompleteReceipt = createTestDestroyReceipt(false);
 		const vmInstance = createFakeVmInstance();
-		vmInstance.close = vi.fn(async () => incompleteReceipt);
+		vmInstance.close = vi.fn(async () => {});
 		const closePinnedRealFsRoot = vi.fn();
 		const dependencies = createBaseDependencies({
 			closePinnedRealFsRoot,
@@ -1092,7 +1042,6 @@ describe('createManagedVm', () => {
 		});
 		const managedVm = await createManagedVm(
 			{
-				ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 				allowedHosts: [],
 				cpus: 1,
 				imagePath: '/vm-images/tool',
@@ -1109,7 +1058,7 @@ describe('createManagedVm', () => {
 			dependencies,
 		);
 
-		await expect(managedVm.close()).resolves.toEqual(incompleteReceipt);
+		await expect(managedVm.close()).resolves.toBeUndefined();
 		expect(closePinnedRealFsRoot).toHaveBeenCalledOnce();
 	});
 
@@ -1126,7 +1075,6 @@ describe('createManagedVm', () => {
 		await expect(
 			createManagedVm(
 				{
-					ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 					allowedHosts: [],
 					cpus: 1,
 					imagePath: '/vm-images/tool',
@@ -1163,7 +1111,6 @@ describe('createManagedVm', () => {
 		await expect(
 			createManagedVm(
 				{
-					ownershipReservation: TEST_OWNERSHIP_RESERVATION_REFERENCE,
 					allowedHosts: [],
 					cpus: 1,
 					imagePath: '/vm-images/tool',

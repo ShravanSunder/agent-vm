@@ -407,7 +407,7 @@ Gondolin (`@earendil-works/gondolin`) provides QEMU micro-VMs with sub-second bo
 
 The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
 
-- **`createManagedVm(options)`** -- assembles VFS mounts, creates HTTP hooks, boots the VM, returns a `ManagedVm` handle (`exec`, `enableSsh`, `enableIngress`, `close`).
+- **`createManagedVm(options)`** -- assembles VFS mounts and HTTP hooks, then returns an unstarted `ManagedVm` handle (`start`, `exec`, `enableSsh`, `enableIngress`, `close`).
 - **`buildImage(options)`** -- fingerprint-cached image builds (SHA-256 of build config + runtime build version tag + fingerprint input).
 - **`SecretResolver` / `resolveServiceAccountToken`** -- resolve `SecretRef` values from 1Password, environment variables, or inline config values.
 
@@ -429,27 +429,28 @@ The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
 
 `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM, regardless of type. It coordinates the lifecycle, image builder, and Gondolin adapter.
 
+Before successor admission, controller startup performs record-based cleanup from schema-v2 Gateway and Tool VM runtime records; controller restart never adopts an existing VM. `startGatewayZone` then owns the new Gateway epoch and its exact runner identity. See [OpenClaw Gateway](openclaw-gateway.md), [Controller](../subsystems/controller.md), and [Gondolin VM Layer](../subsystems/gondolin-vm-layer.md) for the subsystem contracts.
+
 ```
   startGatewayZone(options)
     |
-    |-- 1. Clean orphaned gateway    cleanupOrphanedGatewayIfPresent()
-    |-- 2. Load lifecycle            loadGatewayLifecycle(type) -> GatewayLifecycle
-    |-- 3. Resolve zone secrets      resolveZoneSecrets() -> Record<string, string>
-    |-- 4. Build gateway image       buildGatewayImage() -> { imagePath, fingerprint }
-    |-- 5. Create host directories   mkdir stateDir, cacheDir, zoneFilesDir
-    |-- 6. Prepare host state        lifecycle.prepareHostState() [optional]
-    |-- 7. Build VM spec             lifecycle.buildVmSpec() -> GatewayVmSpec
-    |-- 8. Build process spec        lifecycle.buildProcessSpec() -> GatewayProcessSpec
-    |-- 9. Create managed VM         createManagedVm(vmSpec) -> ManagedVm
-    |-- 10. Bootstrap                vm.exec(processSpec.bootstrapCommand)
-    |-- 11. Start process            vm.exec(processSpec.startCommand)
-    |-- 12. Wait for service health  poll serviceHealthCheck ?? healthCheck (HTTP 2xx or exit 0)
-    |-- 13. Set ingress routes       vm.setIngressRoutes([{ port, prefix: '/' }])
-    |-- 14. Enable ingress           vm.enableIngress({ listenPort, bufferResponseBody: false, ...zone.gateway.ingress })
-    |-- 15. Write runtime record     writeGatewayRuntimeRecord() for crash recovery
+    |-- 1. Resolve startup inputs     lifecycle, config, secrets, image, host state
+    |-- 2. Allocate Gateway epoch     controller-owned identity seed
+    |-- 3. Construct VM handle        createManagedVm(vmSpec) -> unstarted ManagedVm
+    |-- 4. Attach VM identity         gateway epoch seed + vm.id
+    |-- 5. Start VM                   vm.start()
+    |-- 6. Capture runner identity    exact host PID + process identity
+    |-- 7. Persist runtime record     schema v2, before guest bootstrap or publication
+    |-- 8. Start Gateway service      bootstrap, process start, service-health proof
+    |-- 9. Publish ingress            configure routes, enable ingress, enrich runtime record
+    |-- 10. Establish control link    connect control session and publish started result
     |
     v
-  Returns { vm, ingress, processSpec, image, zone }
+  Returns controller-owned runtime handles, including terminateVm
+
+  startup failure
+    -> exact-terminate the captured runner through controller-managed termination
+    -> close the stock Gondolin handle directly only when no runner exists
 ```
 
 ---

@@ -224,6 +224,53 @@ function callerContextSessionFromEnvelope(
 	};
 }
 
+export function resolveGatewayControlInboundStablePrincipal(options: {
+	readonly callerContexts: GatewayControlCallerContextRegistry;
+	readonly envelope: ControlEnvelope;
+	readonly message: GatewayControlRpcMessage;
+	readonly validateCallerContextRegistration?: (
+		payload: GatewayControlCallerContextRegisterPayload,
+	) => void;
+}): string | undefined {
+	if (options.message.kind !== 'command') {
+		return undefined;
+	}
+	const session = callerContextSessionFromEnvelope(options.envelope);
+	if (options.message.operation === 'caller_context_register') {
+		options.validateCallerContextRegistration?.(options.message.payload);
+		return options.callerContexts.validateRegistrationForSession({
+			payload: options.message.payload,
+			session,
+		}).stablePrincipal;
+	}
+	let callerContextId: string | undefined;
+	switch (options.message.operation) {
+		case 'lease_create':
+		case 'lease_reacquire':
+		case 'lease_release':
+		case 'lease_renew':
+		case 'lease_use_end':
+		case 'lease_use_heartbeat':
+		case 'lease_use_start':
+		case 'tool_portal_controller_host_action':
+			callerContextId = options.message.payload.callerContext.callerContextId;
+			break;
+		case 'lease_get':
+		case 'lease_peek':
+			callerContextId = options.message.payload.callerContext?.callerContextId;
+			break;
+		case 'control_ping':
+		case 'operation_cancel':
+		case 'recovery_command':
+			return undefined;
+	}
+	if (callerContextId === undefined) {
+		return undefined;
+	}
+	const resolution = options.callerContexts.resolveForSession({ callerContextId, session });
+	return resolution.status === 'ok' ? resolution.callerContext.stablePrincipal : undefined;
+}
+
 type ToolVmLeaseCallerContextResolution =
 	| {
 			readonly callerContext: GatewayControlTrustedCallerContext;
@@ -537,6 +584,7 @@ async function executeToolPortalControllerHostAction(options: {
 	readonly actions: GatewayControlControllerHostActionOperations | undefined;
 	readonly callerContexts: GatewayControlCallerContextRegistry;
 	readonly payload: GatewayControlToolPortalControllerHostActionPayload;
+	readonly propagateMutationFailure?: boolean;
 	readonly responseToMessageId: string;
 	readonly session: GatewayControlCallerContextSessionRef;
 }): Promise<GatewayControlCommandResultPayload> {
@@ -643,7 +691,10 @@ async function executeToolPortalControllerHostAction(options: {
 			}
 		}
 		return assertUnreachableControllerHostAction(options.payload);
-	} catch {
+	} catch (error) {
+		if (options.propagateMutationFailure === true && options.payload.actionId === 'zone_git_push') {
+			throw error;
+		}
 		return commandResultPayload({
 			error: {
 				errorClass: 'controller_host_action_failed',
@@ -908,8 +959,15 @@ export function createGatewayControlDomainHandler(
 		},
 		buildSemanticFailureResult: ({ envelope, payload }, decision) => {
 			const message = GatewayControlRpcMessageSchema.parse(payload);
-			if (!isLeaseSemanticMutationMessage(message)) {
-				throw new Error('gateway semantic failure does not belong to a lease mutation');
+			if (
+				!isLeaseSemanticMutationMessage(message) &&
+				!(
+					message.kind === 'command' &&
+					message.operation === 'tool_portal_controller_host_action' &&
+					message.payload.actionId === 'zone_git_push'
+				)
+			) {
+				throw new Error('gateway semantic failure does not belong to a mutating operation');
 			}
 			return GatewayControlRpcCommandResultMessageSchema.parse({
 				kind: 'command_result',
@@ -918,7 +976,7 @@ export function createGatewayControlDomainHandler(
 					error: {
 						errorClass: `gateway_semantic_${decision.kind}`,
 						retryable: false,
-						safeMessage: `Gateway semantic lease mutation was refused: ${decision.kind}.`,
+						safeMessage: `Gateway semantic mutation was refused: ${decision.kind}.`,
 					},
 					responseToMessageId: envelope.messageId,
 					result: 'failed',
@@ -927,6 +985,21 @@ export function createGatewayControlDomainHandler(
 		},
 		buildSemanticTransportResult: ({ envelope, payload }, completedValue) => {
 			const message = GatewayControlRpcMessageSchema.parse(payload);
+			if (
+				message.kind === 'command' &&
+				message.operation === 'tool_portal_controller_host_action' &&
+				message.payload.actionId === 'zone_git_push'
+			) {
+				const completedPayload = GatewayControlRpcResponsePayloadSchema.parse(completedValue);
+				return GatewayControlRpcCommandResultMessageSchema.parse({
+					kind: 'command_result',
+					operation: message.operation,
+					payload: {
+						...completedPayload,
+						responseToMessageId: envelope.messageId,
+					},
+				});
+			}
 			if (!isLeaseSemanticMutationMessage(message)) {
 				throw new Error('gateway semantic completion does not belong to a lease mutation');
 			}
@@ -947,6 +1020,60 @@ export function createGatewayControlDomainHandler(
 		},
 		prepareSemanticMutation: async ({ attachmentGeneration, envelope, payload }) => {
 			const message = GatewayControlRpcMessageSchema.parse(payload);
+			if (
+				message.kind === 'command' &&
+				message.operation === 'tool_portal_controller_host_action' &&
+				message.payload.actionId === 'zone_git_push'
+			) {
+				const requiredAttachmentGeneration = requireSemanticEnvelopeField(
+					attachmentGeneration,
+					'attachmentGeneration',
+				);
+				const commandId = requireSemanticEnvelopeField(envelope.commandId, 'commandId');
+				const idempotencyKey = requireSemanticEnvelopeField(
+					envelope.idempotencyKey,
+					'idempotencyKey',
+				);
+				const processEpoch = envelope.bootId;
+				const sessionId = envelope.sessionId;
+				const validUntilMs = requireSemanticEnvelopeField(envelope.expiresAtMs, 'expiresAtMs');
+				if (
+					typeof requiredAttachmentGeneration !== 'number' ||
+					typeof commandId !== 'string' ||
+					typeof idempotencyKey !== 'string' ||
+					typeof processEpoch !== 'string' ||
+					typeof sessionId !== 'string' ||
+					typeof validUntilMs !== 'number'
+				) {
+					throw new Error('gateway controller host semantic envelope fields have invalid types');
+				}
+				return {
+					execute: async () =>
+						await executeToolPortalControllerHostAction({
+							actions: options.controllerHostActions,
+							callerContexts: options.callerContexts,
+							payload: message.payload,
+							propagateMutationFailure: true,
+							responseToMessageId: envelope.messageId,
+							session: callerContextSessionFromEnvelope(envelope),
+						}),
+					identity: {
+						commandId,
+						gateway: options.gateway,
+						idempotencyKey,
+						operation: message.operation,
+						profile: {
+							attachmentGeneration: requiredAttachmentGeneration,
+							kind: 'session_safety',
+							processEpoch,
+							sessionId,
+						},
+						target: `controller_host_action:${message.payload.actionId}:${message.payload.callerContext.callerContextId}`,
+						validUntilMs,
+					},
+					payload: parseGatewaySemanticJsonValue(message.payload),
+				};
+			}
 			if (!isLeaseSemanticMutationMessage(message)) {
 				return undefined;
 			}
@@ -1253,6 +1380,11 @@ export function createGatewayControlDomainHandler(
 					throw new Error('lease_use_end must execute through semantic preparation');
 				}
 				case 'tool_portal_controller_host_action':
+					if (message.payload.actionId === 'zone_git_push') {
+						throw new Error(
+							'zone_git_push controller host action must execute through semantic preparation',
+						);
+					}
 					return GatewayControlRpcCommandResultMessageSchema.parse({
 						kind: 'command_result',
 						operation: 'tool_portal_controller_host_action',

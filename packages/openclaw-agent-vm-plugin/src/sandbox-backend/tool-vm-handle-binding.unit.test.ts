@@ -162,6 +162,7 @@ describe('Tool VM handle binding', () => {
 		await expect(handle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/kex reset/u);
 		expect(runRemoteShellScript).toHaveBeenCalledTimes(1);
 		expect(harness.reacquireLease).not.toHaveBeenCalled();
+		expect(harness.releaseLease).not.toHaveBeenCalled();
 
 		await expect(handle.runShellCommand({ script: 'pwd' })).resolves.toEqual({
 			code: 0,
@@ -194,16 +195,7 @@ describe('Tool VM handle binding', () => {
 			2,
 			expect.objectContaining({ ssh: harness.replacementLease.ssh }),
 		);
-		expect(harness.releaseLease).toHaveBeenCalledWith(
-			harness.oldLease.leaseId,
-			expect.objectContaining({
-				force: true,
-				staleEvidence: {
-					kind: 'tool-vm-ssh',
-					operation: 'command',
-				},
-			}),
-		);
+		expect(harness.releaseLease).not.toHaveBeenCalled();
 		expect(handle.runtimeId).toBe(harness.replacementLease.leaseId);
 		expect(handle.runtimeLabel).toBe(harness.replacementLease.leaseId);
 	});
@@ -239,6 +231,7 @@ describe('Tool VM handle binding', () => {
 			capturedLeaseContext.runRemoteShellScript({ script: 'cat /workspace/file.txt' }),
 		).rejects.toThrow(/file bridge reset/u);
 		expect(harness.reacquireLease).not.toHaveBeenCalled();
+		expect(harness.releaseLease).not.toHaveBeenCalled();
 
 		await expect(
 			capturedLeaseContext.runRemoteShellScript({ script: 'cat /workspace/file.txt' }),
@@ -263,16 +256,7 @@ describe('Tool VM handle binding', () => {
 			2,
 			expect.objectContaining({ ssh: harness.replacementLease.ssh }),
 		);
-		expect(harness.releaseLease).toHaveBeenCalledWith(
-			harness.oldLease.leaseId,
-			expect.objectContaining({
-				force: true,
-				staleEvidence: {
-					kind: 'tool-vm-ssh',
-					operation: 'file-bridge',
-				},
-			}),
-		);
+		expect(harness.releaseLease).not.toHaveBeenCalled();
 	});
 
 	it('uses the replacement binding for buildExecSpec after earlier stale evidence', async () => {

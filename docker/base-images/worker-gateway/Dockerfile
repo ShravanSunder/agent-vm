@@ -10,6 +10,7 @@ RUN apt-get update && \
       ca-certificates \
       git \
       curl \
+      e2fsprogs \
       python3 && \
     rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates && \

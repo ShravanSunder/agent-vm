@@ -23,6 +23,35 @@ const gatewayRecoverySourceKey = {
 	zoneId: 'sunfam',
 } satisfies GatewayVmRecoverySourceKey;
 
+const replacementGatewayRecoverySourceKey = {
+	...gatewayRecoverySourceKey,
+	bootId: 'gateway-boot-b',
+	gatewayVmId: 'gateway-vm-b',
+	generationId: 'gateway-generation-b',
+} satisfies GatewayVmRecoverySourceKey;
+
+function stabilizeGatewayRecovery(
+	tracker: GatewayVmRecoveryTracker,
+	options: { readonly recoveryFinishedAtMs: number },
+): number {
+	const stableAtMs = options.recoveryFinishedAtMs + policy.restartTimeoutMs;
+	for (let observationIndex = 1; observationIndex <= 3; observationIndex += 1) {
+		tracker.recordGatewayControlSessionObservation({
+			observedAtMs: stableAtMs + observationIndex,
+			result: 'ok',
+			sourceKey: replacementGatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+		tracker.recordGatewayServiceProbe({
+			observedAtMs: stableAtMs + observationIndex,
+			result: 'ok',
+			sourceKey: replacementGatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+	}
+	return stableAtMs + 3;
+}
+
 function primeControlSessionRecoveryDue(
 	tracker: GatewayVmRecoveryTracker,
 	options: { readonly observedAtMs?: number } = {},
@@ -63,11 +92,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
-		).toEqual({
-			consecutiveFailures: 10,
-			kind: 'none',
-			reason: 'missing-source-key',
-		});
+		).toEqual({ consecutiveFailures: 10, kind: 'none', reason: 'missing-source-key' });
 
 		for (let index = 1; index <= 9; index += 1) {
 			tracker.recordGatewayControlSessionObservation({
@@ -143,6 +168,69 @@ describe('createGatewayVmRecoveryTracker', () => {
 			reason: 'gateway-control-session-unhealthy',
 			zoneId: 'sunfam',
 		});
+	});
+
+	it('resets only old control evidence when the Gateway source changes', () => {
+		const tracker = createGatewayVmRecoveryTracker({
+			policy: {
+				...policy,
+				channelProviderHealth: {
+					consecutiveFailureThreshold: 3,
+					enabled: true,
+					restartGatewayOnRecoverable: true,
+					restartGatewayOnUnrecoverable: false,
+					transitioningTimeoutMs: 120_000,
+				},
+			},
+		});
+		for (let failureIndex = 1; failureIndex <= 2; failureIndex += 1) {
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: failureIndex,
+				result: 'stale',
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			});
+			tracker.recordGatewayServiceProbe({
+				observedAtMs: failureIndex,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+			tracker.recordAgentChannelProviderObservation({
+				channelProviderHealth: 'unhealthy-recoverable',
+				channelProviderId: 'discord-primary',
+				observedAtMs: failureIndex,
+				result: 'failed',
+				zoneId: 'sunfam',
+			});
+		}
+
+		tracker.recordGatewaySourceChange({
+			sourceKey: replacementGatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+
+		expect(
+			tracker.recordGatewayControlSessionObservation({
+				controlSessionDeathGrace: 'recovery-due',
+				observedAtMs: 4,
+				result: 'stale',
+				sourceKey: replacementGatewayRecoverySourceKey,
+				zoneId: 'sunfam',
+			}),
+		).toMatchObject({ consecutiveFailures: 2, kind: 'none' });
+		expect(
+			tracker.recordGatewayServiceProbe({ observedAtMs: 4, result: 'failed', zoneId: 'sunfam' }),
+		).toMatchObject({ consecutiveFailures: 3, kind: 'none' });
+		expect(
+			tracker.recordAgentChannelProviderObservation({
+				channelProviderHealth: 'unhealthy-recoverable',
+				channelProviderId: 'discord-primary',
+				observedAtMs: 4,
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		).toMatchObject({ consecutiveFailures: 3, kind: 'restart' });
 	});
 
 	it('honors disabled auto recovery policy without returning restart decisions', () => {
@@ -400,11 +488,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
-		).toEqual({
-			consecutiveFailures: 10,
-			kind: 'none',
-			reason: 'missing-source-key',
-		});
+		).toEqual({ consecutiveFailures: 20, kind: 'none', reason: 'stabilizing' });
 	});
 
 	it('keeps running restart and failed-runtime cold-start recovery budgets separate', () => {
@@ -471,7 +555,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 
 		expect(
 			tracker.recordGatewayServiceProbe({
-				observedAtMs: 100_000 + policy.cooldownMs + 1,
+				observedAtMs: 130_000 + policy.cooldownMs + 1,
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
@@ -483,7 +567,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 		expect(
 			tracker.recordGatewayControlSessionObservation({
 				controlSessionDeathGrace: 'recovery-due',
-				observedAtMs: 100_000 + policy.cooldownMs + 2,
+				observedAtMs: 130_000 + policy.cooldownMs + 2,
 				result: 'stale',
 				sourceKey: gatewayRecoverySourceKey,
 				zoneId: 'sunfam',
@@ -509,7 +593,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 
 		expect(
 			tracker.recordGatewayServiceProbe({
-				observedAtMs: 100_000 + policy.cooldownMs + 1,
+				observedAtMs: 110_000 + policy.cooldownMs + 1,
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
@@ -521,25 +605,25 @@ describe('createGatewayVmRecoveryTracker', () => {
 		expect(
 			tracker.recordGatewayControlSessionObservation({
 				controlSessionDeathGrace: 'recovery-due',
-				observedAtMs: 100_000 + policy.cooldownMs + 2,
+				observedAtMs: 110_000 + policy.cooldownMs + 2,
 				result: 'stale',
 				sourceKey: gatewayRecoverySourceKey,
 				zoneId: 'sunfam',
 			}),
 		).toMatchObject({ kind: 'restart', zoneId: 'sunfam' });
 		tracker.markRecoveryStarted({
-			observedAtMs: 100_000 + policy.cooldownMs + 2,
+			observedAtMs: 110_000 + policy.cooldownMs + 2,
 			zoneId: 'sunfam',
 		});
 		tracker.markRecoveryFinished({
-			observedAtMs: 110_000 + policy.cooldownMs + 1,
+			observedAtMs: 120_000 + policy.cooldownMs + 1,
 			result: 'failed',
 			zoneId: 'sunfam',
 		});
 
 		expect(
 			tracker.recordGatewayServiceProbe({
-				observedAtMs: 100_000 + policy.cooldownMs * 2 + 2,
+				observedAtMs: 120_000 + policy.cooldownMs * 2 + 2,
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
@@ -552,7 +636,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 		expect(
 			tracker.recordGatewayControlSessionObservation({
 				controlSessionDeathGrace: 'recovery-due',
-				observedAtMs: 100_000 + policy.cooldownMs * 2 + 3,
+				observedAtMs: 120_000 + policy.cooldownMs * 2 + 3,
 				result: 'stale',
 				sourceKey: gatewayRecoverySourceKey,
 				zoneId: 'sunfam',
@@ -561,19 +645,20 @@ describe('createGatewayVmRecoveryTracker', () => {
 			consecutiveFailedRecoveries: 2,
 			consecutiveFailures: 12,
 			kind: 'suspended',
+			outwardEscalationRequired: true,
 			reason: 'max-failed-recoveries',
 			zoneId: 'sunfam',
 		});
 
 		tracker.recordGatewayServiceProbe({
-			observedAtMs: 110_000 + policy.cooldownMs + policy.failedRecoveryResetMs + 2,
+			observedAtMs: 120_000 + policy.cooldownMs + policy.failedRecoveryResetMs + 3,
 			result: 'failed',
 			zoneId: 'sunfam',
 		});
 		expect(
 			tracker.recordGatewayControlSessionObservation({
 				controlSessionDeathGrace: 'recovery-due',
-				observedAtMs: 110_000 + policy.cooldownMs + policy.failedRecoveryResetMs + 3,
+				observedAtMs: 120_000 + policy.cooldownMs + policy.failedRecoveryResetMs + 4,
 				result: 'stale',
 				sourceKey: gatewayRecoverySourceKey,
 				zoneId: 'sunfam',
@@ -594,17 +679,21 @@ describe('createGatewayVmRecoveryTracker', () => {
 		}
 		tracker.markRecoveryStarted({ observedAtMs: 100_000, zoneId: 'sunfam' });
 		tracker.markRecoveryFinished({ observedAtMs: 130_000, result: 'ok', zoneId: 'sunfam' });
+		const stabilizedAtMs = stabilizeGatewayRecovery(tracker, { recoveryFinishedAtMs: 130_000 });
 		tracker.recordGatewayServiceProbe({
-			observedAtMs: 30 * 60 * 1000,
+			observedAtMs: stabilizedAtMs + 30 * 60 * 1000,
 			result: 'ok',
+			sourceKey: replacementGatewayRecoverySourceKey,
 			zoneId: 'sunfam',
 		});
-		primeControlSessionRecoveryDue(tracker, { observedAtMs: 31 * 60 * 1000 });
+		primeControlSessionRecoveryDue(tracker, {
+			observedAtMs: stabilizedAtMs + 31 * 60 * 1000,
+		});
 
 		for (let index = 1; index <= 9; index += 1) {
 			expect(
 				tracker.recordGatewayServiceProbe({
-					observedAtMs: 31 * 60 * 1000 + index,
+					observedAtMs: stabilizedAtMs + 31 * 60 * 1000 + index,
 					result: 'failed',
 					zoneId: 'sunfam',
 				}),
@@ -613,7 +702,7 @@ describe('createGatewayVmRecoveryTracker', () => {
 
 		expect(
 			tracker.recordGatewayServiceProbe({
-				observedAtMs: 31 * 60 * 1000 + 10,
+				observedAtMs: stabilizedAtMs + 31 * 60 * 1000 + 10,
 				result: 'failed',
 				zoneId: 'sunfam',
 			}),
@@ -640,6 +729,79 @@ describe('createGatewayVmRecoveryTracker', () => {
 				zoneId: 'sunfam',
 			}),
 		).toEqual({ consecutiveFailures: 11, kind: 'none', reason: 'in-flight' });
+	});
+
+	it('preserves unrelated provider failures while Gateway recovery awaits sustained stability', () => {
+		const tracker = createGatewayVmRecoveryTracker({
+			policy: {
+				...policy,
+				channelProviderHealth: {
+					consecutiveFailureThreshold: 3,
+					enabled: true,
+					restartGatewayOnRecoverable: true,
+					restartGatewayOnUnrecoverable: false,
+					transitioningTimeoutMs: 120_000,
+				},
+			},
+		});
+		const providerFailure = {
+			channelProviderHealth: 'unhealthy-recoverable' as const,
+			channelProviderId: 'discord-primary',
+			result: 'failed' as const,
+			zoneId: 'sunfam',
+		};
+
+		tracker.recordAgentChannelProviderObservation({ ...providerFailure, observedAtMs: 10_000 });
+		tracker.recordAgentChannelProviderObservation({ ...providerFailure, observedAtMs: 20_000 });
+		tracker.markRecoveryStarted({ observedAtMs: 30_000, zoneId: 'sunfam' });
+		tracker.markRecoveryFinished({ observedAtMs: 40_000, result: 'ok', zoneId: 'sunfam' });
+
+		expect(
+			tracker.recordAgentChannelProviderObservation({
+				...providerFailure,
+				observedAtMs: 50_000,
+			}),
+		).toEqual({ consecutiveFailures: 3, kind: 'none', reason: 'stabilizing' });
+	});
+
+	it('emits outward escalation once after the failed Gateway recovery budget is exhausted', () => {
+		const tracker = createGatewayVmRecoveryTracker({
+			policy: { ...policy, consecutiveFailureThreshold: 1, maxConsecutiveFailedRecoveries: 1 },
+		});
+		primeControlSessionRecoveryDue(tracker);
+		tracker.recordGatewayServiceProbe({ observedAtMs: 10_000, result: 'failed', zoneId: 'sunfam' });
+		tracker.markRecoveryStarted({ observedAtMs: 10_000, zoneId: 'sunfam' });
+		tracker.markRecoveryFinished({ observedAtMs: 20_000, result: 'failed', zoneId: 'sunfam' });
+		const retryAtMs = 20_000 + policy.cooldownMs + 1;
+		tracker.recordGatewayServiceProbe({
+			observedAtMs: retryAtMs,
+			result: 'failed',
+			zoneId: 'sunfam',
+		});
+
+		const firstSuspension = tracker.recordGatewayControlSessionObservation({
+			controlSessionDeathGrace: 'recovery-due',
+			observedAtMs: retryAtMs + 1,
+			result: 'stale',
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+		const repeatedSuspension = tracker.recordGatewayControlSessionObservation({
+			controlSessionDeathGrace: 'recovery-due',
+			observedAtMs: retryAtMs + 2,
+			result: 'stale',
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+
+		expect(firstSuspension).toMatchObject({
+			kind: 'suspended',
+			outwardEscalationRequired: true,
+		});
+		expect(repeatedSuspension).toMatchObject({
+			kind: 'suspended',
+			outwardEscalationRequired: false,
+		});
 	});
 
 	it('tracks channel-provider failures per provider so healthy providers do not mask unhealthy ones', () => {

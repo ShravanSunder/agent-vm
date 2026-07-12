@@ -216,7 +216,8 @@ async function verifyIdentityBeforeSignal(options: {
 	return { proceed: true };
 }
 
-// Generic "kill an orphaned managed VM process" with a SIGTERM→2s→SIGKILL→2s
+// Terminate the process selected by a controller-owned runtime record with a
+// SIGTERM→2s→SIGKILL→2s
 // bounded sequence (total ≤ 4 s). The caller is responsible for owning the
 // runtime record (read + fence-check + delete after this returns).
 //
@@ -233,7 +234,7 @@ async function verifyIdentityBeforeSignal(options: {
 //   - the recorded PID is alive but its identity does not match (PID reused)
 //   - the recorded PID is alive but its command is NOT a managed VM process
 //   - the process survives both SIGTERM and SIGKILL (a stuck D-state QEMU)
-export async function killOrphanedManagedVmProcess(options: {
+export async function terminateRecordedManagedVmHostProcess(options: {
 	readonly contextLabel: string; // for error messages, e.g. "gateway runtime record for zone 'X'"
 	readonly dependencies: ManagedVmKillDependencies;
 	readonly pid: number;
@@ -308,5 +309,5 @@ export async function killOrphanedManagedVmProcess(options: {
 		return pid;
 	}
 
-	throw new Error(`Failed to terminate orphaned managed VM process ${pid} (${contextLabel}).`);
+	throw new Error(`Failed to terminate recorded managed VM process ${pid} (${contextLabel}).`);
 }

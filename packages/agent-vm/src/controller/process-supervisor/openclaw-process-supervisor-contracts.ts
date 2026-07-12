@@ -30,6 +30,11 @@ export const openClawProcessSupervisorRequestSchema = z.discriminatedUnion('kind
 	z.strictObject({ ...requestBaseShape, kind: z.literal('observe') }),
 	z.strictObject({
 		...requestBaseShape,
+		expectedProcessEpoch: identitySchema,
+		kind: z.literal('terminate-for-reliability-test'),
+	}),
+	z.strictObject({
+		...requestBaseShape,
 		kind: z.literal('start'),
 		selectedProcessEpoch: identitySchema,
 	}),
@@ -114,10 +119,23 @@ const completedContainReceiptSchema = z
 		message: 'completed containment must bind the exact expected process epoch',
 		path: ['observedProcessEpoch'],
 	});
+const completedReliabilityTestTerminationReceiptSchema = z
+	.strictObject({
+		...receiptBaseShape,
+		cgroup: exactEmptyCgroupSchema,
+		expectedProcessEpoch: identitySchema,
+		kind: z.literal('terminate-for-reliability-test'),
+		observedProcessEpoch: identitySchema,
+		status: z.literal('completed'),
+	})
+	.refine((receipt) => receipt.observedProcessEpoch === receipt.expectedProcessEpoch, {
+		message: 'completed reliability-test termination must bind the exact expected process epoch',
+		path: ['observedProcessEpoch'],
+	});
 const nonCompletedReceiptSchema = z.strictObject({
 	...receiptBaseShape,
 	cgroup: incompleteCgroupSchema,
-	kind: z.enum(['contain', 'observe', 'start']),
+	kind: z.enum(['contain', 'observe', 'start', 'terminate-for-reliability-test']),
 	observedProcessEpoch: identitySchema.nullable(),
 	reason: refusalReasonSchema,
 	status: z.enum(['incomplete', 'refused']),
@@ -128,6 +146,7 @@ export const openClawProcessSupervisorReceiptSchema = z.union([
 	completedAbsentObserveReceiptSchema,
 	completedProcessObserveReceiptSchema,
 	completedContainReceiptSchema,
+	completedReliabilityTestTerminationReceiptSchema,
 	nonCompletedReceiptSchema,
 ]);
 

@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { cleanupOrphanedGatewayIfPresent } from '../gateway/gateway-recovery.js';
+import { cleanupRecordedGatewayRuntime } from '../gateway/gateway-recovery.js';
 import {
 	loadGatewayRuntimeRecord,
 	writeGatewayRuntimeRecord,
@@ -58,6 +58,14 @@ function createRuntimeRecord(props: {
 		configPath: '/deployments/claw/config/system.jsonc',
 		controllerPort: 18800,
 		createdAt: '2026-04-13T12:34:56.000Z',
+		gateway: {
+			bootId: 'boot-a',
+			controllerEpoch: 'controller-epoch-a',
+			gatewayEpochId: 'gateway-epoch-a',
+			gatewayVmId: `vm-${props.qemuPid}`,
+			generationId: 'generation-a',
+			zoneId: 'shravan',
+		},
 		gatewayType: 'openclaw',
 		guestListenPort: 18789,
 		ingressPort: props.ingressPort,
@@ -67,7 +75,7 @@ function createRuntimeRecord(props: {
 		},
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		qemuPid: props.qemuPid,
-		schemaVersion: 1,
+		schemaVersion: 2,
 		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 		vmId: `vm-${props.qemuPid}`,
 		zoneId: 'shravan',
@@ -101,7 +109,7 @@ describe('integration: orphan recovery', () => {
 		await createRuntimeRecord({ ingressPort, qemuPid: deadPid, stateDirectory });
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent({
+			cleanupRecordedGatewayRuntime({
 				expectedConfigPath: '/deployments/claw/config/system.jsonc',
 				expectedControllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -123,7 +131,7 @@ describe('integration: orphan recovery', () => {
 		await createRuntimeRecord({ ingressPort, qemuPid: 1, stateDirectory });
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent({
+			cleanupRecordedGatewayRuntime({
 				expectedConfigPath: '/deployments/claw/config/system.jsonc',
 				expectedControllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -139,7 +147,7 @@ describe('integration: orphan recovery', () => {
 		const stateDirectory = createStateDirectory();
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent({
+			cleanupRecordedGatewayRuntime({
 				expectedConfigPath: '/deployments/claw/config/system.jsonc',
 				expectedControllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -159,7 +167,7 @@ describe('integration: orphan recovery', () => {
 		fs.writeFileSync(runtimeRecordPath, '{"createdAt":', 'utf8');
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent({
+			cleanupRecordedGatewayRuntime({
 				expectedConfigPath: '/deployments/claw/config/system.jsonc',
 				expectedControllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',

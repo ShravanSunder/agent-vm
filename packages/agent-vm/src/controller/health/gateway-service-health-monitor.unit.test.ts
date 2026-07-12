@@ -196,7 +196,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 		expect(recoverGatewayVm).not.toHaveBeenCalled();
 	});
 
-	it('does not restart a gateway VM from stale gateway control-session observations alone', async () => {
+	it('requests one same-G process recovery from stale control while HTTP health remains 200', async () => {
 		let nowMs = 0;
 		const healthEventStore = new HealthEventStore({
 			eventHistoryLimit: 20,
@@ -213,6 +213,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			zoneId: 'sunfam',
 		});
 		const recoverGatewayVm = vi.fn();
+		const recoverDeadControlSession = vi.fn(async (): Promise<void> => {});
 		const monitor = createGatewayServiceHealthMonitor({
 			controlSessionDeathGraceMs: 0,
 			gatewayServiceAutoRestart,
@@ -227,6 +228,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				zoneId: 'sunfam',
 			})),
 			recoverGatewayVm,
+			recoverDeadControlSession,
 			resolveGatewayRecoverySourceKey,
 			staleAfterMs: 30_000,
 			zoneIds: ['sunfam'],
@@ -237,10 +239,91 @@ describe('createGatewayServiceHealthMonitor', () => {
 			await monitor.tick();
 		}
 		expect(recoverGatewayVm).not.toHaveBeenCalled();
+		expect(recoverDeadControlSession).toHaveBeenCalledOnce();
+		expect(recoverDeadControlSession).toHaveBeenCalledWith({
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
 
 		nowMs = 140_000;
 		await monitor.tick();
 
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+		expect(recoverDeadControlSession).toHaveBeenCalledOnce();
+	});
+
+	it('quarantines a carried-over control event when the Gateway source changes', async () => {
+		let nowMs = 1_000;
+		let currentSourceKey = gatewayRecoverySourceKey;
+		const replacementSourceKey = {
+			...gatewayRecoverySourceKey,
+			bootId: 'gateway-boot-b',
+			gatewayVmId: 'gateway-vm-b',
+			generationId: 'gateway-generation-b',
+		};
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		healthEventStore.record({
+			domain: 'gateway_control',
+			elapsedMs: 1,
+			kind: 'gateway-control-session',
+			observedAtMs: nowMs,
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-sunfam',
+			result: 'ok',
+			zoneId: 'sunfam',
+		});
+		const recoverDeadControlSession = vi.fn(async (): Promise<void> => {});
+		const recoverGatewayVm = vi.fn();
+		const monitor = createGatewayServiceHealthMonitor({
+			controlSessionDeathGraceMs: 0,
+			gatewayServiceAutoRestart,
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/health',
+				port: 18_789,
+				statusCode: 200,
+				zoneId: 'sunfam',
+			})),
+			recoverDeadControlSession,
+			recoverGatewayVm,
+			resolveGatewayRecoverySourceKey: () => currentSourceKey,
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		await monitor.tick();
+		currentSourceKey = replacementSourceKey;
+		nowMs = 40_000;
+		await monitor.tick();
+
+		expect(recoverDeadControlSession).not.toHaveBeenCalled();
+		expect(recoverGatewayVm).not.toHaveBeenCalled();
+
+		healthEventStore.record({
+			domain: 'gateway_control',
+			elapsedMs: 2,
+			kind: 'gateway-control-session',
+			observedAtMs: nowMs,
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-sunfam',
+			result: 'ok',
+			zoneId: 'sunfam',
+		});
+		await monitor.tick();
+		nowMs = 70_001;
+		await monitor.tick();
+
+		expect(recoverDeadControlSession).toHaveBeenCalledOnce();
+		expect(recoverDeadControlSession).toHaveBeenCalledWith({
+			sourceKey: replacementSourceKey,
+			zoneId: 'sunfam',
+		});
 		expect(recoverGatewayVm).not.toHaveBeenCalled();
 	});
 
@@ -304,6 +387,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 		expect(recoverGatewayVm).toHaveBeenCalledWith({
 			consecutiveFailures: 10,
 			reason: 'gateway-control-session-unhealthy',
+			sourceKey: gatewayRecoverySourceKey,
 			zoneId: 'sunfam',
 		});
 		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
@@ -1071,7 +1155,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 
 		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
 			expect.objectContaining({
-				action: 'gateway-vm-cold-start',
+				action: 'operator-required',
 				consecutiveFailedRecoveries: 2,
 				errorCode: 'max-failed-recoveries',
 				kind: 'gateway-recovery-suspended',
@@ -1233,7 +1317,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 			);
 		expect(suspendedEvent).toEqual(
 			expect.objectContaining({
-				action: 'gateway-vm-cold-start',
+				action: 'operator-required',
 				errorCode: 'max-failed-recoveries',
 				kind: 'gateway-recovery-suspended',
 				reason: 'agent-channel-provider-unhealthy',
@@ -1421,6 +1505,81 @@ describe('createGatewayServiceHealthMonitor', () => {
 				zoneId: 'sunfam',
 			}),
 		);
+	});
+
+	it('classifies immediate recovery callback rejection separately from deadline expiry', async () => {
+		let nowMs = 10_000;
+		const healthEventStore = createHealthEventStoreWithStaleControlSession();
+		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
+			gatewayServiceAutoRestart: {
+				...gatewayServiceAutoRestart,
+				consecutiveFailureThreshold: 1,
+			},
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: false,
+				path: '/health',
+				port: 18_789,
+				statusCode: 502,
+				zoneId: 'sunfam',
+			})),
+			recoverGatewayVm: vi.fn(async () => {
+				throw new Error('recovery callback rejected');
+			}),
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		await monitor.tick();
+		nowMs += 1;
+
+		expect(healthEventStore.listLatestEventsForZone('sunfam')).toContainEqual(
+			expect.objectContaining({
+				errorCode: 'recovery-callback-failed',
+				kind: 'gateway-recovery',
+				result: 'failed',
+			}),
+		);
+	});
+
+	it('bounds a never-resolving dead-control callback and monitor stop under injected time', async () => {
+		let nowMs = 40_000;
+		const timeoutCallbacks: Array<() => void> = [];
+		const monitor = createGatewayServiceHealthMonitor({
+			...s6bRecoveryOptions,
+			clearTimeoutImpl: vi.fn(),
+			gatewayServiceAutoRestart: {
+				...gatewayServiceAutoRestart,
+				restartTimeoutMs: 5_000,
+			},
+			healthEventStore: createHealthEventStoreWithStaleControlSession(),
+			intervalMs: 10_000,
+			now: () => nowMs,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/health',
+				port: 18_789,
+				statusCode: 200,
+				zoneId: 'sunfam',
+			})),
+			recoverDeadControlSession: vi.fn(async () => await new Promise<never>(() => {})),
+			setTimeoutImpl: (callback) => {
+				timeoutCallbacks.push(callback);
+				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+			},
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		const tick = monitor.tick();
+		await vi.waitFor(() => expect(timeoutCallbacks).toHaveLength(1));
+		nowMs += 5_000;
+		timeoutCallbacks[0]?.();
+		await expect(tick).resolves.toBeUndefined();
+		await expect(monitor.stop()).resolves.toBeUndefined();
 	});
 
 	it('does not start an overlapping recovery while the previous recovery callback is unsettled', async () => {

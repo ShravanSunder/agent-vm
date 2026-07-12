@@ -161,6 +161,61 @@ describe('buildControllerStatus', () => {
 		});
 	});
 
+	it('includes only bounded numeric observability diagnostics when provided', () => {
+		const queueDiagnostics = {
+			activeOperations: 1,
+			coalescedRecords: 3,
+			droppedBytes: 128,
+			droppedRecords: 2,
+			failedOperations: 1,
+			flushTimeoutMs: 2_000,
+			flushTimeouts: 1,
+			highWaterPendingBytes: 1_024,
+			highWaterPendingRecords: 8,
+			livenessAggregationWindowMs: 10_000,
+			maxOutstandingOperations: 2,
+			maxPendingBytes: 524_288,
+			maxPendingRecords: 256,
+			operationTimeoutMs: 1_000,
+			operationTimeouts: 1,
+			outstandingBytes: 64,
+			pendingBytes: 512,
+			pendingRecords: 4,
+		};
+
+		const status = buildControllerStatus(
+			systemConfig,
+			{},
+			{
+				evidence: {
+					durableLog: queueDiagnostics,
+					healthEventSinks: queueDiagnostics,
+				},
+				telemetry: {
+					emissionFailures: 1,
+					operationFailures: 2,
+					operationTimeouts: 3,
+				},
+			},
+		);
+
+		expect(status.observability).toMatchObject({
+			evidence: {
+				healthEventSinks: {
+					droppedRecords: 2,
+					highWaterPendingRecords: 8,
+				},
+			},
+			telemetry: {
+				emissionFailures: 1,
+				operationFailures: 2,
+				operationTimeouts: 3,
+			},
+		});
+		expect(JSON.stringify(status.observability)).not.toContain('secret');
+		expect(JSON.stringify(status.observability)).not.toContain('leaseId');
+	});
+
 	it('summarizes multiple zone lifecycle states from runtime snapshots', () => {
 		expect(
 			buildControllerStatus(systemConfig, {

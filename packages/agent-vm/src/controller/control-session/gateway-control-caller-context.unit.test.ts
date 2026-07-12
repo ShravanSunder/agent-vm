@@ -1,9 +1,14 @@
 import { createHmac } from 'node:crypto';
 
 import {
+	CONTROL_PROTOCOL_VERSION,
+	type ControlEnvelope,
+} from '@agent-vm/control-protocol-contracts';
+import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
 	type GatewayControlCallerContextRegisterPayload,
+	GatewayControlRpcMessageSchema,
 } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it } from 'vitest';
 
@@ -12,6 +17,7 @@ import {
 	deriveGatewayControlStablePrincipal,
 	digestGatewayControlSessionKey,
 } from './gateway-control-caller-context.js';
+import { resolveGatewayControlInboundStablePrincipal } from './gateway-control-domain-handler.js';
 
 const acceptedSession = {
 	bootId: 'boot-a',
@@ -70,6 +76,27 @@ function createRegisterPayload(
 
 const registerPayload = createRegisterPayload();
 
+function createInboundEnvelope(operation: string, sequence: number): ControlEnvelope {
+	return {
+		bootId: acceptedSession.bootId,
+		commandId: `55555555-5555-4555-8555-${String(sequence).padStart(12, '0')}`,
+		connectionId: acceptedSession.connectionId,
+		controllerEpoch: acceptedSession.controllerEpoch,
+		createdAtMs: 1,
+		deliveryPolicy: 'critical_idempotent',
+		domain: 'gateway_control',
+		idempotencyKey: `stable-principal-${String(sequence)}`,
+		kind: 'command',
+		messageId: `66666666-6666-4666-8666-${String(sequence).padStart(12, '0')}`,
+		operation,
+		peerId: acceptedSession.peerId,
+		protocolVersion: CONTROL_PROTOCOL_VERSION,
+		sequence,
+		sessionId: acceptedSession.sessionId,
+		zoneId: acceptedSession.zoneId,
+	};
+}
+
 function createRegistry(
 	options: {
 		readonly createCallerContextId?: () => string;
@@ -86,6 +113,82 @@ function createRegistry(
 }
 
 describe('gateway control caller context registry', () => {
+	it('resolves the stable agent principal from a valid signed inbound registration', () => {
+		const callerContexts = createRegistry();
+		const message = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'caller_context_register',
+			payload: registerPayload,
+		});
+
+		expect(
+			resolveGatewayControlInboundStablePrincipal({
+				callerContexts,
+				envelope: createInboundEnvelope('caller_context_register', 1),
+				message,
+			}),
+		).toBe(deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' }));
+		expect(callerContexts.resolve('unregistered')).toBeUndefined();
+	});
+
+	it('resolves a registered callerContextId to the same principal and grants none to invalid material', () => {
+		const callerContexts = createRegistry({
+			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+		});
+		const registered = callerContexts.register({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+		const leaseGetMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_get',
+			payload: {
+				callerContext: { callerContextId: registered.callerContextId },
+				leaseId: 'lease-main',
+			},
+		});
+		const unregisteredLeaseGetMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'lease_get',
+			payload: {
+				callerContext: { callerContextId: '77777777-7777-4777-8777-777777777777' },
+				leaseId: 'lease-main',
+			},
+		});
+		const invalidRegistrationMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'caller_context_register',
+			payload: {
+				adapterEvidence: {
+					...registerPayload.adapterEvidence,
+					proof: { ...registerPayload.adapterEvidence.proof, digest: 'x'.repeat(43) },
+				},
+			},
+		});
+
+		expect(
+			resolveGatewayControlInboundStablePrincipal({
+				callerContexts,
+				envelope: createInboundEnvelope('lease_get', 2),
+				message: leaseGetMessage,
+			}),
+		).toBe(registered.stablePrincipal);
+		expect(
+			resolveGatewayControlInboundStablePrincipal({
+				callerContexts,
+				envelope: createInboundEnvelope('lease_get', 3),
+				message: unregisteredLeaseGetMessage,
+			}),
+		).toBeUndefined();
+		expect(() =>
+			resolveGatewayControlInboundStablePrincipal({
+				callerContexts,
+				envelope: createInboundEnvelope('caller_context_register', 4),
+				message: invalidRegistrationMessage,
+			}),
+		).toThrow(/proof digest is invalid/u);
+	});
+
 	it('derives a stable principal from controller-validated zone and agent identity', () => {
 		const principal = deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' });
 

@@ -8,10 +8,8 @@ import { ZodError } from 'zod';
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	buildGatewayRuntimeRecord,
@@ -24,6 +22,14 @@ import {
 } from './gateway-runtime-record.js';
 
 const createdDirectories: string[] = [];
+const gatewayIdentity = {
+	bootId: 'boot-a',
+	controllerEpoch: 'controller-epoch-a',
+	gatewayEpochId: 'gateway-epoch-a',
+	gatewayVmId: 'gateway-vm-123',
+	generationId: 'generation-a',
+	zoneId: 'shravan',
+} as const;
 
 afterEach(async () => {
 	const directoriesToDelete = createdDirectories.splice(0);
@@ -42,10 +48,10 @@ async function createStateDirectory(): Promise<string> {
 
 function createVmInstanceStub(hostPid: number, vmId: string): ManagedVmInstance {
 	return {
-		close: async () => createCompleteVmDestroyReceipt(vmId),
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
+		close: async () => {},
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+			close: async () => {},
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -54,10 +60,10 @@ function createVmInstanceStub(hostPid: number, vmId: string): ManagedVmInstance 
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => createTestVmDestroyTarget(vmId),
 		getHostPid: () => hostPid,
 		id: vmId,
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
@@ -66,20 +72,21 @@ function createManagedVmStub(options: {
 	readonly id: string;
 }): ManagedVm {
 	return {
-		close: async () => createCompleteVmDestroyReceipt(options.id),
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
+		close: async () => {},
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			close: async () => {},
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			host: '127.0.0.1',
 			port: 19_000,
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => createTestVmDestroyTarget(options.id),
 		getHostPid: () => options.hostPid,
 		getVmInstance: () => createVmInstanceStub(options.hostPid, options.id),
 		id: options.id,
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
@@ -88,6 +95,7 @@ function buildSampleRecord(overrides: Partial<GatewayRuntimeRecord> = {}): Gatew
 		configPath: '/deployments/claw/config/system.jsonc',
 		controllerPort: 18_800,
 		createdAt: '2026-04-13T12:34:56.000Z',
+		gateway: gatewayIdentity,
 		gatewayType: 'openclaw',
 		guestListenPort: 18_789,
 		ingressPort: 18_791,
@@ -97,15 +105,24 @@ function buildSampleRecord(overrides: Partial<GatewayRuntimeRecord> = {}): Gatew
 		},
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		qemuPid: 4242,
-		schemaVersion: 1,
+		schemaVersion: 2,
 		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-		vmId: 'vm-session-123',
+		vmId: gatewayIdentity.gatewayVmId,
 		zoneId: 'shravan',
 		...overrides,
 	};
 }
 
 describe('gateway runtime record', () => {
+	it('rejects schema-v1 and unknown newer gateway runtime records', () => {
+		expect(() =>
+			gatewayRuntimeRecordSchema.parse({ ...buildSampleRecord(), schemaVersion: 1 }),
+		).toThrow(ZodError);
+		expect(() =>
+			gatewayRuntimeRecordSchema.parse({ ...buildSampleRecord(), schemaVersion: 3 }),
+		).toThrow(ZodError);
+	});
+
 	it('rejects pre-cutover gateway runtime records without schemaVersion', () => {
 		const { schemaVersion: _schemaVersion, ...recordWithoutSchemaVersion } = buildSampleRecord();
 
@@ -126,6 +143,30 @@ describe('gateway runtime record', () => {
 			buildSampleRecord();
 
 		expect(() => gatewayRuntimeRecordSchema.parse(recordWithoutProcessIdentity)).toThrow(ZodError);
+	});
+
+	it('requires the exact Gateway epoch identity', () => {
+		const { gateway: _gateway, ...recordWithoutGatewayIdentity } = buildSampleRecord();
+
+		expect(() => gatewayRuntimeRecordSchema.parse(recordWithoutGatewayIdentity)).toThrow(ZodError);
+		expect(() =>
+			gatewayRuntimeRecordSchema.parse({
+				...buildSampleRecord(),
+				gateway: { ...gatewayIdentity, gatewayVmId: undefined },
+			}),
+		).toThrow(ZodError);
+		expect(() =>
+			gatewayRuntimeRecordSchema.parse({
+				...buildSampleRecord(),
+				gateway: { ...gatewayIdentity, gatewayVmId: 'different-gateway-vm' },
+			}),
+		).toThrow(/must match the runtime record VM identity/u);
+		expect(() =>
+			gatewayRuntimeRecordSchema.parse({
+				...buildSampleRecord(),
+				gateway: { ...gatewayIdentity, zoneId: 'different-zone' },
+			}),
+		).toThrow(/must match the runtime record zone/u);
 	});
 
 	it('rejects control-session signing material in guest-visible runtime records', () => {
@@ -216,6 +257,7 @@ describe('gateway runtime record', () => {
 
 		const record = await buildGatewayRuntimeRecord({
 			controllerPort: 18_800,
+			gatewayIdentity,
 			gatewayType: 'openclaw',
 			ingressPort: 18_791,
 			managedVm: createManagedVmStub({ hostPid: 28_282, id: 'gateway-vm-123' }),
@@ -235,13 +277,14 @@ describe('gateway runtime record', () => {
 		expect(record).toMatchObject({
 			configPath: '/deployments/claw/config/system.jsonc',
 			controllerPort: 18_800,
+			gateway: gatewayIdentity,
 			gatewayType: 'openclaw',
 			guestListenPort: 18_789,
 			ingressPort: 18_791,
 			processIdentity: stubIdentity,
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			qemuPid: 28_282,
-			schemaVersion: 1,
+			schemaVersion: 2,
 			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 			vmId: 'gateway-vm-123',
 			zoneId: 'shravan',
@@ -249,10 +292,37 @@ describe('gateway runtime record', () => {
 		expect(record.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
 	});
 
+	it('builds an immediately persistent runtime record before ingress exists', async () => {
+		const record = await buildGatewayRuntimeRecord({
+			controllerPort: 18_800,
+			gatewayIdentity,
+			gatewayType: 'openclaw',
+			managedVm: createManagedVmStub({ hostPid: 28_282, id: 'gateway-vm-123' }),
+			processSpec: {
+				bootstrapCommand: 'bootstrap-openclaw',
+				guestListenPort: 18_789,
+				healthCheck: { path: '/', port: 18_789, type: 'http' },
+				logPath: '/tmp/openclaw.log',
+				startCommand: 'start-openclaw',
+			},
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			readProcessIdentity: async () => ({
+				command: 'qemu-system-x86_64 -m 4G -smp 4',
+				lstart: 'Fri May 22 10:00:00 2026',
+			}),
+			systemConfigPath: '/deployments/claw/config/system.jsonc',
+			zoneId: 'shravan',
+		});
+
+		expect(record).not.toHaveProperty('ingressPort');
+		expect(gatewayRuntimeRecordSchema.parse(record)).toEqual(record);
+	});
+
 	it('buildGatewayRuntimeRecord throws when ps cannot resolve process identity', async () => {
 		await expect(
 			buildGatewayRuntimeRecord({
 				controllerPort: 18_800,
+				gatewayIdentity,
 				gatewayType: 'openclaw',
 				ingressPort: 18_791,
 				managedVm: createManagedVmStub({ hostPid: 28_282, id: 'gateway-vm-123' }),
@@ -280,6 +350,7 @@ describe('gateway runtime record', () => {
 		await expect(
 			buildGatewayRuntimeRecord({
 				controllerPort: 18_800,
+				gatewayIdentity,
 				gatewayType: 'openclaw',
 				ingressPort: 18_791,
 				managedVm,
@@ -306,6 +377,7 @@ describe('gateway runtime record', () => {
 		await expect(
 			buildGatewayRuntimeRecord({
 				controllerPort: 18_800,
+				gatewayIdentity,
 				gatewayType: 'openclaw',
 				ingressPort: 18_791,
 				managedVm,

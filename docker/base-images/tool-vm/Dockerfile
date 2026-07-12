@@ -8,6 +8,7 @@ RUN apt-get update && \
       ca-certificates \
       git \
       curl \
+      e2fsprogs \
       jq \
       ripgrep \
       fd-find \
@@ -20,6 +21,7 @@ RUN apt-get update && \
       tree \
       unzip \
       zip && \
+    rm -f /etc/ssh/ssh_host_* && \
     rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates
 

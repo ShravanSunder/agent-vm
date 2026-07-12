@@ -1,12 +1,18 @@
 export type GatewayOwnershipCoordinatorErrorCode =
+	| 'agent-already-admitted'
+	| 'child-identity-mismatch'
+	| 'child-not-current'
+	| 'child-vm-already-attached'
+	| 'child-vm-not-attached'
 	| 'gateway-already-current'
+	| 'gateway-already-attached'
 	| 'gateway-identity-mismatch'
 	| 'gateway-not-admitting'
+	| 'gateway-not-attached'
 	| 'gateway-not-current'
+	| 'gateway-not-sealed'
 	| 'owner-unsafe'
-	| 'reservation-identity-mismatch'
-	| 'startup-reconciliation-in-progress'
-	| 'state-directory-mismatch';
+	| 'leaf-already-admitted';
 
 export class GatewayOwnershipCoordinatorError extends Error {
 	public constructor(

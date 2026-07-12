@@ -8,6 +8,7 @@ import type {
 } from './controller-telemetry.js';
 import {
 	createOtelControllerTelemetryDriver,
+	defaultOtelControllerTelemetryAdmissionLimits,
 	type OtelControllerTelemetryProviderFactory,
 } from './otel-controller-telemetry-driver.js';
 
@@ -23,7 +24,9 @@ describe('createOtelControllerTelemetryDriver', () => {
 			factoryCalls.push(options);
 			return {
 				loggerProvider: {
-					forceFlush: vi.fn(async () => {}),
+					forceFlush: vi.fn(async () => {
+						throw new Error('log exporter unavailable');
+					}),
 					getLogger: () => ({
 						emit: (record) => emittedLogs.push(record),
 					}),
@@ -118,25 +121,47 @@ describe('createOtelControllerTelemetryDriver', () => {
 			name: 'agent_vm.controller.controller-started',
 			observedAtMs: 1_781_445_000_000,
 		});
+		for (
+			let recordIndex = 0;
+			recordIndex < defaultOtelControllerTelemetryAdmissionLimits.maxQueuedRecordsPerSignal;
+			recordIndex += 1
+		) {
+			driver.emitLog({
+				attributes: {},
+				body: `pressure-${String(recordIndex)}`,
+				name: 'pressure-record',
+				observedAtMs: 1_781_445_000_001 + recordIndex,
+			});
+		}
+		driver.emitLog({
+			attributes: {},
+			body: 'x'.repeat(defaultOtelControllerTelemetryAdmissionLimits.maxRecordBytes),
+			name: 'oversized-record',
+			observedAtMs: 1_781_445_000_001,
+		});
 		await driver.forceFlush();
 		await driver.shutdown();
 
 		expect(factoryCalls).toEqual([
 			{
+				admissionLimits: defaultOtelControllerTelemetryAdmissionLimits,
 				logsUrl: 'http://127.0.0.1:4318/v1/logs',
 				metricsUrl: 'http://127.0.0.1:4318/v1/metrics',
 				resourceAttributes: options.resourceAttributes,
 				tracesUrl: 'http://127.0.0.1:4318/v1/traces',
 			},
 		]);
-		expect(emittedLogs).toEqual([
+		expect(emittedLogs).toHaveLength(
+			defaultOtelControllerTelemetryAdmissionLimits.maxQueuedRecordsPerSignal,
+		);
+		expect(emittedLogs[0]).toEqual(
 			expect.objectContaining({
 				attributes: { 'agent_vm.controller.event': 'controller-started' },
 				body: 'agent-vm controller controller-started',
 				name: 'agent_vm.controller.lifecycle',
 				observedAtMs: 1_781_445_000_000,
 			}),
-		]);
+		);
 		expect(emittedCounters).toEqual([
 			{
 				attributes: {
@@ -167,5 +192,33 @@ describe('createOtelControllerTelemetryDriver', () => {
 			},
 		]);
 		expect(shutdownOrder).toEqual(['logs', 'metrics', 'traces']);
+		expect(driver.getDiagnostics?.()).toMatchObject({
+			admittedRecords: 259,
+			derivedMaxAdmittedPayloadBytesPerSignal:
+				defaultOtelControllerTelemetryAdmissionLimits.maxQueuedRecordsPerSignal *
+				defaultOtelControllerTelemetryAdmissionLimits.maxRecordBytes,
+			droppedOversizedRecords: 1,
+			maxQueuedRecordsPerSignal:
+				defaultOtelControllerTelemetryAdmissionLimits.maxQueuedRecordsPerSignal,
+			maxRecordBytes: defaultOtelControllerTelemetryAdmissionLimits.maxRecordBytes,
+			providerOperationFailures: 1,
+			signals: {
+				logs: {
+					currentRecords: 256,
+					highWaterRecords: 256,
+					saturationDroppedRecords: 1,
+				},
+				metrics: {
+					currentRecords: 0,
+					highWaterRecords: 2,
+					saturationDroppedRecords: 0,
+				},
+				traces: {
+					currentRecords: 0,
+					highWaterRecords: 1,
+					saturationDroppedRecords: 0,
+				},
+			},
+		});
 	});
 });

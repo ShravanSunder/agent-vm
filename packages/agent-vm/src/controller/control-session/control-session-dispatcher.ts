@@ -256,6 +256,14 @@ export function createControlSessionDispatcher(
 			});
 			const semanticMutation = await handler.prepareSemanticMutation?.(context);
 			if (semanticMutation !== undefined) {
+				validateControlSessionDispatchContext({
+					context,
+					handler,
+					...(options.sessionFence === undefined ? {} : { sessionFence: options.sessionFence }),
+					...(options.sessionFenceRegistry === undefined
+						? {}
+						: { sessionFenceRegistry: options.sessionFenceRegistry }),
+				});
 				if (options.semanticLedger === undefined) {
 					throw new Error('gateway semantic mutation has no configured semantic ledger');
 				}

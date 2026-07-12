@@ -1,18 +1,19 @@
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
 import http, { type Server } from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 
-import {
-	createManagedVm,
-	createManagedVmOwnershipReservation,
-	type ManagedVm,
-	type ManagedVmOwnershipReservationReferenceV1,
-} from '@agent-vm/gondolin-adapter';
+import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { assertVmDestructionComplete } from '../shared/vm-destruction-receipt.js';
+import {
+	terminateLiveManagedVm,
+	type ManagedVmProcessTarget,
+} from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const TEST_SECRET_VALUE = 'agent-vm-http-mediation-test-secret';
@@ -20,20 +21,17 @@ const mediationHost = 'mediation-test.vm.host';
 const mediationUpstreamHost = '127.0.0.1';
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 
-async function createStandaloneOwnershipReservation(
-	testDeploymentRoot: string,
-): Promise<ManagedVmOwnershipReservationReferenceV1> {
-	const vmIdentity = randomUUID();
-	const ownershipReservation = await createManagedVmOwnershipReservation({
-		controllerEpoch: 'live-http-mediation-e2e',
-		parentGateway: null,
-		reservationId: `reservation-${vmIdentity}`,
-		reservationRoot: path.join(testDeploymentRoot, 'state', 'vm-ownership'),
-		role: 'standalone',
-		sessionLabel: 'agent-vm-live-http-mediation-test',
-		vmId: `vm-${vmIdentity}`,
-	});
-	return ownershipReservation.reference;
+async function startVmAndCaptureProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
+	await managedVm.start();
+	const hostPid = managedVm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' process identity.`);
+	}
+	return { hostPid, processIdentity, vmId: managedVm.id };
 }
 
 async function createHeaderEchoServer(): Promise<{
@@ -79,10 +77,16 @@ async function closeServer(server: Server | null): Promise<void> {
 	});
 }
 
-async function closeVmAndRequireCompleteReceipt(managedVm: ManagedVm | null): Promise<void> {
-	if (managedVm === null) return;
-	const receipt = await managedVm.close();
-	assertVmDestructionComplete(receipt, 'HTTP mediation VM cleanup');
+async function terminateVmRuntime(
+	runtime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null,
+): Promise<void> {
+	if (runtime === null) return;
+	await terminateLiveManagedVm({
+		contextLabel: 'HTTP mediation VM cleanup',
+		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		target: runtime.target,
+		vm: runtime.managedVm,
+	});
 }
 
 function rewriteMediationHostToLoopback(
@@ -105,15 +109,13 @@ function rewriteMediationHostToLoopback(
 
 describeLiveVmIntegration('live HTTP mediation', () => {
 	let echoServer: Server | null = null;
-	let vm: ManagedVm | null = null;
-	let testDeploymentRoot: string | null = null;
+	let vmRuntime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null =
+		null;
 
 	beforeAll(async () => {
-		testDeploymentRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-http-mediation-e2e-'));
 		const headerEchoServer = await createHeaderEchoServer();
 		echoServer = headerEchoServer.server;
-		vm = await createManagedVm({
-			ownershipReservation: await createStandaloneOwnershipReservation(testDeploymentRoot),
+		const vm = await createManagedVm({
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
@@ -132,11 +134,12 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 			vfsMounts: {},
 			sessionLabel: 'agent-vm-live-http-mediation-test',
 		});
+		vmRuntime = { managedVm: vm, target: await startVmAndCaptureProcess(vm) };
 	}, 60_000);
 
 	afterAll(async () => {
 		const cleanupResults = await Promise.allSettled([
-			closeVmAndRequireCompleteReceipt(vm),
+			terminateVmRuntime(vmRuntime),
 			closeServer(echoServer),
 		]);
 		const cleanupErrors: unknown[] = [];
@@ -148,15 +151,12 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 		if (cleanupErrors.length > 0) {
 			throw new AggregateError(cleanupErrors, 'HTTP mediation E2E cleanup failed');
 		}
-		vm = null;
+		vmRuntime = null;
 		echoServer = null;
-		if (testDeploymentRoot !== null) {
-			await rm(testDeploymentRoot, { force: true, recursive: true });
-			testDeploymentRoot = null;
-		}
 	});
 
 	it('keeps the real secret out of the VM env and injects it for an allowed host', async () => {
+		const vm = vmRuntime?.managedVm;
 		if (!vm) throw new Error('VM was not initialized.');
 
 		const envCheck = await vm.exec('printf "%s" "$TEST_TOKEN"');
@@ -177,6 +177,7 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 	}, 30_000);
 
 	it('blocks requests to hosts outside the allowlist', async () => {
+		const vm = vmRuntime?.managedVm;
 		if (!vm) throw new Error('VM was not initialized.');
 
 		const curlResult = await vm.exec(

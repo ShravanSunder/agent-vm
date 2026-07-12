@@ -1,20 +1,25 @@
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import net from 'node:net';
-import os from 'node:os';
-import path from 'node:path';
 
 import {
 	createGitReadOnlySshEgressOptions,
 	createManagedVm,
-	createManagedVmOwnershipReservation,
 	type ManagedSshEgressOptions,
 	type ManagedVm,
-	type ManagedVmOwnershipReservationReferenceV1,
 } from '@agent-vm/gondolin-adapter';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
-import { assertVmDestructionComplete } from '../shared/vm-destruction-receipt.js';
+import {
+	terminateLiveManagedVm,
+	type ManagedVmProcessTarget,
+} from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
@@ -23,30 +28,30 @@ const upstreamGitHost = '127.0.0.1.sslip.io';
 const allowedRepository = 'agent-vm/read-only-fixture.git';
 const crossVmSshFixturePort = 19100;
 
-async function createStandaloneOwnershipReservation(
-	testDeploymentRoot: string,
-	vmRoleLabel: string,
-): Promise<ManagedVmOwnershipReservationReferenceV1> {
-	const vmIdentity = `${vmRoleLabel}-${randomUUID()}`;
-	const ownershipReservation = await createManagedVmOwnershipReservation({
-		controllerEpoch: 'live-git-ssh-egress-policy-e2e',
-		parentGateway: null,
-		reservationId: `reservation-${vmIdentity}`,
-		reservationRoot: path.join(testDeploymentRoot, 'state', 'vm-ownership'),
-		role: 'standalone',
-		sessionLabel: `live-git-ssh-egress-${vmRoleLabel}`,
-		vmId: `vm-${vmIdentity}`,
-	});
-	return ownershipReservation.reference;
+async function startVmAndCaptureProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
+	await managedVm.start();
+	const hostPid = managedVm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' process identity.`);
+	}
+	return { hostPid, processIdentity, vmId: managedVm.id };
 }
 
-async function closeVmAndRequireCompleteReceipt(
-	managedVm: ManagedVm | null,
+async function terminateVmRuntime(
+	runtime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null,
 	context: string,
 ): Promise<void> {
-	if (managedVm === null) return;
-	const receipt = await managedVm.close();
-	assertVmDestructionComplete(receipt, context);
+	if (runtime === null) return;
+	await terminateLiveManagedVm({
+		contextLabel: context,
+		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		target: runtime.target,
+		vm: runtime.managedVm,
+	});
 }
 
 async function allocateLocalTcpPort(): Promise<number> {
@@ -99,20 +104,27 @@ function createGuestGitSshCommand(props: {
 }
 
 describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
-	let upstreamVm: ManagedVm | null = null;
-	let gatewayVm: ManagedVm | null = null;
-	let testDeploymentRoot: string | null = null;
-
-	beforeAll(async () => {
-		testDeploymentRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-git-ssh-egress-e2e-'));
-	});
+	let upstreamRuntime: {
+		readonly managedVm: ManagedVm;
+		readonly target: ManagedVmProcessTarget;
+	} | null = null;
+	let gatewayRuntime: {
+		readonly managedVm: ManagedVm;
+		readonly target: ManagedVmProcessTarget;
+	} | null = null;
+	let upstreamSsh: Awaited<ReturnType<ManagedVm['enableSsh']>> | null = null;
 
 	afterAll(async () => {
-		const cleanupResults = await Promise.allSettled([
-			closeVmAndRequireCompleteReceipt(gatewayVm, 'gateway VM cleanup'),
-			closeVmAndRequireCompleteReceipt(upstreamVm, 'upstream VM cleanup'),
-		]);
 		const cleanupErrors: unknown[] = [];
+		try {
+			await upstreamSsh?.close();
+		} catch (error) {
+			cleanupErrors.push(error);
+		}
+		const cleanupResults = await Promise.allSettled([
+			terminateVmRuntime(gatewayRuntime, 'gateway VM cleanup'),
+			terminateVmRuntime(upstreamRuntime, 'upstream VM cleanup'),
+		]);
 		for (const result of cleanupResults) {
 			if (result.status === 'rejected') {
 				cleanupErrors.push(result.reason as unknown);
@@ -121,21 +133,13 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 		if (cleanupErrors.length > 0) {
 			throw new AggregateError(cleanupErrors, 'SSH Git egress E2E cleanup failed');
 		}
-		gatewayVm = null;
-		upstreamVm = null;
-		if (testDeploymentRoot !== null) {
-			await rm(testDeploymentRoot, { force: true, recursive: true });
-			testDeploymentRoot = null;
-		}
+		gatewayRuntime = null;
+		upstreamRuntime = null;
+		upstreamSsh = null;
 	});
 
 	it('allows git-upload-pack and denies git-receive-pack at the Gondolin host boundary', async () => {
-		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
-		upstreamVm = await createManagedVm({
-			ownershipReservation: await createStandaloneOwnershipReservation(
-				testDeploymentRoot,
-				'upstream',
-			),
+		const upstreamVm = await createManagedVm({
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
@@ -144,6 +148,10 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 			secrets: {},
 			vfsMounts: {},
 		});
+		upstreamRuntime = {
+			managedVm: upstreamVm,
+			target: await startVmAndCaptureProcess(upstreamVm),
+		};
 
 		const installGitUploadPack = await upstreamVm.exec(
 			[
@@ -157,7 +165,7 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 		expect(installGitUploadPack.exitCode).toBe(0);
 
 		const upstreamSshPort = await allocateLocalTcpPortExcluding([crossVmSshFixturePort]);
-		const upstreamSsh = await upstreamVm.enableSsh({
+		upstreamSsh = await upstreamVm.enableSsh({
 			user: 'root',
 			listenHost: '127.0.0.1',
 			listenPort: upstreamSshPort,
@@ -182,11 +190,7 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 			upstreamReadyTimeoutMs: 5_000,
 		} satisfies ManagedSshEgressOptions;
 
-		gatewayVm = await createManagedVm({
-			ownershipReservation: await createStandaloneOwnershipReservation(
-				testDeploymentRoot,
-				'gateway',
-			),
+		const gatewayVm = await createManagedVm({
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
@@ -196,6 +200,10 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 			sshEgress,
 			vfsMounts: {},
 		});
+		gatewayRuntime = {
+			managedVm: gatewayVm,
+			target: await startVmAndCaptureProcess(gatewayVm),
+		};
 
 		const receivePackResult = await gatewayVm.exec(
 			createGuestGitSshCommand({

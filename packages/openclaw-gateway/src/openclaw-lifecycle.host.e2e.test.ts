@@ -55,6 +55,28 @@ async function pathExists(filePath: string): Promise<boolean> {
 	}
 }
 
+async function runNodeHelperWithStdin(
+	helperPath: string,
+	stdin: string,
+): Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }> {
+	const child = spawn(process.execPath, [helperPath], {
+		stdio: ['pipe', 'pipe', 'pipe'],
+	});
+	let stderr = '';
+	let stdout = '';
+	child.stderr.setEncoding('utf8');
+	child.stdout.setEncoding('utf8');
+	child.stderr.on('data', (chunk: string) => {
+		stderr += chunk;
+	});
+	child.stdout.on('data', (chunk: string) => {
+		stdout += chunk;
+	});
+	child.stdin.end(stdin);
+	const [exitCode] = (await once(child, 'close')) as [number | null, NodeJS.Signals | null];
+	return { exitCode: exitCode ?? -1, stderr, stdout };
+}
+
 async function renderBootstrapFiles(
 	command: string,
 	rootDirectory: string,
@@ -1008,6 +1030,8 @@ describe('openclawLifecycle', () => {
 			expect(helperSource).toContain("refuse('process-overlap')");
 			expect(helperSource).toContain("path.join(groupPath, 'cgroup.kill')");
 			expect(helperSource).toContain("path.join(groupPath, 'cgroup.events')");
+			expect(helperSource).toContain('rmdirSync(groupPath)');
+			expect(helperSource).not.toContain('rmSync(groupPath, { recursive: false })');
 			expect(helperSource).toContain('emptyObserved: true');
 			expect(helperSource).toContain(
 				`set -a; . /run/openclaw/secrets.env; set +a; cd /home/openclaw; exec /usr/local/bin/openclaw gateway --port 18789`,
@@ -1018,7 +1042,177 @@ describe('openclawLifecycle', () => {
 			);
 		});
 
-		it('executes the generated helper through start, replay, collision, observe, and positive containment', async () => {
+		it.each([
+			{
+				failureStage: 'create-cgroup',
+				injectionTarget: 'mkdirSync(groupPath, { mode: 0o700 });',
+			},
+			{
+				failureStage: 'inspect-created-cgroup',
+				injectionTarget: "if (populated(groupPath)) refuse('process-overlap');",
+			},
+		] as const)(
+			'persists only the bounded $failureStage start marker when that pre-receipt stage fails',
+			async ({ failureStage, injectionTarget }) => {
+				const tempDirectory = await mkdtemp(
+					path.join(os.tmpdir(), `openclaw-process-supervisor-${failureStage}-`),
+				);
+				createdDirectories.push(tempDirectory);
+				const stateDirectory = path.join(tempDirectory, 'state');
+				const cgroupRoot = path.join(tempDirectory, 'cgroup');
+				const mountsPath = path.join(tempDirectory, 'mounts');
+				const helperPath = path.join(tempDirectory, 'helper');
+				const rawFailurePayload = `private-${failureStage}-failure:${tempDirectory}`;
+				await Promise.all([
+					mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
+					mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
+					writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
+				]);
+				const helperSource = processSupervisorHelperTestInternals
+					.buildOpenClawProcessSupervisorHelperSource()
+					.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
+					.replaceAll('/sys/fs/cgroup', cgroupRoot)
+					.replaceAll('/proc/mounts', mountsPath);
+				for (const expectedStage of [
+					'ensure-cgroup2',
+					'create-cgroup',
+					'inspect-created-cgroup',
+					'bind-process',
+				]) {
+					expect(helperSource.split(`recordOperationStage('${expectedStage}')`)).toHaveLength(2);
+				}
+				const injectedHelperSource = helperSource.replace(
+					injectionTarget,
+					`throw new Error(${JSON.stringify(rawFailurePayload)});`,
+				);
+				expect(injectedHelperSource).not.toBe(helperSource);
+				await writeFile(helperPath, injectedHelperSource, 'utf8');
+				const request = {
+					actionId: `action-fail-${failureStage}`,
+					contractVersion: 1,
+					expectedProcessEpoch: null,
+					gateway: {
+						controllerEpoch: 'controller-1',
+						gatewayEpochId: 'gateway-epoch-1',
+						gatewayVmId: 'gateway-vm-1',
+					},
+					kind: 'start',
+					selectedProcessEpoch: 'process-1',
+				};
+
+				const outcome = await runNodeHelperWithStdin(helperPath, `${JSON.stringify(request)}\n`);
+				expect(outcome).toMatchObject({
+					stderr: `agent-vm-process-supervisor-failure:${failureStage}\n`,
+				});
+				expect((outcome as { readonly stderr: string }).stderr).not.toContain(rawFailurePayload);
+				expect((outcome as { readonly stderr: string }).stderr).not.toContain(tempDirectory);
+				const persistedStateContent = await readFile(
+					path.join(stateDirectory, 'state-v1.json'),
+					'utf8',
+				);
+				expect(JSON.parse(persistedStateContent)).toMatchObject({
+					lastOperation: {
+						actionId: `action-fail-${failureStage}`,
+						kind: 'start',
+						stage: failureStage,
+					},
+				});
+				expect(persistedStateContent).not.toContain(rawFailurePayload);
+				expect(persistedStateContent).not.toContain(tempDirectory);
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'request-v1.json'), 'utf8')),
+				).toEqual(request);
+			},
+		);
+
+		it('reads one exact stdin request and persists the guest audit before acting', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-process-supervisor-request-stdin-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			const cgroupRoot = path.join(tempDirectory, 'cgroup');
+			const mountsPath = path.join(tempDirectory, 'mounts');
+			const helperPath = path.join(tempDirectory, 'helper');
+			await Promise.all([
+				mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
+				mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
+				writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
+			]);
+			const helperSource = processSupervisorHelperTestInternals
+				.buildOpenClawProcessSupervisorHelperSource()
+				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
+				.replaceAll('/sys/fs/cgroup', cgroupRoot)
+				.replaceAll('/proc/mounts', mountsPath);
+			await writeFile(helperPath, helperSource, 'utf8');
+			const request = {
+				actionId: 'action-stdin-request',
+				contractVersion: 1,
+				expectedProcessEpoch: null,
+				gateway: {
+					controllerEpoch: 'controller-1',
+					gatewayEpochId: 'gateway-epoch-1',
+					gatewayVmId: 'gateway-vm-1',
+				},
+				kind: 'observe',
+			};
+			const serializedRequest = `${JSON.stringify(request)}\n`;
+
+			await expect(runNodeHelperWithStdin(helperPath, serializedRequest)).resolves.toMatchObject({
+				exitCode: 0,
+				stderr: '',
+			});
+			expect(await readFile(path.join(stateDirectory, 'request-v1.json'), 'utf8')).toBe(
+				serializedRequest,
+			);
+			expect(
+				JSON.parse(await readFile(path.join(stateDirectory, 'receipt-v1.json'), 'utf8')),
+			).toMatchObject({
+				actionId: 'action-stdin-request',
+				expectedProcessEpoch: null,
+				kind: 'observe',
+				observedProcessEpoch: null,
+				status: 'completed',
+			});
+		});
+
+		it('bounds invalid stdin without persisting an audit or performing an action', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-process-supervisor-request-read-invalid-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			const cgroupRoot = path.join(tempDirectory, 'cgroup');
+			const mountsPath = path.join(tempDirectory, 'mounts');
+			const helperPath = path.join(tempDirectory, 'helper');
+			await Promise.all([
+				mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
+				mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
+				writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
+			]);
+			const helperSource = processSupervisorHelperTestInternals
+				.buildOpenClawProcessSupervisorHelperSource()
+				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
+				.replaceAll('/sys/fs/cgroup', cgroupRoot)
+				.replaceAll('/proc/mounts', mountsPath);
+			await writeFile(helperPath, helperSource, 'utf8');
+
+			const outcome = await runNodeHelperWithStdin(helperPath, '{"contractVersion":');
+			expect(outcome).toMatchObject({
+				stderr: 'agent-vm-process-supervisor-failure:parse-request-json\n',
+			});
+			expect((outcome as { readonly stderr: string }).stderr).not.toContain(
+				'Unexpected end of JSON input',
+			);
+			expect((outcome as { readonly stderr: string }).stderr).not.toContain(tempDirectory);
+			expect(outcome.exitCode).not.toBe(0);
+			expect(await pathExists(path.join(stateDirectory, 'request-v1.json'))).toBe(false);
+			expect(await pathExists(path.join(stateDirectory, 'state-v1.json'))).toBe(false);
+			expect(await pathExists(path.join(stateDirectory, 'receipt-v1.json'))).toBe(false);
+			expect(await readdir(cgroupRoot)).toEqual([]);
+		});
+
+		it('executes the generated helper through start, reliability termination, containment, and successor start', async () => {
 			const tempDirectory = await mkdtemp(
 				path.join(os.tmpdir(), 'openclaw-process-supervisor-behavior-'),
 			);
@@ -1029,6 +1223,7 @@ describe('openclawLifecycle', () => {
 			const helperPath = path.join(tempDirectory, 'helper');
 			const watcherPath = path.join(tempDirectory, 'fixture-cgroup-watcher.mjs');
 			const watcherModePath = path.join(tempDirectory, 'fixture-cgroup-mode');
+			const cgroupRemovalMarkerPath = path.join(tempDirectory, 'fixture-cgroup-removed');
 			const bootLogPath = path.join(tempDirectory, 'gateway.log');
 			const gateway = {
 				controllerEpoch: 'controller-1',
@@ -1036,16 +1231,28 @@ describe('openclawLifecycle', () => {
 				gatewayVmId: 'gateway-vm-1',
 			} as const;
 			const processEpoch = 'process-1';
+			const successorProcessEpoch = 'process-2';
 			const cgroupName = `agent-vm-${createHash('sha256')
 				.update(`${gateway.gatewayEpochId}\0${processEpoch}`)
 				.digest('hex')
 				.slice(0, 24)}`;
+			const successorCgroupName = `agent-vm-${createHash('sha256')
+				.update(`${gateway.gatewayEpochId}\0${successorProcessEpoch}`)
+				.digest('hex')
+				.slice(0, 24)}`;
 			const cgroupPath = path.join(cgroupRoot, cgroupName);
+			const successorCgroupPath = path.join(cgroupRoot, successorCgroupName);
 			await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
-			await mkdir(cgroupPath, { recursive: true, mode: 0o700 });
-			await writeFile(path.join(cgroupPath, 'cgroup.events'), 'populated 0\n', 'utf8');
-			await writeFile(path.join(cgroupPath, 'cgroup.kill'), '', 'utf8');
-			await writeFile(path.join(cgroupPath, 'cgroup.procs'), '', 'utf8');
+			await Promise.all(
+				[cgroupPath, successorCgroupPath].map(async (fixtureCgroupPath) => {
+					await mkdir(fixtureCgroupPath, { recursive: true, mode: 0o700 });
+					await Promise.all([
+						writeFile(path.join(fixtureCgroupPath, 'cgroup.events'), 'populated 0\n', 'utf8'),
+						writeFile(path.join(fixtureCgroupPath, 'cgroup.kill'), '', 'utf8'),
+						writeFile(path.join(fixtureCgroupPath, 'cgroup.procs'), '', 'utf8'),
+					]);
+				}),
+			);
 			await writeFile(watcherModePath, 'normal', 'utf8');
 			await writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8');
 			const helperSource = processSupervisorHelperTestInternals
@@ -1059,33 +1266,36 @@ describe('openclawLifecycle', () => {
 					'mkdirSync(groupPath, { mode: 0o700, recursive: true });',
 				)
 				.replace(
-					'rmSync(groupPath, { recursive: false });',
+					'rmdirSync(groupPath);',
 					"writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');",
 				);
 			await writeFile(
 				watcherPath,
 				`import { existsSync, readFileSync, watch, writeFileSync } from 'node:fs';
-const groupPath = ${JSON.stringify(cgroupPath)};
-const processPath = groupPath + '/cgroup.procs';
-const killPath = groupPath + '/cgroup.kill';
-const eventsPath = groupPath + '/cgroup.events';
+const groupPaths = ${JSON.stringify([cgroupPath, successorCgroupPath])};
 const modePath = ${JSON.stringify(watcherModePath)};
-const processEvents = watch(processPath, () => {
-  if (readFileSync(modePath, 'utf8').trim() === 'ignore-membership') return;
-  const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
-  if (Number.isInteger(pid)) writeFileSync(eventsPath, 'populated 1\\n');
-});
-const killEvents = watch(killPath, () => {
-  if (readFileSync(modePath, 'utf8').trim() === 'ignore-kill') return;
-  if (!existsSync(killPath) || readFileSync(killPath, 'utf8').trim() !== '1') return;
-  const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
-  if (Number.isInteger(pid)) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
-  writeFileSync(eventsPath, 'populated 0\\n');
+const cgroupWatches = groupPaths.flatMap((groupPath) => {
+  const processPath = groupPath + '/cgroup.procs';
+  const killPath = groupPath + '/cgroup.kill';
+  const eventsPath = groupPath + '/cgroup.events';
+  return [
+    watch(processPath, () => {
+      if (readFileSync(modePath, 'utf8').trim() === 'ignore-membership') return;
+      const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
+      if (Number.isInteger(pid)) writeFileSync(eventsPath, 'populated 1\\n');
+    }),
+    watch(killPath, () => {
+      if (readFileSync(modePath, 'utf8').trim() === 'ignore-kill') return;
+      if (!existsSync(killPath) || readFileSync(killPath, 'utf8').trim() !== '1') return;
+      const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
+      if (Number.isInteger(pid)) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
+      writeFileSync(eventsPath, 'populated 0\\n');
+    }),
+  ];
 });
 process.stdout.write('ready\\n');
 await new Promise((resolve) => process.once('SIGTERM', resolve));
-processEvents.close();
-killEvents.close();
+for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 `,
 				'utf8',
 			);
@@ -1105,28 +1315,7 @@ killEvents.close();
 					readonly receipt: unknown;
 				}> => {
 					await rm(path.join(stateDirectory, 'receipt-v1.json'), { force: true });
-					await writeFile(
-						path.join(stateDirectory, 'request-v1.json'),
-						`${JSON.stringify(request)}\n`,
-						'utf8',
-					);
-					const outcome = await execFileAsync(process.execPath, [helperPath]).then(
-						(result) => ({ exitCode: 0, stderr: result.stderr, stdout: result.stdout }),
-						(error: unknown) => ({
-							exitCode:
-								typeof error === 'object' && error !== null && 'code' in error
-									? Number(error.code)
-									: -1,
-							stderr:
-								typeof error === 'object' && error !== null && 'stderr' in error
-									? String(error.stderr)
-									: '',
-							stdout:
-								typeof error === 'object' && error !== null && 'stdout' in error
-									? String(error.stdout)
-									: '',
-						}),
-					);
+					const outcome = await runNodeHelperWithStdin(helperPath, `${JSON.stringify(request)}\n`);
 					const receiptContent = await readFile(
 						path.join(stateDirectory, 'receipt-v1.json'),
 						'utf8',
@@ -1340,10 +1529,89 @@ killEvents.close();
 				await writeFile(path.join(cgroupPath, 'cgroup.kill'), '', 'utf8');
 				await writeFile(watcherModePath, 'normal', 'utf8');
 				await writeFile(path.join(stateDirectory, 'operation.lock'), 'stale', 'utf8');
-				await expect(execFileAsync(process.execPath, [helperPath])).rejects.toMatchObject({
-					code: 73,
-				});
+				await expect(
+					runNodeHelperWithStdin(helperPath, `${JSON.stringify(startRequest)}\n`),
+				).resolves.toMatchObject({ exitCode: 73 });
 				await rm(path.join(stateDirectory, 'operation.lock'), { force: true });
+				await expect(
+					invoke({
+						actionId: 'action-reliability-terminate-wrong-process',
+						contractVersion: 1,
+						expectedProcessEpoch: 'process-wrong',
+						gateway,
+						kind: 'terminate-for-reliability-test',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						reason: 'process-fence-mismatch',
+						status: 'refused',
+					},
+				});
+				const reliabilityTerminationRequest = {
+					actionId: 'action-reliability-terminate',
+					contractVersion: 1,
+					expectedProcessEpoch: processEpoch,
+					gateway,
+					kind: 'terminate-for-reliability-test',
+				};
+				const reliabilityTermination = await invoke(reliabilityTerminationRequest);
+				expect(reliabilityTermination).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				await expect(invoke(reliabilityTerminationRequest)).resolves.toEqual(
+					reliabilityTermination,
+				);
+				await expect(
+					invoke({
+						...reliabilityTerminationRequest,
+						expectedProcessEpoch: 'process-changed',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-reliability-terminate',
+						reason: 'action-reused',
+						status: 'refused',
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-observe-empty-bound-process',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'observe',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
+				).toMatchObject({
+					cgroupName,
+					currentProcessEpoch: processEpoch,
+					status: 'exited',
+				});
+				const removeFixtureCgroupHelperSource = helperSource.replace(
+					"writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');",
+					`writeFileSync(${JSON.stringify(cgroupRemovalMarkerPath)}, groupPath); writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');`,
+				);
+				expect(removeFixtureCgroupHelperSource).not.toBe(helperSource);
+				await rm(path.join(cgroupPath, 'cgroup.kill'));
+				await writeFile(helperPath, removeFixtureCgroupHelperSource, 'utf8');
 				const contained = await invoke({
 					actionId: 'action-c',
 					contractVersion: 1,
@@ -1359,6 +1627,111 @@ killEvents.close();
 						status: 'completed',
 					},
 				});
+				expect(await readFile(cgroupRemovalMarkerPath, 'utf8')).toBe(cgroupPath);
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
+				).toMatchObject({
+					cgroupName: null,
+					currentProcessEpoch: null,
+					status: 'contained',
+				});
+				await writeFile(helperPath, helperSource, 'utf8');
+				const successorStarted = await invoke({
+					actionId: 'action-start-successor',
+					contractVersion: 1,
+					expectedProcessEpoch: null,
+					gateway,
+					kind: 'start',
+					selectedProcessEpoch: successorProcessEpoch,
+				});
+				expect(successorStarted).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { name: successorCgroupName, populated: true },
+						observedProcessEpoch: successorProcessEpoch,
+						status: 'completed',
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-reliability-terminate-successor',
+						contractVersion: 1,
+						expectedProcessEpoch: successorProcessEpoch,
+						gateway,
+						kind: 'terminate-for-reliability-test',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { emptyObserved: true, name: successorCgroupName, populated: false },
+						observedProcessEpoch: successorProcessEpoch,
+						status: 'completed',
+					},
+				});
+				await rm(successorCgroupPath, { recursive: true });
+				await writeFile(helperPath, removeFixtureCgroupHelperSource, 'utf8');
+				await expect(
+					invoke({
+						actionId: 'action-contain-already-absent',
+						contractVersion: 1,
+						expectedProcessEpoch: successorProcessEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { emptyObserved: true, name: successorCgroupName, populated: false },
+						observedProcessEpoch: successorProcessEpoch,
+						status: 'completed',
+					},
+				});
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
+				).toMatchObject({
+					cgroupName: null,
+					currentProcessEpoch: null,
+					status: 'contained',
+				});
+				const unprovenAbsentProcessEpoch = 'process-unproven-absent';
+				const unprovenAbsentCgroupName = 'agent-vm-unproven-absent';
+				const containedState = JSON.parse(
+					await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8'),
+				) as Record<string, unknown>;
+				await writeFile(
+					path.join(stateDirectory, 'state-v1.json'),
+					`${JSON.stringify({
+						...containedState,
+						cgroupName: unprovenAbsentCgroupName,
+						currentProcessEpoch: unprovenAbsentProcessEpoch,
+						status: 'running',
+					})}\n`,
+					'utf8',
+				);
+				await expect(
+					invoke({
+						actionId: 'action-contain-unproven-absent',
+						contractVersion: 1,
+						expectedProcessEpoch: unprovenAbsentProcessEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						cgroup: { name: unprovenAbsentCgroupName, populated: false },
+						observedProcessEpoch: unprovenAbsentProcessEpoch,
+						reason: 'cgroup-unavailable',
+						status: 'incomplete',
+					},
+				});
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
+				).toMatchObject({
+					cgroupName: unprovenAbsentCgroupName,
+					currentProcessEpoch: unprovenAbsentProcessEpoch,
+					status: 'running',
+				});
 				const state = JSON.parse(
 					await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8'),
 				) as { actionOrder: string[]; actions: Record<string, unknown> };
@@ -1373,7 +1746,14 @@ killEvents.close();
 					'action-b',
 					'action-contain-unavailable',
 					'action-contain-still-populated',
+					'action-reliability-terminate-wrong-process',
+					'action-reliability-terminate',
+					'action-observe-empty-bound-process',
 					'action-c',
+					'action-start-successor',
+					'action-reliability-terminate-successor',
+					'action-contain-already-absent',
+					'action-contain-unproven-absent',
 				]);
 				expect(Object.keys(state.actions)).toEqual(state.actionOrder);
 			} finally {
@@ -1382,7 +1762,7 @@ killEvents.close();
 					await once(watcher, 'exit').catch(() => undefined);
 				}
 			}
-		}, 20_000);
+		}, 60_000);
 
 		it('refreshes the managed diagnostics-otel registry before observable gateway startup', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(

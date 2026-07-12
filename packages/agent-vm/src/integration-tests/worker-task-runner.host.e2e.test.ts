@@ -3,7 +3,6 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import { serve } from '@hono/node-server';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,14 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../agent-vm-worker/src/server.js';
 import type { ServerDeps } from '../../../agent-vm-worker/src/server.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
+import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
-	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 
 const startGatewayZoneMock = vi.fn();
@@ -29,27 +25,30 @@ const startRepoResourceProvidersMock = vi.fn(async () => ({
 const stopRepoResourceProvidersMock = vi.fn(async () => {});
 const workerControllerEpoch = 'worker-host-e2e-controller-epoch';
 const workerVmId = 'worker-vm-1';
-const completeVmDestroyReceipt = createCompleteVmDestroyReceipt(workerVmId, {
-	controllerEpoch: workerControllerEpoch,
-	role: 'standalone',
-});
 
 function createStandaloneVmOwnershipStub(): {
-	readonly destroyLiveMock: Mock<VmCreationOwnership['destroyLive']>;
-	readonly vmOwnership: VmCreationOwnership;
+	readonly destroyLiveMock: Mock<GatewayVmLifecycleAuthority['destroyLive']>;
+	readonly vmOwnership: GatewayVmLifecycleAuthority;
 } {
-	const destroyLiveMock = vi.fn<VmCreationOwnership['destroyLive']>(
-		async (closeLiveVm) => await closeLiveVm(),
+	const gatewaySeed = {
+		bootId: 'worker-task-host-e2e',
+		controllerEpoch: workerControllerEpoch,
+		gatewayEpochId: 'worker-task-gateway-epoch',
+		generationId: 'worker-task-generation',
+		zoneId: 'shravan',
+	};
+	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: workerVmId };
+	const destroyLiveMock = vi.fn<GatewayVmLifecycleAuthority['destroyLive']>(
+		async (destroyVm) => await destroyVm(),
 	);
 	return {
 		destroyLiveMock,
 		vmOwnership: {
-			destroyDetached: vi.fn(async () => completeVmDestroyReceipt),
+			attachGatewayVm: () => gatewayIdentity,
+			containPendingCreate: async () => {},
 			destroyLive: destroyLiveMock,
-			ownershipReservation: createTestVmOwnershipReservationReference(workerVmId, {
-				controllerEpoch: workerControllerEpoch,
-				role: 'standalone',
-			}),
+			gatewayIdentity,
+			gatewaySeed,
 		},
 	};
 }
@@ -113,14 +112,14 @@ describe('worker-task-runner integration', () => {
 	let tempDir: string;
 	let server: { close: (cb?: () => void) => void } | null = null;
 	let workerPort: number;
-	let closeVmMock: Mock<() => Promise<VmDestroyReceiptV1>>;
-	let vmOwnershipDestroyLiveMock: Mock<VmCreationOwnership['destroyLive']>;
+	let closeVmMock: Mock<() => Promise<void>>;
+	let vmOwnershipDestroyLiveMock: Mock<GatewayVmLifecycleAuthority['destroyLive']>;
 	let receivedTaskBody: Parameters<ServerDeps['submitTask']>[0] | null;
 
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-task-runner-integration-'));
 		workerPort = await findOpenPort();
-		closeVmMock = vi.fn(async () => completeVmDestroyReceipt);
+		closeVmMock = vi.fn(async () => {});
 
 		let activeTaskId: string | null = null;
 		let currentStatus: 'pending' | 'completed' = 'pending';
@@ -217,11 +216,14 @@ describe('worker-task-runner integration', () => {
 				guestListenPort: 18789,
 				logPath: '/tmp/worker.log',
 			},
+			terminateVm: async () => await closeVmMock(),
 			vm: {
 				id: workerVmId,
 				close: closeVmMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: workerPort })),
 				enableSsh: vi.fn(async () => ({
+					close: async () => {},
+					command: 'ssh worker-vm',
 					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					host: '127.0.0.1',
 					port: 2222,
@@ -229,14 +231,10 @@ describe('worker-task-runner integration', () => {
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
-				getDestroyTarget: () =>
-					createTestVmDestroyTarget(workerVmId, {
-						controllerEpoch: workerControllerEpoch,
-						role: 'standalone',
-					}),
 				setIngressRoutes: vi.fn(),
 				getHostPid: () => null,
 				getVmInstance: vi.fn(),
+				start: async () => {},
 			},
 			vmOwnership: standaloneOwnership.vmOwnership,
 			zone: systemConfig.zones[0],

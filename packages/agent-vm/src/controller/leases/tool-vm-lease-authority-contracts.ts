@@ -39,19 +39,6 @@ export interface ToolVmSshBinding {
 	readonly user: string;
 }
 
-export interface ToolVmExactDestructionIdentity {
-	readonly reservationId: string;
-	readonly reservationPath: string;
-	readonly vmId: string;
-}
-
-export interface ToolVmExactDestructionReceipt {
-	readonly complete: boolean;
-	readonly reservationId: string;
-	readonly reservationPath: string;
-	readonly vmId: string;
-}
-
 export interface ToolVmActiveUseLatestReport {
 	readonly reportedAtMs: number;
 	readonly sequence: number;
@@ -105,7 +92,6 @@ export type ToolVmActiveUse =
 interface ToolVmLeaseLeafBase {
 	readonly activeUses: ReadonlyMap<string, ToolVmActiveUse>;
 	readonly compatibility: ToolVmLeaseCompatibility;
-	readonly destructionIdentity: ToolVmExactDestructionIdentity;
 	readonly leaseId: string;
 	readonly leafGeneration: string;
 	readonly idleExpiresAtMs: number;
@@ -223,8 +209,6 @@ export type ToolVmLeaseAuthorityTransitionErrorCode =
 	| 'attachment-generation-regressed'
 	| 'binding-not-authorized'
 	| 'compatibility-conflict'
-	| 'destruction-receipt-incomplete'
-	| 'destruction-receipt-mismatch'
 	| 'leaf-already-exists'
 	| 'leaf-destroyed'
 	| 'leaf-generation-mismatch'
@@ -277,7 +261,6 @@ export type ToolVmLeaseAuthorityCommand =
 	| {
 			readonly authority: ToolVmLeafAuthorityReference;
 			readonly compatibility: ToolVmLeaseCompatibility;
-			readonly destructionIdentity: ToolVmExactDestructionIdentity;
 			readonly kind: 'begin-provisioning';
 			readonly idleExpiresAtMs: number;
 	  }
@@ -381,8 +364,8 @@ export type ToolVmLeaseAuthorityCommand =
 			readonly authority: ToolVmLeafAuthorityReference;
 			readonly destroyedAtMs: number;
 			readonly kind: 'destruction-completed';
-			readonly receipt: ToolVmExactDestructionReceipt;
 			readonly reason: string;
+			readonly vmId?: string;
 	  }
 	| { readonly kind: 'prune-tombstones'; readonly nowMs: number };
 

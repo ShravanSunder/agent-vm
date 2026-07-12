@@ -429,16 +429,13 @@ export function createGondolinSandboxBackendFactory(
 					zoneId: options.zoneId,
 				});
 				leaseClient.retainRetiredLeaseReacquireRequest?.(lease.leaseId, reacquireRequest);
+				// Reacquire is the controller-owned atomic replacement transition.
+				// Releasing first would delete the old authority needed to authorize it.
+				return;
 			}
 			await leaseClient
 				.releaseLease(lease.leaseId, {
 					force: true,
-					...(reacquireRequest === undefined
-						? {}
-						: {
-								observedAtMs: reacquireRequest.observedAtMs,
-								staleEvidence: reacquireRequest.staleEvidence,
-							}),
 				})
 				.catch((releaseError: unknown) => {
 					writeSandboxBackendLog(

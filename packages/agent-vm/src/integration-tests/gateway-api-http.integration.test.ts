@@ -20,10 +20,8 @@ import { OPENCLAW_TOOL_VM_WORKSPACE_MOUNT } from '../controller/leases/lease-wor
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
 } from '../testing/managed-vm-test-helpers.js';
 
 type HonoServer = ReturnType<typeof serve>;
@@ -97,6 +95,7 @@ describe('live integration: API client → controller over real HTTP', () => {
 			runtimeRecordId: 'smoke-lease-001',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {
+				close: async () => {},
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',
 				port: 19000,
@@ -105,9 +104,15 @@ describe('live integration: API client → controller over real HTTP', () => {
 			},
 			tcpSlot: 0,
 			vm: {
-				close: vi.fn(async () => createCompleteVmDestroyReceipt('tool-vm-smoke')),
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				close: vi.fn(async () => {}),
+				enableIngress: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					host: '127.0.0.1',
+					port: 18791,
+				})),
 				enableSsh: vi.fn(async () => ({
+					close: async () => {},
+					command: 'ssh tool-vm-smoke',
 					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					host: '127.0.0.1',
 					identityFile: '/tmp/key',
@@ -116,11 +121,11 @@ describe('live integration: API client → controller over real HTTP', () => {
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
-				getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-smoke'),
 				id: 'tool-vm-smoke',
 				setIngressRoutes: vi.fn(),
 				getHostPid: () => null,
 				getVmInstance: vi.fn(),
+				start: async () => {},
 			},
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 			zoneId: 'shravan',

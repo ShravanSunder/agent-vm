@@ -1,38 +1,48 @@
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
 import http, { type Server } from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
+
+import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import {
-	createManagedVm,
-	createManagedVmOwnershipReservation,
-	type ManagedVm,
-	type ManagedVmOwnershipReservationReferenceV1,
-} from '@agent-vm/gondolin-adapter';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
-import { assertVmDestructionComplete } from '../shared/vm-destruction-receipt.js';
+	terminateLiveManagedVm,
+	type ManagedVmProcessTarget,
+} from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const mediationHost = 'gondolin-mediation-test.vm.host';
 const mediationUpstreamHost = '127.0.0.1';
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 
-async function createStandaloneOwnershipReservation(
-	testDeploymentRoot: string,
-): Promise<ManagedVmOwnershipReservationReferenceV1> {
-	const vmIdentity = randomUUID();
-	const ownershipReservation = await createManagedVmOwnershipReservation({
-		controllerEpoch: 'live-gondolin-http-mediation-e2e',
-		parentGateway: null,
-		reservationId: `reservation-${vmIdentity}`,
-		reservationRoot: path.join(testDeploymentRoot, 'state', 'vm-ownership'),
-		role: 'standalone',
-		sessionLabel: 'live-gondolin-http-mediation',
-		vmId: `vm-${vmIdentity}`,
+async function startVmAndCaptureProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
+	await managedVm.start();
+	const hostPid = managedVm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' process identity.`);
+	}
+	return { hostPid, processIdentity, vmId: managedVm.id };
+}
+
+async function terminateVmRuntime(
+	runtime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null,
+): Promise<void> {
+	if (runtime === null) return;
+	await terminateLiveManagedVm({
+		contextLabel: 'Gondolin HTTP mediation VM cleanup',
+		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		target: runtime.target,
+		vm: runtime.managedVm,
 	});
-	return ownershipReservation.reference;
 }
 
 async function createHeaderEchoServer(): Promise<{
@@ -96,39 +106,23 @@ function rewriteMediationHostToLoopback(
 }
 
 describeLiveVmIntegration('live e2e: real Gondolin HTTP mediation', () => {
-	let vm: ManagedVm | null = null;
-	let testDeploymentRoot: string | null = null;
-
-	beforeAll(async () => {
-		testDeploymentRoot = await mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-gondolin-http-mediation-e2e-'),
-		);
-	});
+	let vmRuntime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null =
+		null;
 
 	afterAll(async () => {
-		if (vm) {
-			const receipt = await vm.close();
-			assertVmDestructionComplete(receipt, 'Gondolin HTTP mediation VM cleanup');
-			vm = null;
-		}
-		if (testDeploymentRoot !== null) {
-			await rm(testDeploymentRoot, { force: true, recursive: true });
-			testDeploymentRoot = null;
-		}
+		await terminateVmRuntime(vmRuntime);
+		vmRuntime = null;
 	});
 
 	it('should support HTTP mediation with secret injection', async () => {
-		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
-		if (vm) {
-			const receipt = await vm.close();
-			assertVmDestructionComplete(receipt, 'prior Gondolin HTTP mediation VM cleanup');
-			vm = null;
+		if (vmRuntime) {
+			await terminateVmRuntime(vmRuntime);
+			vmRuntime = null;
 		}
 		const headerEchoServer = await createHeaderEchoServer();
 
 		try {
-			vm = await createManagedVm({
-				ownershipReservation: await createStandaloneOwnershipReservation(testDeploymentRoot),
+			const vm = await createManagedVm({
 				imagePath: '',
 				memory: '512M',
 				cpus: 1,
@@ -146,6 +140,7 @@ describeLiveVmIntegration('live e2e: real Gondolin HTTP mediation', () => {
 				},
 				vfsMounts: {},
 			});
+			vmRuntime = { managedVm: vm, target: await startVmAndCaptureProcess(vm) };
 
 			const envCheck = await vm.exec('echo $TEST_TOKEN');
 			expect(envCheck.stdout.trim()).not.toBe('real-secret-value-12345');

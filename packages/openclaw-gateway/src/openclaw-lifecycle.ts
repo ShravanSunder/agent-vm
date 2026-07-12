@@ -398,13 +398,14 @@ function shellQuote(value: string): string {
 function buildOpenClawProcessSupervisorHelperSource(): string {
 	return `#!/usr/bin/env node
 const { createHash } = require('node:crypto');
-const { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } = require('node:fs');
+const { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
 const directory = '${openClawProcessSupervisorStateDirVmPath}';
 const requestPath = path.join(directory, 'request-v1.json');
 const receiptPath = path.join(directory, 'receipt-v1.json');
 const statePath = path.join(directory, 'state-v1.json');
+const failurePath = path.join(directory, 'failure-v1.json');
 const lockPath = path.join(directory, 'operation.lock');
 const identifier = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join('\\0') === [...keys].sort().join('\\0');
@@ -412,7 +413,7 @@ const validGateway = (value) => exactKeys(value, ['controllerEpoch', 'gatewayEpo
 const parseRequest = (value) => {
   const common = ['actionId', 'contractVersion', 'expectedProcessEpoch', 'gateway', 'kind'];
   const keys = value?.kind === 'start' ? [...common, 'selectedProcessEpoch'] : common;
-  if (!exactKeys(value, keys) || value.contractVersion !== 1 || !['contain', 'observe', 'start'].includes(value.kind) || !identifier.test(value.actionId) || !validGateway(value.gateway) || (value.expectedProcessEpoch !== null && !identifier.test(value.expectedProcessEpoch)) || (value.kind === 'start' && !identifier.test(value.selectedProcessEpoch))) throw new Error('invalid-request');
+  if (!exactKeys(value, keys) || value.contractVersion !== 1 || !['contain', 'observe', 'start', 'terminate-for-reliability-test'].includes(value.kind) || !identifier.test(value.actionId) || !validGateway(value.gateway) || (value.expectedProcessEpoch !== null && !identifier.test(value.expectedProcessEpoch)) || (value.kind === 'start' && !identifier.test(value.selectedProcessEpoch)) || (value.kind === 'terminate-for-reliability-test' && value.expectedProcessEpoch === null)) throw new Error('invalid-request');
   return value;
 };
 const atomicWrite = (filePath, value) => {
@@ -448,10 +449,26 @@ let lock;
 try { lock = openSync(lockPath, 'wx', 0o600); } catch { process.exit(73); }
 const terminated = Symbol('terminated');
 const terminate = (exitCode) => { process.exitCode = exitCode; throw terminated; };
+let activeRequest = null;
+let activeStage = 'initializing';
 try {
-  const request = parseRequest(JSON.parse(readFileSync(requestPath, 'utf8')));
+
+  activeStage = 'read-request';
+  activeStage = 'parse-request-json';
+  const requestValue = JSON.parse(readFileSync(0, 'utf8'));
+  activeStage = 'validate-request';
+  const request = parseRequest(requestValue);
+  activeRequest = request;
   const digest = createHash('sha256').update(JSON.stringify(request)).digest('hex');
+  activeStage = 'persist-request-audit';
+  atomicWrite(requestPath, request);
+  activeStage = 'read-state';
   let state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { contractVersion: 1, gateway: request.gateway, currentProcessEpoch: null, cgroupName: null, status: 'absent', actionOrder: [], actions: {} };
+  const recordOperationStage = (stage) => {
+    activeStage = stage;
+    state = { ...state, lastOperation: { actionId: request.actionId, kind: request.kind, stage } };
+    atomicWrite(statePath, state);
+  };
   const writeReceipt = (receipt) => {
     const actionOrder = [...state.actionOrder.filter((actionId) => actionId !== request.actionId), request.actionId].slice(-128);
     const actions = { ...state.actions, [request.actionId]: { digest, receipt } };
@@ -472,11 +489,15 @@ try {
   if (state.currentProcessEpoch !== request.expectedProcessEpoch) refuse('process-fence-mismatch');
   if (request.kind === 'start') {
     if (state.currentProcessEpoch !== null || !['absent', 'contained'].includes(state.status)) refuse('process-overlap');
+    recordOperationStage('ensure-cgroup2');
     ensureCgroup2();
     const cgroupName = 'agent-vm-' + createHash('sha256').update(request.gateway.gatewayEpochId + '\\0' + request.selectedProcessEpoch).digest('hex').slice(0, 24);
     const groupPath = path.join('/sys/fs/cgroup', cgroupName);
+    recordOperationStage('create-cgroup');
     mkdirSync(groupPath, { mode: 0o700 });
+    recordOperationStage('inspect-created-cgroup');
     if (populated(groupPath)) refuse('process-overlap');
+    recordOperationStage('bind-process');
     state = { ...state, currentProcessEpoch: request.selectedProcessEpoch, cgroupName, status: 'starting' };
     writeReceipt({ actionId: request.actionId, cgroup: { name: cgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: request.selectedProcessEpoch, reason: 'helper-failed', status: 'incomplete' });
     try {
@@ -507,26 +528,55 @@ try {
       state = { ...state, status: isPopulated ? 'running' : 'exited' };
       writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: isPopulated }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, status: 'completed' });
     }
+  } else if (request.kind === 'terminate-for-reliability-test') {
+	if (state.currentProcessEpoch === null || state.cgroupName === null) refuse('process-fence-mismatch');
+	const groupPath = path.join('/sys/fs/cgroup', state.cgroupName);
+	try {
+	  if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('reliability-cgroup-kill-unavailable');
+	  writeFileSync(path.join(groupPath, 'cgroup.kill'), '1\\n');
+	  if (!waitForPopulation(groupPath, false)) throw new Error('cgroup-empty-unproven');
+	  state = { ...state, status: 'exited' };
+	  writeReceipt({ actionId: request.actionId, cgroup: { emptyObserved: true, name: state.cgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, status: 'completed' });
+	} catch (error) {
+	  const reason = error instanceof Error && error.message === 'cgroup-empty-unproven' ? 'cgroup-empty-unproven' : 'cgroup-unavailable';
+	  writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: populated(groupPath) }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason, status: 'incomplete' });
+	  terminate(2);
+	}
   } else {
     if (state.currentProcessEpoch === null || state.cgroupName === null) refuse('process-fence-mismatch');
     const groupPath = path.join('/sys/fs/cgroup', state.cgroupName);
     try {
-      if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('cgroup-kill-unavailable');
-      writeFileSync(path.join(groupPath, 'cgroup.kill'), '1\\n');
-      if (!waitForPopulation(groupPath, false)) throw new Error('cgroup-empty-unproven');
-	  const containedProcessEpoch = state.currentProcessEpoch;
-	  const containedCgroupName = state.cgroupName;
-      rmSync(groupPath, { recursive: false });
+      const containedProcessEpoch = state.currentProcessEpoch;
+      const containedCgroupName = state.cgroupName;
+      if (existsSync(groupPath)) {
+        if (populated(groupPath)) {
+          if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('cgroup-kill-unavailable');
+          writeFileSync(path.join(groupPath, 'cgroup.kill'), '1\\n');
+          if (!waitForPopulation(groupPath, false)) throw new Error('cgroup-empty-unproven');
+        }
+        rmdirSync(groupPath);
+      } else if (state.status !== 'exited') {
+        throw new Error('cgroup-absence-unproven');
+      }
       state = { ...state, currentProcessEpoch: null, cgroupName: null, status: 'contained' };
       writeReceipt({ actionId: request.actionId, cgroup: { emptyObserved: true, name: containedCgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: containedProcessEpoch, status: 'completed' });
     } catch (error) {
       const reason = error instanceof Error && error.message === 'cgroup-empty-unproven' ? 'cgroup-empty-unproven' : 'cgroup-unavailable';
-      writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: populated(groupPath) }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason, status: 'incomplete' });
+      const isPopulated = existsSync(groupPath) ? populated(groupPath) : false;
+      writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: isPopulated }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason, status: 'incomplete' });
       terminate(2);
     }
   }
 } catch (error) {
-  if (error !== terminated) throw error;
+  if (error !== terminated) {
+    try {
+      const candidateErrorCode = error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'unknown';
+      const errorCode = /^[A-Z0-9_]{1,32}$/.test(candidateErrorCode) ? candidateErrorCode : 'unknown';
+      atomicWrite(failurePath, { actionId: activeRequest?.actionId ?? null, errorCode, kind: activeRequest?.kind ?? null, stage: activeStage });
+    } catch {}
+    process.stderr.write('agent-vm-process-supervisor-failure:' + activeStage + '\\n');
+    process.exitCode = 1;
+  }
 } finally { closeSync(lock); rmSync(lockPath, { force: true }); }
 `;
 }

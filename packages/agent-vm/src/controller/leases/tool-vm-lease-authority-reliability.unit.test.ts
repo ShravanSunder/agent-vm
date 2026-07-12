@@ -11,7 +11,6 @@ import {
 	type ToolVmLeaseAuthorityState,
 	type ToolVmLeaseCompatibility,
 	type StartToolVmActiveUseInput,
-	type ToolVmExactDestructionReceipt,
 } from './tool-vm-lease-authority-state.js';
 
 const GATEWAY_ONE = {
@@ -77,15 +76,9 @@ function beginProvisioning(
 		readonly principal?: StableToolVmLeasePrincipal;
 	} = {},
 ): ToolVmLeaseAuthorityState {
-	const leafGeneration = options.leafGeneration ?? 'leaf-generation-1';
 	return reduceToolVmLeaseAuthorityState(state, {
 		authority: authorityReference(options),
 		compatibility: options.compatibility ?? COMPATIBILITY,
-		destructionIdentity: {
-			reservationId: `reservation-${leafGeneration}`,
-			reservationPath: `/state/reservations/${leafGeneration}.json`,
-			vmId: `tool-vm-${leafGeneration}`,
-		},
 		kind: 'begin-provisioning',
 		idleExpiresAtMs: options.idleExpiresAtMs ?? 10_000,
 	});
@@ -147,17 +140,6 @@ function activeUseInput(
 		startedAtMs: 100,
 		useId: 'use-1',
 		...overrides,
-	};
-}
-
-function exactDestructionReceipt(
-	leafGeneration: string = 'leaf-generation-1',
-): ToolVmExactDestructionReceipt {
-	return {
-		complete: true,
-		reservationId: `reservation-${leafGeneration}`,
-		reservationPath: `/state/reservations/${leafGeneration}.json`,
-		vmId: `tool-vm-${leafGeneration}`,
 	};
 }
 
@@ -475,42 +457,29 @@ describe('Tool VM lease authority reliability boundaries', () => {
 		).toMatchObject({ activeUses: new Map([['use-1', expect.any(Object)]]) });
 	});
 
-	it.each([
-		{ field: 'complete' as const, value: false },
-		{ field: 'reservationId' as const, value: 'reservation-wrong' },
-		{ field: 'reservationPath' as const, value: '/state/reservations/wrong.json' },
-		{ field: 'vmId' as const, value: 'tool-vm-wrong' },
-	])(
-		'refuses destruction receipt mismatch in $field and retains exact retry identity',
-		({ field, value }) => {
-			const authority = authorityReference();
-			const destroying = reduceToolVmLeaseAuthorityState(createCurrentLeaf(), {
-				authority,
-				kind: 'begin-destruction',
-				reason: 'test',
-			});
-			const expectedCode =
-				field === 'complete' ? 'destruction-receipt-incomplete' : 'destruction-receipt-mismatch';
-			expectTransitionError(
-				() =>
-					reduceToolVmLeaseAuthorityState(destroying, {
-						authority,
-						destroyedAtMs: 300,
-						kind: 'destruction-completed',
-						receipt: { ...exactDestructionReceipt(), [field]: value },
-						reason: 'test',
-					}),
-				expectedCode,
-			);
-			expect(destroying.leavesByPrincipal.get('shravan\0main')).toMatchObject({
-				destructionIdentity: {
-					reservationId: 'reservation-leaf-generation-1',
-					vmId: 'tool-vm-leaf-generation-1',
-				},
-				kind: 'destroying',
-			});
-		},
-	);
+	it('refuses a destroyed VM identity that conflicts with the committed runtime binding', () => {
+		const authority = authorityReference();
+		const destroying = reduceToolVmLeaseAuthorityState(createCurrentLeaf(), {
+			authority,
+			kind: 'begin-destruction',
+			reason: 'test',
+		});
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(destroying, {
+					authority,
+					destroyedAtMs: 300,
+					kind: 'destruction-completed',
+					reason: 'test',
+					vmId: 'tool-vm-wrong',
+				}),
+			'lease-identity-mismatch',
+		);
+		expect(destroying.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+			kind: 'destroying',
+			runtimeBinding: { vmId: 'tool-vm-leaf-generation-1' },
+		});
+	});
 
 	it('refuses tombstone overflow until explicit expiry pruning preserves unknown-result safety', () => {
 		const configured = createEmptyToolVmLeaseAuthorityState({
@@ -589,7 +558,6 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			authority,
 			destroyedAtMs: 120,
 			kind: 'destruction-completed',
-			receipt: exactDestructionReceipt(),
 			reason: 'replace-first',
 		});
 		const replacementAuthority = authorityReference({ leafGeneration: 'leaf-generation-2' });
@@ -608,7 +576,6 @@ describe('Tool VM lease authority reliability boundaries', () => {
 					authority: replacementAuthority,
 					destroyedAtMs: 121,
 					kind: 'destruction-completed',
-					receipt: exactDestructionReceipt('leaf-generation-2'),
 					reason: 'replace-second',
 				}),
 			'tombstone-capacity-exhausted',
@@ -626,7 +593,6 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			authority: replacementAuthority,
 			destroyedAtMs: 130,
 			kind: 'destruction-completed',
-			receipt: exactDestructionReceipt('leaf-generation-2'),
 			reason: 'replace-second',
 		});
 		expect(destroyedReplacement.tombstonesByGeneration.size).toBe(1);
@@ -659,12 +625,6 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			authority: oldAuthority,
 			destroyedAtMs: 300,
 			kind: 'destruction-completed',
-			receipt: {
-				complete: true,
-				reservationId: 'reservation-leaf-generation-1',
-				reservationPath: '/state/reservations/leaf-generation-1.json',
-				vmId: 'tool-vm-leaf-generation-1',
-			},
 			reason: 'persistent-ssh-failure',
 		});
 		expect(destroyed.leavesByPrincipal.has('shravan\0main')).toBe(false);

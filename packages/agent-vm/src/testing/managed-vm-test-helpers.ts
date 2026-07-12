@@ -3,99 +3,56 @@ import { Readable } from 'node:stream';
 import type {
 	ManagedExecProcess,
 	ManagedExecResult,
+	ManagedVm,
 	ManagedVmFs,
 	SshServerHostKey,
-	VmDestroyTargetV1,
-	VmDestroyReceiptV1,
-	VmOwnershipReservationReferenceV1,
 } from '@agent-vm/gondolin-adapter';
+
+import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 
 export const TEST_SSH_SERVER_HOST_KEY = {
 	algorithm: 'ssh-ed25519',
 	publicKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 } satisfies SshServerHostKey;
 
-export interface ManagedVmTestIdentityOptions {
-	readonly controllerEpoch?: string;
-	readonly parentGateway?: VmDestroyTargetV1['parentGateway'];
-	readonly reservationId?: string;
-	readonly role?: VmDestroyTargetV1['role'];
+export interface CapturedManagedVmTermination {
+	terminate(): Promise<void>;
 }
 
-export function createTestVmOwnershipReservationReference(
-	vmId = 'managed-vm-test',
-	options: ManagedVmTestIdentityOptions = {},
-): VmOwnershipReservationReferenceV1 {
+export async function captureManagedVmTermination(
+	managedVm: ManagedVm,
+): Promise<CapturedManagedVmTermination> {
+	const hostPid = managedVm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Managed VM '${managedVm.id}' has no live runner to capture.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(
+			`Managed VM '${managedVm.id}' pid ${String(hostPid)} disappeared before identity capture.`,
+		);
+	}
 	return {
-		expectedContractVersion: 1,
-		expectedRevision: 1,
-		reservationId: options.reservationId ?? `reservation-${vmId}`,
-		reservationPath: `/tmp/agent-vm-tests/vm-ownership/${options.reservationId ?? `reservation-${vmId}`}/reservation.json`,
-	};
-}
-
-export function createTestVmDestroyTarget(
-	vmId = 'managed-vm-test',
-	options: ManagedVmTestIdentityOptions = {},
-): VmDestroyTargetV1 {
-	const reservationReference = createTestVmOwnershipReservationReference(vmId, options);
-	return {
-		contractVersion: 1,
-		controllerEpoch: options.controllerEpoch ?? 'controller-epoch-test',
-		ownerProcess: {
-			command: 'agent-vm-test',
-			pid: process.pid,
-			startCookie: 'agent-vm-test-process',
-		},
-		parentGateway: options.parentGateway ?? null,
-		reservationId: reservationReference.reservationId,
-		reservationPath: reservationReference.reservationPath,
-		resources: {
-			disposableStoragePaths: [],
-			ingressListener: false,
-			ingressSockets: false,
-			retainedStoragePaths: [],
-			sshListener: false,
-			sshSessions: false,
-		},
-		role: options.role ?? 'standalone',
-		runner: {
-			backend: 'qemu',
-			discoveryIdentity: `agent-vm-test:${vmId}`,
-			executable: '/usr/bin/qemu-system-aarch64',
-		},
-		sessionLabel: `agent-vm-test:${vmId}`,
-		vmId,
-	};
-}
-
-export function createCompleteVmDestroyReceipt(
-	vmId = 'managed-vm-test',
-	options: ManagedVmTestIdentityOptions = {},
-): VmDestroyReceiptV1 {
-	return {
-		contractVersion: 1,
-		reservationId: options.reservationId ?? `reservation-${vmId}`,
-		vmId,
-		controllerEpoch: options.controllerEpoch ?? 'controller-epoch-test',
-		parentGateway: options.parentGateway ?? null,
-		role: options.role ?? 'standalone',
-		requestedRunner: {
-			backend: 'qemu',
-			executableName: 'qemu-system-aarch64',
-			discoveryIdentity: `runner-${vmId}`,
-		},
-		complete: true,
-		completedAt: '2026-07-10T00:00:00.000Z',
-		resources: {
-			exactRunner: { status: 'destroyed' },
-			ingressListener: { status: 'already-absent' },
-			ingressSockets: { status: 'already-absent' },
-			sshListener: { status: 'already-absent' },
-			sshSessions: { status: 'already-absent' },
-			sessionIpc: { status: 'destroyed' },
-			qmp: { status: 'destroyed' },
-			disposableStorage: { status: 'destroyed' },
+		async terminate(): Promise<void> {
+			await terminateLiveManagedVm({
+				contextLabel: `test VM '${managedVm.id}'`,
+				dependencies: {
+					isProcessAlive,
+					killProcess,
+					readProcessCommand,
+					readProcessIdentity,
+					sleep,
+				},
+				target: { hostPid, processIdentity, vmId: managedVm.id },
+				vm: managedVm,
+			});
 		},
 	};
 }

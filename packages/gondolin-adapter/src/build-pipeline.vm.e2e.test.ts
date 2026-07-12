@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,7 +7,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { buildImage } from './build-pipeline.js';
 import type { BuildConfig } from './build-pipeline.js';
 import { shouldRunGondolinBuildPipelineE2e } from './e2e-test-gates.js';
-import { createManagedVmOwnershipReservation } from './exact-vm-lifecycle.js';
 import { createManagedVm, type ManagedVm } from './vm-adapter.js';
 
 const temporaryDirectories: string[] = [];
@@ -66,16 +64,6 @@ describeGondolinBuildPipelineSmoke('smoke: Gondolin image build rootfs init', ()
 		let vm: ManagedVm | undefined;
 
 		try {
-			const vmIdentity = randomUUID();
-			const ownershipReservation = await createManagedVmOwnershipReservation({
-				controllerEpoch: 'agent-vm-build-pipeline-smoke',
-				parentGateway: null,
-				reservationId: `reservation-${vmIdentity}`,
-				reservationRoot: path.join(cacheDirectory, 'vm-ownership'),
-				role: 'standalone',
-				sessionLabel: 'agent-vm-dev-fd-smoke',
-				vmId: `vm-${vmIdentity}`,
-			});
 			const image = await buildImage(
 				{
 					buildConfig,
@@ -85,7 +73,6 @@ describeGondolinBuildPipelineSmoke('smoke: Gondolin image build rootfs init', ()
 				{ gondolinVersion: 'dev-fd-smoke' },
 			);
 			vm = await createManagedVm({
-				ownershipReservation: ownershipReservation.reference,
 				imagePath: image.imagePath,
 				memory: '512M',
 				cpus: 1,

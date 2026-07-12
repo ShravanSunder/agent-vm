@@ -31,7 +31,7 @@ import type {
 	StartControllerRuntimeOptions,
 } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 
 interface OpenClawE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
@@ -109,6 +109,7 @@ const e2eTempRootPrefixes = [
 	'openclaw-control-link-e2e-',
 	'openclaw-control-session-e2e-',
 	'openclaw-mcp-portal-e2e-',
+	'openclaw-process-recovery-e2e-',
 	'openclaw-subagent-lease-e2e-',
 	'openclaw-zone-git-e2e-',
 	'worker-loop-e2e-',
@@ -140,6 +141,7 @@ export interface E2eHarnessRuntime {
 
 export interface E2eHarnessCloseOptions {
 	readonly cleanupImages?: boolean;
+	readonly preserveTempRoot?: boolean;
 }
 
 export interface E2eHarnessImageCleanupOptions extends E2eHarnessCloseOptions {
@@ -187,9 +189,10 @@ export interface PrepareGatewayE2eProjectImagesOptions {
 }
 
 export interface StartE2eControllerRuntimeOptions {
+	readonly createOpenClawProcessReliabilityFaultTargetRegistry?: ControllerRuntimeDependencies['createOpenClawProcessReliabilityFaultTargetRegistry'];
 	readonly onLeaseCreateRequest?: ControllerRuntimeDependencies['onLeaseCreateRequest'];
 	readonly secrets: E2eHarnessSecretMap;
-	readonly startGatewayZone?: typeof startGatewayZone;
+	readonly startGatewayZone?: ControllerRuntimeDependencies['startGatewayZone'];
 	readonly startHttpServer?: NonNullable<ControllerRuntimeDependencies['startHttpServer']>;
 	readonly startOptions: StartControllerRuntimeOptions;
 	readonly tcpHostsOverride?: StartGatewayZoneOptions['tcpHostsOverride'];
@@ -1818,6 +1821,12 @@ export async function startE2eControllerRuntime(
 	const tempRoot = path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath));
 	try {
 		const runtime = await startControllerRuntime(options.startOptions, {
+			...(options.createOpenClawProcessReliabilityFaultTargetRegistry === undefined
+				? {}
+				: {
+						createOpenClawProcessReliabilityFaultTargetRegistry:
+							options.createOpenClawProcessReliabilityFaultTargetRegistry,
+					}),
 			createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
 			...(options.onLeaseCreateRequest === undefined
 				? {}
@@ -1872,7 +1881,9 @@ export async function startE2eControllerRuntime(
 					}
 				}
 				try {
-					await removeE2eTempRoot(tempRoot);
+					if (closeOptions.preserveTempRoot !== true) {
+						await removeE2eTempRoot(tempRoot);
+					}
 				} catch (error) {
 					cleanupErrors.push(error);
 				} finally {

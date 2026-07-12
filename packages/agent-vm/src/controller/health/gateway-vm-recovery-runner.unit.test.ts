@@ -2,14 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
-	createTestVmOwnershipReservationReference,
 } from '../../testing/managed-vm-test-helpers.js';
-import type { VmCreationOwnership } from '../vm-ownership/vm-creation-ownership.js';
+import type { GatewayVmLifecycleAuthority } from '../vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
 import { ControllerZoneRuntimeStartError } from '../zone-runtimes/zone-runtime-errors.js';
 import type { GatewayZoneRuntimeHandle } from '../zone-runtimes/zone-runtime-types.js';
+import type { GatewayVmRecoverySourceKey } from './gateway-vm-recovery-policy.js';
 import {
 	classifyGatewayRecoveryRestartError,
 	createGatewayVmRecoveryRunner,
@@ -153,6 +152,7 @@ describe('createGatewayVmRecoveryRunner', () => {
 		await recoverGatewayVm({
 			consecutiveFailures: 1,
 			reason: 'gateway-service-unhealthy',
+			sourceKey: createGatewayRecoverySourceKey('old-gateway'),
 			zoneId: 'sunfam',
 		});
 
@@ -189,6 +189,7 @@ describe('createGatewayVmRecoveryRunner', () => {
 		await recoverGatewayVm({
 			consecutiveFailures: 1,
 			reason: 'gateway-service-unhealthy',
+			sourceKey: createGatewayRecoverySourceKey('old-gateway'),
 			zoneId: 'sunfam',
 		});
 
@@ -246,6 +247,7 @@ describe('createGatewayVmRecoveryRunner', () => {
 		await recoverRunningGateway({
 			consecutiveFailures: 1,
 			reason: 'gateway-service-unhealthy',
+			sourceKey: createGatewayRecoverySourceKey('old-gateway'),
 			zoneId: 'sunfam',
 		});
 
@@ -299,6 +301,7 @@ describe('createGatewayVmRecoveryRunner', () => {
 		const result = await recoverGatewayVm({
 			consecutiveFailures: 1,
 			reason: 'gateway-service-unhealthy',
+			sourceKey: createGatewayRecoverySourceKey('same-gateway'),
 			zoneId: 'sunfam',
 		});
 
@@ -337,6 +340,7 @@ describe('createGatewayVmRecoveryRunner', () => {
 		const result = await recoverGatewayVm({
 			consecutiveFailures: 1,
 			reason: 'gateway-service-unhealthy',
+			sourceKey: createGatewayRecoverySourceKey('same-gateway'),
 			zoneId: 'sunfam',
 		});
 
@@ -389,6 +393,7 @@ describe('createGatewayVmRecoveryRunner', () => {
 		const result = await recoverGatewayVm({
 			consecutiveFailures: 1,
 			reason: 'gateway-service-unhealthy',
+			sourceKey: createGatewayRecoverySourceKey('old-gateway'),
 			zoneId: 'sunfam',
 		});
 
@@ -442,6 +447,7 @@ describe('createGatewayVmRecoveryRunner', () => {
 			recoverGatewayVm({
 				consecutiveFailures: 1,
 				reason: 'gateway-service-unhealthy',
+				sourceKey: createGatewayRecoverySourceKey('old-gateway'),
 				zoneId: 'sunfam',
 			}),
 		).resolves.toEqual({
@@ -451,6 +457,90 @@ describe('createGatewayVmRecoveryRunner', () => {
 			oldBootedAt: '2026-06-07T10:00:00.000Z',
 			oldHostPid: 111,
 			oldVmId: 'old-gateway',
+			result: 'failed',
+		});
+	});
+
+	it('refuses a stale Gateway source before mutating the current successor', async () => {
+		const restart = vi.fn(async () => ({ leaseReleaseFailureCount: 0 }));
+		const runtime = createRuntime({
+			getLifecycleState: () => ({
+				gateway: createGatewayHandle('gateway-vm-2', 222),
+				kind: 'running',
+			}),
+			getSnapshot: () => ({
+				bootedAt: '2026-07-11T18:00:00.000Z',
+				gateway: { vm: { hostPid: 222, id: 'gateway-vm-2' } },
+				lifecycleState: 'running',
+			}),
+			restart,
+		});
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime: () => runtime,
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog: vi.fn(),
+		});
+
+		await expect(
+			recoverGatewayVm({
+				consecutiveFailures: 1,
+				reason: 'gateway-control-session-unhealthy',
+				sourceKey: createGatewayRecoverySourceKey('gateway-vm-1'),
+				zoneId: 'sunfam',
+			}),
+		).resolves.toEqual({
+			action: 'observe-only',
+			elapsedMs: 0,
+			errorCode: 'stale-recovery-source',
+			result: 'failed',
+		});
+		expect(restart).not.toHaveBeenCalled();
+	});
+
+	it('bounds a never-resolving credential refresh with an injected deadline', async () => {
+		let nowMs = 0;
+		let refreshSignal: AbortSignal | undefined;
+		const timeoutCallbacks: Array<() => void> = [];
+		const runtime = createRuntime({
+			getLifecycleState: () => ({
+				coldStartEligible: true,
+				error: { code: 'secret-resolution-failed', message: 'credentials unavailable' },
+				kind: 'failed',
+			}),
+			refreshCredentials: async (options) => {
+				refreshSignal = options?.signal;
+				return await new Promise<never>(() => {});
+			},
+		});
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			clearTimeoutImpl: vi.fn(),
+			getRecoverableGatewayRuntime: () => runtime,
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => nowMs,
+			restartTimeoutMs: 5_000,
+			setTimeoutImpl: (callback) => {
+				timeoutCallbacks.push(callback);
+				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+			},
+			writeLog: vi.fn(),
+		});
+
+		const recovery = recoverGatewayVm({
+			consecutiveFailures: 1,
+			reason: 'gateway-service-unhealthy',
+			zoneId: 'sunfam',
+		});
+		await vi.waitFor(() => expect(timeoutCallbacks).toHaveLength(1));
+		nowMs = 5_000;
+		timeoutCallbacks[0]?.();
+		expect(refreshSignal?.aborted).toBe(true);
+
+		await expect(recovery).resolves.toEqual({
+			action: 'gateway-vm-cold-start',
+			elapsedMs: 5_000,
+			errorCode: 'recovery-timeout',
 			result: 'failed',
 		});
 	});
@@ -527,6 +617,7 @@ function createRuntime(overrides: Partial<RecoverableGatewayRuntime>): Recoverab
 
 function createGatewayHandle(vmId: string, hostPid: number): GatewayZoneRuntimeHandle {
 	return {
+		controlSessionRecoverySourceKey: createGatewayRecoverySourceKey(vmId),
 		ingress: { host: '127.0.0.1', port: 18_791 },
 		processSpec: {
 			bootstrapCommand: 'bootstrap',
@@ -535,12 +626,17 @@ function createGatewayHandle(vmId: string, hostPid: number): GatewayZoneRuntimeH
 			logPath: '/agent-vm/logs/gateway.log',
 			startCommand: 'start',
 		},
+		terminateVm: async () => {},
 		vm: {
-			close: async () => createCompleteVmDestroyReceipt(vmId),
+			close: async () => {},
 			enableSsh: async () => ({
+				close: async () => {},
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				command: 'ssh gateway',
 				host: '127.0.0.1',
+				identityFile: '/tmp/gateway-identity',
 				port: 22,
+				user: 'root',
 			}),
 			exec: () => createManagedExecProcessStub({ stdout: '' }),
 			getHostPid: () => hostPid,
@@ -550,10 +646,30 @@ function createGatewayHandle(vmId: string, hostPid: number): GatewayZoneRuntimeH
 	};
 }
 
-function createGatewayVmOwnershipStub(vmId: string): VmCreationOwnership {
+function createGatewayRecoverySourceKey(vmId: string): GatewayVmRecoverySourceKey {
 	return {
-		ownershipReservation: createTestVmOwnershipReservationReference(vmId, { role: 'gateway' }),
-		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId, { role: 'gateway' }),
-		destroyLive: async (closeLiveVm) => await closeLiveVm(),
+		bootId: 'boot-test',
+		domain: 'gateway_control' as const,
+		gatewayVmId: vmId,
+		generationId: 'generation-test',
+		zoneId: 'sunfam',
+	};
+}
+
+function createGatewayVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: 'boot-test',
+		controllerEpoch: 'controller-test',
+		gatewayEpochId: 'gateway-epoch-test',
+		generationId: 'generation-test',
+		zoneId: 'zone-test',
+	};
+	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
+	return {
+		gatewayIdentity,
+		gatewaySeed,
+		attachGatewayVm: () => gatewayIdentity,
+		containPendingCreate: async () => {},
+		destroyLive: async (destroyVm) => await destroyVm(),
 	};
 }

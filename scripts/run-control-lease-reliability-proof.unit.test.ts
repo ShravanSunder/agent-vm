@@ -95,6 +95,7 @@ describe('runControlLeaseReliabilityScenarios', () => {
 				scenarios[0].testFile,
 			],
 			environment: {
+				AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1',
 				AGENT_VM_RELIABILITY_DIRTY_HASH: bindings.dirtyHash,
 				AGENT_VM_RELIABILITY_EVIDENCE_FILE: '/owned/evidence/control-session-recovery.json',
 				AGENT_VM_RELIABILITY_HEAD_SHA: bindings.headSha,
@@ -107,6 +108,7 @@ describe('runControlLeaseReliabilityScenarios', () => {
 		expect(executeScenario).toHaveBeenNthCalledWith(2, {
 			args: ['tsx', 'scripts/run-vitest-evidence-project.ts', 'e2e-vm', scenarios[1].testFile],
 			environment: {
+				AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1',
 				AGENT_VM_RELIABILITY_DIRTY_HASH: bindings.dirtyHash,
 				AGENT_VM_RELIABILITY_EVIDENCE_FILE: '/owned/evidence/controller-restart-cleanup.json',
 				AGENT_VM_RELIABILITY_HEAD_SHA: bindings.headSha,

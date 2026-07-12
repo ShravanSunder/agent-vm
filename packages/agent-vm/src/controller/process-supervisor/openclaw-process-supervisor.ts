@@ -2,7 +2,6 @@ import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
-import { writeFileAtomically } from '@agent-vm/gondolin-adapter';
 
 import {
 	OPENCLAW_PROCESS_SUPERVISOR_GUEST_HELPER_PATH,
@@ -31,11 +30,57 @@ export interface OpenClawProcessSupervisor {
 	}): Promise<OpenClawProcessSupervisorReceipt>;
 }
 
+export interface OpenClawProcessReliabilityFaultActuator {
+	terminateOwnedProcess(options: {
+		readonly actionId: string;
+		readonly expectedProcessEpoch: string;
+	}): Promise<OpenClawProcessSupervisorReceipt>;
+}
+
+export interface OpenClawProcessSupervisorPorts {
+	readonly reliabilityFaultActuator: OpenClawProcessReliabilityFaultActuator;
+	readonly supervisor: OpenClawProcessSupervisor;
+}
+
 interface CreateOpenClawProcessSupervisorOptions {
 	readonly gateway: OpenClawProcessSupervisorGateway;
 	readonly invokeHelper: (
 		request: OpenClawProcessSupervisorRequest,
 	) => Promise<OpenClawProcessSupervisorReceipt>;
+}
+
+type NonCompletedOpenClawProcessSupervisorReceipt = Extract<
+	OpenClawProcessSupervisorReceipt,
+	{ readonly status: 'incomplete' | 'refused' }
+>;
+
+export class OpenClawProcessSupervisorReceiptError extends Error {
+	readonly receipt: NonCompletedOpenClawProcessSupervisorReceipt;
+
+	constructor(receipt: NonCompletedOpenClawProcessSupervisorReceipt) {
+		super(
+			`OpenClaw process supervisor ${receipt.kind} was ${receipt.status}: ${receipt.reason ?? 'unknown'}.`,
+		);
+		this.name = 'OpenClawProcessSupervisorReceiptError';
+		this.receipt = receipt;
+	}
+}
+
+export type OpenClawProcessSupervisorInvocationErrorCode =
+	| 'helper-execution'
+	| 'helper-exit'
+	| 'helper-lock-contended'
+	| 'helper-timeout'
+	| 'receipt-invalid';
+
+export class OpenClawProcessSupervisorInvocationError extends Error {
+	readonly code: OpenClawProcessSupervisorInvocationErrorCode;
+
+	constructor(code: OpenClawProcessSupervisorInvocationErrorCode, options?: ErrorOptions) {
+		super(`OpenClaw process supervisor invocation failed: ${code}.`, options);
+		this.name = 'OpenClawProcessSupervisorInvocationError';
+		this.code = code;
+	}
 }
 
 function gatewaysEqual(
@@ -63,6 +108,9 @@ function assertReceiptMatchesRequest(options: {
 	) {
 		throw new Error('OpenClaw process supervisor receipt changed the exact Gateway/process fence.');
 	}
+	if (options.receipt.status !== 'completed') {
+		throw new OpenClawProcessSupervisorReceiptError(options.receipt);
+	}
 	if (
 		options.request.kind === 'start' &&
 		(options.receipt.kind !== 'start' ||
@@ -72,16 +120,11 @@ function assertReceiptMatchesRequest(options: {
 			'OpenClaw process supervisor start receipt changed the selected process epoch.',
 		);
 	}
-	if (options.receipt.status !== 'completed') {
-		throw new Error(
-			`OpenClaw process supervisor ${options.receipt.kind} was ${options.receipt.status}: ${options.receipt.reason ?? 'unknown'}.`,
-		);
-	}
 }
 
-export function createOpenClawProcessSupervisor(
+export function createOpenClawProcessSupervisorPorts(
 	options: CreateOpenClawProcessSupervisorOptions,
-): OpenClawProcessSupervisor {
+): OpenClawProcessSupervisorPorts {
 	let operationTail = Promise.resolve();
 	const runSerialized = async (
 		untrustedRequest: OpenClawProcessSupervisorRequest,
@@ -104,7 +147,7 @@ export function createOpenClawProcessSupervisor(
 		}
 	};
 
-	return {
+	const supervisor = {
 		async contain(requestOptions) {
 			return await runSerialized({
 				...requestOptions,
@@ -129,25 +172,40 @@ export function createOpenClawProcessSupervisor(
 				kind: 'start',
 			});
 		},
-	};
+	} satisfies OpenClawProcessSupervisor;
+	const reliabilityFaultActuator = {
+		async terminateOwnedProcess(requestOptions) {
+			return await runSerialized({
+				...requestOptions,
+				contractVersion: 1,
+				gateway: options.gateway,
+				kind: 'terminate-for-reliability-test',
+			});
+		},
+	} satisfies OpenClawProcessReliabilityFaultActuator;
+	return { reliabilityFaultActuator, supervisor };
 }
 
-export function createManagedVmOpenClawProcessSupervisor(options: {
+export function createOpenClawProcessSupervisor(
+	options: CreateOpenClawProcessSupervisorOptions,
+): OpenClawProcessSupervisor {
+	return createOpenClawProcessSupervisorPorts(options).supervisor;
+}
+
+export function createManagedVmOpenClawProcessSupervisorPorts(options: {
 	readonly gateway: OpenClawProcessSupervisorGateway;
 	readonly hostStateDirectory: string;
 	readonly vm: Pick<ManagedVm, 'exec' | 'id'>;
-}): OpenClawProcessSupervisor {
+}): OpenClawProcessSupervisorPorts {
 	if (options.vm.id !== options.gateway.gatewayVmId) {
 		throw new Error('OpenClaw process supervisor VM does not match the exact Gateway fence.');
 	}
-	const requestPath = path.join(options.hostStateDirectory, 'request-v1.json');
 	const receiptPath = path.join(options.hostStateDirectory, 'receipt-v1.json');
-	return createOpenClawProcessSupervisor({
+	return createOpenClawProcessSupervisorPorts({
 		gateway: options.gateway,
 		invokeHelper: async (request) => {
 			await mkdir(options.hostStateDirectory, { mode: 0o700, recursive: true });
 			await rm(receiptPath, { force: true });
-			await writeFileAtomically(requestPath, `${JSON.stringify(request)}\n`, { mode: 0o600 });
 			const operationAbortController = new AbortController();
 			const timeoutMessage = `OpenClaw process supervisor helper timed out after ${String(OPENCLAW_PROCESS_SUPERVISOR_OPERATION_TIMEOUT_MS)}ms.`;
 			const timeout = setTimeout(() => {
@@ -158,6 +216,7 @@ export function createManagedVmOpenClawProcessSupervisor(options: {
 			try {
 				const result = await options.vm.exec([OPENCLAW_PROCESS_SUPERVISOR_GUEST_HELPER_PATH], {
 					signal: operationAbortController.signal,
+					stdin: `${JSON.stringify(request)}\n`,
 				});
 				helperExitCode = result.exitCode;
 			} catch (error: unknown) {
@@ -171,23 +230,35 @@ export function createManagedVmOpenClawProcessSupervisor(options: {
 				);
 			} catch (receiptError: unknown) {
 				if (operationAbortController.signal.aborted) {
-					throw new Error(timeoutMessage, {
+					throw new OpenClawProcessSupervisorInvocationError('helper-timeout', {
 						cause: receiptError,
 					});
 				}
 				if (helperExitCode !== undefined && helperExitCode !== 0) {
-					throw new Error(
-						`OpenClaw process supervisor helper failed with exit ${String(helperExitCode)}.`,
-						{ cause: receiptError },
+					throw new OpenClawProcessSupervisorInvocationError(
+						helperExitCode === 73 ? 'helper-lock-contended' : 'helper-exit',
+						{
+							cause: receiptError,
+						},
 					);
 				}
 				if (helperExecutionError !== undefined) {
-					throw new Error('OpenClaw process supervisor helper failed before writing a receipt.', {
+					throw new OpenClawProcessSupervisorInvocationError('helper-execution', {
 						cause: receiptError,
 					});
 				}
-				throw receiptError;
+				throw new OpenClawProcessSupervisorInvocationError('receipt-invalid', {
+					cause: receiptError,
+				});
 			}
 		},
 	});
+}
+
+export function createManagedVmOpenClawProcessSupervisor(options: {
+	readonly gateway: OpenClawProcessSupervisorGateway;
+	readonly hostStateDirectory: string;
+	readonly vm: Pick<ManagedVm, 'exec' | 'id'>;
+}): OpenClawProcessSupervisor {
+	return createManagedVmOpenClawProcessSupervisorPorts(options).supervisor;
 }

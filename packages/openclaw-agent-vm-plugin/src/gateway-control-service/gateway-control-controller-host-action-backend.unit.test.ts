@@ -600,6 +600,7 @@ describe('createGatewayControlControllerHostActionBackend', () => {
 		expect(observedEnvelopes).toHaveLength(2);
 		expect(observedEnvelopes[1]).toMatchObject({
 			commandId: observedEnvelopes[0]?.commandId,
+			expiresAtMs: 121_000,
 			idempotencyKey: observedEnvelopes[0]?.idempotencyKey,
 			messageId: observedEnvelopes[0]?.messageId,
 		});

@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GatewayOwnershipEvidence } from '../../gateway/gateway-ownership-evidence.js';
-import {
-	createCompleteVmDestroyReceipt,
-	createTestVmOwnershipReservationReference,
-} from '../../testing/managed-vm-test-helpers.js';
-import type { VmCreationOwnership } from '../vm-ownership/vm-creation-ownership.js';
+import type { GatewayVmLifecycleAuthority } from '../vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
 import {
 	classifyGatewayRecoveryAction,
@@ -196,6 +192,7 @@ describe('classifyGatewayRecoveryAction', () => {
 					consecutiveFailedRecoveries: 3,
 					consecutiveFailures: 12,
 					kind: 'suspended',
+					outwardEscalationRequired: true,
 					reason: 'max-failed-recoveries',
 					zoneId: 'sunfam',
 				},
@@ -229,8 +226,9 @@ function createGatewayRuntimeHandle(): Extract<
 			logPath: '/logs/gateway.log',
 			startCommand: 'start',
 		},
+		terminateVm: async () => {},
 		vm: {
-			close: async () => createCompleteVmDestroyReceipt('gateway-vm-1'),
+			close: async () => {},
 			enableSsh: (): never => {
 				throw new Error('not used');
 			},
@@ -244,10 +242,20 @@ function createGatewayRuntimeHandle(): Extract<
 	};
 }
 
-function createGatewayVmOwnershipStub(vmId: string): VmCreationOwnership {
+function createGatewayVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: 'boot-test',
+		controllerEpoch: 'controller-test',
+		gatewayEpochId: 'gateway-epoch-test',
+		generationId: 'generation-test',
+		zoneId: 'zone-test',
+	};
+	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
 	return {
-		ownershipReservation: createTestVmOwnershipReservationReference(vmId, { role: 'gateway' }),
-		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId, { role: 'gateway' }),
-		destroyLive: async (closeLiveVm) => await closeLiveVm(),
+		gatewayIdentity,
+		gatewaySeed,
+		attachGatewayVm: () => gatewayIdentity,
+		containPendingCreate: async () => {},
+		destroyLive: async (destroyVm) => await destroyVm(),
 	};
 }

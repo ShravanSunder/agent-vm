@@ -11,6 +11,10 @@ import {
 	readDurableHealthEvents,
 } from '../controller/health/durable-health-event-log.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type {
+	OpenClawGatewayProcessEpochBinding,
+	OpenClawGatewayProcessEpochOwner,
+} from '../gateway/openclaw-gateway-process-epoch-owner.js';
 import {
 	canRunGondolinE2e,
 	currentE2eArchitecture,
@@ -24,6 +28,7 @@ import {
 	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
 } from './e2e-harness.js';
+import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawControlLinkSmoke =
@@ -137,11 +142,40 @@ async function waitForHealthEvent(options: {
 	);
 }
 
+async function waitForSuccessorProcessBinding(options: {
+	readonly previousBinding: OpenClawGatewayProcessEpochBinding;
+	readonly processEpochOwner: OpenClawGatewayProcessEpochOwner;
+	readonly timeoutMs: number;
+}): Promise<OpenClawGatewayProcessEpochBinding> {
+	const deadlineMs = Date.now() + options.timeoutMs;
+	while (Date.now() < deadlineMs) {
+		const currentBinding = options.processEpochOwner.getCurrentBinding();
+		const diagnostics = currentBinding.controlSession.getDiagnostics();
+		if (
+			currentBinding.material.processEpoch !== options.previousBinding.material.processEpoch &&
+			currentBinding.controlSession !== options.previousBinding.controlSession &&
+			diagnostics.accepted &&
+			diagnostics.connected &&
+			diagnostics.ready &&
+			diagnostics.lastHelloResponse?.outcome === 'accepted' &&
+			diagnostics.transportName === 'websocket'
+		) {
+			return currentBinding;
+		}
+		await waitForProtocolRetryInterval(1_000);
+	}
+	const currentBinding = options.processEpochOwner.getCurrentBinding();
+	throw new Error(
+		`Timed out waiting for a distinct accepted OpenClaw process binding after '${options.previousBinding.material.processEpoch}'; current process '${currentBinding.material.processEpoch}', diagnostics: ${JSON.stringify(currentBinding.controlSession.getDiagnostics())}`,
+	);
+}
+
 describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control session', () => {
 	let harness: E2eHarnessRuntime | undefined;
 	let project: OpenClawE2eProject | undefined;
 	let systemConfig: E2eHarnessRuntime['systemConfig'] | undefined;
 	let gatewayVm: ManagedVm | undefined;
+	let gatewayProcessEpochOwner: OpenClawGatewayProcessEpochOwner | undefined;
 	const gatewayStarts: ManagedVm[] = [];
 
 	beforeAll(async () => {
@@ -198,15 +232,10 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control se
 				PERPLEXITY_API_KEY: 'unused-control-session-smoke-perplexity-token',
 			},
 			startGatewayZone: async (startGatewayOptions) => {
-				const result = await startGatewayZone({
-					...startGatewayOptions,
-					environmentOverride: {
-						...startGatewayOptions.environmentOverride,
-						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS: '0',
-					},
-				});
+				const result = await startGatewayZone(startGatewayOptions);
 				gatewayStarts.push(result.vm);
 				gatewayVm = result.vm;
+				gatewayProcessEpochOwner = result.openClawProcessEpochOwner;
 				result.vm.setIngressRoutes([
 					{
 						port: result.processSpec.guestListenPort,
@@ -271,11 +300,12 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control se
 	});
 
 	it('restarts the OpenClaw gateway process in the same VM after child process exit', async () => {
-		if (gatewayVm === undefined) {
+		if (gatewayVm === undefined || gatewayProcessEpochOwner === undefined) {
 			throw new Error('Expected OpenClaw control-session smoke harness to be initialized.');
 		}
 		const initialGatewayVmId = gatewayVm.id;
 		const gatewayStartCountBeforeCrash = gatewayStarts.length;
+		const previousBinding = gatewayProcessEpochOwner.getCurrentBinding();
 		const crashResult = await gatewayVm.exec(`
 set -eu
 port_hex="$(printf '%04X' 18789)"
@@ -295,20 +325,29 @@ if [ -z "$gateway_pid" ]; then
   exit 1
 fi
 kill -KILL "$gateway_pid"
-for _attempt in $(seq 1 90); do
-  readyz_code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/readyz 2>/dev/null || true)"
-  if [ "$readyz_code" = "200" ] && grep -q 'gateway-supervisor: starting openclaw gateway attempt=2' /agent-vm/logs/gateway-boot-latest.log; then
-    echo "supervisor restarted openclaw gateway after pid $gateway_pid"
-    exit 0
-  fi
-  sleep 1
-done
-echo "openclaw gateway did not restart after killing pid $gateway_pid" >&2
-tail -n 80 /agent-vm/logs/gateway-boot-latest.log >&2 || true
-exit 1
+echo "terminated openclaw gateway pid $gateway_pid"
 `);
 		expect(crashResult.exitCode, crashResult.stderr).toBe(0);
-		expect(crashResult.stdout).toContain('supervisor restarted openclaw gateway');
+		expect(crashResult.stdout).toContain('terminated openclaw gateway pid');
+		const successorBinding = await waitForSuccessorProcessBinding({
+			previousBinding,
+			processEpochOwner: gatewayProcessEpochOwner,
+			timeoutMs: 120_000,
+		});
+		expect(previousBinding.controlSession.getDiagnostics()).toMatchObject({
+			accepted: false,
+			connected: false,
+			ready: false,
+		});
+		expect(successorBinding.material.processEpoch).not.toBe(previousBinding.material.processEpoch);
+		expect(successorBinding.controlSession).not.toBe(previousBinding.controlSession);
+		expect(successorBinding.controlSession.getDiagnostics()).toMatchObject({
+			accepted: true,
+			connected: true,
+			lastHelloResponse: { outcome: 'accepted' },
+			ready: true,
+			transportName: 'websocket',
+		});
 		expect(gatewayVm.id).toBe(initialGatewayVmId);
 		expect(gatewayStarts).toHaveLength(gatewayStartCountBeforeCrash);
 	});

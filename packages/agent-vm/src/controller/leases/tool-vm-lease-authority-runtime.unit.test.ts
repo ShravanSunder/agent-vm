@@ -1,649 +1,173 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-	ProvisionalToolVmOwnershipHandle,
-	ToolVmProvisionalOwnershipProof,
-} from '../vm-ownership/gateway-ownership-coordinator.js';
-import {
-	createToolVmLeaseAuthorityRuntime,
-	RejectedToolVmProvisioningCleanupError,
-} from './tool-vm-lease-authority-runtime.js';
+import { createToolVmLeaseAuthorityRuntime } from './tool-vm-lease-authority-runtime.js';
 import {
 	COMPATIBILITY,
-	createAuthority,
-	createDeferred,
-	createLease,
-	createMatchingDestroyReceipt,
-	createOwnershipHandle,
-	createVerifiedDestroyTarget,
-	expectTransitionError,
 	GATEWAY_ONE,
-	GATEWAY_TWO,
-	PRINCIPAL_MAIN,
 	RUNTIME_BINDING,
 	SSH_BINDING,
+	createAuthority,
+	createLease,
+	expectTransitionError,
 	type TestLease,
 } from './tool-vm-lease-authority-runtime.test-helpers.js';
 
 describe('createToolVmLeaseAuthorityRuntime', () => {
-	it('awaits ownership.ready as the sole destroy-target source before publishing authority', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
+	it('publishes provisioning authority without inventing a VM or reservation identity', () => {
+		const runtime = createToolVmLeaseAuthorityRuntime<TestLease, { readonly slot: number }>();
 		const authority = createAuthority();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const ready = createDeferred<ToolVmProvisionalOwnershipProof>();
-		const ownership = createOwnershipHandle(verifiedDestroyTarget, { ready: ready.promise });
-		const expectedProof = await createOwnershipHandle(verifiedDestroyTarget).ready;
+		const cleanupContext = { slot: 1 };
 		runtime.registerGateway(GATEWAY_ONE);
 
-		// Act
-		const provisioning = runtime.beginProvisioning({
+		runtime.beginProvisioning({
 			authority,
+			cleanupContext,
 			compatibility: COMPATIBILITY,
 			idleExpiresAtMs: 10_000,
-			ownership,
 		});
 
-		// Assert
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-
-		// Act
-		ready.resolve(expectedProof);
-		await provisioning;
-
-		// Assert
-		expect(runtime.getLease(authority.leaseId)).toBeUndefined();
-		expect(runtime.listLeases()).toEqual([]);
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([authority.leaseId]);
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_TWO)).toEqual([]);
+		expect(runtime.authorityForLease(authority.leaseId)).toEqual(authority);
+		expect(runtime.cleanupContextForAuthority(authority)).toBe(cleanupContext);
+		expect(runtime.leafSnapshotForLease(authority.leaseId)).toEqual(
+			expect.objectContaining({ kind: 'provisioning' }),
+		);
+		expect(JSON.stringify(runtime.leafSnapshotForLease(authority.leaseId))).not.toMatch(
+			/reservation|destructionIdentity|receipt/u,
+		);
 	});
 
-	it('rejects a mismatched ready proof before reducer or resource publication', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const mismatchedTarget = createVerifiedDestroyTarget('tool-vm-1', {
-			gateway: GATEWAY_TWO,
-		});
-		runtime.registerGateway(GATEWAY_ONE);
-
-		// Act / Assert
-		await expect(
-			runtime.beginProvisioning({
-				authority,
-				compatibility: COMPATIBILITY,
-				idleExpiresAtMs: 10_000,
-				ownership: createOwnershipHandle(mismatchedTarget),
-			}),
-		).rejects.toThrow(/ownership proof.*Gateway authority|Gateway authority.*ownership proof/iu);
-		expect(runtime.getLease(authority.leaseId)).toBeUndefined();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-	});
-
-	it('does not record a second runtime resource when the pure reducer refuses provisioning', async () => {
-		// Arrange
+	it('does not retain a second resource when reducer admission rejects a principal collision', () => {
 		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
 		const firstAuthority = createAuthority();
 		const secondAuthority = createAuthority({
 			leaseId: 'lease-2',
 			leafGeneration: 'leaf-generation-2',
 		});
-		const firstTarget = createVerifiedDestroyTarget();
-		const secondTarget = createVerifiedDestroyTarget('tool-vm-2');
 		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
+		runtime.beginProvisioning({
 			authority: firstAuthority,
 			compatibility: COMPATIBILITY,
 			idleExpiresAtMs: 10_000,
-			ownership: createOwnershipHandle(firstTarget),
 		});
 
-		// Act / Assert
-		await expectTransitionError(
-			async () =>
-				await runtime.beginProvisioning({
-					authority: secondAuthority,
-					compatibility: COMPATIBILITY,
-					idleExpiresAtMs: 10_000,
-					ownership: createOwnershipHandle(secondTarget),
-				}),
-			'leaf-already-exists',
-		);
-		expect(runtime.getLease(secondAuthority.leaseId)).toBeUndefined();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([firstAuthority.leaseId]);
-	});
-
-	it('exactly destroys a post-ready duplicate admission rejected by the reducer', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const firstAuthority = createAuthority();
-		const rejectedAuthority = createAuthority({
-			leaseId: 'lease-rejected',
-			leafGeneration: 'leaf-generation-rejected',
-		});
-		const firstTarget = createVerifiedDestroyTarget();
-		const rejectedTarget = createVerifiedDestroyTarget('tool-vm-rejected');
-		const destroyRejected = vi.fn(async () => createMatchingDestroyReceipt(rejectedTarget));
-		const rejectedOwnership = createOwnershipHandle(rejectedTarget, {
-			destroyDetached: destroyRejected,
-		});
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority: firstAuthority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: 10_000,
-			ownership: createOwnershipHandle(firstTarget),
-		});
-
-		// Act / Assert
-		await expectTransitionError(
-			async () =>
-				await runtime.beginProvisioning({
-					authority: rejectedAuthority,
-					compatibility: COMPATIBILITY,
-					idleExpiresAtMs: 10_000,
-					ownership: rejectedOwnership,
-				}),
-			'leaf-already-exists',
-		);
-		expect(destroyRejected).toHaveBeenCalledOnce();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([firstAuthority.leaseId]);
-	});
-
-	it('retains a failed same-authority rejection under its exact cleanup identity', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const liveTarget = createVerifiedDestroyTarget();
-		const rejectedTarget = createVerifiedDestroyTarget('tool-vm-rejected', {
-			reservationId: 'reservation-tool-vm-rejected',
-		});
-		const rejectedCleanupFailure = new Error('rejected reservation destroy failed');
-		const destroyRejected = vi
-			.fn<ProvisionalToolVmOwnershipHandle['destroyDetached']>()
-			.mockRejectedValueOnce(rejectedCleanupFailure)
-			.mockResolvedValueOnce(createMatchingDestroyReceipt(rejectedTarget));
-		const rejectedOwnership = createOwnershipHandle(rejectedTarget, {
-			destroyDetached: destroyRejected,
-		});
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: 10_000,
-			ownership: createOwnershipHandle(liveTarget),
-		});
-
-		// Act
-		let rejection: unknown;
-		try {
-			await runtime.beginProvisioning({
-				authority,
+		expect(() =>
+			runtime.beginProvisioning({
+				authority: secondAuthority,
 				compatibility: COMPATIBILITY,
 				idleExpiresAtMs: 10_000,
-				ownership: rejectedOwnership,
-			});
-		} catch (error) {
-			rejection = error;
-		}
+			}),
+		).toThrow(/already has/iu);
+		expect(runtime.authorityForLease(firstAuthority.leaseId)).toEqual(firstAuthority);
+		expect(runtime.authorityForLease(secondAuthority.leaseId)).toBeUndefined();
+	});
 
-		// Assert
-		expect(rejection).toBeInstanceOf(RejectedToolVmProvisioningCleanupError);
-		expect(rejection).toMatchObject({
-			cleanupId: expect.any(String),
-			cause: expect.objectContaining({ code: 'leaf-already-exists' }),
-		});
-		if (!(rejection instanceof RejectedToolVmProvisioningCleanupError)) {
-			throw new Error('expected rejected provisioning cleanup error');
-		}
-		const { cleanupId } = rejection;
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([authority.leaseId]);
-		expect(runtime.rejectedCleanupIdsOwnedByGateway(GATEWAY_ONE)).toEqual([cleanupId]);
+	it('atomically binds the VM at current commit and publishes the lease', async () => {
+		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
+		const authority = createAuthority();
+		const lease = createLease();
+		runtime.registerGateway(GATEWAY_ONE);
+		runtime.beginProvisioning({ authority, compatibility: COMPATIBILITY, idleExpiresAtMs: 10_000 });
 
-		// Act
-		runtime.sealGateway(GATEWAY_ONE);
-		await runtime.destroyExact({
+		await runtime.commitCurrent({
 			authority,
-			destroyedAtMs: 30_000,
-			mode: { kind: 'detached' },
-			reason: 'dispose-live-leaf',
+			lease,
+			runtimeBinding: RUNTIME_BINDING,
+			sshBinding: SSH_BINDING,
 		});
 
-		// Assert
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-		expect(runtime.rejectedCleanupIdsOwnedByGateway(GATEWAY_ONE)).toEqual([cleanupId]);
-		await expectTransitionError(() => runtime.retireGateway(GATEWAY_ONE), 'parent-has-live-leaves');
+		expect(runtime.getLease(lease.id)).toBe(lease);
+		expect(runtime.leafSnapshotForLease(lease.id)).toMatchObject({
+			kind: 'current',
+			runtimeBinding: RUNTIME_BINDING,
+			sshBinding: SSH_BINDING,
+		});
+	});
 
-		// Act
-		await runtime.retryRejectedProvisioningCleanup(cleanupId);
+	it('rejects commit when the lease VM does not match the controller runtime binding', async () => {
+		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
+		const authority = createAuthority();
+		runtime.registerGateway(GATEWAY_ONE);
+		runtime.beginProvisioning({ authority, compatibility: COMPATIBILITY, idleExpiresAtMs: 10_000 });
+
+		await expect(
+			runtime.commitCurrent({
+				authority,
+				lease: createLease({ vm: { id: 'different-vm' } }),
+				runtimeBinding: RUNTIME_BINDING,
+				sshBinding: SSH_BINDING,
+			}),
+		).rejects.toThrow(/does not match/iu);
+		expect(runtime.getLease(authority.leaseId)).toBeUndefined();
+	});
+
+	it('accepts identical commit retries and rejects binding drift', async () => {
+		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
+		const authority = createAuthority();
+		const lease = createLease();
+		runtime.registerGateway(GATEWAY_ONE);
+		runtime.beginProvisioning({ authority, compatibility: COMPATIBILITY, idleExpiresAtMs: 10_000 });
+		await runtime.commitCurrent({
+			authority,
+			lease,
+			runtimeBinding: RUNTIME_BINDING,
+			sshBinding: SSH_BINDING,
+		});
+
+		await expect(
+			runtime.commitCurrent({
+				authority,
+				lease,
+				runtimeBinding: RUNTIME_BINDING,
+				sshBinding: SSH_BINDING,
+			}),
+		).resolves.toBeUndefined();
+		await expect(
+			runtime.commitCurrent({
+				authority,
+				lease,
+				runtimeBinding: { ...RUNTIME_BINDING, tcpSlot: 2 },
+				sshBinding: SSH_BINDING,
+			}),
+		).rejects.toThrow(/retry changed/iu);
+	});
+
+	it('allows an admitted provisioning leaf to commit after parent seal but rejects new admission', async () => {
+		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
+		const authority = createAuthority();
+		runtime.registerGateway(GATEWAY_ONE);
+		runtime.beginProvisioning({ authority, compatibility: COMPATIBILITY, idleExpiresAtMs: 10_000 });
+		runtime.sealGateway(GATEWAY_ONE);
+
+		await runtime.commitCurrent({
+			authority,
+			lease: createLease(),
+			runtimeBinding: RUNTIME_BINDING,
+			sshBinding: SSH_BINDING,
+		});
+		await expectTransitionError(
+			() =>
+				runtime.beginProvisioning({
+					authority: createAuthority({ leaseId: 'lease-2', leafGeneration: 'leaf-generation-2' }),
+					compatibility: COMPATIBILITY,
+					idleExpiresAtMs: 10_000,
+				}),
+			'parent-not-admitting',
+		);
+	});
+
+	it('runs the controller destroy callback once and retires only after completion', async () => {
+		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
+		const authority = createAuthority();
+		const destroy = vi.fn(async () => {});
+		runtime.registerGateway(GATEWAY_ONE);
+		runtime.beginProvisioning({ authority, compatibility: COMPATIBILITY, idleExpiresAtMs: 10_000 });
+		runtime.sealGateway(GATEWAY_ONE);
+
+		await expectTransitionError(() => runtime.retireGateway(GATEWAY_ONE), 'parent-has-live-leaves');
+		await runtime.destroyExact({ authority, destroy, destroyedAtMs: 20_000, reason: 'shutdown' });
 		runtime.retireGateway(GATEWAY_ONE);
 
-		// Assert
-		expect(destroyRejected).toHaveBeenCalledTimes(2);
-		expect(runtime.rejectedCleanupIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-	});
-
-	it('retains a failed cross-Gateway lease-ID collision under the rejected Gateway cleanup identity', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const firstAuthority = createAuthority();
-		const rejectedAuthority = createAuthority({
-			gateway: GATEWAY_TWO,
-			leaseId: firstAuthority.leaseId,
-			leafGeneration: 'leaf-generation-gateway-2',
-		});
-		const firstTarget = createVerifiedDestroyTarget();
-		const rejectedTarget = createVerifiedDestroyTarget('tool-vm-gateway-2', {
-			gateway: GATEWAY_TWO,
-		});
-		const destroyRejected = vi
-			.fn<ProvisionalToolVmOwnershipHandle['destroyDetached']>()
-			.mockRejectedValueOnce(new Error('cross-Gateway rejected cleanup failed'))
-			.mockResolvedValueOnce(createMatchingDestroyReceipt(rejectedTarget));
-		runtime.registerGateway(GATEWAY_ONE);
-		runtime.registerGateway(GATEWAY_TWO);
-		await runtime.beginProvisioning({
-			authority: firstAuthority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: 10_000,
-			ownership: createOwnershipHandle(firstTarget),
-		});
-
-		// Act
-		let rejection: unknown;
-		try {
-			await runtime.beginProvisioning({
-				authority: rejectedAuthority,
-				compatibility: COMPATIBILITY,
-				idleExpiresAtMs: 10_000,
-				ownership: createOwnershipHandle(rejectedTarget, {
-					destroyDetached: destroyRejected,
-				}),
-			});
-		} catch (error) {
-			rejection = error;
-		}
-
-		// Assert
-		expect(rejection).toBeInstanceOf(RejectedToolVmProvisioningCleanupError);
-		if (!(rejection instanceof RejectedToolVmProvisioningCleanupError)) {
-			throw new Error('expected cross-Gateway rejected provisioning cleanup error');
-		}
-		const { cleanupId } = rejection;
-		expect(destroyRejected).toHaveBeenCalledOnce();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([firstAuthority.leaseId]);
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_TWO)).toEqual([]);
-		expect(runtime.rejectedCleanupIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-		expect(runtime.rejectedCleanupIdsOwnedByGateway(GATEWAY_TWO)).toEqual([cleanupId]);
-
-		// Act
-		await runtime.retryRejectedProvisioningCleanup(cleanupId);
-
-		// Assert
-		expect(destroyRejected).toHaveBeenCalledTimes(2);
-		expect(runtime.rejectedCleanupIdsOwnedByGateway(GATEWAY_TWO)).toEqual([]);
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([firstAuthority.leaseId]);
-	});
-
-	it('exactly destroys a ready admission that loses a race with Gateway sealing', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const ready = createDeferred<ToolVmProvisionalOwnershipProof>();
-		const destroyRejected = vi.fn(async () => createMatchingDestroyReceipt(verifiedDestroyTarget));
-		const ownership = createOwnershipHandle(verifiedDestroyTarget, {
-			destroyDetached: destroyRejected,
-			ready: ready.promise,
-		});
-		const expectedProof = await createOwnershipHandle(verifiedDestroyTarget).ready;
-		runtime.registerGateway(GATEWAY_ONE);
-		const provisioning = runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: 10_000,
-			ownership,
-		});
-		const rejectedProvisioning = expect(provisioning).rejects.toMatchObject({
-			code: 'parent-not-admitting',
-		});
-
-		// Act
-		runtime.sealGateway(GATEWAY_ONE);
-		ready.resolve(expectedProof);
-
-		// Assert
-		await rejectedProvisioning;
-		expect(destroyRejected).toHaveBeenCalledOnce();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-	});
-
-	it('publishes a current lease only after durable ownership commit succeeds', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const commitCurrent = vi.fn(async () => {
-			throw new Error('durable ownership commit failed');
-		});
-		const ownership = createOwnershipHandle(verifiedDestroyTarget, { commitCurrent });
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership,
-		});
-
-		// Act / Assert
-		await expect(
-			runtime.commitCurrent({
-				authority,
-				lease,
-				runtimeBinding: RUNTIME_BINDING,
-				sshBinding: SSH_BINDING,
-			}),
-		).rejects.toThrow('durable ownership commit failed');
-		expect(commitCurrent).toHaveBeenCalledOnce();
-		expect(runtime.getLease(lease.id)).toBeUndefined();
-		expect(
-			runtime.findCurrentLeaseByPrincipal({
-				gateway: GATEWAY_ONE,
-				principal: PRINCIPAL_MAIN,
-			}),
-		).toBeUndefined();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([authority.leaseId]);
-	});
-
-	it('single-flights concurrent durable current commits', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const durableCommit = createDeferred<void>();
-		const commitCurrent = vi.fn(() => durableCommit.promise);
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership: createOwnershipHandle(verifiedDestroyTarget, { commitCurrent }),
-		});
-
-		// Act
-		const firstCommit = runtime.commitCurrent({
-			authority,
-			lease,
-			runtimeBinding: RUNTIME_BINDING,
-			sshBinding: SSH_BINDING,
-		});
-		const secondCommit = runtime.commitCurrent({
-			authority,
-			lease,
-			runtimeBinding: RUNTIME_BINDING,
-			sshBinding: SSH_BINDING,
-		});
-		durableCommit.resolve();
-		const outcomes = await Promise.allSettled([firstCommit, secondCommit]);
-
-		// Assert
-		expect(commitCurrent).toHaveBeenCalledOnce();
-		expect(outcomes).toEqual([
-			{ status: 'fulfilled', value: undefined },
-			{ status: 'fulfilled', value: undefined },
-		]);
-		expect(runtime.getLease(lease.id)).toBe(lease);
-	});
-
-	it('shares only identical commit retries during and after durable commit', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const durableCommit = createDeferred<void>();
-		const commitCurrent = vi.fn(() => durableCommit.promise);
-		const canonicalCommit = {
-			authority,
-			lease,
-			runtimeBinding: RUNTIME_BINDING,
-			sshBinding: SSH_BINDING,
-		};
-		const changedLeaseCommit = {
-			...canonicalCommit,
-			lease: createLease({ id: 'lease-other' }),
-		};
-		const changedBehaviorCommit = {
-			...canonicalCommit,
-			lease: createLease({
-				idleExpiresAtMs: lease.idleExpiresAtMs + 1_000,
-				label: 'behavior-changed lease',
-			}),
-		};
-		const changedRuntimeCommit = {
-			...canonicalCommit,
-			runtimeBinding: {
-				...RUNTIME_BINDING,
-				runtimeRecordId: 'runtime-tool-vm-other',
-			},
-		};
-		const changedSshCommit = {
-			...canonicalCommit,
-			sshBinding: {
-				...SSH_BINDING,
-				bindingId: 'ssh-tool-vm-other',
-			},
-		};
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership: createOwnershipHandle(verifiedDestroyTarget, { commitCurrent }),
-		});
-
-		// Act
-		const firstCommit = runtime.commitCurrent(canonicalCommit);
-		const identicalInFlightRetry = runtime.commitCurrent(canonicalCommit);
-		const changedBehaviorInFlightOutcome = runtime.commitCurrent(changedBehaviorCommit).then(
-			() => ({ kind: 'fulfilled' as const }),
-			(error: unknown) => ({ error, kind: 'rejected' as const }),
-		);
-
-		// Assert
-		await expect(runtime.commitCurrent(changedLeaseCommit)).rejects.toThrow();
-		await expect(runtime.commitCurrent(changedRuntimeCommit)).rejects.toThrow(
-			/commit retry changed lease or binding identity/iu,
-		);
-		await expect(runtime.commitCurrent(changedSshCommit)).rejects.toThrow(
-			/commit retry changed lease or binding identity/iu,
-		);
-		expect(commitCurrent).toHaveBeenCalledOnce();
-
-		// Act
-		durableCommit.resolve();
-		await Promise.all([firstCommit, identicalInFlightRetry]);
-		await runtime.commitCurrent(canonicalCommit);
-
-		// Assert
-		expect(await changedBehaviorInFlightOutcome).toMatchObject({
-			error: expect.any(Error),
-			kind: 'rejected',
-		});
-		await expect(runtime.commitCurrent(changedLeaseCommit)).rejects.toThrow();
-		await expect(runtime.commitCurrent(changedBehaviorCommit)).rejects.toThrow(
-			/commit retry changed/iu,
-		);
-		await expect(runtime.commitCurrent(changedRuntimeCommit)).rejects.toThrow(
-			/commit retry changed lease or binding identity/iu,
-		);
-		await expect(runtime.commitCurrent(changedSshCommit)).rejects.toThrow(
-			/commit retry changed lease or binding identity/iu,
-		);
-		expect(commitCurrent).toHaveBeenCalledOnce();
-		expect(runtime.getLease(lease.id)).toBe(lease);
-	});
-
-	it('retains a sealed pending commit for exact disposal after durable membership wins', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const durableCommit = createDeferred<void>();
-		const destroyDetached = vi.fn(async () => createMatchingDestroyReceipt(verifiedDestroyTarget));
-		const closeLiveVm = vi.fn(async () => createMatchingDestroyReceipt(verifiedDestroyTarget));
-		const ownership = createOwnershipHandle(verifiedDestroyTarget, {
-			commitCurrent: vi.fn(() => durableCommit.promise),
-			destroyDetached,
-		});
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership,
-		});
-		const pendingCommit = runtime.commitCurrent({
-			authority,
-			lease,
-			runtimeBinding: RUNTIME_BINDING,
-			sshBinding: SSH_BINDING,
-		});
-		const commitOutcome = pendingCommit.then(
-			() => undefined,
-			(error: unknown) => error,
-		);
-
-		// Act
-		runtime.sealGateway(GATEWAY_ONE);
-		durableCommit.resolve();
-
-		// Assert
-		expect(await commitOutcome).toBeUndefined();
-		expect(runtime.getLease(lease.id)).toBe(lease);
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([lease.id]);
-
-		// Act
-		await runtime.destroyExact({
-			authority,
-			destroyedAtMs: 30_000,
-			mode: { closeLiveVm, kind: 'live' },
-			reason: 'sealed-after-durable-commit',
-		});
-
-		// Assert
-		expect(closeLiveVm).toHaveBeenCalledOnce();
-		expect(destroyDetached).not.toHaveBeenCalled();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-	});
-
-	it('serializes exact destruction after a pending durable commit', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const durableCommit = createDeferred<void>();
-		const operationOrder: string[] = [];
-		const commitCurrent = vi.fn(async () => {
-			operationOrder.push('commit-started');
-			await durableCommit.promise;
-			operationOrder.push('commit-finished');
-		});
-		const destroyDetached = vi.fn(async () => {
-			operationOrder.push('destroy-started');
-			return createMatchingDestroyReceipt(verifiedDestroyTarget);
-		});
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership: createOwnershipHandle(verifiedDestroyTarget, {
-				commitCurrent,
-				destroyDetached,
-			}),
-		});
-
-		// Act
-		const pendingCommit = runtime.commitCurrent({
-			authority,
-			lease,
-			runtimeBinding: RUNTIME_BINDING,
-			sshBinding: SSH_BINDING,
-		});
-		const pendingDestroy = runtime.destroyExact({
-			authority,
-			destroyedAtMs: 30_000,
-			mode: { kind: 'detached' },
-			reason: 'serialized-after-commit',
-		});
-		const destroyStartedBeforeCommitSettled = destroyDetached.mock.calls.length > 0;
-		durableCommit.resolve();
-		const outcomes = await Promise.allSettled([pendingCommit, pendingDestroy]);
-
-		// Assert
-		expect(destroyStartedBeforeCommitSettled).toBe(false);
-		expect(outcomes.every((outcome) => outcome.status === 'fulfilled')).toBe(true);
-		expect(operationOrder).toEqual(['commit-started', 'commit-finished', 'destroy-started']);
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-	});
-
-	it('refuses durable commit retry after failure until exact disposal completes', async () => {
-		// Arrange
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const commitCurrent = vi.fn(async () => {
-			throw new Error('durable commit failed');
-		});
-		const destroyDetached = vi.fn(async () => createMatchingDestroyReceipt(verifiedDestroyTarget));
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership: createOwnershipHandle(verifiedDestroyTarget, {
-				commitCurrent,
-				destroyDetached,
-			}),
-		});
-
-		// Act / Assert
-		await expect(
-			runtime.commitCurrent({
-				authority,
-				lease,
-				runtimeBinding: RUNTIME_BINDING,
-				sshBinding: SSH_BINDING,
-			}),
-		).rejects.toThrow('durable commit failed');
-		await expect(
-			runtime.commitCurrent({
-				authority,
-				lease,
-				runtimeBinding: RUNTIME_BINDING,
-				sshBinding: SSH_BINDING,
-			}),
-		).rejects.toThrow(
-			/commit.*(?:failed|uncertain).*exact destruction|exact destruction.*commit/iu,
-		);
-		expect(commitCurrent).toHaveBeenCalledOnce();
-
-		// Act
-		await runtime.destroyExact({
-			authority,
-			destroyedAtMs: 30_000,
-			mode: { kind: 'detached' },
-			reason: 'failed-durable-commit',
-		});
-
-		// Assert
-		expect(destroyDetached).toHaveBeenCalledOnce();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
+		expect(destroy).toHaveBeenCalledOnce();
+		expect(runtime.authorityForLease(authority.leaseId)).toBeUndefined();
 	});
 });

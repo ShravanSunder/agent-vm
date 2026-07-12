@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
-import { VmDestructionUnprovenError } from '../../shared/vm-destruction-receipt.js';
+import { ManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveWorkerTask } from '../active-task-registry.js';
 import type { PreparedWorkerTask } from '../worker-task-runner.js';
 import { createWorkerZoneRuntime } from './worker-zone-runtime.js';
@@ -172,7 +172,7 @@ describe('createWorkerZoneRuntime destroy orchestration', () => {
 			[
 				new Error('worker task failed'),
 				new AggregateError(
-					[new VmDestructionUnprovenError('Worker VM exact destruction is unproven')],
+					[new ManagedVmTerminationUnprovenError('Worker VM exact destruction is unproven')],
 					'nested cleanup failed',
 				),
 			],

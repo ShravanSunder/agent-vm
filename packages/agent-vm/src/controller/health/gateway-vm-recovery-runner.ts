@@ -10,13 +10,29 @@ import type {
 	GatewayVmRecoveryRequest,
 	GatewayVmRecoveryResult,
 } from './gateway-service-health-monitor.js';
+import type { GatewayVmRecoverySourceKey } from './gateway-vm-recovery-policy.js';
 
 export interface CreateGatewayVmRecoveryRunnerOptions {
+	readonly clearTimeoutImpl?: ((timer: NodeJS.Timeout) => void) | undefined;
 	readonly getRecoverableGatewayRuntime: (zoneId: string) => RecoverableGatewayRuntime;
 	readonly getRuntimeReadiness: () => ControllerRuntimeReadiness;
 	readonly now: () => number;
 	readonly restartTimeoutMs: number;
+	readonly setTimeoutImpl?: ((callback: () => void, delayMs: number) => NodeJS.Timeout) | undefined;
 	readonly writeLog: (message: string) => void;
+}
+
+function gatewayRecoverySourceKeysEqual(
+	left: GatewayVmRecoverySourceKey,
+	right: GatewayVmRecoverySourceKey,
+): boolean {
+	return (
+		left.bootId === right.bootId &&
+		left.domain === right.domain &&
+		left.gatewayVmId === right.gatewayVmId &&
+		left.generationId === right.generationId &&
+		left.zoneId === right.zoneId
+	);
 }
 
 export interface RecoverableGatewayRuntime {
@@ -34,7 +50,10 @@ export interface RecoverableGatewayRuntime {
 			| undefined;
 		readonly lifecycleState: 'failed' | 'running' | 'stopped';
 	};
-	readonly refreshCredentials: () => Promise<{ readonly ok: true; readonly zoneId: string }>;
+	readonly refreshCredentials: (options?: {
+		readonly signal?: AbortSignal | undefined;
+		readonly timeoutMs?: number | undefined;
+	}) => Promise<{ readonly ok: true; readonly zoneId: string }>;
 	readonly restart: (options: {
 		readonly operationTrigger: 'auto-recovery';
 		readonly timeoutMs: number;
@@ -101,6 +120,9 @@ export function classifyGatewayRecoveryRestartError(error: unknown): string {
 		return 'restart-disk-failure';
 	}
 	const message = formatUnknownError(error).toLowerCase();
+	if (message.includes('gateway recovery action deadline exceeded')) {
+		return 'recovery-timeout';
+	}
 	if (
 		message.includes('1password') ||
 		message.includes('credential') ||
@@ -136,6 +158,28 @@ function classifyGatewayRecoveryRuntimeError(
 export function createGatewayVmRecoveryRunner(
 	options: CreateGatewayVmRecoveryRunnerOptions,
 ): (request: GatewayVmRecoveryRequest) => Promise<GatewayVmRecoveryResult> {
+	const setTimeoutImpl = options.setTimeoutImpl ?? setTimeout;
+	const clearTimeoutImpl = options.clearTimeoutImpl ?? clearTimeout;
+	const runWithDeadline = async <TResult>(
+		operation: Promise<TResult>,
+		onTimeout?: () => void,
+	): Promise<TResult> => {
+		let timeout: NodeJS.Timeout | undefined;
+		const timeoutPromise = new Promise<never>((_resolve, reject) => {
+			timeout = setTimeoutImpl(() => {
+				onTimeout?.();
+				reject(new Error('gateway recovery action deadline exceeded'));
+			}, options.restartTimeoutMs);
+			timeout.unref?.();
+		});
+		try {
+			return await Promise.race([operation, timeoutPromise]);
+		} finally {
+			if (timeout !== undefined) {
+				clearTimeoutImpl(timeout);
+			}
+		}
+	};
 	return async (request): Promise<GatewayVmRecoveryResult> => {
 		const startedAtMs = options.now();
 		const elapsedMs = (): number => options.now() - startedAtMs;
@@ -164,8 +208,25 @@ export function createGatewayVmRecoveryRunner(
 		}
 
 		const oldSnapshot = runtime.getSnapshot();
+		const lifecycleState = runtime.getLifecycleState();
+		if (lifecycleState.kind === 'running' || lifecycleState.kind === 'running-degraded') {
+			const currentSourceKey = lifecycleState.gateway.controlSessionRecoverySourceKey;
+			if (
+				request.sourceKey === undefined ||
+				request.sourceKey.zoneId !== request.zoneId ||
+				currentSourceKey === undefined ||
+				!gatewayRecoverySourceKeysEqual(currentSourceKey, request.sourceKey)
+			) {
+				return {
+					action: 'observe-only',
+					elapsedMs: elapsedMs(),
+					errorCode: 'stale-recovery-source',
+					result: 'failed',
+				};
+			}
+		}
 		const recoveryAction = classifyGatewayRecoveryAction({
-			lifecycleState: runtime.getLifecycleState(),
+			lifecycleState,
 			recoveryDecision: {
 				consecutiveFailures: request.consecutiveFailures,
 				kind: 'restart',
@@ -177,8 +238,16 @@ export function createGatewayVmRecoveryRunner(
 			options.writeLog(
 				`Refreshing gateway secret resolver for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
 			);
+			const refreshAbortController = new AbortController();
 			try {
-				await runtime.refreshCredentials();
+				await runWithDeadline(
+					runtime.refreshCredentials({
+						signal: refreshAbortController.signal,
+						timeoutMs: options.restartTimeoutMs,
+					}),
+					() =>
+						refreshAbortController.abort(new Error('gateway recovery action deadline exceeded')),
+				);
 			} catch (error) {
 				options.writeLog(
 					`Gateway VM recovery credential refresh failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
@@ -206,10 +275,12 @@ export function createGatewayVmRecoveryRunner(
 			);
 			let coldStartResult: OpenClawZoneRestartResult;
 			try {
-				coldStartResult = await runtime.coldStart({
-					operationTrigger: 'auto-recovery',
-					timeoutMs: options.restartTimeoutMs,
-				});
+				coldStartResult = await runWithDeadline(
+					runtime.coldStart({
+						operationTrigger: 'auto-recovery',
+						timeoutMs: options.restartTimeoutMs,
+					}),
+				);
 			} catch (error) {
 				options.writeLog(
 					`Gateway VM recovery cold-start failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
@@ -259,10 +330,12 @@ export function createGatewayVmRecoveryRunner(
 
 		let restartResult: OpenClawZoneRestartResult;
 		try {
-			restartResult = await runtime.restart({
-				operationTrigger: 'auto-recovery',
-				timeoutMs: options.restartTimeoutMs,
-			});
+			restartResult = await runWithDeadline(
+				runtime.restart({
+					operationTrigger: 'auto-recovery',
+					timeoutMs: options.restartTimeoutMs,
+				}),
+			);
 		} catch (error) {
 			options.writeLog(
 				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,

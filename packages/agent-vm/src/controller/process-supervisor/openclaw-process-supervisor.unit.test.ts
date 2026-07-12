@@ -5,7 +5,10 @@ import {
 	openClawProcessSupervisorReceiptSchema,
 	type OpenClawProcessSupervisorReceipt,
 } from './openclaw-process-supervisor-contracts.js';
-import { createOpenClawProcessSupervisor } from './openclaw-process-supervisor.js';
+import {
+	createOpenClawProcessSupervisor,
+	createOpenClawProcessSupervisorPorts,
+} from './openclaw-process-supervisor.js';
 
 const gateway = {
 	controllerEpoch: 'controller-1',
@@ -43,6 +46,88 @@ function completedReceipt(options: {
 }
 
 describe('OpenClaw process supervisor contracts', () => {
+	it('accepts only the exact typed reliability-test termination request and completed receipt', () => {
+		const request = openClawProcessSupervisorRequestSchema.parse({
+			actionId: 'action-reliability-terminate-1',
+			contractVersion: 1,
+			expectedProcessEpoch: 'process-1',
+			gateway,
+			kind: 'terminate-for-reliability-test',
+		});
+
+		expect(request).toEqual({
+			actionId: 'action-reliability-terminate-1',
+			contractVersion: 1,
+			expectedProcessEpoch: 'process-1',
+			gateway,
+			kind: 'terminate-for-reliability-test',
+		});
+		expect(
+			openClawProcessSupervisorReceiptSchema.parse({
+				actionId: request.actionId,
+				cgroup: {
+					emptyObserved: true,
+					name: 'agent-vm-process-1',
+					populated: false,
+				},
+				contractVersion: 1,
+				expectedProcessEpoch: 'process-1',
+				gateway,
+				kind: 'terminate-for-reliability-test',
+				observedProcessEpoch: 'process-1',
+				status: 'completed',
+			}),
+		).toMatchObject({
+			expectedProcessEpoch: 'process-1',
+			kind: 'terminate-for-reliability-test',
+			observedProcessEpoch: 'process-1',
+		});
+
+		for (const unsafeField of [
+			{ pid: 1234 },
+			{ signal: 'SIGKILL' },
+			{ command: 'kill -9 1234' },
+			{ cgroupPath: '/sys/fs/cgroup/untrusted' },
+		]) {
+			expect(() =>
+				openClawProcessSupervisorRequestSchema.parse({
+					actionId: 'action-reliability-terminate-unsafe',
+					contractVersion: 1,
+					expectedProcessEpoch: 'process-1',
+					gateway,
+					kind: 'terminate-for-reliability-test',
+					...unsafeField,
+				}),
+			).toThrow();
+		}
+	});
+
+	it.each([
+		['mismatched process epoch', 'process-2', true, false],
+		['missing positive empty observation', 'process-1', false, false],
+		['still-populated cgroup', 'process-1', true, true],
+	] as const)(
+		'rejects a completed reliability-test termination receipt with %s',
+		(_label, observedProcessEpoch, emptyObserved, populated) => {
+			expect(() =>
+				openClawProcessSupervisorReceiptSchema.parse({
+					actionId: 'action-reliability-terminate-invalid',
+					cgroup: {
+						...(emptyObserved ? { emptyObserved: true } : {}),
+						name: 'agent-vm-process-1',
+						populated,
+					},
+					contractVersion: 1,
+					expectedProcessEpoch: 'process-1',
+					gateway,
+					kind: 'terminate-for-reliability-test',
+					observedProcessEpoch,
+					status: 'completed',
+				}),
+			).toThrow();
+		},
+	);
+
 	it('rejects raw commands and requests without exact Gateway and process fences', () => {
 		expect(() =>
 			openClawProcessSupervisorRequestSchema.parse({
@@ -108,6 +193,105 @@ describe('OpenClaw process supervisor contracts', () => {
 });
 
 describe('createOpenClawProcessSupervisor', () => {
+	it('throws a typed error that retains the validated non-completed receipt', async () => {
+		const refusedReceipt = openClawProcessSupervisorReceiptSchema.parse({
+			actionId: 'action-start-refused',
+			cgroup: {
+				name: 'agent-vm-process-existing',
+				populated: true,
+			},
+			contractVersion: 1,
+			expectedProcessEpoch: null,
+			gateway,
+			kind: 'start',
+			observedProcessEpoch: 'process-existing',
+			reason: 'process-overlap',
+			status: 'refused',
+		});
+		const supervisor = createOpenClawProcessSupervisor({
+			gateway,
+			invokeHelper: async () => refusedReceipt,
+		});
+
+		const receiptError = await supervisor
+			.start({
+				actionId: refusedReceipt.actionId,
+				expectedProcessEpoch: null,
+				selectedProcessEpoch: 'process-selected',
+			})
+			.catch((error: unknown) => error);
+
+		expect(receiptError).toBeInstanceOf(Error);
+		expect(receiptError).toMatchObject({
+			message: 'OpenClaw process supervisor start was refused: process-overlap.',
+			name: 'OpenClawProcessSupervisorReceiptError',
+			receipt: refusedReceipt,
+		});
+		expect((receiptError as { readonly receipt: unknown }).receipt).toStrictEqual(refusedReceipt);
+	});
+
+	it('serializes reliability-test termination with normal supervisor operations', async () => {
+		let releaseObservation: (() => void) | undefined;
+		const observationMayFinish = new Promise<void>((resolve) => {
+			releaseObservation = resolve;
+		});
+		const invokeHelper = vi.fn(async (request) => {
+			if (request.kind === 'observe') {
+				await observationMayFinish;
+				return completedReceipt({
+					actionId: request.actionId,
+					expectedProcessEpoch: request.expectedProcessEpoch,
+					kind: 'observe',
+					processEpoch: request.expectedProcessEpoch,
+				});
+			}
+			return openClawProcessSupervisorReceiptSchema.parse({
+				actionId: request.actionId,
+				cgroup: {
+					emptyObserved: true,
+					name: `agent-vm-${request.expectedProcessEpoch}`,
+					populated: false,
+				},
+				contractVersion: 1,
+				expectedProcessEpoch: request.expectedProcessEpoch,
+				gateway,
+				kind: 'terminate-for-reliability-test',
+				observedProcessEpoch: request.expectedProcessEpoch,
+				status: 'completed',
+			});
+		});
+		const { reliabilityFaultActuator, supervisor } = createOpenClawProcessSupervisorPorts({
+			gateway,
+			invokeHelper,
+		});
+
+		const observation = supervisor.observe({
+			actionId: 'action-observe-before-terminate',
+			expectedProcessEpoch: 'process-1',
+		});
+		const termination = reliabilityFaultActuator.terminateOwnedProcess({
+			actionId: 'action-reliability-terminate-1',
+			expectedProcessEpoch: 'process-1',
+		});
+		await vi.waitFor(() => expect(invokeHelper).toHaveBeenCalledOnce());
+		expect(invokeHelper).toHaveBeenNthCalledWith(1, expect.objectContaining({ kind: 'observe' }));
+
+		releaseObservation?.();
+		await expect(observation).resolves.toMatchObject({ kind: 'observe' });
+		await expect(termination).resolves.toMatchObject({
+			expectedProcessEpoch: 'process-1',
+			kind: 'terminate-for-reliability-test',
+			observedProcessEpoch: 'process-1',
+		});
+		expect(invokeHelper).toHaveBeenNthCalledWith(2, {
+			actionId: 'action-reliability-terminate-1',
+			contractVersion: 1,
+			expectedProcessEpoch: 'process-1',
+			gateway,
+			kind: 'terminate-for-reliability-test',
+		});
+	});
+
 	it('rejects a completed start receipt for a different controller-selected process epoch', async () => {
 		const supervisor = createOpenClawProcessSupervisor({
 			gateway,

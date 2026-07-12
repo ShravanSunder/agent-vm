@@ -11,7 +11,6 @@ import {
 	type SuspectToolVmLeaseLeaf,
 	type ToolVmActiveUse,
 	type ToolVmActiveUseLatestReport,
-	type ToolVmExactDestructionReceipt,
 	type ToolVmLeafAuthorityReference,
 	type ToolVmLeaseAuthorityRetentionPolicy,
 	type ToolVmLeaseAuthorityState,
@@ -58,28 +57,6 @@ export function validateLatestReport(report: ToolVmActiveUseLatestReport): void 
 		report.summary.length > maximumActiveUseReportSummaryLength
 	) {
 		throw new Error('Tool VM active-use report is outside its bounded contract.');
-	}
-}
-
-export function validateExactDestructionReceipt(
-	leaf: ToolVmLeaseLeafState,
-	receipt: ToolVmExactDestructionReceipt,
-): void {
-	if (!receipt.complete) {
-		return transitionError(
-			'destruction-receipt-incomplete',
-			'Exact Tool VM destruction receipt is incomplete.',
-		);
-	}
-	if (
-		receipt.reservationId !== leaf.destructionIdentity.reservationId ||
-		receipt.reservationPath !== leaf.destructionIdentity.reservationPath ||
-		receipt.vmId !== leaf.destructionIdentity.vmId
-	) {
-		return transitionError(
-			'destruction-receipt-mismatch',
-			'Exact Tool VM destruction receipt does not match the retained target identity.',
-		);
 	}
 }
 

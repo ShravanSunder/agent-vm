@@ -930,20 +930,11 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(handle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/ssh hung/u);
 		await factory(createFactoryParamsForAgent('beta'));
 
-		expect(releaseLease).toHaveBeenCalledWith(
-			'01890f00-0000-7000-8000-000000000001',
-			expect.objectContaining({
-				force: true,
-				staleEvidence: {
-					kind: 'tool-vm-ssh',
-					operation: 'command',
-				},
-			}),
-		);
+		expect(releaseLease).not.toHaveBeenCalled();
 		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 
-	it('reacquires from a sibling handle after shared stale cleanup retires the old caller context', async () => {
+	it('reacquires from a sibling handle while the shared stale lease retains controller authority', async () => {
 		const oldLease = createLeaseResponse('sibling-old');
 		const replacementLease = createLeaseResponse('sibling-new');
 		let retiredLeaseId: string | undefined;
@@ -956,51 +947,37 @@ describe('createGondolinSandboxBackendFactory', () => {
 					};
 			  }
 			| undefined;
-		let oldCallerContextRegistered = true;
-		const requestLease = vi.fn(async () => {
-			oldCallerContextRegistered = true;
-			return oldLease;
-		});
-		const startActiveUse = vi.fn(async (leaseId: string, request) => {
-			if (leaseId === oldLease.leaseId && !oldCallerContextRegistered) {
-				throw new ControllerLeaseRequestError({
-					bodyText: JSON.stringify({
-						message: `gateway control lease '${leaseId}' has no registered caller context`,
-					}),
-					context: 'Gateway control lease_use_start',
-					responseBody: {
-						message: `gateway control lease '${leaseId}' has no registered caller context`,
-					},
-					status: 409,
-				});
-			}
-			return {
-				expiresAt: 2_000,
-				heartbeatAfterMs: 1_000,
-				useId: request.useId,
-			};
-		});
+		let oldLeaseAuthorityAvailable = true;
+		const requestLease = vi.fn(async () => oldLease);
+		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+			useId: request.useId,
+		}));
 		const reacquireLease = vi.fn(async (oldLeaseId: string) => {
 			expect(oldLeaseId).toBe(oldLease.leaseId);
 			expect(retiredLeaseId).toBe(oldLease.leaseId);
+			expect(oldLeaseAuthorityAvailable).toBe(true);
 			return replacementLease;
 		});
-		const releaseLease = vi.fn(async (leaseId: string, options) => {
-			if (options?.force === true) {
+		const releaseLease = vi.fn(async () => {
+			oldLeaseAuthorityAvailable = false;
+		});
+		const retainRetiredLeaseReacquireRequest = vi.fn(
+			(leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
 				retiredLeaseId = leaseId;
 				if (
-					options.observedAtMs !== undefined &&
-					options.staleEvidence?.kind === 'tool-vm-ssh' &&
-					options.staleEvidence.operation === 'command'
+					reacquireRequest.staleEvidence.kind === 'tool-vm-ssh' &&
+					reacquireRequest.staleEvidence.operation === 'command'
 				) {
 					retiredReacquireRequest = {
-						observedAtMs: options.observedAtMs,
-						staleEvidence: options.staleEvidence,
+						observedAtMs: reacquireRequest.observedAtMs,
+						staleEvidence: { kind: 'tool-vm-ssh', operation: 'command' },
 					};
 				}
-				oldCallerContextRegistered = false;
-			}
-		});
+				return true;
+			},
+		);
 		const runRemoteShellScript = vi
 			.fn()
 			.mockResolvedValueOnce({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('probe') })
@@ -1019,6 +996,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			releaseLease,
 			renewLease: async () => oldLease,
 			requestLease,
+			retainRetiredLeaseReacquireRequest,
 			startActiveUse,
 		};
 		const factory = createGondolinSandboxBackendFactory(
@@ -1049,16 +1027,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		expect(firstHandle.runtimeId).toBe(oldLease.leaseId);
 		expect(secondHandle.runtimeId).toBe(replacementLease.leaseId);
-		expect(releaseLease).toHaveBeenCalledWith(
-			oldLease.leaseId,
-			expect.objectContaining({
-				force: true,
-				staleEvidence: {
-					kind: 'tool-vm-ssh',
-					operation: 'command',
-				},
-			}),
-		);
+		expect(releaseLease).not.toHaveBeenCalled();
 		expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, {
 			observedAtMs: expect.any(Number),
 			staleEvidence: {
@@ -1080,7 +1049,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 	});
 
-	it('shares a local stale marker before best-effort release completes for sibling handles', async () => {
+	it('shares a local stale marker without pre-releasing authority for sibling handles', async () => {
 		const oldLease = createLeaseResponse('sibling-release-fails-old');
 		const replacementLease = createLeaseResponse('sibling-release-fails-new');
 		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
@@ -1162,16 +1131,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stdout: Buffer.from('ok'),
 		});
 
-		expect(releaseLease).toHaveBeenCalledWith(
-			oldLease.leaseId,
-			expect.objectContaining({
-				force: true,
-				staleEvidence: {
-					kind: 'tool-vm-ssh',
-					operation: 'command',
-				},
-			}),
-		);
+		expect(releaseLease).not.toHaveBeenCalled();
 		expect(reacquireLease).toHaveBeenCalledTimes(1);
 		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
 			oldLease.leaseId,
@@ -1179,37 +1139,38 @@ describe('createGondolinSandboxBackendFactory', () => {
 		]);
 	});
 
-	it('publishes a reacquire hint when the cached reuse probe retires a lease used by an existing handle', async () => {
+	it('reacquires a cached-probe lease before cleanup can delete its controller authority', async () => {
 		const oldLease = createLeaseResponse('cached-probe-old');
 		const replacementLease = createLeaseResponse('cached-probe-new');
 		const publishHealthEvent = vi.fn(async () => {});
 		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
-		let oldCallerContextRegistered = true;
+		let oldLeaseAuthorityAvailable = true;
 		const requestLease = vi.fn(async () => {
-			oldCallerContextRegistered = true;
+			oldLeaseAuthorityAvailable = true;
 			return oldLease;
 		});
-		const startActiveUse = vi.fn(async (leaseId: string, request) => {
-			if (leaseId === oldLease.leaseId && !oldCallerContextRegistered) {
-				throw new ControllerLeaseRequestError({
-					bodyText: JSON.stringify({
-						message: `gateway control lease '${leaseId}' has no registered caller context`,
-					}),
-					context: 'Gateway control lease_use_start',
-					responseBody: {
-						message: `gateway control lease '${leaseId}' has no registered caller context`,
-					},
-					status: 409,
-				});
-			}
-			return {
-				expiresAt: 2_000,
-				heartbeatAfterMs: 1_000,
-				useId: request.useId,
-			};
-		});
+		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+			useId: request.useId,
+		}));
 		const reacquireLease = vi.fn(async (oldLeaseId: string) => {
 			expect(oldLeaseId).toBe(oldLease.leaseId);
+			if (!oldLeaseAuthorityAvailable) {
+				throw new ControllerLeaseRequestError({
+					bodyText: JSON.stringify({
+						leaseRejectionReason: 'lease_authority_absent',
+						message: 'gateway control lease authority is absent',
+					}),
+					context: 'Gateway control lease_reacquire',
+					leaseRejectionReason: 'lease_authority_absent',
+					responseBody: {
+						leaseRejectionReason: 'lease_authority_absent',
+						message: 'gateway control lease authority is absent',
+					},
+					status: 404,
+				});
+			}
 			expect(retainedReacquireRequest).toEqual({
 				observedAtMs: expect.any(Number),
 				staleEvidence: {
@@ -1219,17 +1180,15 @@ describe('createGondolinSandboxBackendFactory', () => {
 			});
 			return replacementLease;
 		});
-		const releaseLease = vi.fn(async (_leaseId: string, options) => {
-			if (options?.force === true) {
-				oldCallerContextRegistered = false;
-				if (options.staleEvidence !== undefined) {
-					retainedReacquireRequest = {
-						observedAtMs: options.observedAtMs ?? 1,
-						staleEvidence: options.staleEvidence,
-					};
-				}
-			}
+		const releaseLease = vi.fn(async () => {
+			oldLeaseAuthorityAvailable = false;
 		});
+		const retainRetiredLeaseReacquireRequest = vi.fn(
+			(_leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
+				retainedReacquireRequest = reacquireRequest;
+				return true;
+			},
+		);
 		const runRemoteShellScript = vi
 			.fn()
 			.mockRejectedValueOnce(new Error('cached probe reset'))
@@ -1247,6 +1206,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			releaseLease,
 			renewLease: async () => oldLease,
 			requestLease,
+			retainRetiredLeaseReacquireRequest,
 			startActiveUse,
 		} satisfies LeaseClient;
 		const factory = createGondolinSandboxBackendFactory(
@@ -1274,16 +1234,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stdout: Buffer.from('ok'),
 		});
 
-		expect(releaseLease).toHaveBeenCalledWith(
-			oldLease.leaseId,
-			expect.objectContaining({
-				force: true,
-				staleEvidence: {
-					kind: 'tool-vm-ssh',
-					operation: 'probe',
-				},
-			}),
-		);
+		expect(retainRetiredLeaseReacquireRequest).toHaveBeenCalledWith(oldLease.leaseId, {
+			observedAtMs: expect.any(Number),
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				operation: 'probe',
+			},
+		});
+		expect(releaseLease).not.toHaveBeenCalled();
 		expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, {
 			observedAtMs: expect.any(Number),
 			staleEvidence: {
@@ -1312,7 +1270,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		]);
 	});
 
-	it('retains a cached-probe reacquire hint before cleanup and direct reacquire failures', async () => {
+	it('retains a cached-probe reacquire hint across direct reacquire failures without cleanup', async () => {
 		const oldLease = createLeaseResponse('cached-probe-retain-old');
 		const replacementLease = createLeaseResponse('cached-probe-retain-new');
 		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
@@ -1399,27 +1357,12 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 		});
 		const retainCallOrder = retainRetiredLeaseReacquireRequest.mock.invocationCallOrder[0];
-		const releaseCallOrder = releaseLease.mock.invocationCallOrder[0];
 		const firstReacquireCallOrder = reacquireLease.mock.invocationCallOrder[0];
-		if (
-			retainCallOrder === undefined ||
-			releaseCallOrder === undefined ||
-			firstReacquireCallOrder === undefined
-		) {
-			throw new Error('expected retain, release, and reacquire calls');
+		if (retainCallOrder === undefined || firstReacquireCallOrder === undefined) {
+			throw new Error('expected retain and reacquire calls');
 		}
-		expect(retainCallOrder).toBeLessThan(releaseCallOrder);
 		expect(retainCallOrder).toBeLessThan(firstReacquireCallOrder);
-		expect(releaseLease).toHaveBeenCalledWith(
-			oldLease.leaseId,
-			expect.objectContaining({
-				force: true,
-				staleEvidence: {
-					kind: 'tool-vm-ssh',
-					operation: 'probe',
-				},
-			}),
-		);
+		expect(releaseLease).not.toHaveBeenCalled();
 		expect(reacquireLease).toHaveBeenCalledTimes(2);
 		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
 			replacementLease.leaseId,

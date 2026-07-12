@@ -28,10 +28,10 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |      createTcpPool({ basePort, size })
     |      Fixed array of port slots for tool VM SSH forwarding
     |
-    |-- 4. Reconcile exact VM ownership
-    |      Authenticate reservation and Gateway membership evidence
-    |      Destroy proven old Tool VM children before their Gateway
-    |      Refuse ambiguous/incomplete evidence; adopt nothing
+    |-- 4. Reconcile recorded VM cleanup evidence
+    |      Validate schema-v2 deployment, Gateway-parent, VM, pid, and process identity
+    |      Destroy recorded old Tool VM children before their Gateway
+    |      Refuse malformed/mismatched/unproven evidence; adopt nothing
     |
     |-- 5. Create zone runtime registry
     |      Builds one runtime per selected zone
@@ -49,7 +49,7 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |
     |-- 8. Start selected gateway zones
     |      startGatewayZone({ secretResolver, systemConfig, zoneId })
-    |      Image build, exact reservation, VM boot, health check
+    |      Image build, Gateway epoch admission, VM boot, runtime record, health check
     |
     |-- 9. Wire operations + task runner
     |      OpenClaw zones: zone runtime operations + stopController
@@ -84,13 +84,14 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
 
 The `stopController` operation (exposed via `POST /stop-controller`) follows the same sequence but triggers the HTTP server close on a 100ms delay so the response can flush before the socket drops.
 
-Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first acquires the same deployment-wide ownership lock held for the controller's full lifetime, then refuses to run while the configured controller health endpoint is reachable. `--force` skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence validation. Cleanup scans the selected zone's private Gateway membership journal and the deployment reservation inventory, authenticates canonical config path, controller port, project namespace, zone, principal, session, reservation, and destroy-target identity, destroys Tool VM children before their Gateway parent, and requires complete exact-destruction receipts. Valid standalone Worker reservations are filtered by the selected zone. A missing, malformed, mismatched, duplicate, or incomplete ownership disposition refuses cleanup; legacy runtime records and PID matching are never cleanup authority. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
+Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first acquires the same deployment-wide ownership lock held for the controller's full lifetime, then refuses to run while the configured controller health endpoint is reachable. `--force` skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence validation. The lock is mutual exclusion, not destruction evidence.
 
-Gateway subtree destruction runs at most four child dispositions concurrently,
-gives each exact target 60 seconds, and gives the whole subtree 300 seconds.
-When either deadline expires, queued children do not start, the Gateway is not
-closed, and a successor Gateway is refused until the old subtree has a complete
-durable disposition.
+Cleanup reads schema-v2 Tool records from `<stateDir>/tool-leases/<recordId>.json` before the zone's `<stateDir>/gateway-runtime.json`. Each record must match the canonical config path, controller port, project namespace, zone, session label, full Gateway parent identity, VM id, pid, and process command/start identity as applicable. Cleanup revalidates the live process and endpoint before signaling, deletes records only after the recorded process and relevant endpoint are absent, and never adopts an old VM. Old, malformed, mismatched, or otherwise unproven evidence fails closed and remains for operator diagnosis. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
+
+Gateway subtree destruction runs at most four child dispositions concurrently.
+When the bounded subtree attempt aborts or any exact child disposition remains
+unproven, queued children do not start, the Gateway is not closed, and a
+successor Gateway is refused until recorded cleanup evidence is resolved.
 
 ---
 
@@ -149,10 +150,11 @@ context.
 Health snapshots and the bounded event history are in-memory controller state
 for fast live reads. Accepted health and recovery events are also appended to
 `<runtimeDir>/controller-health/events.jsonl` as diagnostic evidence. That
-durable JSONL log is not backup state and is not authority for ownership or
-recovery decisions. VM ownership membership and reservation journals plus
-exact destruction receipts are the authority; legacy runtime records and
-process/port observations are diagnostic evidence only.
+durable JSONL log is not backup state and is not authority for ownership,
+destruction, adoption, or slot reuse. The controller owns lifecycle decisions;
+schema-v2 runtime records plus revalidated process and endpoint identity are
+durable cleanup evidence after a crash. Telemetry cannot substitute for that
+evidence.
 
 Operators can read the same zone-scoped health evidence through the CLI:
 `agent-vm controller health --config <system-config> --zone <zone>` runs the
@@ -198,20 +200,25 @@ aggressive. Health probes use short timeouts and no retry. Git push/pull and
 lease-create operations use longer timeouts because normal work can legitimately
 take longer. Unsafe mutations are not retried without an idempotency proof.
 
-For OpenClaw zones, the controller can automatically recover a gateway when the
-host-side gateway-service probe, the control session, or a generic
-channel-provider health event fails repeatedly. The default running gateway
-trigger is 10 consecutive degraded gateway-service/control-session
-observations, a 61 minute per-zone cooldown, and a 10 minute recovery deadline.
+For OpenClaw zones, the controller can automatically recover from repeated
+host-side gateway-service, control-session, or policy-enabled generic
+channel-provider degradation. Dead control while Gateway service remains live
+first requests bounded same-Gateway OpenClaw process recovery, replacing the
+process and disposable control session while preserving the Gateway VM and
+healthy Tool VMs. Gateway VM restart is outward escalation after process
+recovery is exhausted or Gateway service/lifecycle evidence requires
+replacement. The default Gateway-recovery budget has a 61 minute per-zone
+cooldown and a 10 minute recovery deadline.
 Generic channel-provider health has its own policy: `unhealthy-recoverable`
 degrades readiness/status by default and feeds recovery only when
 `restartGatewayOnRecoverable` is explicitly enabled, `transitioning` is observed
 until its timeout, and `unhealthy-unrecoverable` is surfaced without restart by
 default.
 
-Recovery action selection comes from the internal gateway lifecycle state. A
-running or degraded gateway is restarted. A stopped or cold-start-eligible failed
-gateway is cold-started after current ownership checks prove the old runtime
+Gateway recovery action selection comes from the internal Gateway lifecycle
+state after the same-Gateway process-recovery boundary has escalated. A running
+or degraded Gateway is restarted. A stopped or cold-start-eligible failed
+Gateway is cold-started after current ownership checks prove the old runtime
 record and ingress port are safe. An owner-unsafe or ambiguous failed runtime
 requires operator action. Failed or timed-out recovery attempts are recorded as
 failed `gateway-recovery` events and do not freeze the monitor loop. After 3
@@ -236,10 +243,10 @@ the zone runtime.
 
 `startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in the [gateway zone orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
 
-- Before an OpenClaw zone reaches `startGatewayZone()`, controller startup reconciles the zone's exact ownership membership and reservation inventory. It adopts nothing: proven old Tool VM children are destroyed before their Gateway parent, while ambiguous or incomplete evidence refuses a successor.
-- OpenClaw startup does not invoke the legacy `gateway-recovery.ts` PID/runtime-record cleanup path. Worker task VMs use exact standalone reservations in the deployment runtime inventory and are reconciled through the same receipt rules.
-- The runtime-record write still persists operational diagnostics such as pid, vmId, and zoneId, but that record is not destructive authority.
-- The controller holds the returned `{ vm, ingress, processSpec }` for the lifetime of the zone and uses `vm.close()` + runtime record deletion during shutdown.
+- Before a fresh OpenClaw tree is published, controller recovery adopts nothing: it validates v2 Tool and Gateway records, destroys verified old Tool runners before their Gateway parent, and refuses a successor when identity or endpoint absence is unproven.
+- Gateway startup allocates an epoch seed before stock VM construction, attaches the returned VM id, starts the VM, captures pid/process identity, and persists `<stateDir>/gateway-runtime.json` before publishing the runtime. The ingress port is added when available.
+- The controller holds the returned live VM handle for the zone lifetime. Normal teardown fences admission, destroys Tool children, terminates the exact recorded Gateway process, observes runner absence, calls stock `VM.close()`, verifies endpoint absence, and only then deletes the runtime record.
+- Gateway-to-Tool command and file bytes stay on direct SSH. Socket.IO carries bounded control; health events and telemetry are not lifecycle authority.
 
 ---
 
@@ -274,13 +281,16 @@ not by VM-facing public HTTP lease routes.
     |-- 4. selectToolVmProfileForAgent()
     |       |-- zone.agentToolVmProfiles[agentId]
     |       |-- otherwise zone.defaultToolVmProfile
-    |-- 5. createManagedVm(...)        Boot a tool VM with the slot's port
-    |-- 5. vm.enableSsh({ port })      Start SSH listener, validate exact server identity
-    |-- 6. Build Lease record          id = UUIDv7
-    |-- 7. Store in leases Map with effectiveIdleTtlMs
+    |-- 5. Begin provisional Tool membership under the exact Gateway epoch
+    |-- 6. createManagedVm(...)        Construct an unstarted stock Gondolin VM
+    |-- 7. Attach vm.id, vm.start(), capture pid + process-start identity
+    |-- 8. Persist <stateDir>/tool-leases/<recordId>.json (schema v2)
+    |-- 9. vm.enableSsh({ port })      Start SSH listener, validate exact server identity
+    |-- 10. Commit membership + lease  Publish current lease only after durable evidence
     |
-    |   On failure at step 2-3:
-    |     vm.close() (if created) then tcpPool.release(slot)
+    |   On failure:
+    |     exact-terminate a recorded runner; otherwise close only an unstarted/absent runner
+    |     preserve evidence and quarantine the slot when identity/absence is unproven
     |
     v
   gateway_control_rpc lease_release
@@ -288,9 +298,10 @@ not by VM-facing public HTTP lease routes.
     v
   releaseLease()
     |-- 1. Reject when active uses exist unless force=true
-    |-- 2. vm.close()                  Destroy the tool VM
-    |-- 3. leases.delete(leaseId)      Remove from tracking map
-    |-- 4. tcpPool.release(slot)       Return slot to pool
+    |-- 2. Close SSH and terminate the exact recorded process
+    |-- 3. Observe Gondolin runner + Tool SSH endpoint absent; stock VM.close()
+    |-- 4. Delete runtime record and mark membership destroyed
+    |-- 5. tcpPool.release(slot)       Return slot only after absence proof
 ```
 
 Each lease holds: `id`, `zoneId`, `agentId`, `profileId`, `agentWorkspaceDir`,
@@ -431,7 +442,7 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |   30-minute timeout (configurable via timeoutMs)
     |
     |== TEARDOWN (always runs in finally block) ===============
-    |   1. vm.close()
+    |   1. Stop the prepared Worker runtime through controller-managed exact VM termination
     |   2. Stop selected repo resource Compose providers
     |   3. Check gitdirs for dirty/unpushed work
     |   4. Push, export recovery artifact, or discard before cleanup

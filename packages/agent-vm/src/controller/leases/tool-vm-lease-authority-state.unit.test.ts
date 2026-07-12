@@ -88,15 +88,9 @@ function beginProvisioning(
 		readonly principal?: StableToolVmLeasePrincipal;
 	} = {},
 ): ToolVmLeaseAuthorityState {
-	const leafGeneration = options.leafGeneration ?? 'leaf-generation-1';
 	return reduceToolVmLeaseAuthorityState(state, {
 		authority: authorityReference(options),
 		compatibility: options.compatibility ?? COMPATIBILITY,
-		destructionIdentity: {
-			reservationId: `reservation-${leafGeneration}`,
-			reservationPath: `/state/reservations/${leafGeneration}.json`,
-			vmId: `tool-vm-${leafGeneration}`,
-		},
 		kind: 'begin-provisioning',
 		idleExpiresAtMs: options.idleExpiresAtMs ?? 10_000,
 	});

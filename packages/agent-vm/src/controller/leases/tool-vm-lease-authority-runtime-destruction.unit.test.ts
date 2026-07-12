@@ -1,168 +1,121 @@
-import type {
-	ManagedVmDestroyReceiptV1,
-	ManagedVmDestroyTargetV1,
-} from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createToolVmLeaseAuthorityRuntime } from './tool-vm-lease-authority-runtime.js';
 import {
 	COMPATIBILITY,
-	createAuthority,
-	createDeferred,
-	createLease,
-	createMatchingDestroyReceipt,
-	createOwnershipHandle,
-	createVerifiedDestroyTarget,
-	expectTransitionError,
 	GATEWAY_ONE,
-	GATEWAY_TWO,
-	PRINCIPAL_MAIN,
 	PRINCIPAL_SIBLING,
 	RUNTIME_BINDING,
 	SSH_BINDING,
+	createAuthority,
+	createDeferred,
+	createLease,
+	expectTransitionError,
 	type TestLease,
 } from './tool-vm-lease-authority-runtime.test-helpers.js';
 
+async function createCurrentRuntime(): Promise<{
+	readonly authority: ReturnType<typeof createAuthority>;
+	readonly runtime: ReturnType<typeof createToolVmLeaseAuthorityRuntime<TestLease>>;
+}> {
+	const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
+	const authority = createAuthority();
+	runtime.registerGateway(GATEWAY_ONE);
+	runtime.beginProvisioning({ authority, compatibility: COMPATIBILITY, idleExpiresAtMs: 10_000 });
+	await runtime.commitCurrent({
+		authority,
+		lease: createLease(),
+		runtimeBinding: RUNTIME_BINDING,
+		sshBinding: SSH_BINDING,
+	});
+	return { authority, runtime };
+}
+
 describe('createToolVmLeaseAuthorityRuntime destruction', () => {
-	it('commits, resolves, and touches a lease only under its exact Gateway', async () => {
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const commitCurrent = vi.fn(async () => {});
-		const ownership = createOwnershipHandle(verifiedDestroyTarget, { commitCurrent });
-		runtime.registerGateway(GATEWAY_ONE);
-		runtime.registerGateway(GATEWAY_TWO);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership,
-		});
-		await runtime.commitCurrent({
-			authority,
-			lease,
-			runtimeBinding: RUNTIME_BINDING,
-			sshBinding: SSH_BINDING,
-		});
+	it('single-flights destruction and removes authority only after callback completion', async () => {
+		const { authority, runtime } = await createCurrentRuntime();
+		const callbackCompletion = createDeferred<void>();
+		const destroy = vi.fn(() => callbackCompletion.promise);
 
-		const touchedLease = runtime.touchLease(authority, 5_000, 20_000, (currentLease) => ({
-			...currentLease,
-			idleExpiresAtMs: 20_000,
-		}));
+		const first = runtime.destroyExact({
+			authority,
+			destroy,
+			destroyedAtMs: 20_000,
+			reason: 'idle',
+		});
+		const second = runtime.destroyExact({
+			authority,
+			destroy,
+			destroyedAtMs: 20_000,
+			reason: 'idle',
+		});
+		expect(runtime.getLease(authority.leaseId)).toBeUndefined();
+		expect(runtime.authorityForLease(authority.leaseId)).toEqual(authority);
+		expect(runtime.leafSnapshotForLease(authority.leaseId)).toMatchObject({ kind: 'destroying' });
 
-		expect(commitCurrent).toHaveBeenCalledOnce();
-		expect(runtime.getLease(lease.id)).toBe(touchedLease);
-		expect(runtime.listLeases()).toEqual([touchedLease]);
-		expect(
-			runtime.findCurrentLeaseByPrincipal({ gateway: GATEWAY_ONE, principal: PRINCIPAL_MAIN }),
-		).toBe(touchedLease);
-		expect(
-			runtime.findCurrentLeaseByPrincipal({ gateway: GATEWAY_TWO, principal: PRINCIPAL_MAIN }),
-		).toBeUndefined();
+		callbackCompletion.resolve();
+		await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+		expect(destroy).toHaveBeenCalledOnce();
+		expect(runtime.authorityForLease(authority.leaseId)).toBeUndefined();
 	});
 
-	it('single-flights destruction and removes resources only after the exact receipt', async () => {
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const target = createVerifiedDestroyTarget();
-		const destroyReceipt = createDeferred<ManagedVmDestroyReceiptV1>();
-		const destroyDetached = vi.fn(() => destroyReceipt.promise);
-		const ownership = createOwnershipHandle(target, { destroyDetached });
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership,
-		});
-		await runtime.commitCurrent({
-			authority,
-			lease,
-			runtimeBinding: RUNTIME_BINDING,
-			sshBinding: SSH_BINDING,
-		});
-
-		const firstAttempt = runtime.destroyExact({
-			authority,
-			destroyedAtMs: 30_000,
-			mode: { kind: 'detached' },
-			reason: 'lease-release',
-		});
-		const secondAttempt = runtime.destroyExact({
-			authority,
-			destroyedAtMs: 30_000,
-			mode: { kind: 'detached' },
-			reason: 'lease-release',
-		});
-
-		expect(secondAttempt).toBe(firstAttempt);
-		expect(destroyDetached).toHaveBeenCalledOnce();
-		expect(runtime.getLease(lease.id)).toBeUndefined();
-		destroyReceipt.resolve(createMatchingDestroyReceipt(target));
-		expect(await firstAttempt).toMatchObject({ authority, lease, ownership });
-		expect(runtime.listLeases()).toEqual([]);
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
-	});
-
-	it.each([
-		{
-			name: 'mismatched',
-			receiptFor: (target: ManagedVmDestroyTargetV1): ManagedVmDestroyReceiptV1 => ({
-				...createMatchingDestroyReceipt(target),
-				reservationId: 'reservation-other',
-			}),
-		},
-		{
-			name: 'incomplete',
-			receiptFor: (target: ManagedVmDestroyTargetV1): ManagedVmDestroyReceiptV1 => ({
-				...createMatchingDestroyReceipt(target),
-				complete: false,
-			}),
-		},
-	])('retains owner-unsafe resources after a $name receipt', async ({ receiptFor }) => {
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const lease = createLease();
-		const target = createVerifiedDestroyTarget();
-		const destroyDetached = vi.fn(async () => receiptFor(target));
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership: createOwnershipHandle(target, { destroyDetached }),
-		});
-		await runtime.commitCurrent({
-			authority,
-			lease,
-			runtimeBinding: RUNTIME_BINDING,
-			sshBinding: SSH_BINDING,
+	it('retains owner-unsafe authority after callback failure and admits one retry', async () => {
+		const { authority, runtime } = await createCurrentRuntime();
+		const firstFailure = new Error('controller cleanup failed');
+		const firstDestroy = vi.fn(async () => {
+			throw firstFailure;
 		});
 
 		await expect(
 			runtime.destroyExact({
 				authority,
-				destroyedAtMs: 30_000,
-				mode: { kind: 'detached' },
-				reason: 'lease-release',
+				destroy: firstDestroy,
+				destroyedAtMs: 20_000,
+				reason: 'idle',
 			}),
-		).rejects.toThrow(/destruction receipt|exact VM destruction/iu);
-		expect(runtime.getLease(lease.id)).toBeUndefined();
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([lease.id]);
-		await expect(
-			runtime.destroyExact({
-				authority,
-				destroyedAtMs: 31_000,
-				mode: { kind: 'detached' },
-				reason: 'explicit-exact-retry',
-			}),
-		).rejects.toThrow(/destruction receipt|exact VM destruction/iu);
-		expect(destroyDetached).toHaveBeenCalledTimes(2);
+		).rejects.toBe(firstFailure);
+		expect(runtime.leafSnapshotForLease(authority.leaseId)).toMatchObject({
+			kind: 'owner-unsafe',
+			ownerUnsafeReason: 'controller-destruction-failed',
+		});
+		const retryDestroy = vi.fn(async () => {});
+		await runtime.destroyExact({
+			authority,
+			destroy: retryDestroy,
+			destroyedAtMs: 21_000,
+			reason: 'retry',
+		});
+		expect(firstDestroy).toHaveBeenCalledOnce();
+		expect(retryDestroy).toHaveBeenCalledOnce();
+		expect(runtime.authorityForLease(authority.leaseId)).toBeUndefined();
 	});
 
-	it('reserves the final tombstone slot before concurrent destruction', async () => {
+	it('tombstones a provisioning leaf after controller cleanup without invented VM identity', async () => {
+		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
+		const authority = createAuthority();
+		const destroy = vi.fn(async () => {});
+		runtime.registerGateway(GATEWAY_ONE);
+		runtime.beginProvisioning({ authority, compatibility: COMPATIBILITY, idleExpiresAtMs: 10_000 });
+
+		await runtime.destroyExact({
+			authority,
+			destroy,
+			destroyedAtMs: 20_000,
+			reason: 'provisioning',
+		});
+
+		expect(destroy).toHaveBeenCalledOnce();
+		expect(runtime.authorityForLease(authority.leaseId)).toBeUndefined();
+		expect(() =>
+			runtime.beginProvisioning({
+				authority,
+				compatibility: COMPATIBILITY,
+				idleExpiresAtMs: 30_000,
+			}),
+		).toThrow(/already used/iu);
+	});
+
+	it('reserves the final tombstone slot before concurrent callbacks settle', async () => {
 		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>({
 			retentionPolicy: { maxLeafTombstones: 1 },
 		});
@@ -172,68 +125,47 @@ describe('createToolVmLeaseAuthorityRuntime destruction', () => {
 			leafGeneration: 'leaf-generation-2',
 			principal: PRINCIPAL_SIBLING,
 		});
-		const firstTarget = createVerifiedDestroyTarget();
-		const secondTarget = createVerifiedDestroyTarget('tool-vm-2');
-		const firstReceipt = createDeferred<ManagedVmDestroyReceiptV1>();
-		const destroyFirst = vi.fn(() => firstReceipt.promise);
-		const destroySecond = vi.fn(async () => createMatchingDestroyReceipt(secondTarget));
 		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
+		for (const authority of [firstAuthority, secondAuthority]) {
+			runtime.beginProvisioning({
+				authority,
+				compatibility: COMPATIBILITY,
+				idleExpiresAtMs: 10_000,
+			});
+		}
+		const firstCompletion = createDeferred<void>();
+		const first = runtime.destroyExact({
 			authority: firstAuthority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: 10_000,
-			ownership: createOwnershipHandle(firstTarget, { destroyDetached: destroyFirst }),
-		});
-		await runtime.beginProvisioning({
-			authority: secondAuthority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: 10_000,
-			ownership: createOwnershipHandle(secondTarget, { destroyDetached: destroySecond }),
+			destroy: () => firstCompletion.promise,
+			destroyedAtMs: 20_000,
+			reason: 'first',
 		});
 
-		const firstDestruction = runtime.destroyExact({
-			authority: firstAuthority,
-			destroyedAtMs: 30_000,
-			mode: { kind: 'detached' },
-			reason: 'first-destruction',
-		});
 		await expectTransitionError(
 			() =>
 				runtime.destroyExact({
 					authority: secondAuthority,
-					destroyedAtMs: 30_000,
-					mode: { kind: 'detached' },
-					reason: 'second-destruction',
+					destroy: async () => {},
+					destroyedAtMs: 20_000,
+					reason: 'second',
 				}),
 			'tombstone-capacity-exhausted',
 		);
-		expect(destroySecond).not.toHaveBeenCalled();
-		firstReceipt.resolve(createMatchingDestroyReceipt(firstTarget));
-		await firstDestruction;
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([secondAuthority.leaseId]);
+		firstCompletion.resolve();
+		await first;
 	});
 
-	it('retires a sealed Gateway only after every leaf is disposed', async () => {
-		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
-		const authority = createAuthority();
-		const target = createVerifiedDestroyTarget();
-		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
-			authority,
-			compatibility: COMPATIBILITY,
-			idleExpiresAtMs: 10_000,
-			ownership: createOwnershipHandle(target),
-		});
+	it('retains Gateway parent until all controller-owned leaves are disposed', async () => {
+		const { authority, runtime } = await createCurrentRuntime();
 		runtime.sealGateway(GATEWAY_ONE);
 		await expectTransitionError(() => runtime.retireGateway(GATEWAY_ONE), 'parent-has-live-leaves');
-		await expectTransitionError(() => runtime.retireGateway(GATEWAY_TWO), 'parent-unregistered');
+
 		await runtime.destroyExact({
 			authority,
-			destroyedAtMs: 40_000,
-			mode: { kind: 'detached' },
-			reason: 'gateway-replacement',
+			destroy: async () => {},
+			destroyedAtMs: 20_000,
+			reason: 'shutdown',
 		});
-		runtime.retireGateway(GATEWAY_ONE);
-		expect(runtime.leaseIdsOwnedByGateway(GATEWAY_ONE)).toEqual([]);
+		expect(() => runtime.retireGateway(GATEWAY_ONE)).not.toThrow();
 	});
 });

@@ -3,7 +3,7 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerDestroy as runControllerDestroyDefault } from '../../operations/destroy-zone.js';
-import { containsUnprovenVmDestructionError } from '../../shared/vm-destruction-receipt.js';
+import { containsManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveTaskRegistry, ActiveWorkerTask } from '../active-task-registry.js';
 import { pullDefaultForTask, type PullDefaultRequest } from '../git-pull-default-operations.js';
 import {
@@ -290,7 +290,7 @@ export function createWorkerZoneRuntime(
 				});
 			} catch (error) {
 				if (
-					!containsUnprovenVmDestructionError(error) &&
+					!containsManagedVmTerminationUnprovenError(error) &&
 					options.activeTaskRegistry.get(prepared.zoneId, prepared.taskId)
 				) {
 					options.activeTaskRegistry.clear(prepared.zoneId, prepared.taskId);

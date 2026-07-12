@@ -10,26 +10,50 @@ import {
 import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 
+import {
+	gatewayEpochIdentitySchema,
+	type GatewayEpochIdentity,
+} from '../controller/vm-ownership/vm-ownership-contracts.js';
 import { readProcessIdentity as defaultReadProcessIdentity } from '../shared/managed-vm-process.js';
 
-export const gatewayRuntimeRecordSchema = z.strictObject({
-	schemaVersion: z.literal(1),
-	configPath: z.string().min(1),
-	controllerPort: z.number().int().positive(),
-	createdAt: z.iso.datetime(),
-	gatewayType: z.enum(gatewayTypeValues),
-	guestListenPort: z.number().int().positive(),
-	ingressPort: z.number().int().positive(),
-	processIdentity: z.strictObject({
-		command: z.string().min(1),
-		lstart: z.string().min(1),
-	}),
-	projectNamespace: z.string().min(1),
-	qemuPid: z.number().int().positive(),
-	sessionLabel: z.string().min(1),
-	vmId: z.string().min(1),
-	zoneId: z.string().min(1),
-});
+const gatewayTypeSchema = z.enum(gatewayTypeValues);
+
+export const gatewayRuntimeRecordSchema = z
+	.strictObject({
+		schemaVersion: z.literal(2),
+		configPath: z.string().min(1),
+		controllerPort: z.number().int().positive(),
+		createdAt: z.iso.datetime(),
+		gatewayType: gatewayTypeSchema,
+		guestListenPort: z.number().int().positive(),
+		gateway: gatewayEpochIdentitySchema,
+		ingressPort: z.number().int().positive().optional(),
+		processIdentity: z.strictObject({
+			command: z.string().min(1),
+			lstart: z.string().min(1),
+		}),
+		projectNamespace: z.string().min(1),
+		qemuPid: z.number().int().positive(),
+		sessionLabel: z.string().min(1),
+		vmId: z.string().min(1),
+		zoneId: z.string().min(1),
+	})
+	.superRefine((record, context) => {
+		if (record.gateway.gatewayVmId !== record.vmId) {
+			context.addIssue({
+				code: 'custom',
+				message: 'Gateway epoch VM identity must match the runtime record VM identity.',
+				path: ['gateway', 'gatewayVmId'],
+			});
+		}
+		if (record.gateway.zoneId !== record.zoneId) {
+			context.addIssue({
+				code: 'custom',
+				message: 'Gateway epoch zone must match the runtime record zone.',
+				path: ['gateway', 'zoneId'],
+			});
+		}
+	});
 
 export type GatewayRuntimeRecord = z.infer<typeof gatewayRuntimeRecordSchema>;
 
@@ -141,7 +165,8 @@ function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
 export async function buildGatewayRuntimeRecord(options: {
 	readonly controllerPort: number;
 	readonly gatewayType: GatewayType;
-	readonly ingressPort: number;
+	readonly gatewayIdentity: GatewayEpochIdentity;
+	readonly ingressPort?: number;
 	readonly managedVm: ManagedVm;
 	readonly processSpec: GatewayProcessSpec;
 	readonly projectNamespace: string;
@@ -149,7 +174,7 @@ export async function buildGatewayRuntimeRecord(options: {
 	readonly systemConfigPath: string;
 	readonly zoneId: string;
 }): Promise<GatewayRuntimeRecord> {
-	const gatewayType = gatewayRuntimeRecordSchema.shape.gatewayType.parse(options.gatewayType);
+	const gatewayType = gatewayTypeSchema.parse(options.gatewayType);
 	const qemuPid = resolveManagedVmQemuPid(options.managedVm);
 	const processIdentityReader = options.readProcessIdentity ?? defaultReadProcessIdentity;
 	const processIdentity = await processIdentityReader(qemuPid);
@@ -163,13 +188,14 @@ export async function buildGatewayRuntimeRecord(options: {
 		configPath: options.systemConfigPath,
 		controllerPort: options.controllerPort,
 		createdAt: new Date().toISOString(),
+		gateway: options.gatewayIdentity,
 		gatewayType,
 		guestListenPort: options.processSpec.guestListenPort,
-		ingressPort: options.ingressPort,
+		...(options.ingressPort === undefined ? {} : { ingressPort: options.ingressPort }),
 		processIdentity,
 		projectNamespace: options.projectNamespace,
 		qemuPid,
-		schemaVersion: 1,
+		schemaVersion: 2,
 		sessionLabel: buildGatewaySessionLabel(options.projectNamespace, options.zoneId),
 		vmId: options.managedVm.id,
 		zoneId: options.zoneId,

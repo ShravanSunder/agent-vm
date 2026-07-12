@@ -3,11 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { GatewayOwnershipEvidence } from '../../gateway/gateway-ownership-evidence.js';
 import type { ControllerZoneLifecycleState } from '../../operations/controller-status.js';
-import {
-	createCompleteVmDestroyReceipt,
-	createTestVmOwnershipReservationReference,
-} from '../../testing/managed-vm-test-helpers.js';
-import type { VmCreationOwnership } from '../vm-ownership/vm-creation-ownership.js';
+import type { GatewayVmLifecycleAuthority } from '../vm-ownership/gateway-vm-lifecycle-authority.js';
 import {
 	classifyGatewayStartError,
 	deriveGatewayDiagnosisSnapshot,
@@ -229,8 +225,9 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 			logPath: '/logs/gateway.log',
 			startCommand: 'start',
 		},
+		terminateVm: async () => {},
 		vm: {
-			close: async () => createCompleteVmDestroyReceipt('gateway-vm-1'),
+			close: async () => {},
 			enableSsh: (): never => {
 				throw new Error('not used');
 			},
@@ -244,11 +241,21 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 	};
 }
 
-function createGatewayVmOwnershipStub(vmId: string): VmCreationOwnership {
+function createGatewayVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: 'boot-test',
+		controllerEpoch: 'controller-test',
+		gatewayEpochId: 'gateway-epoch-test',
+		generationId: 'generation-test',
+		zoneId: 'zone-test',
+	};
+	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
 	return {
-		ownershipReservation: createTestVmOwnershipReservationReference(vmId, { role: 'gateway' }),
-		destroyDetached: async () => createCompleteVmDestroyReceipt(vmId, { role: 'gateway' }),
-		destroyLive: async (closeLiveVm) => await closeLiveVm(),
+		gatewayIdentity,
+		gatewaySeed,
+		attachGatewayVm: () => gatewayIdentity,
+		containPendingCreate: async () => {},
+		destroyLive: async (destroyVm) => await destroyVm(),
 	};
 }
 

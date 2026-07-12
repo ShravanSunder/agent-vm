@@ -140,8 +140,8 @@ describe('runControllerOfflineCleanup', () => {
 			operationOrder.push('probe-controller');
 			throw new Error('controller is reachable');
 		});
-		const reconcileExactVmOwnership = vi.fn(async () => {
-			operationOrder.push('reconcile');
+		const cleanupRecordedVmTree = vi.fn(async () => {
+			operationOrder.push('cleanup-records');
 		});
 
 		await expect(
@@ -153,20 +153,20 @@ describe('runControllerOfflineCleanup', () => {
 				{
 					acquireControllerOwnershipLock,
 					assertControllerUnavailableForOfflineCleanup,
-					reconcileExactVmOwnership,
+					cleanupRecordedVmTree,
 				},
 			),
 		).rejects.toThrow(/controller is reachable/u);
 
-		expect(reconcileExactVmOwnership).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 		expect(operationOrder).toEqual(['acquire-lock', 'probe-controller', 'release-lock']);
 		expect(release).toHaveBeenCalledOnce();
 	});
 
-	it('does not probe or reconcile when the deployment ownership lock is held', async () => {
+	it('does not probe or clean records when the deployment ownership lock is held', async () => {
 		const lockConflict = new ControllerOwnershipLockError('controller-already-active');
 		const assertControllerUnavailableForOfflineCleanup = vi.fn(async () => {});
-		const reconcileExactVmOwnership = vi.fn(async () => {});
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -179,17 +179,17 @@ describe('runControllerOfflineCleanup', () => {
 						throw lockConflict;
 					}),
 					assertControllerUnavailableForOfflineCleanup,
-					reconcileExactVmOwnership,
+					cleanupRecordedVmTree,
 				},
 			),
 		).rejects.toBe(lockConflict);
 
 		expect(assertControllerUnavailableForOfflineCleanup).not.toHaveBeenCalled();
-		expect(reconcileExactVmOwnership).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 	});
 
 	it('refuses cleanup when controller reachability is ambiguous', async () => {
-		const reconcileExactVmOwnership = vi.fn(async () => {});
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -201,16 +201,16 @@ describe('runControllerOfflineCleanup', () => {
 					assertControllerUnavailableForOfflineCleanup: async () => {
 						throw new Error('health probe timed out');
 					},
-					reconcileExactVmOwnership,
+					cleanupRecordedVmTree,
 				},
 			),
 		).rejects.toThrow(/health probe timed out/u);
 
-		expect(reconcileExactVmOwnership).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 	});
 
 	it('refuses cleanup when the controller health endpoint returns an HTTP response', async () => {
-		const reconcileExactVmOwnership = vi.fn(async () => {});
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 		await withHttpServer(
 			(_request, response) => {
 				response.writeHead(503);
@@ -223,18 +223,18 @@ describe('runControllerOfflineCleanup', () => {
 							systemConfig: createSystemConfig({ controllerPort }),
 							zoneId: 'beta',
 						},
-						{ reconcileExactVmOwnership },
+						{ cleanupRecordedVmTree },
 					),
 				).rejects.toThrow(/HTTP 503/u);
 			},
 		);
 
-		expect(reconcileExactVmOwnership).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 	});
 
 	it('allows cleanup when the controller port refuses connections', async () => {
 		const controllerPort = await findClosedLocalPort();
-		const reconcileExactVmOwnership = vi.fn(async () => {});
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -242,7 +242,7 @@ describe('runControllerOfflineCleanup', () => {
 					systemConfig: createSystemConfig({ controllerPort }),
 					zoneId: 'beta',
 				},
-				{ reconcileExactVmOwnership },
+				{ cleanupRecordedVmTree },
 			),
 		).resolves.toEqual({
 			results: [
@@ -253,7 +253,7 @@ describe('runControllerOfflineCleanup', () => {
 				},
 			],
 		});
-		expect(reconcileExactVmOwnership).toHaveBeenCalledOnce();
+		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
 	});
 
 	it('allows forced cleanup even while the configured controller is reachable', async () => {
@@ -268,8 +268,8 @@ describe('runControllerOfflineCleanup', () => {
 		const assertControllerUnavailableForOfflineCleanup = vi.fn(async () => {
 			throw new Error('should not probe when forced');
 		});
-		const reconcileExactVmOwnership = vi.fn(async () => {
-			operationOrder.push('reconcile');
+		const cleanupRecordedVmTree = vi.fn(async () => {
+			operationOrder.push('cleanup-records');
 		});
 
 		await expect(
@@ -282,7 +282,7 @@ describe('runControllerOfflineCleanup', () => {
 				{
 					acquireControllerOwnershipLock,
 					assertControllerUnavailableForOfflineCleanup,
-					reconcileExactVmOwnership,
+					cleanupRecordedVmTree,
 				},
 			),
 		).resolves.toEqual({
@@ -295,11 +295,11 @@ describe('runControllerOfflineCleanup', () => {
 			],
 		});
 		expect(assertControllerUnavailableForOfflineCleanup).not.toHaveBeenCalled();
-		expect(reconcileExactVmOwnership).toHaveBeenCalledOnce();
+		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
 		expect(acquireControllerOwnershipLock).toHaveBeenCalledWith({
 			runtimeDirectory: '/runtime',
 		});
-		expect(operationOrder).toEqual(['acquire-lock', 'reconcile', 'release-lock']);
+		expect(operationOrder).toEqual(['acquire-lock', 'cleanup-records', 'release-lock']);
 	});
 
 	it('cleans only the requested zone from the selected installation config', async () => {
@@ -315,8 +315,8 @@ describe('runControllerOfflineCleanup', () => {
 		const assertControllerUnavailableForOfflineCleanup = vi.fn(async () => {
 			operationOrder.push('probe-controller');
 		});
-		const reconcileExactVmOwnership = vi.fn(async () => {
-			operationOrder.push('reconcile');
+		const cleanupRecordedVmTree = vi.fn(async () => {
+			operationOrder.push('cleanup-records');
 		});
 
 		await expect(
@@ -328,7 +328,7 @@ describe('runControllerOfflineCleanup', () => {
 				{
 					acquireControllerOwnershipLock,
 					assertControllerUnavailableForOfflineCleanup,
-					reconcileExactVmOwnership,
+					cleanupRecordedVmTree,
 				},
 			),
 		).resolves.toEqual({
@@ -341,25 +341,159 @@ describe('runControllerOfflineCleanup', () => {
 			],
 		});
 
-		expect(reconcileExactVmOwnership).toHaveBeenCalledOnce();
-		expect(reconcileExactVmOwnership).toHaveBeenCalledWith({
+		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
+		expect(cleanupRecordedVmTree).toHaveBeenCalledWith({
 			systemConfig,
 			zoneId: 'beta',
 		});
 		expect(operationOrder).toEqual([
 			'acquire-lock',
 			'probe-controller',
-			'reconcile',
+			'cleanup-records',
 			'release-lock',
 		]);
 	});
 
-	it('propagates owner-unsafe exact reconciliation without a success result', async () => {
+	it('cleans recorded Tool VM runners before the recorded Gateway runner', async () => {
+		const systemConfig = createSystemConfig();
+		const operationOrder: string[] = [];
+		const cleanupRecordedToolVmRuntimes = vi.fn(async () => {
+			operationOrder.push('cleanup-tools');
+			return { cleanedCount: 2, killedPids: [31, 32], quarantinedCount: 0, warnings: [] };
+		});
+		const cleanupRecordedGatewayRuntime = vi.fn(async () => {
+			operationOrder.push('cleanup-gateway');
+			return { cleanedUp: true, killedPid: 30 };
+		});
+
+		await expect(
+			runControllerOfflineCleanup(
+				{
+					force: true,
+					systemConfig,
+					zoneId: 'beta',
+				},
+				{
+					cleanupRecordedGatewayRuntime,
+					cleanupRecordedToolVmRuntimes,
+				},
+			),
+		).resolves.toEqual({
+			results: [
+				{
+					ownershipDisposition: 'complete',
+					stateDir: '/state/beta',
+					zoneId: 'beta',
+				},
+			],
+		});
+
+		expect(operationOrder).toEqual(['cleanup-tools', 'cleanup-gateway']);
+		expect(cleanupRecordedToolVmRuntimes).toHaveBeenCalledWith({
+			expectedConfigPath: systemConfig.systemConfigPath,
+			expectedControllerPort: systemConfig.host.controllerPort,
+			mode: 'offline-cleanup',
+			projectNamespace: systemConfig.host.projectNamespace,
+			stateDir: '/state/beta',
+			tcpBasePort: systemConfig.tcpPool.basePort,
+			zoneId: 'beta',
+		});
+		expect(cleanupRecordedGatewayRuntime).toHaveBeenCalledWith({
+			configuredIngressPort: 18891,
+			expectedConfigPath: systemConfig.systemConfigPath,
+			expectedControllerPort: systemConfig.host.controllerPort,
+			mode: 'offline-cleanup',
+			projectNamespace: systemConfig.host.projectNamespace,
+			stateDir: '/state/beta',
+			zoneId: 'beta',
+		});
+	});
+
+	it('preserves the Gateway record when Tool VM cleanup fails closed', async () => {
+		const identityMismatch = new Error('recorded Tool VM process identity changed');
+		const cleanupRecordedGatewayRuntime = vi.fn(async () => ({
+			cleanedUp: true,
+			killedPid: 30,
+		}));
+
+		await expect(
+			runControllerOfflineCleanup(
+				{
+					force: true,
+					systemConfig: createSystemConfig(),
+					zoneId: 'beta',
+				},
+				{
+					cleanupRecordedGatewayRuntime,
+					cleanupRecordedToolVmRuntimes: vi.fn(async () => {
+						throw identityMismatch;
+					}),
+				},
+			),
+		).rejects.toBe(identityMismatch);
+
+		expect(cleanupRecordedGatewayRuntime).not.toHaveBeenCalled();
+	});
+
+	it('does not report completion when a Tool VM runtime record could not be deleted', async () => {
+		const cleanupRecordedGatewayRuntime = vi.fn(async () => ({
+			cleanedUp: true,
+			killedPid: 30,
+		}));
+
+		await expect(
+			runControllerOfflineCleanup(
+				{
+					force: true,
+					systemConfig: createSystemConfig(),
+					zoneId: 'beta',
+				},
+				{
+					cleanupRecordedGatewayRuntime,
+					cleanupRecordedToolVmRuntimes: vi.fn(async () => ({
+						cleanedCount: 0,
+						killedPids: [31],
+						quarantinedCount: 0,
+						warnings: ['runtime record deletion failed'],
+					})),
+				},
+			),
+		).rejects.toThrow(/runtime record deletion failed/u);
+
+		expect(cleanupRecordedGatewayRuntime).not.toHaveBeenCalled();
+	});
+
+	it('does not report completion when the Gateway runtime record could not be deleted', async () => {
+		await expect(
+			runControllerOfflineCleanup(
+				{
+					force: true,
+					systemConfig: createSystemConfig(),
+					zoneId: 'beta',
+				},
+				{
+					cleanupRecordedGatewayRuntime: vi.fn(async () => ({
+						cleanedUp: false,
+						cleanupWarning: 'gateway runtime record deletion failed',
+						killedPid: 30,
+					})),
+					cleanupRecordedToolVmRuntimes: vi.fn(async () => ({
+						cleanedCount: 0,
+						killedPids: [],
+						quarantinedCount: 0,
+						warnings: [],
+					})),
+				},
+			),
+		).rejects.toThrow(/gateway runtime record deletion failed/u);
+	});
+
+	it('propagates owner-unsafe recorded-process cleanup without a success result', async () => {
 		const ownershipError = Object.assign(
-			new Error('exact VM ownership reconciliation refused owner-unsafe evidence'),
+			new Error('recorded VM process cleanup refused owner-unsafe evidence'),
 			{ code: 'owner-unsafe' as const },
 		);
-		const reconcileExactVmOwnership = vi.fn(async () => {
+		const cleanupRecordedVmTree = vi.fn(async () => {
 			throw ownershipError;
 		});
 		const release = vi.fn(async () => {});
@@ -373,12 +507,12 @@ describe('runControllerOfflineCleanup', () => {
 				{
 					acquireControllerOwnershipLock: vi.fn(async () => ({ release })),
 					assertControllerUnavailableForOfflineCleanup: async () => {},
-					reconcileExactVmOwnership,
+					cleanupRecordedVmTree,
 				},
 			),
 		).rejects.toBe(ownershipError);
 
-		expect(reconcileExactVmOwnership).toHaveBeenCalledOnce();
+		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
 		expect(release).toHaveBeenCalledOnce();
 	});
 
@@ -386,7 +520,7 @@ describe('runControllerOfflineCleanup', () => {
 		const acquireControllerOwnershipLock = vi.fn(async () => ({
 			release: async () => {},
 		}));
-		const reconcileExactVmOwnership = vi.fn(async () => {});
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -397,12 +531,12 @@ describe('runControllerOfflineCleanup', () => {
 				{
 					acquireControllerOwnershipLock,
 					assertControllerUnavailableForOfflineCleanup: async () => {},
-					reconcileExactVmOwnership,
+					cleanupRecordedVmTree,
 				},
 			),
 		).rejects.toThrow(/Unknown zone 'sunfam'/u);
 
 		expect(acquireControllerOwnershipLock).not.toHaveBeenCalled();
-		expect(reconcileExactVmOwnership).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 	});
 });

@@ -1,9 +1,6 @@
 import type { TaskState } from '@agent-vm/agent-vm-worker';
 import type { GatewayProcessSpec } from '@agent-vm/gateway-interface';
-import type {
-	ManagedVm,
-	ManagedVmOwnershipReservationReferenceV1,
-} from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
@@ -36,8 +33,10 @@ export interface GatewayZoneRuntimeHandle {
 	readonly controlSessionRecoverySourceKey?: GatewayZoneStartResult['controlSessionRecoverySourceKey'];
 	readonly ingress: GatewayZoneStartResult['ingress'];
 	readonly openClawProcessSupervisor?: OpenClawProcessSupervisor | undefined;
+	readonly openClawProcessEpochOwner?: GatewayZoneStartResult['openClawProcessEpochOwner'];
 	readonly processEpoch?: string | undefined;
 	readonly processSpec: GatewayProcessSpec;
+	readonly terminateVm: GatewayZoneStartResult['terminateVm'];
 	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'getHostPid' | 'id'>;
 	readonly vmOwnership: GatewayZoneStartResult['vmOwnership'];
 }
@@ -84,7 +83,15 @@ export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 	getLifecycleState(): GatewayZoneLifecycleState;
 	getDiagnosis(): GatewayDiagnosisSnapshot;
 	getLogs(): Promise<{ readonly output: string; readonly zoneId: string }>;
-	refreshCredentials(): Promise<{ readonly ok: true; readonly zoneId: string }>;
+	refreshCredentials(options?: {
+		readonly signal?: AbortSignal | undefined;
+		readonly timeoutMs?: number | undefined;
+	}): Promise<{ readonly ok: true; readonly zoneId: string }>;
+	requestControlSessionRecovery?:
+		| ((request: {
+				readonly sourceKey: NonNullable<GatewayZoneStartResult['controlSessionRecoverySourceKey']>;
+		  }) => Promise<void>)
+		| undefined;
 	restart(options?: OpenClawZoneRestartOptions): Promise<OpenClawZoneRestartResult>;
 	start(): Promise<void>;
 	stop(): Promise<void>;
@@ -121,7 +128,6 @@ export interface SharedZoneRuntimeDependencies {
 	readonly controllerGithubToken: string | null;
 	readonly createManagedToolVm: (options: {
 		readonly agentId: string;
-		readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;

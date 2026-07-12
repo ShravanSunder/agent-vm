@@ -1,4 +1,3 @@
-import type { ManagedVmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createToolVmLeaseAuthorityRuntime } from './tool-vm-lease-authority-runtime.js';
@@ -7,9 +6,6 @@ import {
 	createAuthority,
 	createDeferred,
 	createLease,
-	createMatchingDestroyReceipt,
-	createOwnershipHandle,
-	createVerifiedDestroyTarget,
 	GATEWAY_ONE,
 	PRINCIPAL_MAIN,
 	RUNTIME_BINDING,
@@ -33,13 +29,11 @@ async function createCurrentLeaseRuntime(): Promise<{
 	const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
 	const authority = createAuthority();
 	const lease = createLease();
-	const verifiedDestroyTarget = createVerifiedDestroyTarget();
 	runtime.registerGateway(GATEWAY_ONE);
-	await runtime.beginProvisioning({
+	runtime.beginProvisioning({
 		authority,
 		compatibility: COMPATIBILITY,
 		idleExpiresAtMs: lease.idleExpiresAtMs,
-		ownership: createOwnershipHandle(verifiedDestroyTarget),
 	});
 	await runtime.commitCurrent({
 		authority,
@@ -241,15 +235,13 @@ describe('Tool VM lease authority runtime projections', () => {
 		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
 		const authority = createAuthority();
 		const lease = createLease();
-		const verifiedDestroyTarget = createVerifiedDestroyTarget();
-		const destroyReceipt = createDeferred<ManagedVmDestroyReceiptV1>();
-		const destroyDetached = vi.fn(() => destroyReceipt.promise);
+		const destroyCompletion = createDeferred<void>();
+		const destroy = vi.fn(() => destroyCompletion.promise);
 		runtime.registerGateway(GATEWAY_ONE);
-		await runtime.beginProvisioning({
+		runtime.beginProvisioning({
 			authority,
 			compatibility: COMPATIBILITY,
 			idleExpiresAtMs: lease.idleExpiresAtMs,
-			ownership: createOwnershipHandle(verifiedDestroyTarget, { destroyDetached }),
 		});
 		await runtime.commitCurrent({
 			authority,
@@ -261,13 +253,13 @@ describe('Tool VM lease authority runtime projections', () => {
 		// Act
 		const destruction = runtime.destroyExact({
 			authority,
+			destroy,
 			destroyedAtMs: 300,
-			mode: { kind: 'detached' },
 			reason: 'lease-release',
 		});
 
 		// Assert
-		expect(destroyDetached).toHaveBeenCalledOnce();
+		expect(destroy).toHaveBeenCalledOnce();
 		expect(runtime.getLease(lease.id)).toBeUndefined();
 		expect(
 			runtime.findCurrentLeaseByPrincipal({
@@ -278,7 +270,7 @@ describe('Tool VM lease authority runtime projections', () => {
 		expect(runtime.leafSnapshotForLease(lease.id)).toMatchObject({ kind: 'destroying' });
 
 		// Act
-		destroyReceipt.resolve(createMatchingDestroyReceipt(verifiedDestroyTarget));
+		destroyCompletion.resolve();
 		await destruction;
 
 		// Assert

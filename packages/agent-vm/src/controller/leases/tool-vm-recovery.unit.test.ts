@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PortOwner } from '../../shared/port-owner.js';
-import { cleanupOrphanedToolVmsIfPresent } from './tool-vm-recovery.js';
+import { cleanupRecordedToolVmRuntimes } from './tool-vm-recovery.js';
 import type {
 	ToolVmRuntimeRecord,
 	ToolVmRuntimeRecordLoadResult,
@@ -37,8 +37,12 @@ function createToolVmRuntimeRecord(
 		createdAt: '2026-04-13T12:34:56.000Z',
 		agentId: 'agentA',
 		gateway: {
-			sessionLabel: 'shravan-claw-463c3e5f:sunfam:gateway',
-			vmId: 'gateway-vm-instance-1',
+			bootId: 'boot-a',
+			controllerEpoch: 'controller-epoch-a',
+			gatewayEpochId: 'gateway-epoch-a',
+			gatewayVmId: 'gateway-vm-instance-1',
+			generationId: 'generation-a',
+			zoneId: 'sunfam',
 		},
 		leaseId: 'sunfam-agentA-1700000000000',
 		processIdentity: {
@@ -48,7 +52,7 @@ function createToolVmRuntimeRecord(
 		projectNamespace: 'shravan-claw-463c3e5f',
 		qemuPid: 48282,
 		recordId: '01890f00-0000-7000-8000-000000000001',
-		schemaVersion: 1,
+		schemaVersion: 2,
 		sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:3',
 		tcpSlot: 3,
 		vmId: 'tool-vm-instance-1',
@@ -68,8 +72,8 @@ function loadedToolVmRuntimeRecords(
 }
 
 function createCleanupOptions(
-	overrides: Partial<Parameters<typeof cleanupOrphanedToolVmsIfPresent>[0]> = {},
-): Parameters<typeof cleanupOrphanedToolVmsIfPresent>[0] {
+	overrides: Partial<Parameters<typeof cleanupRecordedToolVmRuntimes>[0]> = {},
+): Parameters<typeof cleanupRecordedToolVmRuntimes>[0] {
 	return {
 		expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 		expectedControllerPort: 18800,
@@ -88,9 +92,9 @@ function buildMatchingIdentityResolver(
 	return async (pid) => (pid === record.qemuPid ? record.processIdentity : null);
 }
 
-describe('cleanupOrphanedToolVmsIfPresent', () => {
+describe('cleanupRecordedToolVmRuntimes', () => {
 	it('returns zero counts when no records exist', async () => {
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			{
 				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 				expectedControllerPort: 18800,
@@ -115,7 +119,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		const killProcess = vi.fn();
 		const logMessages: string[] = [];
 
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			createCleanupOptions({ mode: 'in-process-recovery' }),
 			{
 				killProcess,
@@ -130,8 +134,8 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 
 		expect(killProcess).not.toHaveBeenCalled();
 		expect(result.cleanedCount).toBe(0);
-		expect(result.warnings.join('\n')).toContain('held by pid 222, expected pid 111');
-		expect(logMessages.join('\n')).toContain('held by pid 222, expected pid 111');
+		expect(result.warnings.join('\n')).toContain('cannot reuse port 19500');
+		expect(logMessages.join('\n')).toContain('cannot reuse port 19500');
 	});
 
 	it('throws in offline cleanup when a tool VM port is held by a different pid', async () => {
@@ -143,14 +147,64 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		const killProcess = vi.fn();
 
 		await expect(
-			cleanupOrphanedToolVmsIfPresent(createCleanupOptions({ mode: 'offline-cleanup' }), {
+			cleanupRecordedToolVmRuntimes(createCleanupOptions({ mode: 'offline-cleanup' }), {
 				killProcess,
 				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
 				portForSlot: () => 19_500,
 				readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 222 }),
 			}),
-		).rejects.toThrow(/port 19500 is held by pid 222, expected pid 111/u);
+		).rejects.toThrow(/cannot reuse port 19500 because it is held by pid 222/u);
 		expect(killProcess).not.toHaveBeenCalled();
+	});
+
+	it('does not mistake a controller-owned Tool SSH listener for the VM runner', async () => {
+		const record = createToolVmRuntimeRecord({
+			qemuPid: 111,
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:0',
+			tcpSlot: 0,
+		});
+		const killProcess = vi.fn();
+
+		const result = await cleanupRecordedToolVmRuntimes(
+			createCleanupOptions({ mode: 'in-process-recovery' }),
+			{
+				killProcess,
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
+				log: () => {},
+				portForSlot: () => 19_500,
+				readTcpListenPortOwner: async () => ({ command: 'node agent-vm controller', pid: 333 }),
+			},
+		);
+
+		expect(killProcess).not.toHaveBeenCalled();
+		expect(result.cleanedCount).toBe(0);
+		expect(result.warnings.join('\n')).toContain(
+			'Stock Gondolin owns the Tool SSH listener in the controller process',
+		);
+	});
+
+	it('refuses slot reuse even when a listener happens to report the recorded VM pid', async () => {
+		const record = createToolVmRuntimeRecord({
+			qemuPid: 111,
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:0',
+			tcpSlot: 0,
+		});
+		const killProcess = vi.fn();
+
+		const result = await cleanupRecordedToolVmRuntimes(
+			createCleanupOptions({ mode: 'in-process-recovery' }),
+			{
+				killProcess,
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
+				log: () => {},
+				portForSlot: () => 19_500,
+				readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 111 }),
+			},
+		);
+
+		expect(killProcess).not.toHaveBeenCalled();
+		expect(result.cleanedCount).toBe(0);
+		expect(result.warnings.join('\n')).toContain('cannot reuse port 19500');
 	});
 
 	it('kills the recorded qemu pid and deletes the record when scope matches', async () => {
@@ -165,7 +219,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			.mockReturnValueOnce(true)
 			.mockReturnValueOnce(true)
 			.mockReturnValueOnce(false);
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			{
 				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 				expectedControllerPort: 18800,
@@ -197,7 +251,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		const killProcess = vi.fn();
 		const readProcessCommand = vi.fn(async () => null);
 		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			{
 				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 				expectedControllerPort: 18800,
@@ -236,7 +290,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			.mockReturnValueOnce(true)
 			.mockReturnValueOnce(false);
 
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			createCleanupOptions({ mode: 'in-process-recovery' }),
 			{
 				deleteToolVmRuntimeRecord,
@@ -271,7 +325,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		});
 
 		await expect(
-			cleanupOrphanedToolVmsIfPresent(createCleanupOptions({ mode: 'offline-cleanup' }), {
+			cleanupRecordedToolVmRuntimes(createCleanupOptions({ mode: 'offline-cleanup' }), {
 				deleteToolVmRuntimeRecord,
 				isProcessAlive: () => true,
 				killProcess,
@@ -297,7 +351,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		// process (different start time + different command) on the same PID.
 		// Cleanup must REFUSE the signal.
 		await expect(
-			cleanupOrphanedToolVmsIfPresent(
+			cleanupRecordedToolVmRuntimes(
 				{
 					expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 					expectedControllerPort: 18800,
@@ -329,7 +383,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		// configPath/controllerPort match the deployment; only projectNamespace
 		// (the third fence) differs. This exercises the projectNamespace fence
 		// in isolation.
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			{
 				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 				expectedControllerPort: 18800,
@@ -360,7 +414,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 
 	it('throws in offline-cleanup mode when scope does not match', async () => {
 		await expect(
-			cleanupOrphanedToolVmsIfPresent(
+			cleanupRecordedToolVmRuntimes(
 				{
 					expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 					expectedControllerPort: 18800,
@@ -409,7 +463,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			label: 'sessionLabel fence',
 		},
 	])('skips on $label mismatch (in-process-recovery)', async ({ expectedReason, fixture }) => {
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			{
 				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 				expectedControllerPort: 18800,
@@ -457,7 +511,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			.mockReturnValueOnce(true)
 			.mockReturnValueOnce(true)
 			.mockReturnValueOnce(false);
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			{
 				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 				expectedControllerPort: 18800,
@@ -528,7 +582,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			return Promise.resolve(null);
 		});
 
-		const cleanupPromise = cleanupOrphanedToolVmsIfPresent(
+		const cleanupPromise = cleanupRecordedToolVmRuntimes(
 			createCleanupOptions({ mode: 'in-process-recovery' }),
 			{
 				deleteToolVmRuntimeRecord,
@@ -584,7 +638,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			.mockReturnValueOnce(true)
 			.mockReturnValueOnce(true)
 			.mockReturnValueOnce(false);
-		const result = await cleanupOrphanedToolVmsIfPresent(
+		const result = await cleanupRecordedToolVmRuntimes(
 			{
 				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
 				expectedControllerPort: 18800,

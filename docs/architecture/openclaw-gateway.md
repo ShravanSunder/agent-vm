@@ -89,17 +89,21 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
 ```
 
 The gateway stays alive until `controller stop`, `controller destroy`, process
-exit, or automatic gateway VM recovery. Recovery has two infrastructure actions:
-restart a known running gateway VM, or cold-start a failed/stopped gateway when
-current ownership checks prove it is safe. For running-gateway recovery, the
-controller force releases that zone's Tool VM leases, restarts the gateway VM,
-verifies the VM id changed, and records a `gateway-recovery` health event. For
-cold-start recovery, the controller verifies that the old record/port state is
-safe before creating a new gateway. The default trigger is 10 consecutive
-degraded observations with a 61 minute per-zone cooldown. After 3 consecutive
-failed automatic recovery attempts, the controller records
-`gateway-recovery-suspended` and pauses auto-recovery for that zone until the
-failed-recovery reset window expires.
+exit, or automatic Gateway VM recovery. A dead control session while the Gateway
+service remains live first requests bounded same-Gateway OpenClaw process
+recovery. That replaces only the OpenClaw process and disposable control session,
+preserving the Gateway VM and healthy Tool VMs. Gateway VM recovery is outward
+escalation after process recovery is exhausted or Gateway service/lifecycle
+evidence requires replacement. It has two infrastructure actions: restart a
+known running Gateway VM, or cold-start a failed/stopped Gateway when current
+ownership checks prove it is safe. For running-Gateway recovery, the controller
+force releases that zone's Tool VM leases, restarts the Gateway VM, verifies the
+VM id changed, and records a `gateway-recovery` health event. For cold-start
+recovery, the controller verifies that the old record/port state is safe before
+creating a new Gateway. The default Gateway-recovery budget has a 61 minute
+per-zone cooldown. After 3 consecutive failed automatic recovery attempts, the
+controller records `gateway-recovery-suspended` and pauses auto-recovery for
+that zone until the failed-recovery reset window expires.
 
 OpenClaw/provider details stay below the plugin boundary. The plugin may publish
 generic `agent-channel-provider-health` events with redacted details such as a

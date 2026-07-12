@@ -18,15 +18,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
-	createTestVmOwnershipReservationReference,
 } from '../../testing/managed-vm-test-helpers.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
-import type { GatewayOwnershipCoordinator } from '../vm-ownership/gateway-ownership-coordinator.js';
+import type {
+	GatewayOwnershipCoordinator,
+	ToolVmMembershipHandle,
+} from '../vm-ownership/gateway-ownership-coordinator.js';
 import {
 	gatewayIdentitiesEqual,
 	type GatewayEpochIdentity,
@@ -68,49 +68,45 @@ function refuseUnexpectedGatewayOwnershipOperation(): never {
 }
 
 function createOwnershipCoordinatorStub(): GatewayOwnershipCoordinator {
-	const ownershipReservation = createTestVmOwnershipReservationReference('tool-vm-1', {
-		controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
-		parentGateway: {
-			epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
-			vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
-		},
-		role: 'tool',
-	});
-	const verifiedDestroyTarget = createTestVmDestroyTarget('tool-vm-1', {
-		controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
-		parentGateway: {
-			epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
-			vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
-		},
-		role: 'tool',
-	});
 	return {
-		beginGatewayEpoch: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		beginGatewayEpoch: () => refuseUnexpectedGatewayOwnershipOperation(),
 		admitProvisionalToolVm: (options) => {
 			if (!gatewayIdentitiesEqual(TEST_GATEWAY_EPOCH, options.expectedGateway)) {
 				throw new Error('Tool VM admission refused a stale Gateway VM epoch.');
 			}
+			let state: ReturnType<ToolVmMembershipHandle['snapshot']>['state'] = 'provisional';
+			let toolVmId: string | undefined;
 			return {
-				ready: Promise.resolve({
-					destructionIdentity: {
-						reservationId: verifiedDestroyTarget.reservationId,
-						reservationPath: verifiedDestroyTarget.reservationPath,
-						vmId: verifiedDestroyTarget.vmId,
-					},
-					ownershipReservation,
-					verifiedDestroyTarget,
+				agentId: options.agentId,
+				leafId: options.leafId,
+				attachToolVm(attachedToolVmId): void {
+					toolVmId = attachedToolVmId;
+				},
+				beginDestroying(): void {
+					state = 'destroying';
+				},
+				commitCurrent(): void {
+					state = 'current';
+				},
+				recordDestroyed(): void {
+					state = 'destroyed';
+				},
+				recordUnavailable(): void {
+					state = 'owner-unsafe';
+				},
+				snapshot: () => ({
+					agentId: options.agentId,
+					leafId: options.leafId,
+					state,
+					...(toolVmId === undefined ? {} : { toolVmId }),
 				}),
-				commitCurrent: async () => {},
-				destroyDetached: async () => createCompleteVmDestroyReceipt('tool-vm-1'),
-				destroyLive: async (closeLiveVm) => await closeLiveVm(),
 			};
 		},
-		destroyGatewayDetached: async () => refuseUnexpectedGatewayOwnershipOperation(),
-		recordGatewayDestroyReceipt: async () => refuseUnexpectedGatewayOwnershipOperation(),
-		recordGatewayDestroyUnavailable: async () => refuseUnexpectedGatewayOwnershipOperation(),
-		reconcileControllerStartup: async () => {},
+		recordGatewayDestroyUnavailable: () => refuseUnexpectedGatewayOwnershipOperation(),
 		resolveGatewayEpoch: () => TEST_GATEWAY_EPOCH,
+		retireGateway: async () => refuseUnexpectedGatewayOwnershipOperation(),
 		sealGatewayEpoch: () => refuseUnexpectedGatewayOwnershipOperation(),
+		snapshotGateway: () => refuseUnexpectedGatewayOwnershipOperation(),
 	};
 }
 
@@ -198,24 +194,17 @@ type GatewayControlCommandResultMessage = Extract<
 
 function createManagedVmStub(): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
+		let hostPidReadCount = 0;
 		const vm = {
-			close: vi.fn(async () => ({
-				...createCompleteVmDestroyReceipt('tool-vm-1', {
-					controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
-					parentGateway: {
-						epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
-						vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
-					},
-					role: 'tool',
-				}),
-				requestedRunner: {
-					backend: 'qemu' as const,
-					discoveryIdentity: 'agent-vm-test:tool-vm-1',
-					executableName: 'qemu-system-aarch64',
-				},
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({
+				close: vi.fn(async () => {}),
+				host: '127.0.0.1',
+				port: 18791,
 			})),
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
+				close: vi.fn(async () => {}),
+				command: 'ssh sandbox@127.0.0.1',
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				host: '127.0.0.1',
 				identityFile: '/tmp/tool-vm-key',
@@ -224,11 +213,14 @@ function createManagedVmStub(): Parameters<typeof createLeaseManager>[0]['create
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1'),
-			getHostPid: () => 12345,
+			getHostPid: () => {
+				hostPidReadCount += 1;
+				return hostPidReadCount === 1 ? 12345 : null;
+			},
 			getVmInstance: () => vm,
 			id: 'tool-vm-1',
 			setIngressRoutes: vi.fn(),
+			start: vi.fn(async () => {}),
 		};
 		return vm;
 	});
@@ -249,6 +241,13 @@ function createTestLeaseManager(): ReturnType<typeof createLeaseManager> {
 		},
 		createManagedVm: createManagedVmStub(),
 		deleteToolVmRuntimeRecord: vi.fn(async () => {}),
+		managedVmKillDependencies: {
+			isProcessAlive: () => false,
+			killProcess: vi.fn(),
+			readProcessCommand: async () => null,
+			readProcessIdentity: async () => null,
+			sleep: async () => {},
+		},
 		now: () => 1_000,
 		ownershipCoordinator: createOwnershipCoordinatorStub(),
 		projectNamespace: 'gateway-control-lease-rpc-integration-tests',
@@ -256,6 +255,7 @@ function createTestLeaseManager(): ReturnType<typeof createLeaseManager> {
 			command: 'qemu-system-x86_64 -m 1G',
 			lstart: 'Fri May 22 10:00:00 2026',
 		}),
+		readTcpListenPortOwner: async () => null,
 		stateDirFor: (zoneId) => `/tmp/gateway-control-lease-rpc-integration-tests/${zoneId}`,
 		systemConfigPath: '/etc/agent-vm/system.json',
 		tcpPool: createTcpPool({ basePort: 19000, size: 2 }),

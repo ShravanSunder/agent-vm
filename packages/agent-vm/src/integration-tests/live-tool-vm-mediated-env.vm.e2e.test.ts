@@ -1,18 +1,25 @@
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import {
-	createManagedVmOwnershipReservation,
-	type ManagedVmOwnershipReservationReferenceV1,
-} from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import {
+	terminateLiveManagedVm,
+	type ManagedVmProcessTarget,
+} from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
@@ -25,24 +32,28 @@ async function createTemporaryDirectory(): Promise<string> {
 	return await mkdtemp(path.join(os.tmpdir(), 'agent-vm-live-mediated-env-'));
 }
 
-async function createToolVmOwnershipReservation(
-	testDeploymentRoot: string,
-): Promise<ManagedVmOwnershipReservationReferenceV1> {
-	const vmIdentity = randomUUID();
-	const ownershipReservation = await createManagedVmOwnershipReservation({
-		controllerEpoch: 'live-tool-vm-mediated-env-e2e',
-		parentGateway: {
-			epoch: 'gateway-epoch-live-tool-vm-mediated-env-e2e',
-			vmId: 'gateway-vm-live-tool-vm-mediated-env-e2e',
-		},
-		principal: 'shravan',
-		reservationId: `reservation-${vmIdentity}`,
-		reservationRoot: path.join(testDeploymentRoot, 'state', 'vm-ownership'),
-		role: 'tool',
-		sessionLabel: 'agent-vm-live-tool-vm-mediated-env-test',
-		vmId: `tool-vm-${vmIdentity}`,
+async function captureStartedVmProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
+	const hostPid = managedVm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' process identity.`);
+	}
+	return { hostPid, processIdentity, vmId: managedVm.id };
+}
+
+async function terminateVmRuntime(
+	managedVm: ManagedVm,
+	target: ManagedVmProcessTarget,
+): Promise<void> {
+	await terminateLiveManagedVm({
+		contextLabel: 'Tool VM mediated environment cleanup',
+		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		target,
+		vm: managedVm,
 	});
-	return ownershipReservation.reference;
 }
 
 async function createMediatedEnvSystemConfig(
@@ -180,13 +191,11 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 
 		const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
 		await mkdir(hostWorkMountDir, { recursive: true });
-		const ownershipReservation = await createToolVmOwnershipReservation(temporaryDirectory);
 		const toolVm = await createToolVm(
 			{
 				agentId: 'shravan',
 				cacheDir: systemConfig.cacheDir,
 				hostWorkMountDir,
-				ownershipReservation,
 				profile,
 				secretResolver: createStaticSecretResolver({}),
 				systemConfig,
@@ -201,6 +210,8 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 				}),
 			},
 		);
+		const terminationTarget = await captureStartedVmProcess(toolVm);
+		let sshAccess: Awaited<ReturnType<ManagedVm['enableSsh']>> | undefined;
 
 		try {
 			const execPlaceholderResult = await toolVm.exec('printf "%s" "$GITHUB_TOKEN"');
@@ -208,7 +219,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 			expect(execPlaceholderResult.stdout).not.toBe('');
 			expect(execPlaceholderResult.stdout).not.toBe(rawGithubToken);
 
-			const sshAccess = await toolVm.enableSsh({ user: 'root' });
+			sshAccess = await toolVm.enableSsh({ user: 'root' });
 			if (!sshAccess.identityFile || !sshAccess.user) {
 				throw new Error('Expected Tool VM SSH access to include identityFile and user.');
 			}
@@ -222,7 +233,8 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 			expect(sshPlaceholder).toBe(execPlaceholderResult.stdout);
 			expect(sshPlaceholder).not.toBe(rawGithubToken);
 		} finally {
-			await toolVm.close();
+			await sshAccess?.close();
+			await terminateVmRuntime(toolVm, terminationTarget);
 		}
 	}, 180_000);
 });

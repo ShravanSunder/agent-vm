@@ -20,20 +20,12 @@ import {
 	type ShadowPredicate,
 	type ShadowProviderOptions,
 	type SshOptions,
-	type SshServerHostKey as GondolinSshServerHostKey,
 	type VMOptions,
 	type VmFs as GondolinVmFs,
 	type VirtualProvider,
 	getInfoFromSshExecRequest,
 } from '@earendil-works/gondolin';
 
-import {
-	MANAGED_VM_EXACT_LIFECYCLE_CONTRACT_VERSION,
-	assertManagedVmExactLifecycleContractVersion,
-	type ManagedVmDestroyReceiptV1,
-	type ManagedVmDestroyTargetV1,
-	type ManagedVmOwnershipReservationReferenceV1,
-} from './exact-vm-lifecycle.js';
 import {
 	configureHostNetworkDefaults,
 	type HostNetworkDefaultsResult,
@@ -43,8 +35,6 @@ import {
 	createPinnedRealFsProvider,
 	type PinnedRealFsRoot,
 } from './pinned-realfs.js';
-
-assertManagedVmExactLifecycleContractVersion(MANAGED_VM_EXACT_LIFECYCLE_CONTRACT_VERSION);
 
 export const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
 export const SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK = '::ffff:198.18.0.1';
@@ -77,15 +67,28 @@ export interface GitReadOnlySshEgressOptions {
 }
 
 export interface SshAccess {
+	close(): Promise<void>;
 	readonly host: string;
 	readonly command?: string;
 	readonly identityFile?: string;
 	readonly port: number;
-	readonly serverHostKey: GondolinSshServerHostKey;
+	readonly serverHostKey: SshServerHostKey;
 	readonly user?: string;
 }
 
-export type SshServerHostKey = GondolinSshServerHostKey;
+export interface ManagedVmSshAccess {
+	close(): Promise<void>;
+	readonly command: string;
+	readonly host: string;
+	readonly identityFile: string;
+	readonly port: number;
+	readonly user: string;
+}
+
+export interface SshServerHostKey {
+	readonly algorithm: 'ssh-ed25519';
+	readonly publicKeyBase64: string;
+}
 
 export function isSshServerHostKey(value: unknown): value is SshServerHostKey {
 	if (typeof value !== 'object' || value === null) {
@@ -125,7 +128,54 @@ export function isSshServerHostKey(value: unknown): value is SshServerHostKey {
 	}
 }
 
+export function parseSshServerHostKey(publicKeyText: string): SshServerHostKey {
+	const publicKeyLines = publicKeyText
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+	if (publicKeyLines.length !== 1) {
+		throw new Error('Tool VM did not expose exactly one ssh-ed25519 server host key.');
+	}
+	const publicKeyFields = publicKeyLines[0]?.split(/\s+/u);
+	const serverHostKey = {
+		algorithm: publicKeyFields?.[0],
+		publicKeyBase64: publicKeyFields?.[1],
+	};
+	if (!isSshServerHostKey(serverHostKey)) {
+		throw new Error('Tool VM did not expose a valid ssh-ed25519 server host key.');
+	}
+	return serverHostKey;
+}
+
+async function readSshServerHostKey(vmInstance: ManagedVmInstance): Promise<SshServerHostKey> {
+	const publicKeyResult = await vmInstance.exec(['/bin/cat', '/etc/ssh/ssh_host_ed25519_key.pub']);
+	if (publicKeyResult.exitCode !== 0) {
+		throw new Error(
+			`Tool VM server host key read failed with exit ${String(publicKeyResult.exitCode)}.`,
+		);
+	}
+	return parseSshServerHostKey(publicKeyResult.stdout);
+}
+
+async function closeSshAccessAfterIdentityFailure(
+	sshAccess: Awaited<ReturnType<ManagedVmInstance['enableSsh']>>,
+	identityError: unknown,
+): Promise<never> {
+	try {
+		await sshAccess.close();
+	} catch (closeError) {
+		// oxlint-disable-next-line preserve-caught-error -- AggregateError.errors preserves closeError while cause retains the primary identity failure.
+		throw new AggregateError(
+			[identityError, closeError],
+			'Tool VM SSH server identity validation and SSH access cleanup both failed.',
+			{ cause: identityError },
+		);
+	}
+	throw identityError;
+}
+
 export interface IngressAccess {
+	close(): Promise<void>;
 	readonly host: string;
 	readonly port: number;
 }
@@ -134,12 +184,12 @@ export interface ManagedVmInstance {
 	readonly fs: ManagedVmFs;
 	readonly id: string;
 	exec(command: string | string[], options?: ManagedExecOptions): ManagedExecProcess;
-	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
+	enableSsh(options?: EnableSshOptions): Promise<ManagedVmSshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	getHostPid?(): number | null;
-	getDestroyTarget(): ManagedVmDestroyTargetV1;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
-	close(): Promise<ManagedVmDestroyReceiptV1>;
+	start(): Promise<void>;
+	close(): Promise<void>;
 }
 
 export interface ManagedVmDependencies {
@@ -172,7 +222,6 @@ export interface VfsMountSpec {
 }
 
 export interface CreateVmOptions {
-	readonly ownershipReservation: ManagedVmOwnershipReservationReferenceV1;
 	readonly imagePath: string;
 	readonly memory: string;
 	readonly cpus: number;
@@ -196,10 +245,10 @@ export interface ManagedVm {
 	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	getHostPid(): number | null;
-	getDestroyTarget(): ManagedVmDestroyTargetV1;
 	getVmInstance(): ManagedVmInstance;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
-	close(): Promise<ManagedVmDestroyReceiptV1>;
+	start(): Promise<void>;
+	close(): Promise<void>;
 }
 
 /* oxlint-disable typescript-eslint/no-unsafe-type-assertion -- VM.create() returns
@@ -626,7 +675,6 @@ export async function createManagedVm(
 			...(options.onResponse ? { onResponse: options.onResponse } : {}),
 		});
 		vmInstance = await dependencies.createVm({
-			ownershipReservation: options.ownershipReservation,
 			...(options.imagePath.length > 0 ? { sandbox: { imagePath: options.imagePath } } : {}),
 			...(options.sessionLabel ? { sessionLabel: options.sessionLabel } : {}),
 			rootfs: {
@@ -677,10 +725,21 @@ export async function createManagedVm(
 		},
 		async enableSsh(sshOptions?: EnableSshOptions): Promise<SshAccess> {
 			const sshAccess = await vmInstance.enableSsh(sshOptions);
-			if (!isSshServerHostKey(Reflect.get(sshAccess, 'serverHostKey'))) {
-				throw new Error('Gondolin SSH access did not include a valid ssh-ed25519 server host key.');
+			let serverHostKey: SshServerHostKey;
+			try {
+				serverHostKey = await readSshServerHostKey(vmInstance);
+			} catch (identityError) {
+				return await closeSshAccessAfterIdentityFailure(sshAccess, identityError);
 			}
-			return sshAccess;
+			return {
+				close: async (): Promise<void> => await sshAccess.close(),
+				command: sshAccess.command,
+				host: sshAccess.host,
+				identityFile: sshAccess.identityFile,
+				port: sshAccess.port,
+				serverHostKey,
+				user: sshAccess.user,
+			};
 		},
 		async enableIngress(ingressOptions?: EnableIngressOptions): Promise<IngressAccess> {
 			return await vmInstance.enableIngress(resolveManagedVmIngressOptions(ingressOptions));
@@ -688,20 +747,19 @@ export async function createManagedVm(
 		getHostPid(): number | null {
 			return vmInstance.getHostPid?.() ?? null;
 		},
-		getDestroyTarget(): ManagedVmDestroyTargetV1 {
-			return vmInstance.getDestroyTarget();
-		},
 		getVmInstance(): ManagedVmInstance {
 			return vmInstance;
 		},
 		setIngressRoutes(routes: readonly IngressRoute[]): void {
 			vmInstance.setIngressRoutes(routes);
 		},
-		async close(): Promise<ManagedVmDestroyReceiptV1> {
+		async start(): Promise<void> {
+			await vmInstance.start();
+		},
+		async close(): Promise<void> {
 			let closeError: unknown;
-			let receipt: ManagedVmDestroyReceiptV1 | undefined;
 			try {
-				receipt = await vmInstance.close();
+				await vmInstance.close();
 			} catch (error) {
 				closeError = error;
 			}
@@ -713,10 +771,6 @@ export async function createManagedVm(
 			if (closeError !== undefined) {
 				throw closeError;
 			}
-			if (receipt === undefined) {
-				throw new Error('Gondolin VM close completed without an exact destruction receipt');
-			}
-			return receipt;
 		},
 	};
 }

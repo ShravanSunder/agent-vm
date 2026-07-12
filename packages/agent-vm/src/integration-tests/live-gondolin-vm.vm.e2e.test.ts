@@ -1,14 +1,8 @@
-import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import {
-	createManagedVm,
-	createManagedVmOwnershipReservation,
-	type ManagedVm,
-	type ManagedVmOwnershipReservationReferenceV1,
-} from '@agent-vm/gondolin-adapter';
+import { createManagedVm, type ManagedVm, type SshAccess } from '@agent-vm/gondolin-adapter';
 /**
  * Live e2e test — boots real Gondolin VMs.
  *
@@ -17,9 +11,19 @@ import {
  * Requires: QEMU installed, ~30s per test, creates real VMs.
  * NOT part of the standard test suite (too slow, needs QEMU).
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
-import { assertVmDestructionComplete } from '../shared/vm-destruction-receipt.js';
+import {
+	terminateLiveManagedVm,
+	type ManagedVmProcessTarget,
+} from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
@@ -28,26 +32,32 @@ const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.ski
 const ingressReadyTimeoutMs = 10_000;
 const ingressRetryIntervalMs = 100;
 
-async function createStandaloneOwnershipReservation(
-	testDeploymentRoot: string,
-	vmPurposeLabel: string,
-): Promise<ManagedVmOwnershipReservationReferenceV1> {
-	const vmIdentity = `${vmPurposeLabel}-${randomUUID()}`;
-	const ownershipReservation = await createManagedVmOwnershipReservation({
-		controllerEpoch: 'live-gondolin-vm-e2e',
-		parentGateway: null,
-		reservationId: `reservation-${vmIdentity}`,
-		reservationRoot: path.join(testDeploymentRoot, 'state', 'vm-ownership'),
-		role: 'standalone',
-		sessionLabel: `live-gondolin-vm-${vmPurposeLabel}`,
-		vmId: `vm-${vmIdentity}`,
-	});
-	return ownershipReservation.reference;
+async function startVmAndCaptureProcessTarget(vm: ManagedVm): Promise<ManagedVmProcessTarget> {
+	await vm.start();
+	const hostPid = vm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Started Gondolin VM '${vm.id}' did not expose a host PID.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(`Started Gondolin VM '${vm.id}' process identity could not be captured.`);
+	}
+	return { hostPid, processIdentity, vmId: vm.id };
 }
 
-async function closeVmAndRequireCompleteReceipt(vm: ManagedVm, context: string): Promise<void> {
-	const receipt = await vm.close();
-	assertVmDestructionComplete(receipt, context);
+async function terminateStartedVm(options: {
+	readonly context: string;
+	readonly processTarget: ManagedVmProcessTarget;
+	readonly sshAccess?: SshAccess;
+	readonly vm: ManagedVm;
+}): Promise<void> {
+	await options.sshAccess?.close();
+	await terminateLiveManagedVm({
+		contextLabel: options.context,
+		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		target: options.processTarget,
+		vm: options.vm,
+	});
 }
 
 async function fetchIngressUntilReady(url: string): Promise<{
@@ -80,30 +90,25 @@ async function fetchIngressUntilReady(url: string): Promise<{
 
 describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 	let vm: ManagedVm | null = null;
-	let testDeploymentRoot: string | null = null;
-
-	beforeAll(async () => {
-		testDeploymentRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-gondolin-vm-e2e-'));
-	});
+	let vmProcessTarget: ManagedVmProcessTarget | null = null;
+	let vmSshAccess: SshAccess | null = null;
 
 	afterAll(async () => {
-		if (vm) {
-			await closeVmAndRequireCompleteReceipt(vm, 'final Gondolin VM E2E cleanup');
+		if (vm !== null && vmProcessTarget !== null) {
+			await terminateStartedVm({
+				context: 'final Gondolin VM E2E cleanup',
+				processTarget: vmProcessTarget,
+				...(vmSshAccess === null ? {} : { sshAccess: vmSshAccess }),
+				vm,
+			});
 			vm = null;
-		}
-		if (testDeploymentRoot !== null) {
-			await rm(testDeploymentRoot, { force: true, recursive: true });
-			testDeploymentRoot = null;
+			vmProcessTarget = null;
+			vmSshAccess = null;
 		}
 	});
 
 	it('should boot a basic VM and exec a command', async () => {
-		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
 		vm = await createManagedVm({
-			ownershipReservation: await createStandaloneOwnershipReservation(
-				testDeploymentRoot,
-				'basic-exec',
-			),
 			imagePath: '', // use default Gondolin image (alpine-base:latest, auto-downloads)
 			memory: '512M',
 			cpus: 1,
@@ -112,6 +117,7 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 			secrets: {},
 			vfsMounts: {},
 		});
+		vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
 		const result = await vm.exec('echo hello_from_gondolin && uname -a');
 
@@ -127,15 +133,16 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 		await writeFile(path.join(tmpDir, 'test.txt'), 'vfs_mount_works');
 
 		// Close previous VM and create one with VFS
-		await closeVmAndRequireCompleteReceipt(vm, 'basic exec VM cleanup');
+		if (vmProcessTarget === null) throw new Error('VM process target is unavailable');
+		await terminateStartedVm({
+			context: 'basic exec VM cleanup',
+			processTarget: vmProcessTarget,
+			vm,
+		});
 		vm = null;
-		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
+		vmProcessTarget = null;
 
 		vm = await createManagedVm({
-			ownershipReservation: await createStandaloneOwnershipReservation(
-				testDeploymentRoot,
-				'vfs-mount',
-			),
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
@@ -149,6 +156,7 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 				},
 			},
 		});
+		vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
 		const result = await vm.exec('cat /test-mount/test.txt');
 
@@ -159,18 +167,19 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 
 	it('should persist writable RealFS /workspace files across disposable VM lifetimes', async () => {
 		if (vm) {
-			await closeVmAndRequireCompleteReceipt(vm, 'VFS mount VM cleanup');
+			if (vmProcessTarget === null) throw new Error('VM process target is unavailable');
+			await terminateStartedVm({
+				context: 'VFS mount VM cleanup',
+				processTarget: vmProcessTarget,
+				vm,
+			});
 			vm = null;
+			vmProcessTarget = null;
 		}
-		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
 
 		const hostWorkMountDir = await mkdtemp(path.join(os.tmpdir(), 'gondolin-live-work-'));
 		try {
 			vm = await createManagedVm({
-				ownershipReservation: await createStandaloneOwnershipReservation(
-					testDeploymentRoot,
-					'realfs-write',
-				),
 				imagePath: '',
 				memory: '512M',
 				cpus: 1,
@@ -184,6 +193,7 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 					},
 				},
 			});
+			vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
 			const writeResult = await vm.exec(
 				"mkdir -p /workspace/project && printf 'persisted through realfs' > /workspace/project/notes.md",
@@ -193,13 +203,14 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 				readFile(path.join(hostWorkMountDir, 'project', 'notes.md'), 'utf8'),
 			).resolves.toBe('persisted through realfs');
 
-			await closeVmAndRequireCompleteReceipt(vm, 'RealFS writer VM cleanup');
+			await terminateStartedVm({
+				context: 'RealFS writer VM cleanup',
+				processTarget: vmProcessTarget,
+				vm,
+			});
 			vm = null;
+			vmProcessTarget = null;
 			vm = await createManagedVm({
-				ownershipReservation: await createStandaloneOwnershipReservation(
-					testDeploymentRoot,
-					'realfs-read',
-				),
 				imagePath: '',
 				memory: '512M',
 				cpus: 1,
@@ -213,14 +224,20 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 					},
 				},
 			});
+			vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
 			const readResult = await vm.exec('cat /workspace/project/notes.md');
 			expect(readResult.exitCode).toBe(0);
 			expect(readResult.stdout.trim()).toBe('persisted through realfs');
 		} finally {
-			if (vm) {
-				await closeVmAndRequireCompleteReceipt(vm, 'RealFS reader VM cleanup');
+			if (vm !== null && vmProcessTarget !== null) {
+				await terminateStartedVm({
+					context: 'RealFS reader VM cleanup',
+					processTarget: vmProcessTarget,
+					vm,
+				});
 				vm = null;
+				vmProcessTarget = null;
 			}
 			await rm(hostWorkMountDir, { recursive: true, force: true });
 		}
@@ -228,16 +245,17 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 
 	it('should enable ingress and expose a guest HTTP server', async () => {
 		if (vm) {
-			await closeVmAndRequireCompleteReceipt(vm, 'prior Gondolin VM cleanup');
+			if (vmProcessTarget === null) throw new Error('VM process target is unavailable');
+			await terminateStartedVm({
+				context: 'prior Gondolin VM cleanup',
+				processTarget: vmProcessTarget,
+				vm,
+			});
 			vm = null;
+			vmProcessTarget = null;
 		}
-		if (testDeploymentRoot === null) throw new Error('test deployment root is unavailable');
 
 		vm = await createManagedVm({
-			ownershipReservation: await createStandaloneOwnershipReservation(
-				testDeploymentRoot,
-				'ingress-and-ssh',
-			),
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
@@ -246,6 +264,7 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 			secrets: {},
 			vfsMounts: {},
 		});
+		vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
 		await vm.exec(
 			"while true; do printf 'HTTP/1.1 200 OK\\r\\nConnection: close\\r\\nContent-Length: 13\\r\\n\\r\\ningress_works' | nc -l -p 18080; done >/tmp/ingress-server.log 2>&1 &",
@@ -281,14 +300,14 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 	it('should enable SSH and allow host-to-guest exec', async () => {
 		if (!vm) throw new Error('VM not available from previous test');
 
-		const sshAccess = await vm.enableSsh({
+		vmSshAccess = await vm.enableSsh({
 			user: 'root',
 			listenHost: '127.0.0.1',
 			listenPort: 0,
 		});
 
-		expect(sshAccess.host).toBe('127.0.0.1');
-		expect(sshAccess.port).toBeGreaterThan(0);
-		expect(sshAccess.user).toBe('root');
+		expect(vmSshAccess.host).toBe('127.0.0.1');
+		expect(vmSshAccess.port).toBeGreaterThan(0);
+		expect(vmSshAccess.user).toBe('root');
 	}, 30_000);
 });

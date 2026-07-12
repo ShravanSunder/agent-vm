@@ -4,23 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
-import type { ManagedVm, VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import { writeGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
+import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
-	createTestVmOwnershipReservationReference,
 } from '../testing/managed-vm-test-helpers.js';
 import type { ControlSessionClient, WorkerControlRpcOperations } from './control-session/index.js';
-import type { VmCreationOwnership } from './vm-ownership/vm-creation-ownership.js';
 import type { WorkerTaskInput } from './worker-task-runner.js';
 import type { WorkerTaskPollClock } from './worker-task-runner.js';
 
@@ -64,38 +63,6 @@ const closedTaskStateSchema = z.object({
 
 const workerControllerEpoch = 'worker-controller-epoch-test';
 const workerVmId = 'worker-vm-1';
-const completeVmDestroyReceipt = createCompleteVmDestroyReceipt(workerVmId, {
-	controllerEpoch: workerControllerEpoch,
-	role: 'standalone',
-});
-const incompleteVmDestroyReceipt = {
-	...completeVmDestroyReceipt,
-	complete: false,
-	resources: {
-		...completeVmDestroyReceipt.resources,
-		exactRunner: { status: 'unproven', reason: 'runner-resistant' },
-	},
-} satisfies VmDestroyReceiptV1;
-
-function createStandaloneVmOwnershipStub(): {
-	readonly destroyLiveMock: Mock<VmCreationOwnership['destroyLive']>;
-	readonly vmOwnership: VmCreationOwnership;
-} {
-	const destroyLiveMock = vi.fn<VmCreationOwnership['destroyLive']>(
-		async (closeLiveVm) => await closeLiveVm(),
-	);
-	return {
-		destroyLiveMock,
-		vmOwnership: {
-			destroyDetached: vi.fn(async () => completeVmDestroyReceipt),
-			destroyLive: destroyLiveMock,
-			ownershipReservation: createTestVmOwnershipReservationReference(workerVmId, {
-				controllerEpoch: workerControllerEpoch,
-				role: 'standalone',
-			}),
-		},
-	};
-}
 
 function buildWorkerConfigInput(): Record<string, unknown> {
 	return {
@@ -221,6 +188,7 @@ const systemConfig = {
 
 async function executePreparedWorkerTaskForTest(options: {
 	readonly input: WorkerTaskInput;
+	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
 	readonly onTaskFinished?: (zoneId: string, taskId: string) => Promise<void>;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
@@ -242,6 +210,9 @@ async function executePreparedWorkerTaskForTest(options: {
 	return await executeWorkerTask(prepared, {
 		...(options.onTaskFinished ? { onTaskFinished: options.onTaskFinished } : {}),
 		controllerEpoch: workerControllerEpoch,
+		...(options.managedVmKillDependencies === undefined
+			? {}
+			: { managedVmKillDependencies: options.managedVmKillDependencies }),
 		secretResolver: options.secretResolver,
 		systemConfig: options.systemConfig,
 		pollClock: options.pollClock ?? createInstantPollClock(),
@@ -325,8 +296,8 @@ function createWorkerControlOperationsStub(): WorkerControlRpcOperations {
 describe('worker-task-runner', () => {
 	let tempDir: string;
 	let managedVm: ManagedVm;
-	let managedVmCloseMock: Mock<() => Promise<VmDestroyReceiptV1>>;
-	let vmOwnershipDestroyLiveMock: Mock<VmCreationOwnership['destroyLive']>;
+	let managedVmCloseMock: Mock<() => Promise<void>>;
+	let managedVmStartMock: Mock<() => Promise<void>>;
 
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runner-'));
@@ -358,12 +329,18 @@ describe('worker-task-runner', () => {
 			throw new Error(`Unexpected fetch ${url}`);
 		}) as typeof fetch;
 
-		managedVmCloseMock = vi.fn(async () => completeVmDestroyReceipt);
+		managedVmCloseMock = vi.fn(async () => {});
+		managedVmStartMock = vi.fn(async () => {});
 		managedVm = {
 			id: workerVmId,
 			close: async () => await managedVmCloseMock(),
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableIngress: vi.fn(async () => ({
+				close: vi.fn(async () => {}),
+				host: '127.0.0.1',
+				port: 18791,
+			})),
 			enableSsh: vi.fn(async () => ({
+				close: async () => {},
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				host: '127.0.0.1',
 				port: 2222,
@@ -371,32 +348,36 @@ describe('worker-task-runner', () => {
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
-			getDestroyTarget: () =>
-				createTestVmDestroyTarget(workerVmId, {
-					controllerEpoch: workerControllerEpoch,
-					role: 'standalone',
-				}),
 			setIngressRoutes: vi.fn(),
 			getHostPid: () => null,
 			getVmInstance: vi.fn(),
+			start: async () => await managedVmStartMock(),
 		};
 
-		const standaloneOwnership = createStandaloneVmOwnershipStub();
-		vmOwnershipDestroyLiveMock = standaloneOwnership.destroyLiveMock;
-		startGatewayZoneMock.mockResolvedValue({
-			image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
-			ingress: { host: '127.0.0.1', port: 18791 },
-			processSpec: {
-				bootstrapCommand: 'true',
-				startCommand:
-					'agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state',
-				healthCheck: { type: 'http', port: 18789, path: '/health' },
-				guestListenPort: 18789,
-				logPath: '/tmp/worker.log',
-			},
-			vm: managedVm,
-			vmOwnership: standaloneOwnership.vmOwnership,
-			zone,
+		startGatewayZoneMock.mockImplementation(async (startOptions: StartGatewayZoneOptions) => {
+			const vmOwnership = await startOptions.createVmOwnership({
+				kind: 'standalone',
+				sessionLabel: 'worker-task-session',
+				zoneId: zone.id,
+			});
+			vmOwnership.attachGatewayVm(managedVm.id);
+			await managedVm.start();
+			return {
+				image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'true',
+					startCommand:
+						'agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state',
+					healthCheck: { type: 'http', port: 18789, path: '/health' },
+					guestListenPort: 18789,
+					logPath: '/tmp/worker.log',
+				},
+				terminateVm: async () => await managedVm.close(),
+				vm: managedVm,
+				vmOwnership,
+				zone,
+			};
 		});
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 	});
@@ -456,12 +437,13 @@ describe('worker-task-runner', () => {
 					DATABASE_URL: 'postgres://postgres.local:5432/app',
 				},
 			}),
+			expect.any(Object),
 		);
-		expect(vmOwnershipDestroyLiveMock).toHaveBeenCalledOnce();
+		expect(managedVmStartMock).toHaveBeenCalledOnce();
 		expect(managedVmCloseMock).toHaveBeenCalledOnce();
 	});
 
-	it('reserves standalone Worker VMs under the deployment-global runtime root', async () => {
+	it('creates standalone Worker VM lifecycle authority without reservation state', async () => {
 		// Arrange / Act
 		await executePreparedWorkerTaskForTest({
 			input: {
@@ -482,26 +464,120 @@ describe('worker-task-runner', () => {
 		}
 		const vmOwnership = await startOptions.createVmOwnership({
 			kind: 'standalone',
-			sessionLabel: 'worker-shared-ownership-root',
+			sessionLabel: 'worker-standalone-lifecycle',
 			zoneId: 'shravan',
 		});
 
 		// Assert
-		const expectedReservationRoot = path.join(
-			systemConfig.runtimeDir,
-			'vm-ownership',
-			'standalone-reservations',
-		);
-		expect(path.dirname(path.dirname(vmOwnership.ownershipReservation.reservationPath))).toBe(
-			expectedReservationRoot,
-		);
-		expect(vmOwnership.ownershipReservation.reservationPath).not.toContain(
-			`${path.sep}worker-tasks${path.sep}`,
-		);
-		await fs.rm(path.join(systemConfig.runtimeDir, 'vm-ownership'), {
-			force: true,
-			recursive: true,
+		expect(vmOwnership.gatewaySeed).toMatchObject({
+			controllerEpoch: workerControllerEpoch,
+			zoneId: 'shravan',
 		});
+		expect(vmOwnership.gatewayIdentity).toBeUndefined();
+		expect(vmOwnership).not.toHaveProperty('ownershipReservation');
+		expect(vmOwnership).not.toHaveProperty('destroyDetached');
+		expect(vmOwnership.attachGatewayVm('worker-vm-independent')).toMatchObject({
+			gatewayVmId: 'worker-vm-independent',
+			zoneId: 'shravan',
+		});
+	});
+
+	it('terminates the exact recorded Worker VM runner before stock close', async () => {
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const processIdentity = {
+			command: 'qemu-system-aarch64 -name worker-vm-1',
+			lstart: 'Sat Jul 11 17:00:00 2026',
+		};
+		const orderedEvents: string[] = [];
+		let runnerAttached = true;
+		managedVm = {
+			...managedVm,
+			getHostPid: () => (runnerAttached ? 48_282 : null),
+		};
+		managedVmCloseMock.mockImplementation(async () => {
+			orderedEvents.push('stock-close');
+		});
+		const managedVmKillDependencies = {
+			isProcessAlive: () => runnerAttached,
+			killProcess: (pid: number, signal: NodeJS.Signals) => {
+				orderedEvents.push(`${String(signal)}:${String(pid)}`);
+				runnerAttached = false;
+			},
+			readProcessCommand: async () => processIdentity.command,
+			readProcessIdentity: async () => processIdentity,
+			sleep: async () => {},
+		} satisfies ManagedVmKillDependencies;
+		startGatewayZoneMock.mockImplementationOnce(async (startOptions: StartGatewayZoneOptions) => {
+			const vmOwnership = await startOptions.createVmOwnership({
+				kind: 'standalone',
+				sessionLabel: 'worker-task-session',
+				zoneId: zone.id,
+			});
+			const gatewayIdentity = vmOwnership.attachGatewayVm(managedVm.id);
+			await managedVm.start();
+			const workerStateDirectory = startOptions.zoneOverride?.gateway.stateDir;
+			if (workerStateDirectory === undefined) {
+				throw new Error('Worker task startup did not provide its state directory.');
+			}
+			await writeGatewayRuntimeRecord(workerStateDirectory, {
+				configPath: systemConfig.systemConfigPath,
+				controllerPort: systemConfig.host.controllerPort,
+				createdAt: '2026-07-11T17:00:00.000Z',
+				gateway: gatewayIdentity,
+				gatewayType: 'worker',
+				guestListenPort: 18_789,
+				ingressPort: 18_791,
+				processIdentity,
+				projectNamespace: systemConfig.host.projectNamespace,
+				qemuPid: 48_282,
+				schemaVersion: 2,
+				sessionLabel: `${systemConfig.host.projectNamespace}:${zone.id}:gateway`,
+				vmId: managedVm.id,
+				zoneId: zone.id,
+			});
+			return {
+				image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
+				ingress: { host: '127.0.0.1', port: 18_791 },
+				processSpec: {
+					bootstrapCommand: 'true',
+					startCommand: 'agent-vm-worker serve',
+					healthCheck: { type: 'http', port: 18_789, path: '/health' },
+					guestListenPort: 18_789,
+					logPath: '/tmp/worker.log',
+				},
+				terminateVm: async () => {
+					await terminateLiveManagedVm({
+						dependencies: managedVmKillDependencies,
+						target: {
+							hostPid: 48_282,
+							processIdentity,
+							vmId: managedVm.id,
+						},
+						vm: managedVm,
+					});
+				},
+				vm: managedVm,
+				vmOwnership,
+				zone,
+			};
+		});
+		await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-exact-worker-cleanup',
+				prompt: 'prove exact Worker cleanup',
+				repos: [],
+				context: {},
+			},
+			managedVmKillDependencies,
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: zone.id,
+		});
+
+		expect(orderedEvents).toEqual(['SIGTERM:48282', 'stock-close']);
 	});
 
 	it('writes effective worker config into per-task state during pre-start', async () => {
@@ -2056,8 +2132,8 @@ describe('worker-task-runner', () => {
 		expect(stopRepoResourceProvidersMock).not.toHaveBeenCalled();
 	});
 
-	it('reports Worker VM cleanup failure when close resolves with an incomplete receipt', async () => {
-		managedVmCloseMock.mockResolvedValueOnce(incompleteVmDestroyReceipt);
+	it('reports Worker VM cleanup failure when stock close rejects', async () => {
+		managedVmCloseMock.mockRejectedValueOnce(new Error('stock close failed'));
 		const onTaskFinished = vi.fn(async () => {});
 
 		await expect(
@@ -2073,7 +2149,7 @@ describe('worker-task-runner', () => {
 				zoneId: 'shravan',
 				onTaskFinished,
 			}),
-		).rejects.toThrow(/incomplete/u);
+		).rejects.toThrow(/did not prove exact destruction/u);
 
 		expect(managedVmCloseMock).toHaveBeenCalledOnce();
 		expect(onTaskFinished).not.toHaveBeenCalled();

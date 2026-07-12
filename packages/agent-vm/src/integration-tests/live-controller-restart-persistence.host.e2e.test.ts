@@ -2,25 +2,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import {
-	readManagedVmDestroyTarget,
-	readManagedVmOwnershipReservation,
-	type ManagedVm,
-	type ManagedVmDestroyReceiptV1,
-} from '@agent-vm/gondolin-adapter';
+import type { ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { startControllerHttpServer } from '../controller/http/controller-http-server.js';
-import type { VmCreationOwnership } from '../controller/vm-ownership/vm-creation-ownership.js';
-import { gatewayMembershipRecordSchema } from '../controller/vm-ownership/vm-ownership-contracts.js';
+import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
+import {
+	deleteGatewayRuntimeRecord,
+	loadGatewayRuntimeRecord,
+	writeGatewayRuntimeRecord,
+} from '../gateway/gateway-runtime-record.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
 } from '../testing/managed-vm-test-helpers.js';
 
 function createSystemConfig(
@@ -104,107 +101,142 @@ function createSystemConfig(
 	};
 }
 
+async function startManagedVmStub(): Promise<void> {}
+
+async function enableIngressStub(): Promise<{
+	close(): Promise<void>;
+	readonly host: string;
+	readonly port: number;
+}> {
+	return { close: async () => {}, host: '127.0.0.1', port: 18_791 };
+}
+
+function setIngressRoutesStub(): void {}
+
 async function createGatewayVmMock(
 	stateDirectory: string,
-	vmOwnership: VmCreationOwnership,
+	vmOwnership: GatewayVmLifecycleAuthority,
 ): Promise<ManagedVm> {
-	const reservation = await readManagedVmOwnershipReservation(
-		vmOwnership.ownershipReservation.reservationPath,
-	);
-	const destroyTarget = await readManagedVmDestroyTarget(
-		vmOwnership.ownershipReservation.reservationPath,
-	);
-	const targetExecutableName = path.basename(destroyTarget.runner.executable);
-	const createExactDestroyReceipt = async (): Promise<ManagedVmDestroyReceiptV1> => ({
-		...createCompleteVmDestroyReceipt(reservation.vmId, {
-			controllerEpoch: reservation.controllerEpoch,
-			parentGateway: reservation.parentGateway,
-			reservationId: reservation.reservationId,
-			role: reservation.role,
-		}),
-		requestedRunner: {
-			backend: destroyTarget.runner.backend,
-			discoveryIdentity: destroyTarget.runner.discoveryIdentity,
-			executableName: /^[A-Za-z0-9._+-]{1,128}$/u.test(targetExecutableName)
-				? targetExecutableName
-				: 'runner',
-			...(destroyTarget.runner.pid === undefined ? {} : { pid: destroyTarget.runner.pid }),
-			...(destroyTarget.runner.startCookie === undefined
-				? {}
-				: { startCookie: destroyTarget.runner.startCookie }),
-		},
+	const vmId = `gateway-${vmOwnership.gatewaySeed.gatewayEpochId}`;
+	let hostPid: number | null = 28_000;
+	const close = async (): Promise<void> => {
+		hostPid = null;
+	};
+	const start = startManagedVmStub;
+	const enableIngress = enableIngressStub;
+	const enableSsh: ManagedVm['enableSsh'] = async () => ({
+		close: async () => {},
+		command: 'ssh -i /tmp/gateway-key root@127.0.0.1 -p 19000',
+		host: '127.0.0.1',
+		identityFile: '/tmp/gateway-key',
+		port: 19_000,
+		serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		user: 'root',
 	});
-	const gatewayVm: ManagedVm = {
-		close: createExactDestroyReceipt,
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+	const exec: ManagedVm['exec'] = (command: string) => {
+		if (command === 'write-state persistence.txt persistent-value') {
+			fs.writeFileSync(path.join(stateDirectory, 'persistence.txt'), 'persistent-value', 'utf8');
+			return createManagedExecProcessStub();
+		}
+
+		if (command === 'read-state persistence.txt') {
+			return createManagedExecProcessStub({
+				stdout: fs.readFileSync(path.join(stateDirectory, 'persistence.txt'), 'utf8'),
+			});
+		}
+
+		if (command.includes('cat /agent-vm/logs/gateway-boot-latest.log')) {
+			return createManagedExecProcessStub({ stdout: 'gateway-log' });
+		}
+
+		return createManagedExecProcessStub();
+	};
+	const fsStub = createManagedVmFsStub();
+	const getHostPid = (): number | null => hostPid;
+	const setIngressRoutes = setIngressRoutesStub;
+	const vmInstance: ManagedVmInstance = {
+		close,
+		enableIngress,
 		enableSsh: async () => ({
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-			command: 'ssh root@127.0.0.1',
+			close: async () => {},
+			command: 'ssh -i /tmp/gateway-key root@127.0.0.1 -p 19000',
 			host: '127.0.0.1',
-			port: 19000,
+			identityFile: '/tmp/gateway-key',
+			port: 19_000,
 			user: 'root',
 		}),
-		exec: (command: string) => {
-			if (command === 'write-state persistence.txt persistent-value') {
-				fs.writeFileSync(path.join(stateDirectory, 'persistence.txt'), 'persistent-value', 'utf8');
-				return createManagedExecProcessStub();
-			}
-
-			if (command === 'read-state persistence.txt') {
-				return createManagedExecProcessStub({
-					stdout: fs.readFileSync(path.join(stateDirectory, 'persistence.txt'), 'utf8'),
-				});
-			}
-
-			if (command.includes('cat /agent-vm/logs/gateway-boot-latest.log')) {
-				return createManagedExecProcessStub({ stdout: 'gateway-log' });
-			}
-
-			return createManagedExecProcessStub();
-		},
-		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => destroyTarget,
-		getHostPid: () => 28_000,
-		getVmInstance: () => gatewayVm,
-		id: reservation.vmId,
-		setIngressRoutes: () => {},
+		exec,
+		fs: fsStub,
+		getHostPid,
+		id: vmId,
+		setIngressRoutes,
+		start,
 	};
+	const gatewayVm: ManagedVm = {
+		close,
+		enableIngress,
+		enableSsh,
+		exec,
+		fs: fsStub,
+		getHostPid,
+		getVmInstance: () => vmInstance,
+		id: vmId,
+		setIngressRoutes,
+		start,
+	};
+	vmOwnership.attachGatewayVm(vmId);
 	return gatewayVm;
 }
 
-function readGatewayMembershipStates(stateDirectory: string): readonly string[] {
-	const membershipDirectory = path.join(stateDirectory, 'vm-ownership', 'gateway-membership');
-	return fs
-		.readdirSync(membershipDirectory)
-		.filter((entryName) => entryName.endsWith('.json'))
-		.map((entryName) =>
-			gatewayMembershipRecordSchema.parse(
-				JSON.parse(fs.readFileSync(path.join(membershipDirectory, entryName), 'utf8')),
-			),
-		)
-		.map((record) => record.state)
-		.toSorted();
-}
-
 function createToolVmMock(identityFile: string): ManagedVm {
-	const toolVm: ManagedVm = {
-		close: async () => createCompleteVmDestroyReceipt('tool-vm-live-restart'),
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
+	let hostPid: number | null = 28_100;
+	const close = async (): Promise<void> => {
+		hostPid = null;
+	};
+	const start = startManagedVmStub;
+	const enableIngress = enableIngressStub;
+	const enableSsh: ManagedVm['enableSsh'] = async () => ({
+		close: async () => {},
+		command: 'ssh -i /tmp/tool-key sandbox@127.0.0.1 -p 19000',
+		host: '127.0.0.1',
+		identityFile,
+		port: 19_000,
+		serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		user: 'sandbox',
+	});
+	const exec: ManagedVm['exec'] = () => createManagedExecProcessStub();
+	const fsStub = createManagedVmFsStub();
+	const getHostPid = (): number | null => hostPid;
+	const setIngressRoutes = setIngressRoutesStub;
+	const vmInstance: ManagedVmInstance = {
+		close,
+		enableIngress,
 		enableSsh: async () => ({
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-			command: 'ssh sandbox@127.0.0.1',
+			close: async () => {},
+			command: 'ssh -i /tmp/tool-key sandbox@127.0.0.1 -p 19000',
 			host: '127.0.0.1',
 			identityFile,
 			port: 19_000,
 			user: 'sandbox',
 		}),
-		exec: () => createManagedExecProcessStub(),
-		fs: createManagedVmFsStub(),
-		getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-live-restart'),
-		getHostPid: () => 28_100,
-		getVmInstance: () => toolVm,
+		exec,
+		fs: fsStub,
+		getHostPid,
 		id: 'tool-vm-live-restart',
-		setIngressRoutes: () => {},
+		setIngressRoutes,
+		start,
+	};
+	const toolVm: ManagedVm = {
+		close,
+		enableIngress,
+		enableSsh,
+		exec,
+		fs: fsStub,
+		getHostPid,
+		getVmInstance: () => vmInstance,
+		id: 'tool-vm-live-restart',
+		setIngressRoutes,
+		start,
 	};
 	return toolVm;
 }
@@ -324,6 +356,30 @@ describe('live integration: controller restart persistence', () => {
 							zoneId: zone.id,
 						});
 						const gatewayVm = await createGatewayVmMock(stateDirectory, vmOwnership);
+						await gatewayVm.start();
+						const gatewayIdentity = vmOwnership.gatewayIdentity;
+						if (gatewayIdentity === undefined) {
+							throw new Error('Expected attached Gateway identity before runtime publication.');
+						}
+						await writeGatewayRuntimeRecord(stateDirectory, {
+							configPath: systemConfig.systemConfigPath,
+							controllerPort: systemConfig.host.controllerPort,
+							createdAt: new Date().toISOString(),
+							gateway: gatewayIdentity,
+							gatewayType: 'openclaw',
+							guestListenPort: 18_789,
+							ingressPort: 18_791,
+							processIdentity: {
+								command: 'qemu-system-aarch64 -m 1G',
+								lstart: 'Fri May 22 10:00:00 2026',
+							},
+							projectNamespace: systemConfig.host.projectNamespace,
+							qemuPid: gatewayVm.getHostPid() ?? 28_000,
+							schemaVersion: 2,
+							sessionLabel: `${systemConfig.host.projectNamespace}:${zone.id}:gateway`,
+							vmId: gatewayVm.id,
+							zoneId: zone.id,
+						});
 						gatewayVmIds.push(gatewayVm.id);
 						return {
 							image: {
@@ -341,6 +397,10 @@ describe('live integration: controller restart persistence', () => {
 								healthCheck: { type: 'http', port: 18789, path: '/' } as const,
 								logPath: '/agent-vm/logs/gateway-boot-latest.log',
 								startCommand: 'start-openclaw',
+							},
+							terminateVm: async () => {
+								await gatewayVm.close();
+								await deleteGatewayRuntimeRecord(stateDirectory);
 							},
 							vm: gatewayVm,
 							vmOwnership,
@@ -365,6 +425,10 @@ describe('live integration: controller restart persistence', () => {
 			stderr: '',
 			stdout: '',
 		});
+		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toMatchObject({
+			schemaVersion: 2,
+			vmId: gatewayVmIds[0],
+		});
 
 		const stopResponse = await fetch(`http://127.0.0.1:${controllerPort}/stop-controller`, {
 			method: 'POST',
@@ -377,11 +441,15 @@ describe('live integration: controller restart persistence', () => {
 		await currentServerClosed;
 		await runtime.close();
 		await expect(fetch(`http://127.0.0.1:${String(controllerPort)}/health`)).rejects.toThrow();
-		expect(readGatewayMembershipStates(stateDirectory)).toEqual(['destroyed']);
+		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
 
 		const restartedRuntime = await startRuntime();
 		expect(gatewayVmIds).toHaveLength(2);
 		expect(gatewayVmIds[1]).not.toBe(gatewayVmIds[0]);
+		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toMatchObject({
+			schemaVersion: 2,
+			vmId: gatewayVmIds[1],
+		});
 
 		const readResponse = await fetch(
 			`http://127.0.0.1:${controllerPort}/zones/shravan/execute-command`,
@@ -435,6 +503,6 @@ describe('live integration: controller restart persistence', () => {
 		expect(createLeaseResponse.status).toBe(404);
 
 		await restartedRuntime.close();
-		expect(readGatewayMembershipStates(stateDirectory)).toEqual(['destroyed', 'destroyed']);
+		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
 	});
 });

@@ -1,10 +1,7 @@
-import { randomUUID } from 'node:crypto';
-
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import { cleanupRecordedToolVmRuntimes as cleanupRecordedToolVmRuntimesDefault } from '../controller/leases/tool-vm-recovery.js';
 import { acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault } from '../controller/vm-ownership/controller-ownership-lock.js';
-import { createGatewayOwnershipCoordinator } from '../controller/vm-ownership/gateway-ownership-coordinator.js';
-import { vmOwnershipDeploymentIdentityForSystemConfig } from '../controller/vm-ownership/vm-ownership-deployment-identity.js';
-import { standaloneVmOwnershipReservationRoot } from '../controller/vm-ownership/vm-ownership-reservation-inventory.js';
+import { cleanupRecordedGatewayRuntime as cleanupRecordedGatewayRuntimeDefault } from '../gateway/gateway-recovery.js';
 
 export interface ControllerOfflineCleanupResult {
 	readonly results: readonly {
@@ -58,42 +55,64 @@ async function assertControllerUnavailableForOfflineCleanup(controllerPort: numb
 	}
 }
 
-interface ControllerOfflineCleanupDependencies {
+export interface RecordedVmTreeReconciliationDependencies {
+	readonly cleanupRecordedGatewayRuntime?: typeof cleanupRecordedGatewayRuntimeDefault;
+	readonly cleanupRecordedToolVmRuntimes?: typeof cleanupRecordedToolVmRuntimesDefault;
+}
+
+interface ControllerOfflineCleanupDependencies extends RecordedVmTreeReconciliationDependencies {
 	readonly acquireControllerOwnershipLock?: typeof acquireControllerOwnershipLockDefault;
 	readonly assertControllerUnavailableForOfflineCleanup?: (controllerPort: number) => Promise<void>;
-	readonly reconcileExactVmOwnership?: (options: {
+	readonly cleanupRecordedVmTree?: (options: {
 		readonly systemConfig: LoadedSystemConfig;
 		readonly zoneId: string;
 	}) => Promise<void>;
 }
 
-async function reconcileExactVmOwnership(options: {
+export async function reconcileRecordedVmTree(options: {
+	readonly dependencies?: RecordedVmTreeReconciliationDependencies;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneId: string;
 }): Promise<void> {
-	const coordinator = createGatewayOwnershipCoordinator({
-		controllerEpoch: `offline-cleanup-${randomUUID()}`,
-		createId: randomUUID,
-		deploymentIdentity: vmOwnershipDeploymentIdentityForSystemConfig(options.systemConfig),
-		nowMs: Date.now,
-		standaloneReservationRoot: standaloneVmOwnershipReservationRoot(
-			options.systemConfig.runtimeDir,
-		),
-		stateDirectoryForZone: (zoneId): string => {
-			const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
-			if (!zone) {
-				throw new Error(`Unknown zone '${zoneId}' while resolving VM ownership state.`);
-			}
-			return zone.gateway.stateDir;
-		},
-	});
 	const zone = options.systemConfig.zones.find((candidate) => candidate.id === options.zoneId);
 	if (!zone) {
 		throw new Error(`Unknown zone '${options.zoneId}'.`);
 	}
-	await coordinator.reconcileControllerStartup(zone.gateway.type === 'openclaw' ? [zone.id] : [], {
-		standaloneZoneId: zone.id,
+	if (zone.gateway.type !== 'openclaw') {
+		return;
+	}
+
+	const cleanupScope = {
+		expectedConfigPath: options.systemConfig.systemConfigPath,
+		expectedControllerPort: options.systemConfig.host.controllerPort,
+		mode: 'offline-cleanup' as const,
+		projectNamespace: options.systemConfig.host.projectNamespace,
+		stateDir: zone.gateway.stateDir,
+		zoneId: zone.id,
+	};
+	const toolCleanup = await (
+		options.dependencies?.cleanupRecordedToolVmRuntimes ?? cleanupRecordedToolVmRuntimesDefault
+	)({
+		...cleanupScope,
+		tcpBasePort: options.systemConfig.tcpPool.basePort,
 	});
+	if (toolCleanup.warnings.length > 0 || toolCleanup.quarantinedCount > 0) {
+		throw new Error(
+			`Offline Tool VM cleanup for zone '${zone.id}' did not complete safely: ${toolCleanup.warnings.join('; ') || `${String(toolCleanup.quarantinedCount)} runtime record(s) remain quarantined`}`,
+		);
+	}
+
+	const gatewayCleanup = await (
+		options.dependencies?.cleanupRecordedGatewayRuntime ?? cleanupRecordedGatewayRuntimeDefault
+	)({
+		...cleanupScope,
+		configuredIngressPort: zone.gateway.port,
+	});
+	if (gatewayCleanup.cleanupWarning !== undefined) {
+		throw new Error(
+			`Offline Gateway cleanup for zone '${zone.id}' did not complete safely: ${gatewayCleanup.cleanupWarning}`,
+		);
+	}
 }
 
 export async function runControllerOfflineCleanup(
@@ -124,10 +143,25 @@ export async function runControllerOfflineCleanup(
 			)(options.systemConfig.host.controllerPort);
 		}
 
-		await (dependencies.reconcileExactVmOwnership ?? reconcileExactVmOwnership)({
-			systemConfig: options.systemConfig,
-			zoneId: zone.id,
-		});
+		if (dependencies.cleanupRecordedVmTree) {
+			await dependencies.cleanupRecordedVmTree({
+				systemConfig: options.systemConfig,
+				zoneId: zone.id,
+			});
+		} else {
+			await reconcileRecordedVmTree({
+				dependencies: {
+					...(dependencies.cleanupRecordedGatewayRuntime
+						? { cleanupRecordedGatewayRuntime: dependencies.cleanupRecordedGatewayRuntime }
+						: {}),
+					...(dependencies.cleanupRecordedToolVmRuntimes
+						? { cleanupRecordedToolVmRuntimes: dependencies.cleanupRecordedToolVmRuntimes }
+						: {}),
+				},
+				systemConfig: options.systemConfig,
+				zoneId: zone.id,
+			});
+		}
 		cleanupResult = {
 			results: [
 				{

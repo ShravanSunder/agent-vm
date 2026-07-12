@@ -22,6 +22,10 @@ import {
 import type { Socket } from 'socket.io';
 
 import {
+	createGatewayControlAdmissionPressureE2eActuator,
+	registerGatewayControlAdmissionPressureE2eActuator,
+} from './gateway-control-admission-pressure-e2e-testing.js';
+import {
 	buildGatewayControlAdmissionFailureResult,
 	createGatewayControlSessionAdmissionRuntime,
 	measureGatewayControlApplicationMessageBytes,
@@ -88,6 +92,13 @@ export function createGatewayControlApplicationMessageRuntime(
 	ports: GatewayControlApplicationMessageRuntimePorts,
 ): GatewayControlApplicationMessageRuntime {
 	let admissionRuntime = createGatewayControlSessionAdmissionRuntime();
+	registerGatewayControlAdmissionPressureE2eActuator(
+		createGatewayControlAdmissionPressureE2eActuator({
+			getAcceptedSession: () => ports.getAcceptedSession(),
+			getEgress: () => admissionRuntime.egress,
+			getIngress: () => admissionRuntime.ingress,
+		}),
+	);
 
 	const submitGatewayControlEgress = async (optionsForEgress: {
 		readonly classification: Extract<

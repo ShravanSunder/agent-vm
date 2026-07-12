@@ -7,17 +7,19 @@ import { type AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { type ManagedVm } from '@agent-vm/gondolin-adapter';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
 	testExports as toolVmWriteReadE2eToolTestExports,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { ControlSessionClient } from '../controller/control-session/control-session-client.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type {
+	OpenClawGatewayProcessEpochBinding,
+	OpenClawGatewayProcessEpochOwner,
+} from '../gateway/openclaw-gateway-process-epoch-owner.js';
 import { stableTelemetryHash } from '../observability/health-event-telemetry.js';
 import {
 	canRunGondolinE2e,
@@ -614,7 +616,7 @@ function activeLeaseCountFromControllerStatus(
 	return zoneStatus.activeLeaseCount;
 }
 
-async function restartOpenClawGatewayProcess(gatewayVm: ManagedVm): Promise<void> {
+async function terminateOpenClawGatewayProcess(gatewayVm: ManagedVm): Promise<void> {
 	const result = await gatewayVm.exec(`
 set -eu
 port_hex="$(printf '%04X' 18789)"
@@ -634,63 +636,77 @@ if [ -z "$gateway_pid" ]; then
   exit 1
 fi
 kill -KILL "$gateway_pid"
-for _attempt in $(seq 1 90); do
-  readyz_code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/readyz 2>/dev/null || true)"
-  if [ "$readyz_code" = "200" ]; then
-    echo "supervisor restarted openclaw gateway after pid $gateway_pid"
-    exit 0
-  fi
-  sleep 1
-done
-echo "openclaw gateway did not restart after killing pid $gateway_pid" >&2
-tail -n 80 /agent-vm/logs/gateway-boot-latest.log >&2 || true
-exit 1
+echo "terminated openclaw gateway pid $gateway_pid"
 `);
 	if (result.exitCode !== 0) {
 		throw new Error(
-			`OpenClaw gateway process restart failed with exit ${String(result.exitCode)}.\nstdout:\n${
+			`OpenClaw gateway process termination failed with exit ${String(result.exitCode)}.\nstdout:\n${
 				result.stdout
 			}\nstderr:\n${result.stderr}`,
 		);
 	}
 }
 
-async function waitForControlSessionReconnected(options: {
-	readonly controlSession: ControlSessionClient;
-	readonly minimumHelloCount: number;
+async function waitForSuccessorProcessBinding(options: {
+	readonly previousBinding: OpenClawGatewayProcessEpochBinding;
+	readonly processEpochOwner: OpenClawGatewayProcessEpochOwner;
 	readonly timeoutMs: number;
-}): Promise<void> {
+}): Promise<OpenClawGatewayProcessEpochBinding> {
 	const deadlineMs = Date.now() + options.timeoutMs;
 	while (Date.now() < deadlineMs) {
-		const diagnostics = options.controlSession.getDiagnostics();
+		const currentBinding = options.processEpochOwner.getCurrentBinding();
+		const diagnostics = currentBinding.controlSession.getDiagnostics();
 		if (
+			currentBinding.material.processEpoch !== options.previousBinding.material.processEpoch &&
+			currentBinding.controlSession !== options.previousBinding.controlSession &&
+			diagnostics.accepted &&
 			diagnostics.connected &&
-			diagnostics.helloCount >= options.minimumHelloCount &&
+			diagnostics.ready &&
 			diagnostics.lastHelloResponse?.outcome === 'accepted' &&
 			diagnostics.transportName === 'websocket'
 		) {
-			return;
+			return currentBinding;
 		}
 		await waitForProtocolRetryInterval(1_000);
 	}
+	const currentBinding = options.processEpochOwner.getCurrentBinding();
 	throw new Error(
-		`Timed out waiting for control-session accepted reconnect hello count >= ${String(options.minimumHelloCount)}; diagnostics: ${JSON.stringify(options.controlSession.getDiagnostics())}`,
+		`Timed out waiting for a distinct accepted OpenClaw process binding after '${options.previousBinding.material.processEpoch}'; current process '${currentBinding.material.processEpoch}', diagnostics: ${JSON.stringify(currentBinding.controlSession.getDiagnostics())}`,
 	);
 }
 
 async function runRepeatedGatewayFlaps(options: {
-	readonly controlSession: ControlSessionClient;
 	readonly flapCount: number;
+	readonly getGatewayStartCount: () => number;
 	readonly gatewayVm: ManagedVm;
+	readonly processEpochOwner: OpenClawGatewayProcessEpochOwner;
 }): Promise<void> {
+	const initialGatewayStartCount = options.getGatewayStartCount();
+	const initialGatewayVmId = options.gatewayVm.id;
 	for (let flapIndex = 0; flapIndex < options.flapCount; flapIndex += 1) {
-		const helloCountBeforeFlap = options.controlSession.getDiagnostics().helloCount;
-		await restartOpenClawGatewayProcess(options.gatewayVm);
-		await waitForControlSessionReconnected({
-			controlSession: options.controlSession,
-			minimumHelloCount: helloCountBeforeFlap + 1,
+		const previousBinding = options.processEpochOwner.getCurrentBinding();
+		await terminateOpenClawGatewayProcess(options.gatewayVm);
+		const successorBinding = await waitForSuccessorProcessBinding({
+			previousBinding,
+			processEpochOwner: options.processEpochOwner,
 			timeoutMs: 120_000,
 		});
+		expect(previousBinding.controlSession.getDiagnostics()).toMatchObject({
+			accepted: false,
+			connected: false,
+			ready: false,
+		});
+		expect(successorBinding.material.processEpoch).not.toBe(previousBinding.material.processEpoch);
+		expect(successorBinding.controlSession).not.toBe(previousBinding.controlSession);
+		expect(successorBinding.controlSession.getDiagnostics()).toMatchObject({
+			accepted: true,
+			connected: true,
+			lastHelloResponse: { outcome: 'accepted' },
+			ready: true,
+			transportName: 'websocket',
+		});
+		expect(options.gatewayVm.id).toBe(initialGatewayVmId);
+		expect(options.getGatewayStartCount()).toBe(initialGatewayStartCount);
 	}
 }
 
@@ -1025,7 +1041,8 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 	let project: OpenClawE2eProject | undefined;
 	let gatewayVm: ManagedVm | undefined;
 	let gatewayGuestListenPort: number | undefined;
-	let gatewayControlSession: ControlSessionClient | undefined;
+	let gatewayProcessEpochOwner: OpenClawGatewayProcessEpochOwner | undefined;
+	let gatewayStartCount = 0;
 	const observedLeaseRequests: ObservedLeaseCreateRequest[] = [];
 
 	beforeAll(async () => {
@@ -1062,15 +1079,9 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			injection: 'env',
 			source: 'environment',
 		};
-		systemZone.secrets[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV] = {
+		systemZone.secrets[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV] = {
 			audience: 'gateway',
-			envVar: AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV,
-			injection: 'env',
-			source: 'environment',
-		};
-		systemZone.secrets[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV] = {
-			audience: 'gateway',
-			envVar: AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
+			envVar: AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
 			injection: 'env',
 			source: 'environment',
 		};
@@ -1079,8 +1090,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			'OPENAI_API_KEY',
 			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV,
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
 		];
 		const zoneFilesDir = systemZone.gateway.zoneFilesDir;
 		await Promise.all(
@@ -1110,8 +1120,9 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			secrets: {
 				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV]: '1',
 				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV]: toolVmWriteReadProbeKey,
-				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_AGENT_ID_ENV]: betaAgentId,
-				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SESSION_KEY_ENV]: toolVmWriteReadProbeSessionKey,
+				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV]: JSON.stringify([
+					{ agentId: betaAgentId, sessionKey: toolVmWriteReadProbeSessionKey },
+				]),
 				GITHUB_TOKEN: 'unused-subagent-smoke-token',
 				OPENAI_API_KEY: 'subagent-smoke-mock-openai-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
@@ -1119,9 +1130,10 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 			},
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
+				gatewayStartCount += 1;
 				gatewayVm = result.vm;
 				gatewayGuestListenPort = result.processSpec.guestListenPort;
-				gatewayControlSession = result.controlSession;
+				gatewayProcessEpochOwner = result.openClawProcessEpochOwner;
 				result.vm.setIngressRoutes([
 					{
 						port: result.processSpec.guestListenPort,
@@ -1148,19 +1160,20 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 		}
 	});
 
-	it('keeps Tool VM subagent SSH path working after repeated control-session flaps', async () => {
+	it('keeps Tool VM subagent SSH path working after repeated process recoveries', async () => {
 		if (
 			gatewayVm === undefined ||
 			gatewayGuestListenPort === undefined ||
-			gatewayControlSession === undefined ||
+			gatewayProcessEpochOwner === undefined ||
 			harness === undefined
 		) {
 			throw new Error('Expected smoke harness to be initialized.');
 		}
 		await runRepeatedGatewayFlaps({
-			controlSession: gatewayControlSession,
 			flapCount: positiveIntegerFromEnv('AGENT_VM_OPENCLAW_FLAP_COUNT', defaultFlapCount),
+			getGatewayStartCount: () => gatewayStartCount,
 			gatewayVm,
+			processEpochOwner: gatewayProcessEpochOwner,
 		});
 		await startMockOpenAiServerInGateway({
 			gatewayVm,

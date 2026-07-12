@@ -6,12 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
 	AGENT_VM_PACKAGE_NAMES,
-	GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH,
-	GONDOLIN_EXACT_VM_PATCH_SHA256,
 	OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES,
 	TOOL_VM_TARBALL_PACKAGE_NAMES,
-	assertGondolinPatchIdentity,
-	calculateGondolinPatchSha256,
 	createBetaTarballSyncPlan,
 	listStaleLocalOverlayFileNames,
 	migrateLegacyOpenClawPackageOverrides,
@@ -48,20 +44,6 @@ async function writeJsonFixture(filePath: string, value: unknown): Promise<void>
 }
 
 describe('beta tarball sync planning', () => {
-	it('pins the default Gondolin patch identity to the current workspace patch', async () => {
-		const patchBytes = await readFile(
-			new URL(`../${GONDOLIN_EXACT_VM_PATCH_RELATIVE_PATH}`, import.meta.url),
-		);
-
-		expect(calculateGondolinPatchSha256(patchBytes)).toBe(GONDOLIN_EXACT_VM_PATCH_SHA256);
-	});
-
-	it('rejects Gondolin patch bytes that do not match the frozen identity', () => {
-		expect(() => assertGondolinPatchIdentity(Buffer.from('wrong patch'), '0'.repeat(64))).toThrow(
-			/Gondolin exact-VM patch SHA-256 mismatch/u,
-		);
-	});
-
 	it('pins the host install and every workspace override to one tarball directory', () => {
 		const plan = createBetaTarballSyncPlan({
 			cacheKey: 'abc123ef',
@@ -107,8 +89,8 @@ describe('beta tarball sync planning', () => {
 		});
 
 		expect(workspaceYaml).toContain('packages: []');
-		expect(workspaceYaml).toContain('patchedDependencies:');
-		expect(workspaceYaml).toContain("'@earendil-works/gondolin@0.12.0': patches/");
+		expect(workspaceYaml).not.toContain('patchedDependencies:');
+		expect(workspaceYaml).not.toContain('@earendil-works/gondolin');
 		expect(workspaceYaml).toContain('  - "@google/genai"');
 		expect(workspaceYaml).toContain('  - "openclaw"');
 		expect(workspaceYaml).toContain(
@@ -250,12 +232,8 @@ describe('beta tarball deployment artifact refresh', () => {
 			'tool-vms',
 			'default',
 		);
-		const gondolinPatchFilePath = path.join(workspaceDirectory, 'gondolin-exact-vm.patch');
-		const gondolinPatchBytes = Buffer.from('test Gondolin exact-VM patch bytes');
-		await writeFile(gondolinPatchFilePath, gondolinPatchBytes);
 		const plan = createBetaTarballSyncPlan({
 			cacheKey: 'newhash01',
-			gondolinPatchSha256: calculateGondolinPatchSha256(gondolinPatchBytes),
 			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-newhash01',
 			version: '0.0.110',
 		});
@@ -319,7 +297,6 @@ describe('beta tarball deployment artifact refresh', () => {
 
 		await refreshBetaDeploymentTarballArtifacts({
 			deploymentDirectory,
-			gondolinPatchFilePath,
 			managedOpenClawGatewayPackageOverrides: {
 				npm: [],
 				openclaw: [],
@@ -346,13 +323,6 @@ describe('beta tarball deployment artifact refresh', () => {
 			path.join(openClawOverlayDirectory, 'local-agent-vm'),
 		);
 		const toolVmLocalFileNames = await readdir(path.join(toolVmOverlayDirectory, 'local-agent-vm'));
-		const deploymentPatchBytes = await readFile(
-			path.join(deploymentDirectory, plan.gondolinPatch.workspaceRelativePath),
-		);
-		const gatewayPatchBytes = await readFile(
-			path.join(openClawOverlayDirectory, 'local-agent-vm', plan.gondolinPatch.overlayFileName),
-		);
-
 		expect(packageJson).toContain(
 			'../agent-vm/tmp/beta-tarballs-newhash01/agent-vm-agent-vm-0.0.110.tgz',
 		);
@@ -360,8 +330,8 @@ describe('beta tarball deployment artifact refresh', () => {
 		expect(workspaceYaml).toContain(
 			"'@agent-vm/openclaw-agent-vm-plugin': file:../agent-vm/tmp/beta-tarballs-newhash01/agent-vm-openclaw-agent-vm-plugin-0.0.110.tgz",
 		);
-		expect(calculateGondolinPatchSha256(deploymentPatchBytes)).toBe(plan.gondolinPatch.sha256);
-		expect(calculateGondolinPatchSha256(gatewayPatchBytes)).toBe(plan.gondolinPatch.sha256);
+		expect(workspaceYaml).not.toContain('patchedDependencies:');
+		expect(openClawOverlayJson).not.toContain('.patch');
 		expect(openClawOverlayJson).toContain(
 			'local-agent-vm/agent-vm-openclaw-agent-vm-plugin-0.0.110-newhash01.tgz',
 		);
@@ -453,13 +423,11 @@ describe('openclaw gateway overlay rendering', () => {
 					`local-agent-vm/${packageName.replace('@agent-vm/', 'agent-vm-')}-0.0.82-abc123ef.tgz`,
 			),
 		);
-		expect(overlay.copy.at(-1)?.from).toBe(`local-agent-vm/${plan.gondolinPatch.overlayFileName}`);
 		expect(overlay.runAfterBase).toEqual([
 			'mkdir -p /opt/agent-vm/local-packages',
 			expect.stringContaining(
 				'"@agent-vm/gateway-interface": "file:/tmp/agent-vm-gateway-interface-0.0.82-abc123ef.tgz"',
 			),
-			expect.stringContaining("'@earendil-works/gondolin@0.12.0': /tmp/"),
 			'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
 			expect.stringContaining(
 				'ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin',
@@ -474,8 +442,8 @@ describe('openclaw gateway overlay rendering', () => {
 		);
 		expect(overlayJson).toContain('@agent-vm/agent-portal-sdk');
 		expect(overlayJson).toContain('file:/tmp/agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz');
-		expect(overlayJson).toContain('@earendil-works/gondolin@0.12.0');
-		expect(overlayJson).toContain('.patch');
+		expect(overlayJson).not.toContain('@earendil-works/gondolin@0.12.0');
+		expect(overlayJson).not.toContain('.patch');
 		expect(overlayJson).not.toContain('npm install --prefix');
 		expect(overlayJson).not.toContain('pnpm add -g');
 		expect(overlayJson).not.toContain('rm -rf');

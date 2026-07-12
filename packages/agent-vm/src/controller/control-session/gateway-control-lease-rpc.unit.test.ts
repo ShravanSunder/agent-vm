@@ -9,20 +9,19 @@ import {
 	type GatewayControlLeaseSnapshot,
 } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
-import type { VmDestroyReceiptV1 } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
-	createCompleteVmDestroyReceipt,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
-	createTestVmDestroyTarget,
-	createTestVmOwnershipReservationReference,
 } from '../../testing/managed-vm-test-helpers.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
-import type { GatewayOwnershipCoordinator } from '../vm-ownership/gateway-ownership-coordinator.js';
+import type {
+	GatewayOwnershipCoordinator,
+	ToolVmMembershipHandle,
+} from '../vm-ownership/gateway-ownership-coordinator.js';
 import {
 	gatewayIdentitiesEqual,
 	type GatewayEpochIdentity,
@@ -225,24 +224,6 @@ async function executeLeaseSemanticMutation(
 
 const TEST_TOOL_VM_KNOWN_HOSTS_LINE = `tool-0.vm.host ${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}`;
 
-function createMatchingToolVmDestroyReceipt(): VmDestroyReceiptV1 {
-	return {
-		...createCompleteVmDestroyReceipt('tool-vm-1', {
-			controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
-			parentGateway: {
-				epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
-				vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
-			},
-			role: 'tool',
-		}),
-		requestedRunner: {
-			backend: 'qemu',
-			discoveryIdentity: 'agent-vm-test:tool-vm-1',
-			executableName: 'qemu-system-aarch64',
-		},
-	};
-}
-
 function refuseUnexpectedGatewayOwnershipOperation(): never {
 	throw new Error('unexpected Gateway ownership operation in lease RPC test');
 }
@@ -251,24 +232,8 @@ function createOwnershipCoordinatorStub(
 	currentGateway: GatewayEpochIdentity = TEST_GATEWAY_EPOCH,
 	observedExpectedGateways: GatewayEpochIdentity[] = [],
 ): GatewayOwnershipCoordinator {
-	const ownershipReservation = createTestVmOwnershipReservationReference('tool-vm-1', {
-		controllerEpoch: currentGateway.controllerEpoch,
-		parentGateway: {
-			epoch: currentGateway.gatewayEpochId,
-			vmId: currentGateway.gatewayVmId,
-		},
-		role: 'tool',
-	});
-	const verifiedDestroyTarget = createTestVmDestroyTarget('tool-vm-1', {
-		controllerEpoch: currentGateway.controllerEpoch,
-		parentGateway: {
-			epoch: currentGateway.gatewayEpochId,
-			vmId: currentGateway.gatewayVmId,
-		},
-		role: 'tool',
-	});
 	return {
-		beginGatewayEpoch: async () => refuseUnexpectedGatewayOwnershipOperation(),
+		beginGatewayEpoch: () => refuseUnexpectedGatewayOwnershipOperation(),
 		admitProvisionalToolVm: vi.fn(
 			(
 				options: Parameters<GatewayOwnershipCoordinator['admitProvisionalToolVm']>[0],
@@ -277,59 +242,42 @@ function createOwnershipCoordinatorStub(
 				if (!gatewayIdentitiesEqual(currentGateway, options.expectedGateway)) {
 					throw new Error('Tool VM admission refused a stale Gateway VM epoch.');
 				}
+				let state: ReturnType<ToolVmMembershipHandle['snapshot']>['state'] = 'provisional';
+				let toolVmId: string | undefined;
 				return {
-					ready: Promise.resolve({
-						destructionIdentity: {
-							reservationId: verifiedDestroyTarget.reservationId,
-							reservationPath: verifiedDestroyTarget.reservationPath,
-							vmId: verifiedDestroyTarget.vmId,
-						},
-						ownershipReservation,
-						verifiedDestroyTarget,
+					agentId: options.agentId,
+					leafId: options.leafId,
+					attachToolVm(attachedToolVmId): void {
+						toolVmId = attachedToolVmId;
+					},
+					beginDestroying(): void {
+						state = 'destroying';
+					},
+					commitCurrent(): void {
+						state = 'current';
+					},
+					recordDestroyed(): void {
+						state = 'destroyed';
+					},
+					recordUnavailable(): void {
+						state = 'owner-unsafe';
+					},
+					snapshot: () => ({
+						agentId: options.agentId,
+						leafId: options.leafId,
+						state,
+						...(toolVmId === undefined ? {} : { toolVmId }),
 					}),
-					commitCurrent: async () => {},
-					destroyDetached: async () => createMatchingToolVmDestroyReceipt(),
-					destroyLive: async (closeLiveVm) => await closeLiveVm(),
 				};
 			},
 		),
-		destroyGatewayDetached: async () => refuseUnexpectedGatewayOwnershipOperation(),
-		recordGatewayDestroyReceipt: async () => refuseUnexpectedGatewayOwnershipOperation(),
-		recordGatewayDestroyUnavailable: async () => refuseUnexpectedGatewayOwnershipOperation(),
-		reconcileControllerStartup: async () => {},
+		recordGatewayDestroyUnavailable: () => refuseUnexpectedGatewayOwnershipOperation(),
 		resolveGatewayEpoch: () => currentGateway,
+		retireGateway: async () => refuseUnexpectedGatewayOwnershipOperation(),
 		sealGatewayEpoch: () => refuseUnexpectedGatewayOwnershipOperation(),
+		snapshotGateway: () => refuseUnexpectedGatewayOwnershipOperation(),
 	};
 }
-
-const incompleteVmDestroyReceipt = {
-	contractVersion: 1,
-	reservationId: 'reservation-tool-vm-1',
-	vmId: 'tool-vm-1',
-	controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
-	parentGateway: {
-		vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
-		epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
-	},
-	role: 'tool',
-	requestedRunner: {
-		backend: 'qemu',
-		executableName: 'qemu-system-aarch64',
-		discoveryIdentity: 'runner-incomplete',
-	},
-	complete: false,
-	completedAt: '2026-07-10T00:00:00.000Z',
-	resources: {
-		exactRunner: { status: 'unproven', reason: 'runner-resistant' },
-		ingressListener: { status: 'already-absent' },
-		ingressSockets: { status: 'already-absent' },
-		sshListener: { status: 'destroyed' },
-		sshSessions: { status: 'destroyed' },
-		sessionIpc: { status: 'already-absent' },
-		qmp: { status: 'destroyed' },
-		disposableStorage: { status: 'destroyed' },
-	},
-} satisfies VmDestroyReceiptV1;
 
 function withCallerContextPayload<TPayload>(
 	payload: TPayload,
@@ -350,23 +298,18 @@ function withCallerContextPayload<TPayload>(
 function createManagedVmStub(
 	options: {
 		readonly closeError?: Error;
-		readonly closeReceipts?: readonly VmDestroyReceiptV1[];
+		readonly closeErrors?: readonly (Error | null)[];
 		readonly isLive?: () => boolean;
 		readonly omitServerHostKey?: boolean;
 		readonly serverHostKeyOverride?: unknown;
 	} = {},
 ): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
-		const destroyIdentity = {
-			controllerEpoch: TEST_GATEWAY_EPOCH.controllerEpoch,
-			parentGateway: {
-				epoch: TEST_GATEWAY_EPOCH.gatewayEpochId,
-				vmId: TEST_GATEWAY_EPOCH.gatewayVmId,
-			},
-			role: 'tool' as const,
-		};
-		let closeReceiptIndex = 0;
+		let closeAttemptIndex = 0;
+		let hostPidReadCount = 0;
 		const sshAccess = {
+			close: vi.fn(async () => {}),
+			command: 'ssh sandbox@127.0.0.1',
 			host: '127.0.0.1',
 			identityFile: '/tmp/tool-vm-key',
 			port: 19000,
@@ -383,14 +326,17 @@ function createManagedVmStub(
 				if (options.closeError !== undefined) {
 					throw options.closeError;
 				}
-				const configuredReceipt = options.closeReceipts?.[closeReceiptIndex];
-				closeReceiptIndex += 1;
-				if (configuredReceipt !== undefined) {
-					return configuredReceipt;
+				const configuredError = options.closeErrors?.[closeAttemptIndex];
+				closeAttemptIndex += 1;
+				if (configuredError !== undefined && configuredError !== null) {
+					throw configuredError;
 				}
-				return createMatchingToolVmDestroyReceipt();
 			}),
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableIngress: vi.fn(async () => ({
+				close: vi.fn(async () => {}),
+				host: '127.0.0.1',
+				port: 18791,
+			})),
 			enableSsh: vi.fn(async () => sshAccess),
 			exec: vi.fn(() =>
 				options.isLive?.() === false
@@ -398,11 +344,14 @@ function createManagedVmStub(
 					: createManagedExecProcessStub(),
 			),
 			fs: createManagedVmFsStub(),
-			getDestroyTarget: () => createTestVmDestroyTarget('tool-vm-1', destroyIdentity),
-			getHostPid: () => 12345,
+			getHostPid: () => {
+				hostPidReadCount += 1;
+				return hostPidReadCount === 1 ? 12345 : null;
+			},
 			getVmInstance: () => vm,
 			id: 'tool-vm-1',
 			setIngressRoutes: vi.fn(),
+			start: vi.fn(async () => {}),
 		};
 		return vm;
 	});
@@ -411,7 +360,7 @@ function createManagedVmStub(
 function createTestLeaseManager(
 	options: {
 		readonly closeError?: Error;
-		readonly closeReceipts?: readonly VmDestroyReceiptV1[];
+		readonly closeErrors?: readonly (Error | null)[];
 		readonly createManagedVm?: Parameters<typeof createLeaseManager>[0]['createManagedVm'];
 		readonly isLive?: () => boolean;
 		readonly leaseIds?: readonly string[];
@@ -434,7 +383,7 @@ function createTestLeaseManager(
 			options.createManagedVm ??
 			createManagedVmStub({
 				...(options.closeError === undefined ? {} : { closeError: options.closeError }),
-				...(options.closeReceipts === undefined ? {} : { closeReceipts: options.closeReceipts }),
+				...(options.closeErrors === undefined ? {} : { closeErrors: options.closeErrors }),
 				...(options.isLive === undefined ? {} : { isLive: options.isLive }),
 				...(options.omitServerHostKey === undefined
 					? {}
@@ -444,7 +393,15 @@ function createTestLeaseManager(
 					: { serverHostKeyOverride: options.serverHostKeyOverride }),
 			}),
 		deleteToolVmRuntimeRecord: vi.fn(async () => {}),
+		managedVmKillDependencies: {
+			isProcessAlive: () => false,
+			killProcess: vi.fn(),
+			readProcessCommand: async () => null,
+			readProcessIdentity: async () => null,
+			sleep: async () => {},
+		},
 		now: options.now ?? (() => 1_000),
+		readTcpListenPortOwner: async () => null,
 		ownershipCoordinator: options.ownershipCoordinator ?? createOwnershipCoordinatorStub(),
 		projectNamespace: 'gateway-control-lease-rpc-tests',
 		readProcessIdentity: async () => ({
@@ -1797,7 +1754,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 	it('keeps releasing authority fenced until exact retry permits one successor', async () => {
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const leaseManager = createTestLeaseManager({
-			closeReceipts: [incompleteVmDestroyReceipt, createMatchingToolVmDestroyReceipt()],
+			closeErrors: [new Error('incomplete exact destruction'), null],
 			leaseIds: ['lease-old', 'lease-new', 'lease-unexpected'],
 			tcpPool,
 		});

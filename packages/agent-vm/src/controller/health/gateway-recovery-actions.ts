@@ -23,6 +23,7 @@ export type GatewayRecoveryDecisionAction =
 				| 'recovery-in-flight'
 				| 'recovery-missing-source-key'
 				| 'recovery-needs-corroboration'
+				| 'recovery-stabilizing'
 				| 'recovery-unobserved'
 				| 'recovery-within-grace'
 				| 'channel-provider-unrecoverable'
@@ -106,6 +107,8 @@ function classifyNoRecoveryReason(
 			return 'recovery-missing-source-key';
 		case 'needs-corroboration':
 			return 'recovery-needs-corroboration';
+		case 'stabilizing':
+			return 'recovery-stabilizing';
 		case 'unobserved':
 			return 'recovery-unobserved';
 		case 'within-grace':
