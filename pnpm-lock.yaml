@@ -66,12 +66,15 @@ importers:
       '@agent-vm/gateway-control-contracts':
         specifier: workspace:*
         version: link:../gateway-control-contracts
-      '@agent-vm/gateway-interface':
+      '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
-        version: link:../gateway-interface
-      '@agent-vm/gondolin-adapter':
+        version: link:../gateway-lifecycle
+      '@agent-vm/gondolin-vm-adapter':
         specifier: workspace:*
-        version: link:../gondolin-adapter
+        version: link:../gondolin-vm-adapter
+      '@agent-vm/managed-vm':
+        specifier: workspace:*
+        version: link:../managed-vm
       '@agent-vm/mcp-portal':
         specifier: workspace:*
         version: link:../mcp-portal
@@ -157,9 +160,9 @@ importers:
       '@agent-vm/control-protocol-contracts':
         specifier: workspace:*
         version: link:../control-protocol-contracts
-      '@agent-vm/gateway-interface':
+      '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
-        version: link:../gateway-interface
+        version: link:../gateway-lifecycle
       '@agent-vm/worker-control-contracts':
         specifier: workspace:*
         version: link:../worker-control-contracts
@@ -253,29 +256,48 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
-  packages/gateway-interface:
+  packages/gateway-lifecycle:
     dependencies:
-      '@agent-vm/gondolin-adapter':
+      '@agent-vm/managed-vm':
         specifier: workspace:*
-        version: link:../gondolin-adapter
+        version: link:../managed-vm
       '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secret-management
       uuid:
         specifier: ^11.1.1
         version: 11.1.1
+    devDependencies:
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
-  packages/gondolin-adapter:
+  packages/gondolin-vm-adapter:
     dependencies:
+      '@agent-vm/managed-vm':
+        specifier: workspace:*
+        version: link:../managed-vm
       '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secret-management
       '@earendil-works/gondolin':
         specifier: 0.12.0
         version: 0.12.0
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/managed-vm:
+    devDependencies:
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/mcp-portal:
     dependencies:
@@ -322,12 +344,9 @@ importers:
       '@agent-vm/gateway-control-contracts':
         specifier: workspace:*
         version: link:../gateway-control-contracts
-      '@agent-vm/gateway-interface':
+      '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
-        version: link:../gateway-interface
-      '@agent-vm/gondolin-adapter':
-        specifier: workspace:*
-        version: link:../gondolin-adapter
+        version: link:../gateway-lifecycle
       '@agent-vm/tool-portal':
         specifier: workspace:*
         version: link:../tool-portal
@@ -347,12 +366,12 @@ importers:
 
   packages/openclaw-gateway:
     dependencies:
-      '@agent-vm/gateway-interface':
+      '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
-        version: link:../gateway-interface
-      '@agent-vm/gondolin-adapter':
+        version: link:../gateway-lifecycle
+      '@agent-vm/managed-vm':
         specifier: workspace:*
-        version: link:../gondolin-adapter
+        version: link:../managed-vm
       '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secret-management
@@ -419,12 +438,12 @@ importers:
 
   packages/worker-gateway:
     dependencies:
-      '@agent-vm/gateway-interface':
+      '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
-        version: link:../gateway-interface
-      '@agent-vm/gondolin-adapter':
+        version: link:../gateway-lifecycle
+      '@agent-vm/managed-vm':
         specifier: workspace:*
-        version: link:../gondolin-adapter
+        version: link:../managed-vm
 
 packages:
 

@@ -11,7 +11,7 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
@@ -26,19 +26,19 @@ import {
 	loadAllToolVmRuntimeRecords,
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
-import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	expectedControlLeaseReliabilityEvidenceWriteKind,
 	hashControlLeaseReliabilityArtifact,
 	writeControlLeaseReliabilityEvidence,
 } from './control-lease-reliability-evidence.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZoneForController as startGatewayZone,
 	type E2eHarnessRuntime,
 	type OpenClawE2eProject,
 	useLocalOpenClawGatewayImagePackages,
@@ -47,7 +47,7 @@ import { withProtocolDeadline } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const canRunControlAdmissionIsolationE2e =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeControlAdmissionIsolationE2e = canRunControlAdmissionIsolationE2e
 	? describe
 	: describe.skip;
@@ -418,7 +418,7 @@ describeControlAdmissionIsolationE2e('e2e: control admission pressure isolation'
 			},
 			startGatewayZone: async (startOptions) => {
 				const result = await startGatewayZone(startOptions);
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{ port: result.processSpec.guestListenPort, prefix: '/', stripPrefix: true },
 				]);
 				gatewayStart = result;

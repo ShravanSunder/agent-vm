@@ -13,6 +13,8 @@
 		"test:taxonomy": "tsx scripts/audit-test-taxonomy.ts",
 		"test:portal-architecture": "tsx scripts/audit-portal-architecture.ts",
 		"test:portal-exports": "tsx scripts/verify-portal-package-exports.ts",
+		"test:managed-vm-boundaries": "tsx scripts/audit-managed-vm-boundaries.ts",
+		"test:managed-vm-contracts": "tsx scripts/verify-managed-vm-contracts.ts",
 		"test:vm-ownership-boundaries": "tsx scripts/audit-vm-ownership-boundaries.ts",
 		"test:reliability-fault-boundaries": "tsx scripts/audit-reliability-fault-boundaries.ts",
 		"lint": "oxlint .",
@@ -37,6 +39,7 @@
 		"test:e2e:llm": "AGENT_VM_LLM_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-llm",
 		"test:e2e": "tsx scripts/run-e2e-proof-lanes.ts",
 		"test:watch": "vitest",
+		"inspect:managed-vm-package-cut": "tsx scripts/inspect-managed-vm-package-cut.ts",
 		"dev:sync-tarballs": "tsx scripts/sync-local-tarballs-to-deployment.ts",
 		"perf:gondolin-vfs": "node scripts/perf/gondolin-vfs-benchmark.ts",
 		"perf:worker-git": "node scripts/perf/gondolin-worker-git-benchmark.ts"

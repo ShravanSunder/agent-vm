@@ -3,6 +3,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { ManagedVmFactory, ManagedVmImageCapability } from '@agent-vm/managed-vm';
 import { serve } from '@hono/node-server';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,7 +15,6 @@ import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gat
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 
 const startGatewayZoneMock = vi.fn();
@@ -25,6 +25,16 @@ const startRepoResourceProvidersMock = vi.fn(async () => ({
 const stopRepoResourceProvidersMock = vi.fn(async () => {});
 const workerControllerEpoch = 'worker-host-e2e-controller-epoch';
 const workerVmId = 'worker-vm-1';
+const managedVmFactoryStub: ManagedVmFactory = {
+	createManagedVm: async () => {
+		throw new Error('The gateway-zone mock owns VM creation in this test.');
+	},
+};
+const managedVmImagesStub: ManagedVmImageCapability = {
+	prepareImage: async () => {
+		throw new Error('The gateway-zone mock owns image preparation in this test.');
+	},
+};
 
 function createStandaloneVmOwnershipStub(): {
 	readonly destroyLiveMock: Mock<GatewayVmLifecycleAuthority['destroyLive']>;
@@ -224,16 +234,15 @@ describe('worker-task-runner integration', () => {
 				enableSsh: vi.fn(async () => ({
 					close: async () => {},
 					command: 'ssh worker-vm',
+					identityFile: '/tmp/worker-vm-identity',
 					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					host: '127.0.0.1',
 					port: 2222,
 					user: 'root',
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub()),
-				fs: createManagedVmFsStub(),
-				setIngressRoutes: vi.fn(),
-				getHostPid: () => null,
-				getVmInstance: vi.fn(),
+				configureIngressRoutes: vi.fn(),
+				getHostProcessId: () => null,
 				start: async () => {},
 			},
 			vmOwnership: standaloneOwnership.vmOwnership,
@@ -335,6 +344,8 @@ describe('worker-task-runner integration', () => {
 		});
 		const result = await executeWorkerTask(prepared, {
 			controllerEpoch: workerControllerEpoch,
+			managedVmFactory: managedVmFactoryStub,
+			managedVmImages: managedVmImagesStub,
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
 			timeoutMs: 2_000,

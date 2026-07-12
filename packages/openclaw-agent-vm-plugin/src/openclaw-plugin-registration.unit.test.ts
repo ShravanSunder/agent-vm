@@ -10,7 +10,7 @@ import {
 import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -290,7 +290,7 @@ function createMockToolVmWriteReadBackend(options?: {
 	};
 }
 
-describe('createGondolinPlugin', () => {
+describe('createAgentVmPlugin', () => {
 	it('marks the plugin for gateway startup activation', async () => {
 		const manifestPath = path.resolve(import.meta.dirname, '..', 'openclaw.plugin.json');
 		const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
@@ -343,7 +343,7 @@ describe('createGondolinPlugin', () => {
 		});
 	});
 
-	it('exports a default plugin descriptor with the gondolin id', () => {
+	it('exports a default plugin descriptor with the agent-vm id', () => {
 		expect(defaultPlugin.id).toBe('gondolin');
 		expect(defaultPlugin.name).toBe('Gondolin VM Sandbox');
 		expect(typeof defaultPlugin.register).toBe('function');

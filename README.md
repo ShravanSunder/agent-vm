@@ -43,6 +43,14 @@ the host-side controller using `--git-dir` and host credentials. PR creation
 happens from the worker via `gh pr create` after `git-push` succeeds, with
 GitHub HTTP traffic mediated by the controller proxy.
 
+VM orchestration is backend-neutral below the application composition root.
+Gateway implementations produce workload requirements through
+`gateway-lifecycle`; controller, lease, health, recovery, Gateway VM, and Tool
+VM code consume narrow `managed-vm` capabilities. The `agent-vm` application
+has a regular runtime dependency on `gondolin-vm-adapter`, selects it at
+startup, and projects its provider into those capabilities, so backend-native
+handles and filesystem objects do not flow into domain code.
+
 ## Init Presets
 
 `agent-vm init` can scaffold the repo for two deployment shapes: bare metal and

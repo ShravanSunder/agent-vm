@@ -13,7 +13,7 @@ import {
 	GatewayControlRpcMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';

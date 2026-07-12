@@ -2,13 +2,21 @@
 
 [Overview](../README.md) > [Architecture](../architecture/overview.md) > Gondolin VM Layer
 
-Deep dive into the Gondolin VM abstraction: how `gondolin-adapter` wraps the `@earendil-works/gondolin` SDK into a managed VM interface with VFS mounts, HTTP secret mediation, synthetic DNS, and fingerprint-cached image builds. This is the lowest infrastructure layer -- every gateway and tool VM in the system boots through this adapter.
+Deep dive into the stock Gondolin implementation: how
+`@agent-vm/gondolin-vm-adapter` implements the backend-neutral
+`@agent-vm/managed-vm` contracts with VFS mounts, HTTP secret mediation,
+synthetic DNS, and fingerprint-cached image builds. This is the lowest
+infrastructure layer -- every shipping gateway and Tool VM currently boots
+through this adapter.
 
 ---
 
 ## What Gondolin Provides
 
-Gondolin (`@earendil-works/gondolin`) is the external SDK that runs QEMU micro-VMs on the host. The system never calls QEMU directly. Instead, `gondolin-adapter` wraps the SDK into a dependency-injectable adapter with narrower types.
+Gondolin (`@earendil-works/gondolin`) is the external SDK that runs QEMU
+micro-VMs on the host. The system never calls QEMU directly. Instead,
+`gondolin-vm-adapter` translates neutral managed-VM requests and handles into
+SDK calls. Only the adapter imports the SDK.
 
 | Capability | SDK Surface | What It Does |
 |------------|-------------|--------------|
@@ -26,43 +34,36 @@ Gondolin (`@earendil-works/gondolin`) is the external SDK that runs QEMU micro-V
 
 ## ManagedVm Interface
 
-`createManagedVm()` returns a `ManagedVm` -- the handle every consumer uses to interact with a running VM. The interface is defined in `vm-adapter.ts`.
+`ManagedVmFactory.createManagedVm()` returns the neutral `ManagedVm` handle
+used by controller domains. The interface is defined by
+`packages/managed-vm`; it deliberately exposes no Gondolin type, native VM
+handle, or native filesystem object.
 
 ```
   ManagedVm
   |
   |-- id: string                         Unique VM identifier
-  |-- exec(command, options?)            Run via Gondolin ExecProcess:
-  |                                      awaitable ExecResult and stream-capable
-  |-- fs                                 Gondolin VmFs: access, mkdir, listDir, stat,
-  |                                      rename, buffered and streaming read/write,
-  |                                      delete
-  |-- enableSsh(options?) -> SshAccess   Open SSH tunnel; returns client and exact server identity
-  |-- enableIngress(options?) -> IngressAccess
+  |-- start()                            Start the VM
+  |-- getHostProcessId()                 Host PID; required after successful start
+  |-- exec(command, options?)            Neutral awaitable/streaming process contract
+  |-- enableSsh(options?) -> ManagedVmSshAccess
+  |                                      Open SSH tunnel; returns exact server identity
+  |-- enableIngress(options?) -> ManagedVmAccessHandle
   |                                      Open inbound HTTP route; returns host, port
-  |-- setIngressRoutes(routes)           Configure path-prefix routing into the VM
-  |-- getVmInstance() -> ManagedVmInstance
-  |                                      Access the underlying SDK VM handle
+  |-- configureIngressRoutes(routes)     Configure path-prefix routing into the VM
   |-- close()                            Shut down the VM and release all resources
 ```
 
-`exec()` intentionally preserves Gondolin's native shape: string commands run
-through a login shell, array commands execute a specific binary, and options
-such as `stdout: 'pipe'`, `stderr: 'pipe'`, `stdin`, `pty`, `signal`,
-`windowBytes`, and `buffer: false` flow through to the SDK. Awaiting the return
-value yields Gondolin's `ExecResult`; when stdout/stderr are piped, callers can
-stream the process output with Gondolin's backpressure window.
+`exec()` provides a backend-neutral awaitable and streaming contract. The
+adapter translates commands, environment, PTY, signal, and stdin options to
+Gondolin and translates results and output chunks back. Controller domains
+cannot reach the SDK process or filesystem handles; file operations needed by
+current workloads run through controlled guest commands or the Tool VM SSH
+protocol.
 
-`fs` is the native Gondolin filesystem surface, not a separate agent-vm RPC
-protocol. It supports direct file operations and streaming reads/writes. For
-VFS-mounted paths, those operations hit the host-side VFS provider. For guest
-rootfs paths, Gondolin may wait for exec idle before serving file RPC, so
-long-running command artifacts should be written under VFS mounts rather than
-guest rootfs.
-
-`SshAccess` includes `host`, `port`, and optional `user`, `command`,
-`identityFile`. `IngressRoute` maps a URL prefix to a guest port with optional
-prefix stripping.
+`ManagedVmSshAccess` includes `host`, `port`, `user`, `command`,
+`identityFile`, and an exact Ed25519 `serverHostKey`. `ManagedVmIngressRoute`
+maps a URL prefix to a guest port with optional prefix stripping.
 
 Gondolin ingress is for inbound HTTP from the host to guest HTTP services. The
 gateway VM uses it to expose OpenClaw: agent-vm sets one route, `/` to the
@@ -81,24 +82,24 @@ to guest ports. Raw TCP services remain `tcpHosts` mappings, not HTTP ingress.
 
 ---
 
-## CreateVmOptions
+## ManagedVmCreateRequest
 
-All VM configuration flows through a single options object passed to `createManagedVm()`.
+Controller orchestration combines `GatewayVmRequirements` with controller-owned
+image and resource decisions, then passes one neutral request to the injected
+factory. The adapter translates this request into Gondolin SDK options.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `imagePath` | `string` | Path to the Gondolin image directory (contains `rootfs.ext4`, `vmlinuz-virt`, etc.) |
-| `memory` | `string` | RAM allocation (e.g., `'512M'`, `'2G'`) |
-| `cpus` | `number` | Virtual CPU count |
+| `imageReference` | `string` | Provider image reference selected by controller image capability |
+| `resources` | `{ memory, cpuCount }` | Backend-neutral resource request |
 | `rootfsMode` | `'readonly' \| 'memory' \| 'cow'` | How the root filesystem handles writes |
 | `allowedHosts` | `readonly string[]` | Outbound HTTP allowlist for mediation proxy |
-| `secrets` | `Record<string, SecretSpec>` | HTTP-mediated secrets: `{ hosts, value }` per secret |
-| `vfsMounts` | `Record<string, VfsMountSpec>` | Guest path -> mount specification |
-| `tcpHosts` | `Record<string, string>` | Synthetic DNS hostname -> host TCP endpoint |
-| `env` | `Record<string, string>` | Environment variables injected into the VM |
-| `sessionLabel` | `string` | Human-readable label for debugging (e.g., `'myproject:zone1:gateway'`) |
-| `onRequest` | `(request) -> Promise<...>` | Optional hook: intercept outbound requests |
-| `onResponse` | `(response) -> Promise<...>` | Optional hook: intercept inbound responses |
+| `mediatedSecrets` | `ManagedVmMediatedSecretDescriptor[]` | Host-side mediation values and allowed hosts; raw values never enter guest env or images |
+| `mounts` | `Record<string, ManagedVmMount>` | Guest path to neutral mount policy, including single-use owned directories |
+| `tcpHosts` | `ManagedVmTcpHostMapping[]` | Synthetic hostname to host TCP endpoint |
+| `environment` | `Record<string, string>` | Environment variables injected into the VM |
+| `sessionLabel` | `string` | Human-readable diagnostic label |
+| `mediation` | `ManagedVmRequestMediation` | Optional request/response hooks |
 
 ---
 
@@ -111,13 +112,17 @@ The `rootfsMode` controls what happens when a process inside the VM writes to th
   --------    -----------------------------   ----------------------------    --------
   cow         Copy-on-write qcow2 overlay     Yes (within session)            Gateway VMs: install packages,
                                                                               modify /etc, persist within session
-  memory      Backend-specific throwaway      No (lost on close)              Tool VMs: fully ephemeral,
-              rootfs mode; QEMU snapshot,                                     no state leaks between leases
+  memory      Backend-specific throwaway      No (lost on close)              Available neutral mode;
+              rootfs mode; QEMU snapshot,                                     not used by current Tool VMs
               krun temporary qcow2 on disk
   readonly    Immutable                       Rejected (write fails)          Not currently used in production
 ```
 
-Gateway VMs use `cow` so the bootstrap command can install packages and write config files that persist for the session. Tool VMs use `memory` so every lease starts from a clean slate. In Gondolin docs, rootfs `memory` means throwaway rootfs mode, not always RAM-backed storage; guest tmpfs and VFS `MemoryProvider` are the memory-pressure paths.
+Gateway, Worker, and Tool VMs currently use `cow`. Tool VM isolation comes from
+a new VM lifecycle and controlled mounts per lease, not from selecting
+`rootfsMode: memory`. In Gondolin docs, rootfs `memory` means a throwaway rootfs
+mode, not always RAM-backed storage; guest tmpfs and VFS `MemoryProvider` are
+the memory-pressure paths.
 
 ---
 
@@ -166,15 +171,17 @@ HTTP mediation is how secrets reach outbound API calls without the VM process ev
   +-------------------+          +---------------------+          +------------------+
 ```
 
-The `secrets` parameter in `CreateVmOptions` is a `Record<string, SecretSpec>` where each `SecretSpec` contains:
-- `hosts`: list of hostnames this secret applies to (e.g., `['api.openai.com']`)
-- `value`: the resolved secret plaintext
+Each neutral mediated-secret descriptor carries an environment-variable name,
+an allowed-host list, and a value resolved at the trusted host boundary. The
+adapter converts these descriptors to Gondolin HTTP hooks. The resolved value
+may enter the trusted provider request for mediation, but never the guest
+environment or image.
 
 The hook bundle also sets environment variables (`hookBundle.env`) that configure the in-VM HTTP client to route through the mediation proxy. The VM process makes normal HTTP requests -- it never knows secrets are being injected.
 
 For mediated secrets that are consumed through environment variables, such as
 stdio MCP provider API keys, `hookBundle.env` also contains generated
-placeholder values. `createManagedVm()` must pass both `httpHooks` and
+placeholder values. The Gondolin adapter passes both `httpHooks` and
 `hookBundle.env` into `VM.create()`: the hooks know how to substitute the
 placeholder, and the env bundle is how the gateway process and its stdio
 children receive the placeholder instead of the raw secret.
@@ -198,7 +205,7 @@ instead of raw mapped TCP.
   tool-1.vm.host:22          ------> 127.0.0.1:19001   (tool VM 1 SSH)
 ```
 
-When `tcpHosts` is provided in `CreateVmOptions`, the adapter configures:
+When neutral `tcpHosts` mappings are provided, the adapter configures:
 - `dns.mode: 'synthetic'` with `syntheticHostMapping: 'per-host'` -- Gondolin resolves virtual hostnames to per-host RFC2544 IPv4 answers such as `198.19.x.y`
 - `dns.syntheticIPv4: '198.18.0.1'` -- fallback synthetic A answer when no per-host mapping applies
 - `dns.syntheticIPv6: '::ffff:198.18.0.1'` -- shared IPv4-mapped RFC2544 AAAA answer so OpenClaw SSRF checks that validate all A/AAAA answers can accept the fake address under `allowRfc2544BenchmarkRange`
@@ -242,9 +249,10 @@ fails closed if the field is missing or malformed.
 
 ## VM Capability Transports
 
-`gateway-interface` defines the small shared lease vocabulary for VM
-capabilities: `VmCapabilityLease<TTransport>`, reusable SSH endpoint types, and
-the current `ToolVmSshLease` specialization.
+`gateway-lifecycle` defines the shared lease vocabulary used by gateway kinds,
+while `managed-vm` owns the neutral SSH access and server-identity contracts.
+The current Tool VM lease specialization uses those contracts without exposing
+the Gondolin SDK.
 
 Only `ssh-sandbox` is implemented today. It means VM-to-VM SSH over `tcpHosts`:
 the controller creates or reuses the Tool VM, calls `enableSsh()`, returns an
@@ -258,16 +266,15 @@ though the host-side TCP slot is reusable. A replacement Tool VM on the same
 slot cannot satisfy the old lease's pinned server identity.
 
 `gondolin-rpc` and `ingress-service` are reserved names for future capability
-work. `gondolin-rpc` should mean controller-owned execution through `ManagedVm`
-using native `vm.exec()` and `vm.fs`, which is the preferred shape for typed,
-controlled workloads such as credentialed CLI execution. `ingress-service`
+work. `gondolin-rpc` would require a separately designed controller-owned
+execution and filesystem contract; the current neutral `ManagedVm` deliberately
+has no native filesystem escape hatch. `ingress-service`
 should mean a warm HTTP service inside a VM exposed through Gondolin ingress.
 Neither is part of the current Tool VM SSH path.
 
 OpenClaw's filesystem bridge remains plugin-owned. It is an OpenClaw
 remote-shell filesystem protocol implemented over SSH; it is not a generic
-Tool VM filesystem API. Controlled non-OpenClaw workloads should use Gondolin
-`vm.fs` directly once they own the `ManagedVm` handle.
+Tool VM filesystem API.
 
 ---
 
@@ -279,7 +286,7 @@ VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `
   build-config.jsonc
     |
     v
-  buildGondolinImage({ buildConfigPath, cacheDir, fingerprintInput? })
+  buildManagedVmImage({ buildConfigPath, cacheDir, fingerprintInput? })
     |
     |-- 1. Load config       JSON.parse(buildConfigPath) -> BuildConfig
     |-- 2. Fingerprint        SHA-256(stableSerialize(config) + fingerprintInput
@@ -306,7 +313,13 @@ VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `
 
 `computeBuildFingerprint()` uses stable JSON serialization (sorted keys, no undefined values) to ensure the same config and fingerprint input always produce the same fingerprint regardless of property order. Docker-backed profiles pass the inspected Docker rootfs layer identity as fingerprint input, so unchanged Docker outputs can reuse Gondolin assets and changed Docker layers naturally produce a new generation.
 
-`buildGatewayImage()` in `gateway-image-builder.ts` first checks the profile-local prepared-image record written by `agent-vm build`; if the build config, fingerprint input, fingerprint, and asset files still match, startup reuses that image path without invoking Gondolin. Otherwise it loads the config and delegates to `buildGondolinImage()`, supporting dependency injection for testing. Tool VM startup uses the same prepared-image record contract.
+`buildGatewayImage()` in `gateway-image-builder.ts` delegates through the
+injected neutral `ManagedVmImageCapability`. The composition projection first
+checks the profile-local prepared-image record written by `agent-vm build`; if
+the build config, fingerprint input, fingerprint, and asset files still match,
+startup reuses that image reference without invoking Gondolin. Otherwise the
+selected capability loads and builds the image through backend tooling. Tool VM
+startup uses the same prepared-image record contract.
 
 `agent-vm build` dedupes repeated resolved build config path + effective
 fingerprint pairs across configured image profiles in the same invocation. The
@@ -318,44 +331,53 @@ The `fullReset` option deletes the cached image directory before building, forci
 
 ---
 
-## gondolin-adapter Exports
+## gondolin-vm-adapter Exports
 
-The `gondolin-adapter` package (`packages/gondolin-adapter/src/index.ts`) re-exports everything the rest of the system needs from the Gondolin layer.
+The `gondolin-vm-adapter` package
+(`packages/gondolin-vm-adapter/src/index.ts`) has a deliberately narrow public
+surface. It constructs a neutral provider plus primitive build/tooling
+projections; it does not export SDK handles or adapter-native VM types.
 
 | Export | Source | Purpose |
 |--------|--------|---------|
-| `createManagedVm` | `vm-adapter.ts` | Boot a VM and return a `ManagedVm` handle |
-| `ManagedVm`, `ManagedVmInstance` | `vm-adapter.ts` | VM handle interfaces |
-| `CreateVmOptions`, `VfsMountSpec` | `vm-adapter.ts` | VM configuration types |
-| `ManagedExecResult`, `SshAccess`, `IngressAccess`, `IngressRoute` | `vm-adapter.ts` | Result types |
-| `SecretResolver`, `createSecretResolver`, `createOpCliSecretResolver` | `@agent-vm/secret-management` | Resolve `SecretRef` values from 1Password SDK or `op` CLI |
-| `resolveServiceAccountToken`, `TokenSource` | `@agent-vm/secret-management` | Obtain 1Password service account token from env or macOS Keychain |
-| `SecretSpec` | `types.ts` | `{ hosts, value }` -- resolved secret with host binding |
-| `SecretRef` | `types.ts` | Discriminated union: `{ source: '1password', ref }`, `{ source: 'environment', ref }`, or `{ source: 'config', value }` |
-| `writeFileAtomically` | `write-file-atomically.ts` | Write-then-rename for crash-safe file updates |
-| `buildImage`, `computeBuildFingerprint` | `build-pipeline.ts` | Fingerprint-cached image builds |
-| `BuildConfig`, `BuildImageOptions`, `BuildImageResult` | `build-pipeline.ts` | Build configuration and result types |
-| `getDefaultBuildConfig` | `@earendil-works/gondolin` | SDK default build config (re-exported) |
-| `compilePolicy`, `PolicySources` | `policy-compiler.ts` | Merge and dedupe VM host allowlists from multiple sources |
-| `validateWritableMount`, `validateRuntimeMountPolicy` | `mount-policy.ts` | Enforce writable mount restrictions and auth path protection |
-| `ensureVolumeDir`, `resolveVolumeDirs` | `volume-manager.ts` | Create and resolve persistent volume directories |
+| `createGondolinManagedVmProvider` | `managed-vm-provider.ts` | Construct the neutral aggregate provider at composition |
+| `configureHostNetworkDefaults` | `host-network-defaults.ts` | Apply required host Node network defaults before VM construction |
+| `createGondolinImageBuildTooling` | `build-pipeline.ts` | Create fingerprint-cached image build tooling |
+| `buildImageAssetFileNames`, `hasBuiltImageAssets` | `build-pipeline.ts` | Primitive asset inventory and presence projection |
+| `resolveGondolinMinimumZigVersion`, `resolveGondolinPackageSpec` | `gondolin-package.ts` | Primitive build/release provenance projections |
+
+The shipping application imports this package in exactly two production
+modules:
+
+- `packages/agent-vm/src/composition/gondolin-managed-vm-provider.ts` constructs
+  one `ManagedVmProvider`, keeps the aggregate local, and injects only the
+  factory, image, and owned-directory capabilities required downstream.
+- `packages/agent-vm/src/build/gondolin-managed-vm-build-tooling.ts` projects
+  the selected backend's build metadata and tooling.
+
+All controller domain, Gateway orchestration, Tool VM lifecycle, lease, health,
+runtime-record, and recovery code imports `@agent-vm/managed-vm`, never the
+adapter. Destructive recovery and process-identity fencing remain controller
+authority; `ManagedVm.close()` is mechanical provider cleanup.
 
 ---
 
 ## Source Files
 
-| File | Lines | Responsibility |
-|------|-------|----------------|
-| `packages/gondolin-adapter/src/vm-adapter.ts` | 287 | `ManagedVm` interface, `createManagedVm()`, VFS provider assembly, HTTP hooks wiring |
-| `packages/secret-management/src/contracts.ts` | 28 | `SecretRef`, `SecretResolver`, and `MediatedSecretSpec` shared contracts |
-| `packages/secret-management/src/onepassword-secret-resolver.ts` | 657 | 1Password SDK client with isolated `op inject` fallback and token source resolution |
-| `packages/secret-management/src/redacted-exec-file.ts` | 216 | Child-process execution with redacted failure formatting |
-| `packages/secret-management/src/op-cli-service-account-env.ts` | 65 | Isolated service-account environment for `op` CLI fallback |
-| `packages/gondolin-adapter/src/build-pipeline.ts` | 132 | `buildImage()`, `computeBuildFingerprint()`, asset verification |
-| `packages/gondolin-adapter/src/mount-policy.ts` | 117 | Writable mount validation, auth path protection |
-| `packages/gondolin-adapter/src/policy-compiler.ts` | 33 | VM host allowlist compilation and deduplication |
-| `packages/gondolin-adapter/src/volume-manager.ts` | 39 | Persistent volume directory management |
-| `packages/gondolin-adapter/src/write-file-atomically.ts` | 29 | Atomic file write via write-then-rename |
-| `packages/gondolin-adapter/src/index.ts` | 11 | Barrel re-exports |
-| `packages/agent-vm/src/build/gondolin-image-builder.ts` | 47 | `buildGondolinImage()` wrapper with config loading |
-| `packages/agent-vm/src/gateway/gateway-image-builder.ts` | 41 | `buildGatewayImage()` thin wrapper for gateway-specific builds |
+| File | Responsibility |
+|------|----------------|
+| `packages/managed-vm/src/managed-vm-contracts.ts` | Neutral `ManagedVm`, factory, provider capabilities, mounts, process, SSH, and ingress contracts |
+| `packages/gondolin-vm-adapter/src/managed-vm-provider.ts` | Gondolin translation, VFS provider assembly, HTTP hooks, and neutral handle implementation |
+| `packages/secret-management/src/contracts.ts` | `SecretRef`, `SecretResolver`, and `MediatedSecretSpec` shared contracts |
+| `packages/secret-management/src/onepassword-secret-resolver.ts` | 1Password SDK client with isolated `op inject` fallback and token source resolution |
+| `packages/secret-management/src/redacted-exec-file.ts` | Child-process execution with redacted failure formatting |
+| `packages/secret-management/src/op-cli-service-account-env.ts` | Isolated service-account environment for `op` CLI fallback |
+| `packages/gondolin-vm-adapter/src/vm-adapter.ts` | SDK translation and neutral VM handle implementation |
+| `packages/gondolin-vm-adapter/src/pinned-realfs.ts` | Final-component no-follow open, identity revalidation, exact-once owned-directory cleanup |
+| `packages/gondolin-vm-adapter/src/build-pipeline.ts` | Fingerprint-cached image build tooling and asset verification |
+| `packages/gondolin-vm-adapter/src/mount-policy.ts` | Writable mount validation and auth path protection |
+| `packages/gondolin-vm-adapter/src/policy-compiler.ts` | VM host allowlist compilation and deduplication |
+| `packages/gondolin-vm-adapter/src/volume-manager.ts` | Persistent volume directory management |
+| `packages/gondolin-vm-adapter/src/index.ts` | Narrow public exports |
+| `packages/agent-vm/src/composition/gondolin-managed-vm-provider.ts` | Runtime provider composition and narrow capability injection |
+| `packages/agent-vm/src/build/gondolin-managed-vm-build-tooling.ts` | Build/tooling composition projection |

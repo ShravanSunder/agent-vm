@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { GatewayControlLeaseSnapshot } from '@agent-vm/gateway-control-contracts';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
@@ -20,7 +20,6 @@ import {
 	loadAllToolVmRuntimeRecords,
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
-import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { isProcessAlive } from '../shared/managed-vm-process.js';
 import {
 	expectedControlLeaseReliabilityEvidenceWriteKind,
@@ -28,12 +27,13 @@ import {
 	writeControlLeaseReliabilityEvidence,
 } from './control-lease-reliability-evidence.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZoneForController as startGatewayZone,
 	type E2eHarnessRuntime,
 	type OpenClawE2eProject,
 	useLocalOpenClawGatewayImagePackages,
@@ -42,7 +42,7 @@ import { waitForProtocolRetryInterval, withProtocolDeadline } from './e2e-protoc
 
 const architecture = currentE2eArchitecture();
 const runLeaseLeafReplacementE2e =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeLeaseLeafReplacementE2e = runLeaseLeafReplacementE2e ? describe : describe.skip;
 const zoneId = 'lease-leaf-replacement';
 const gatewayToken = 'lease-leaf-replacement-gateway-token';
@@ -386,7 +386,7 @@ describeLeaseLeafReplacementE2e('e2e: one Tool VM leaf replacement', () => {
 						leaseSnapshots,
 					),
 				});
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{ port: result.processSpec.guestListenPort, prefix: '/', stripPrefix: true },
 				]);
 				gatewayVm = result.vm;

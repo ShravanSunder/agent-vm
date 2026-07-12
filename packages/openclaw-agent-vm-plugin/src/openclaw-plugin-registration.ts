@@ -1,8 +1,13 @@
 import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 
+import {
+	type AgentVmPluginConfigInput,
+	type AgentVmPluginConfigJsonObject,
+	resolveAgentVmPluginConfig,
+} from './agent-vm-plugin-config.js';
 import { createGatewayControlCallerContextStore } from './gateway-control-service/gateway-control-caller-context-store.js';
 import { createGatewayControlEventPublisher } from './gateway-control-service/gateway-control-event-publisher.js';
 import { createGatewayControlLeaseClient } from './gateway-control-service/gateway-control-lease-client.js';
@@ -17,11 +22,6 @@ import {
 	type GatewayControlService,
 } from './gateway-control-service/gateway-control-service.js';
 import {
-	type GondolinPluginConfigInput,
-	type GondolinPluginConfigJsonObject,
-	resolveGondolinPluginConfig,
-} from './gondolin-plugin-config.js';
-import {
 	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 	createBackendDeps,
 } from './openclaw-backend-dependencies.js';
@@ -34,15 +34,15 @@ import {
 	type SshSandboxSession,
 } from './openclaw-sandbox-sdk-contract.js';
 import {
-	createGondolinSandboxBackendFactory,
-	createGondolinSandboxBackendManager,
+	createAgentVmSandboxBackendFactory,
+	createAgentVmSandboxBackendManager,
 } from './sandbox-backend-factory.js';
 import { registerToolPortalNativeTools } from './tool-portal-native-tools.js';
 import { registerToolVmWriteReadE2eRoute } from './tool-vm-write-read-e2e-tool.js';
 
 const gatewayControlLeaseClientEndpoint = 'gateway-control://control-session';
 
-interface RegisterGondolinPluginOptions {
+interface RegisterAgentVmPluginOptions {
 	readonly enableToolVmWriteReadE2eRoute?: boolean | undefined;
 }
 
@@ -84,20 +84,20 @@ function resolveGatewayControlCallerContextAgentAuthorityKeys(): Readonly<Record
 	return parsedKeys;
 }
 
-export function registerGondolinPlugin(
+export function registerAgentVmPlugin(
 	api: {
-		readonly config?: GondolinPluginConfigJsonObject;
-		readonly pluginConfig: GondolinPluginConfigInput;
+		readonly config?: AgentVmPluginConfigJsonObject;
+		readonly pluginConfig: AgentVmPluginConfigInput;
 		readonly registerHttpRoute?: OpenClawHttpRouteRegistrationApi['registerHttpRoute'];
 		readonly registerTool?: OpenClawToolRegistrationApi['registerTool'];
 		readonly registrationMode: string;
 		readonly runtime?: {
 			readonly config?: {
-				readonly current?: () => GondolinPluginConfigJsonObject;
+				readonly current?: () => AgentVmPluginConfigJsonObject;
 			};
 		};
 	},
-	options: RegisterGondolinPluginOptions = {},
+	options: RegisterAgentVmPluginOptions = {},
 ): void {
 	const registerTool = api.registerTool;
 	if (typeof registerTool !== 'function') {
@@ -106,7 +106,7 @@ export function registerGondolinPlugin(
 		}
 		return;
 	}
-	const pluginConfig = resolveGondolinPluginConfig(api.pluginConfig);
+	const pluginConfig = resolveAgentVmPluginConfig(api.pluginConfig);
 	if (pluginConfig.toolPortal !== undefined && api.registrationMode !== 'full') {
 		registerToolPortalNativeTools({
 			api: { registerTool },
@@ -205,7 +205,7 @@ export function registerGondolinPlugin(
 	};
 
 	const sdkPath = '/opt/openclaw-sdk/sandbox.js';
-	const gondolinSandboxBackendFactoryPromise = import(sdkPath).then(
+	const agentVmSandboxBackendFactoryPromise = import(sdkPath).then(
 		(sdkRaw: Record<string, unknown>) => {
 			assertSdkShape(sdkRaw);
 
@@ -238,7 +238,7 @@ export function registerGondolinPlugin(
 				publishHealthEvent: gatewayControlEventPublisher.publishHealthEvent,
 				publishOpenClawRuntimeStatus: publishRuntimeStatus,
 			};
-			const gondolinSandboxBackendFactory = createGondolinSandboxBackendFactory(
+			const agentVmSandboxBackendFactory = createAgentVmSandboxBackendFactory(
 				{
 					...pluginConfig,
 					controllerUrl: gatewayControlLeaseClientEndpoint,
@@ -248,8 +248,8 @@ export function registerGondolinPlugin(
 				backendDependenciesWithLeaseClient,
 			);
 			sdkRaw.registerSandboxBackend('gondolin', {
-				factory: gondolinSandboxBackendFactory,
-				manager: createGondolinSandboxBackendManager(
+				factory: agentVmSandboxBackendFactory,
+				manager: createAgentVmSandboxBackendManager(
 					{
 						controllerUrl: gatewayControlLeaseClientEndpoint,
 						zoneId: pluginConfig.zoneId,
@@ -257,17 +257,17 @@ export function registerGondolinPlugin(
 					backendDependenciesWithLeaseClient,
 				),
 			});
-			return gondolinSandboxBackendFactory;
+			return agentVmSandboxBackendFactory;
 		},
 	);
-	gondolinSandboxBackendFactoryPromise.catch((error: unknown) => {
+	agentVmSandboxBackendFactoryPromise.catch((error: unknown) => {
 		const message = error instanceof Error ? error.message : JSON.stringify(error);
 		process.stderr.write(`[gondolin] failed to load OpenClaw SDK: ${message}\n`);
 	});
 	if (options.enableToolVmWriteReadE2eRoute === true) {
 		registerToolVmWriteReadE2eRoute({
 			api: { registerHttpRoute },
-			factoryProvider: async () => await gondolinSandboxBackendFactoryPromise,
+			factoryProvider: async () => await agentVmSandboxBackendFactoryPromise,
 		});
 	}
 }
@@ -277,8 +277,8 @@ const plugin = {
 	name: 'Gondolin VM Sandbox',
 	description: 'Sandbox backend powered by Gondolin micro-VMs.',
 
-	register(api: Parameters<typeof registerGondolinPlugin>[0]): void {
-		registerGondolinPlugin(api, { enableToolVmWriteReadE2eRoute: true });
+	register(api: Parameters<typeof registerAgentVmPlugin>[0]): void {
+		registerAgentVmPlugin(api, { enableToolVmWriteReadE2eRoute: true });
 	},
 };
 

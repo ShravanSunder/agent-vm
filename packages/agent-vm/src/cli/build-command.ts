@@ -1,11 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-	buildImageAssetFileNames,
-	hasBuiltImageAssets,
-	type BuildImageResult,
-} from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
 import {
@@ -14,9 +9,19 @@ import {
 	type DockerRootfsIdentity,
 } from '../build/docker-image-builder.js';
 import {
-	buildGondolinImage as buildGondolinImageDefault,
+	buildManagedVmImage as buildManagedVmImageDefault,
 	computeFingerprintFromConfigPath,
 } from '../build/gondolin-image-builder.js';
+import {
+	hasManagedVmImageAssets,
+	managedVmImageAssetFileNames,
+} from '../build/gondolin-managed-vm-build-tooling.js';
+
+interface ManagedVmBackendImageBuildResult {
+	readonly built: boolean;
+	readonly fingerprint: string;
+	readonly imagePath: string;
+}
 import {
 	generateManagedDockerfile as generateManagedDockerfileDefault,
 	resolveManagedImageRelease as resolveManagedImageReleaseDefault,
@@ -26,7 +31,7 @@ import {
 	type ManagedImageRelease,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
-import { writePreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
+import { writePreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 import {
 	deleteStaleImageDirectories as deleteStaleImageDirectoriesDefault,
 	findPrunableImageDirectories as findPrunableImageDirectoriesDefault,
@@ -34,8 +39,8 @@ import {
 	type StaleImageEntry,
 } from '../build/stale-image-cleaner.js';
 import {
-	assertGondolinZigCompatibility,
-	resolveGondolinCompatibleZigVersion,
+	assertManagedVmZigCompatibility,
+	resolveManagedVmCompatibleZigVersion,
 	resolveHostZigVersion,
 } from '../build/zig-compatibility.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
@@ -64,14 +69,14 @@ export interface BuildCommandDependencies {
 		readonly quiet?: boolean;
 		readonly streamPreview?: TaskOutput;
 	}) => Promise<void>;
-	readonly buildGondolinImage?: (options: {
+	readonly buildManagedVmImage?: (options: {
 		readonly buildConfigPath: string;
 		readonly cacheDir: string;
 		readonly fingerprintInput?: unknown;
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
-	}) => Promise<BuildImageResult>;
-	readonly computeGondolinFingerprint?: (options: {
+	}) => Promise<ManagedVmBackendImageBuildResult>;
+	readonly computeManagedVmFingerprint?: (options: {
 		readonly buildConfigPath: string;
 		readonly fingerprintInput?: unknown;
 	}) => Promise<string>;
@@ -160,7 +165,7 @@ interface ImageTarget {
 
 interface BuiltImageCacheEntry {
 	readonly imageTarget: ImageTarget;
-	readonly result: BuildImageResult;
+	readonly result: ManagedVmBackendImageBuildResult;
 }
 
 interface DockerBackedFingerprintInput {
@@ -178,7 +183,7 @@ interface DockerBuildPlan {
 interface BuiltImagePlanResult {
 	readonly imageTarget: ImageTarget;
 	readonly targetPlan: GondolinTargetPlan;
-	readonly result: BuildImageResult;
+	readonly result: ManagedVmBackendImageBuildResult;
 }
 
 interface GondolinTargetPlan {
@@ -312,12 +317,12 @@ async function materializeGondolinImageAlias(options: {
 	if (path.resolve(options.sourceImagePath) === path.resolve(targetImagePath)) {
 		return targetImagePath;
 	}
-	if (!options.fullReset && (await hasBuiltImageAssets(targetImagePath))) {
+	if (!options.fullReset && (await hasManagedVmImageAssets(targetImagePath))) {
 		return targetImagePath;
 	}
 	await fs.rm(targetImagePath, { recursive: true, force: true });
 	await fs.mkdir(targetImagePath, { recursive: true });
-	for (const fileName of buildImageAssetFileNames) {
+	for (const fileName of managedVmImageAssetFileNames) {
 		// oxlint-disable-next-line no-await-in-loop -- preserve deterministic asset copy/link ordering
 		await linkOrCopyImageAsset(
 			path.join(options.sourceImagePath, fileName),
@@ -337,7 +342,7 @@ async function materializePreparedTargetImage(options: {
 	if (path.resolve(options.sourceImagePath) === path.resolve(targetImagePath)) {
 		return targetImagePath;
 	}
-	if (!(await hasBuiltImageAssets(options.sourceImagePath))) {
+	if (!(await hasManagedVmImageAssets(options.sourceImagePath))) {
 		return options.sourceImagePath;
 	}
 	return await materializeGondolinImageAlias(options);
@@ -425,7 +430,7 @@ async function assertZigBuildPrerequisite(
 ): Promise<void> {
 	const requiredZigVersion = await resolveRequiredZigVersion();
 	const zigVersion = await resolveZigVersion();
-	assertGondolinZigCompatibility({
+	assertManagedVmZigCompatibility({
 		requiredVersion: requiredZigVersion,
 		...(zigVersion ? { installedVersion: zigVersion } : {}),
 	});
@@ -743,9 +748,9 @@ export async function runBuildCommand(
 	const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
 	const resolveDockerRootfsIdentity =
 		dependencies.resolveDockerRootfsIdentity ?? resolveDockerRootfsIdentityDefault;
-	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
-	const computeGondolinFingerprint =
-		dependencies.computeGondolinFingerprint ??
+	const buildManagedVmImage = dependencies.buildManagedVmImage ?? buildManagedVmImageDefault;
+	const computeManagedVmFingerprint =
+		dependencies.computeManagedVmFingerprint ??
 		(async (fingerprintOptions): Promise<string> =>
 			fingerprintOptions.fingerprintInput === undefined
 				? await computeFingerprintFromConfigPath(fingerprintOptions.buildConfigPath)
@@ -758,7 +763,7 @@ export async function runBuildCommand(
 		dependencies.findPrunableImageDirectories ?? findPrunableImageDirectoriesDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const resolveRequiredZigVersion =
-		dependencies.resolveRequiredZigVersion ?? resolveGondolinCompatibleZigVersion;
+		dependencies.resolveRequiredZigVersion ?? resolveManagedVmCompatibleZigVersion;
 	const resolveZigVersion = dependencies.resolveZigVersion ?? resolveHostZigVersion;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
 	const runTaskGroup = dependencies.runTaskGroup ?? createRunTaskGroupFallback(runTaskStep);
@@ -930,7 +935,7 @@ export async function runBuildCommand(
 		let fingerprint = fingerprintByInputKey.get(fingerprintInputKey);
 		if (fingerprint === undefined) {
 			// oxlint-disable-next-line no-await-in-loop -- fingerprint errors should identify the matching profile path
-			fingerprint = await computeGondolinFingerprint({
+			fingerprint = await computeManagedVmFingerprint({
 				buildConfigPath: imageTarget.buildConfigPath,
 				...(fingerprintInput === undefined ? {} : { fingerprintInput }),
 			});
@@ -979,9 +984,9 @@ export async function runBuildCommand(
 						targetPlan.shouldResetGondolinCache ? 'building vm assets' : 'checking vm assets',
 					);
 					const gondolinTaskOutput = createGondolinPhaseTaskOutput(taskContext, statusController);
-					let result: BuildImageResult;
+					let result: ManagedVmBackendImageBuildResult;
 					try {
-						result = await buildGondolinImage({
+						result = await buildManagedVmImage({
 							buildConfigPath: targetPlan.imageTarget.buildConfigPath,
 							cacheDir: targetPlan.imageTarget.cacheDirectory,
 							...(targetPlan.fingerprintInput === undefined
@@ -1030,7 +1035,7 @@ export async function runBuildCommand(
 			targetCacheDirectory: targetPlan.imageTarget.cacheDirectory,
 		});
 		// oxlint-disable-next-line no-await-in-loop -- prepared records are profile-local and must report the matching profile path on failure
-		await writePreparedGondolinImage({
+		await writePreparedManagedVmImage({
 			buildConfigPath: targetPlan.imageTarget.buildConfigPath,
 			cacheDir: targetPlan.imageTarget.cacheDirectory,
 			fingerprint: existingBuild.result.fingerprint,

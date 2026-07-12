@@ -2,14 +2,13 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import {
 	buildToolVmRuntimeRecord,
@@ -49,33 +48,13 @@ async function createStateDirectory(): Promise<string> {
 	return directoryPath;
 }
 
-function createVmInstanceStub(hostPid: number, vmId: string): ManagedVmInstance {
-	return {
-		close: async () => {},
-		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
-		enableSsh: async () => ({
-			close: async () => {},
-			command: 'ssh ...',
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 2222,
-			user: 'agent',
-		}),
-		exec: () => createManagedExecProcessStub({ stdout: '' }),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => hostPid,
-		id: vmId,
-		setIngressRoutes: () => {},
-		start: async () => {},
-	};
-}
-
 function createManagedVmStub(options: {
 	readonly hostPid: number;
 	readonly id: string;
 }): ManagedVm {
 	return {
 		close: async () => {},
+		configureIngressRoutes: () => {},
 		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
 			close: async () => {},
@@ -87,11 +66,8 @@ function createManagedVmStub(options: {
 			user: 'agent',
 		}),
 		exec: () => createManagedExecProcessStub({ stdout: '' }),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => options.hostPid,
-		getVmInstance: () => createVmInstanceStub(options.hostPid, options.id),
+		getHostProcessId: () => options.hostPid,
 		id: options.id,
-		setIngressRoutes: () => {},
 		start: async () => {},
 	};
 }
@@ -332,7 +308,7 @@ describe('tool-vm-runtime-record', () => {
 	it('buildToolVmRuntimeRecord throws when getHostPid returns null', async () => {
 		const managedVm = {
 			...createManagedVmStub({ hostPid: 48_282, id: 'tool-vm-instance-1' }),
-			getHostPid: () => null,
+			getHostProcessId: () => null,
 		} satisfies ManagedVm;
 
 		await expect(
@@ -348,13 +324,13 @@ describe('tool-vm-runtime-record', () => {
 				tcpSlot: 3,
 				zoneId: 'sunfam',
 			}),
-		).rejects.toThrow('does not expose an active host pid');
+		).rejects.toThrow('does not expose an active host process id');
 	});
 
-	it('buildToolVmRuntimeRecord throws when getHostPid returns an invalid pid', async () => {
+	it('buildToolVmRuntimeRecord throws when getHostProcessId returns an invalid pid', async () => {
 		const managedVm = {
 			...createManagedVmStub({ hostPid: 48_282, id: 'tool-vm-instance-1' }),
-			getHostPid: () => 0,
+			getHostProcessId: () => 0,
 		} satisfies ManagedVm;
 
 		await expect(
@@ -370,7 +346,7 @@ describe('tool-vm-runtime-record', () => {
 				tcpSlot: 3,
 				zoneId: 'sunfam',
 			}),
-		).rejects.toThrow('invalid host pid');
+		).rejects.toThrow('invalid host process id');
 	});
 
 	it('write rejects invalid records before touching disk', async () => {

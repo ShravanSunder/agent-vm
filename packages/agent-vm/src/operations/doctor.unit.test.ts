@@ -895,11 +895,12 @@ describe('runControllerDoctor', () => {
 			nodeVersion: 'v25.9.0',
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
 			systemConfig: createWorkerOnlySystemConfig(),
-			workerGatewayVmSpecBuilder: () => ({
-				vfsMounts: {
+			workerGatewayVmRequirementsBuilder: () => ({
+				mounts: {
 					'/work/repos': {
+						access: 'read-write',
 						hostPath: '/host/work/repos',
-						kind: 'realfs',
+						kind: 'host-directory',
 					},
 				},
 			}),

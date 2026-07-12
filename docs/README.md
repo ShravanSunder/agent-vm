@@ -10,6 +10,7 @@ directory is the deeper map.
 | Run a local Worker gateway | [getting-started/setup.md](getting-started/setup.md) |
 | Understand the Worker gateway | [architecture/agent-worker-gateway.md](architecture/agent-worker-gateway.md) |
 | Understand state/cache/backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
+| Understand VM provider and package boundaries | [architecture/overview.md#package-dependency-graph](architecture/overview.md#package-dependency-graph) |
 | Review concrete OpenClaw/Worker storage paths | [architecture/storage-matrix.md](architecture/storage-matrix.md) |
 | Understand Gondolin rootfs/VFS performance knobs | [reference/gondolin/vfs-rootfs-performance.md](reference/gondolin/vfs-rootfs-performance.md) |
 | Look up config fields | [reference/configuration/README.md](reference/configuration/README.md) |

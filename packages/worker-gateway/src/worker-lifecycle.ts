@@ -1,20 +1,17 @@
 import type {
-	BuildGatewayVmSpecOptions,
+	BuildGatewayVmRequirementsOptions,
 	GatewayLifecycle,
 	GatewayProcessSpec,
-	GatewayVmSpec,
-} from '@agent-vm/gateway-interface';
+	GatewayVmRequirements,
+} from '@agent-vm/gateway-lifecycle';
 import {
 	buildGatewaySessionLabel,
 	composeNodeOptions,
 	normalizeGitReposForSshReadAllowlist,
 	splitResolvedGatewaySecrets,
 	workerVmAllowedHosts,
-} from '@agent-vm/gateway-interface';
-import {
-	createGitReadOnlySshEgressOptions,
-	type ManagedSshEgressOptions,
-} from '@agent-vm/gondolin-adapter';
+} from '@agent-vm/gateway-lifecycle';
+import type { ManagedVmGitReadOnlySshEgress } from '@agent-vm/managed-vm';
 
 const workerGatewayGuestPath = '/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
@@ -29,7 +26,7 @@ function buildWorkerBootstrapCommand(): string {
 
 function createManagedGitReadOnlySshEgressOptions(options: {
 	readonly gitReadAllowlistRepos: readonly string[] | undefined;
-}): ManagedSshEgressOptions | undefined {
+}): ManagedVmGitReadOnlySshEgress | undefined {
 	const agent = process.env.SSH_AUTH_SOCK;
 	if (agent === undefined || agent.length === 0) {
 		return undefined;
@@ -41,19 +38,20 @@ function createManagedGitReadOnlySshEgressOptions(options: {
 	) {
 		return undefined;
 	}
-	return createGitReadOnlySshEgressOptions({
-		agent,
+	return {
+		agentSocket: agent,
 		allowedHosts: normalizedAllowlist.allowedHosts,
-		allowedRepos: normalizedAllowlist.allowedRepos,
-	});
+		allowedRepositories: normalizedAllowlist.allowedRepos,
+		kind: 'git-read-only',
+	};
 }
 
 export const workerLifecycle: GatewayLifecycle = {
-	buildVmSpec({
+	buildVmRequirements({
 		projectNamespace,
 		resolvedSecrets,
 		zone,
-	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
+	}: BuildGatewayVmRequirementsOptions): GatewayVmRequirements {
 		if (zone.gateway.type !== 'worker') {
 			throw new Error(`Worker lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 		}
@@ -100,10 +98,11 @@ export const workerLifecycle: GatewayLifecycle = {
 			...(sshEgress === undefined ? {} : { sshEgress }),
 			tcpHosts: {},
 			websocketUpgrades: zone.websocketUpgrades ?? [],
-			vfsMounts: {
+			mounts: {
 				'/state': {
+					access: 'read-write',
 					hostPath: zone.gateway.stateDir,
-					kind: 'realfs',
+					kind: 'host-directory',
 				},
 			},
 		};
@@ -114,7 +113,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			bootstrapCommand: buildWorkerBootstrapCommand(),
 			// printf NODE_OPTIONS into the boot log so an env-loss regression
 			// is visible in the log stream without SSHing into the VM.
-			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-lifecycle.
 			startCommand: `export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && { printf 'worker-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > /tmp/agent-vm-worker.log; } && cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state >> /tmp/agent-vm-worker.log 2>&1 &`,
 			healthCheck: { type: 'http', port: 18789, path: '/health' },
 			serviceHealthCheck: { type: 'http', port: 18789, path: '/health' },

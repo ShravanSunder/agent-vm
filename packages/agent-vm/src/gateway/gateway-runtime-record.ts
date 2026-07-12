@@ -6,8 +6,8 @@ import {
 	gatewayTypeValues,
 	type GatewayProcessSpec,
 	type GatewayType,
-} from '@agent-vm/gateway-interface';
-import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
+} from '@agent-vm/gateway-lifecycle';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { ZodError, z } from 'zod';
 
 import {
@@ -15,6 +15,7 @@ import {
 	type GatewayEpochIdentity,
 } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import { readProcessIdentity as defaultReadProcessIdentity } from '../shared/managed-vm-process.js';
+import { writeFileAtomically } from '../shared/write-file-atomically.js';
 
 const gatewayTypeSchema = z.enum(gatewayTypeValues);
 
@@ -145,18 +146,13 @@ export async function deleteGatewayRuntimeRecord(stateDirectory: string): Promis
 	await fs.rm(resolveGatewayRuntimeRecordPath(stateDirectory), { force: true });
 }
 
-function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
-	if (typeof managedVm.getHostPid !== 'function') {
-		throw new Error('Managed VM wrapper is missing getHostPid(); update the Gondolin adapter.');
-	}
-	const qemuPid = managedVm.getHostPid();
+function resolveManagedVmHostProcessId(managedVm: ManagedVm): number {
+	const qemuPid = managedVm.getHostProcessId();
 	if (qemuPid === null) {
-		throw new Error(
-			'Gondolin VM runtime does not expose an active host pid; upgrade @earendil-works/gondolin to a version with VM.getHostPid().',
-		);
+		throw new Error(`Managed VM '${managedVm.id}' does not expose an active host process id.`);
 	}
 	if (!Number.isInteger(qemuPid) || qemuPid <= 0) {
-		throw new Error(`Gondolin VM runtime exposed an invalid host pid: ${qemuPid}.`);
+		throw new Error(`Managed VM '${managedVm.id}' exposed an invalid host process id: ${qemuPid}.`);
 	}
 
 	return qemuPid;
@@ -175,7 +171,7 @@ export async function buildGatewayRuntimeRecord(options: {
 	readonly zoneId: string;
 }): Promise<GatewayRuntimeRecord> {
 	const gatewayType = gatewayTypeSchema.parse(options.gatewayType);
-	const qemuPid = resolveManagedVmQemuPid(options.managedVm);
+	const qemuPid = resolveManagedVmHostProcessId(options.managedVm);
 	const processIdentityReader = options.readProcessIdentity ?? defaultReadProcessIdentity;
 	const processIdentity = await processIdentityReader(qemuPid);
 	if (processIdentity === null) {

@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-	assertGondolinZigCompatibility,
+	assertManagedVmZigCompatibility,
 	buildZigInstallHint,
 	buildZigUpgradeHint,
-	checkGondolinZigCompatibility,
+	checkManagedVmZigCompatibility,
 	isZigVersionAtLeast,
-	resolveGondolinCompatibleZigVersion,
+	resolveManagedVmCompatibleZigVersion,
 	resolveHostZigVersion,
 } from './zig-compatibility.js';
 
@@ -20,7 +20,7 @@ describe('Zig compatibility', () => {
 	});
 
 	it('resolves the required Gondolin Zig version through the supplied resolver', async () => {
-		await expect(resolveGondolinCompatibleZigVersion(async () => '0.15.2')).resolves.toBe(
+		await expect(resolveManagedVmCompatibleZigVersion(async () => '0.15.2')).resolves.toBe(
 			'0.15.2',
 		);
 	});
@@ -65,7 +65,7 @@ describe('Zig compatibility', () => {
 
 	it('returns a compatible discriminated result for installed Zig versions that satisfy Gondolin', () => {
 		expect(
-			checkGondolinZigCompatibility({
+			checkManagedVmZigCompatibility({
 				installedVersion: '0.15.2',
 				requiredVersion: '0.15.2',
 			}),
@@ -80,7 +80,7 @@ describe('Zig compatibility', () => {
 
 	it('returns a missing discriminated result when Zig is not installed', () => {
 		expect(
-			checkGondolinZigCompatibility({
+			checkManagedVmZigCompatibility({
 				requiredVersion: '0.15.2',
 			}),
 		).toEqual({
@@ -93,7 +93,7 @@ describe('Zig compatibility', () => {
 
 	it('returns an incompatible discriminated result when Zig is too old', () => {
 		expect(
-			checkGondolinZigCompatibility({
+			checkManagedVmZigCompatibility({
 				installedVersion: '0.15.1',
 				requiredVersion: '0.15.2',
 			}),
@@ -120,7 +120,7 @@ describe('Zig compatibility', () => {
 
 	it('throws install guidance when builds need Zig but none is installed', () => {
 		expect(() =>
-			assertGondolinZigCompatibility({
+			assertManagedVmZigCompatibility({
 				requiredVersion: '0.15.2',
 			}),
 		).toThrow('Install Zig >= 0.15.2. On macOS: brew install zig.');
@@ -128,7 +128,7 @@ describe('Zig compatibility', () => {
 
 	it('throws upgrade guidance with the installed version when Zig is incompatible', () => {
 		expect(() =>
-			assertGondolinZigCompatibility({
+			assertManagedVmZigCompatibility({
 				installedVersion: '0.15.1',
 				requiredVersion: '0.15.2',
 			}),

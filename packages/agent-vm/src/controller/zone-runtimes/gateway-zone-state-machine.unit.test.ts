@@ -1,4 +1,4 @@
-import { gatewayRecoveryHealthReasons } from '@agent-vm/gateway-interface';
+import { gatewayRecoveryHealthReasons } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { GatewayOwnershipEvidence } from '../../gateway/gateway-ownership-evidence.js';
@@ -234,7 +234,7 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 			exec: (): never => {
 				throw new Error('not used');
 			},
-			getHostPid: (): number => 42,
+			getHostProcessId: (): number => 42,
 			id: 'gateway-vm-1',
 		},
 		vmOwnership: createGatewayVmOwnershipStub('gateway-vm-1'),

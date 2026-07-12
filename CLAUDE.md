@@ -77,14 +77,20 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 ## Packages
 
 ```text
-gondolin-adapter          → VM build pipeline, adapter, secret resolver (no internal deps)
-gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter)
-openclaw-gateway          → OpenClaw lifecycle (→ gateway-interface, gondolin-adapter)
-worker-gateway            → Worker lifecycle (→ gateway-interface, gondolin-adapter)
-openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ gondolin-adapter)
+managed-vm                → Backend-neutral ManagedVm contracts and owned-directory capabilities
+gondolin-vm-adapter       → Gondolin provider, VM build pipeline, VFS, mediation (→ managed-vm, secrets)
+gateway-lifecycle         → GatewayLifecycle, VM/process specs, shared runtime policy (→ managed-vm, secrets)
+openclaw-gateway          → OpenClaw lifecycle (→ gateway-lifecycle, managed-vm)
+worker-gateway            → Worker lifecycle (→ gateway-lifecycle, managed-vm)
+openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ managed-vm)
 agent-vm-worker           → Worker process, runs inside VM (standalone)
 agent-vm                  → Controller CLI + HTTP server (→ all above)
 ```
+
+Only `packages/agent-vm/src/composition/gondolin-managed-vm-provider.ts` and
+`packages/agent-vm/src/build/gondolin-managed-vm-build-tooling.ts` may import
+`@agent-vm/gondolin-vm-adapter` in production. Controller domain,
+orchestration, leases, health, and recovery consume `@agent-vm/managed-vm`.
 
 ## Layout
 

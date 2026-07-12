@@ -39,7 +39,7 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |
     |-- 6. Create lease manager
     |      createLeaseManager({ tcpPool, createManagedVm, now })
-    |      Wires VM creation and TCP slot bookkeeping into the lease lifecycle
+    |      Injects a narrow Tool VM creation closure and TCP slot bookkeeping
     |
     |-- 7. Start idle reaper
     |      createIdleReaper({ ttlForLease })
@@ -282,7 +282,7 @@ not by VM-facing public HTTP lease routes.
     |       |-- zone.agentToolVmProfiles[agentId]
     |       |-- otherwise zone.defaultToolVmProfile
     |-- 5. Begin provisional Tool membership under the exact Gateway epoch
-    |-- 6. createManagedVm(...)        Construct an unstarted stock Gondolin VM
+    |-- 6. createManagedVm(...)        Construct an unstarted ManagedVm via the injected factory
     |-- 7. Attach vm.id, vm.start(), capture pid + process-start identity
     |-- 8. Persist <stateDir>/tool-leases/<recordId>.json (schema v2)
     |-- 9. vm.enableSsh({ port })      Start SSH listener, validate exact server identity
@@ -483,6 +483,13 @@ The controller uses a consistent function-and-closure pattern for dependency inj
     now: () => number;
   }): LeaseManager
 ```
+
+Application startup constructs the stock Gondolin `ManagedVmProvider` once in
+`composition/gondolin-managed-vm-provider.ts`. The aggregate provider never
+enters controller domains. Runtime wiring injects only its neutral
+`ManagedVmFactory`, image capability, and owned-directory capability where each
+is needed; the lease manager receives the still narrower Tool VM creation
+closure shown above.
 
 **Runtime-level wiring** happens in `startControllerRuntime()`, which closes over all subsystems. Its `ControllerRuntimeDependencies` interface carries 11 optional overrides (`createSecretResolver`, `startGatewayZone`, `startHttpServer`, `createManagedToolVm`, `runWorkerTask`, `now`, `setIntervalImpl`, `clearIntervalImpl`, `deleteGatewayRuntimeRecord`, `onWorkerTaskPrepared`, `onWorkerTaskFinished`). Production defaults are imported at module scope and used when the corresponding dependency is absent. Every subsystem (`gateway-recovery.ts`, `gateway-zone-orchestrator.ts`, `idle-reaper.ts`, `worker-task-runner.ts`) follows this same pattern -- tests override individual collaborators without mocking internals.
 

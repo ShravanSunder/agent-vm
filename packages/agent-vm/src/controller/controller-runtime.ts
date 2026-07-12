@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
-import { configureHostNetworkDefaults } from '@agent-vm/gondolin-adapter';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
 import { resolveCliVersion } from '../cli/cli-version.js';
@@ -407,9 +406,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		controllerEpoch,
 		createGatewayEpochId: randomUUID,
 	});
-	const hostNetworkDefaults = (
-		dependencies.configureHostNetworkDefaults ?? configureHostNetworkDefaults
-	)();
+	const hostNetworkDefaults = dependencies.configureManagedVmHostNetworkDefaults();
 	writeControllerRuntimeLog(
 		`Host network defaults: dnsResultOrder=${hostNetworkDefaults.dnsResultOrder} autoSelectFamily=${hostNetworkDefaults.autoSelectFamily}`,
 	);
@@ -441,17 +438,24 @@ async function startControllerRuntimeWithOwnershipLock(
 	const createManagedToolVm =
 		dependencies.createManagedToolVm ??
 		(async (toolVmOptions) =>
-			await createUnstartedToolVm({
-				agentId: toolVmOptions.agentId,
-				cacheDir: options.systemConfig.cacheDir,
-				profile: toolVmOptions.profile,
-				systemConfig: options.systemConfig,
-				tcpSlot: toolVmOptions.tcpSlot,
-				hostWorkMountDir: toolVmOptions.hostWorkMountDir,
-				...(toolVmOptions.zoneGitMount ? { zoneGitMount: toolVmOptions.zoneGitMount } : {}),
-				zoneId: toolVmOptions.zoneId,
-				secretResolver: toolVmOptions.secretResolver,
-			}));
+			await createUnstartedToolVm(
+				{
+					agentId: toolVmOptions.agentId,
+					cacheDir: options.systemConfig.cacheDir,
+					profile: toolVmOptions.profile,
+					systemConfig: options.systemConfig,
+					tcpSlot: toolVmOptions.tcpSlot,
+					hostWorkMountDir: toolVmOptions.hostWorkMountDir,
+					...(toolVmOptions.zoneGitMount ? { zoneGitMount: toolVmOptions.zoneGitMount } : {}),
+					zoneId: toolVmOptions.zoneId,
+					secretResolver: toolVmOptions.secretResolver,
+				},
+				{
+					managedVmFactory: dependencies.managedVmFactory,
+					managedVmImages: dependencies.managedVmImages,
+					managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
+				},
+			));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const activeTaskRegistry = new ActiveTaskRegistry();
 	const requestHeartbeatRegistry = new RequestHeartbeatRegistry();
@@ -690,6 +694,8 @@ async function startControllerRuntimeWithOwnershipLock(
 							: {}),
 						createFreshSecretResolver,
 						createVmOwnership: createOpenClawGatewayVmOwnership,
+						managedVmFactory: dependencies.managedVmFactory,
+						managedVmImages: dependencies.managedVmImages,
 						...(dependencies.isProcessAlive ? { isProcessAlive: dependencies.isProcessAlive } : {}),
 						now,
 						recoverGatewayAfterProcessFailure: async (request) =>
@@ -722,7 +728,10 @@ async function startControllerRuntimeWithOwnershipLock(
 									runtimePluginConfigs,
 									writeLog: writeControllerRuntimeLog,
 								},
-								effectivePreflightDependencies,
+								{
+									...effectivePreflightDependencies,
+									managedVmImages: dependencies.managedVmImages,
+								},
 							);
 						},
 						restartGatewayZone: async (zoneId, startOptions) => {
@@ -786,12 +795,18 @@ async function startControllerRuntimeWithOwnershipLock(
 							if (dependencies.checkObservabilityStackReadiness === undefined) {
 								return await (dependencies.startGatewayZone ?? startGatewayZoneForController)(
 									startGatewayZoneOptions,
+									{
+										managedVmFactory: dependencies.managedVmFactory,
+										managedVmImages: dependencies.managedVmImages,
+									},
 								);
 							}
 							return await (dependencies.startGatewayZone ?? startGatewayZoneForController)(
 								startGatewayZoneOptions,
 								{
 									checkObservabilityStackReadiness: dependencies.checkObservabilityStackReadiness,
+									managedVmFactory: dependencies.managedVmFactory,
+									managedVmImages: dependencies.managedVmImages,
 								},
 							);
 						},
@@ -821,6 +836,8 @@ async function startControllerRuntimeWithOwnershipLock(
 								? { prepareWorkerTask: dependencies.prepareWorkerTask }
 								: {}),
 							requestHeartbeatRegistry,
+							managedVmFactory: dependencies.managedVmFactory,
+							managedVmImages: dependencies.managedVmImages,
 							secretResolver,
 							systemConfig: options.systemConfig,
 							zone,
@@ -1221,6 +1238,7 @@ export async function startControllerRuntime(
 		];
 		for (const zoneId of selectedZoneIds) {
 			try {
+				// oxlint-disable-next-line no-await-in-loop -- Reconcile recorded VM trees sequentially so cleanup and owner-unsafe failures cannot race across zones during startup.
 				await reconcileRecordedVmTree({
 					systemConfig: options.systemConfig,
 					zoneId,

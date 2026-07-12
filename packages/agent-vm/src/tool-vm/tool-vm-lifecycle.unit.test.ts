@@ -11,26 +11,138 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
-import {
-	buildImageAssetFileNames,
-	type CreateVmOptions,
-	type ManagedVm,
-	type ManagedVmInstance,
-	type ManagedVmSshAccess,
-	type PinnedRealFsRoot,
-} from '@agent-vm/gondolin-adapter';
+import type { ManagedVm, ManagedVmCreateRequest, OwnedHostDirectory } from '@agent-vm/managed-vm';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { writePreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
-import { createToolVm } from './tool-vm-lifecycle.js';
+import {
+	createToolVm as createToolVmWithManagedProvider,
+	type ToolVmLifecycleDependencies,
+} from './tool-vm-lifecycle.js';
+
+type CreateVmOptions = ManagedVmCreateRequest;
+
+interface OwnedDirectoryBackingFixture {
+	readonly device: number;
+	readonly fd: number;
+	readonly hostPath: string;
+	readonly inode: number;
+	readonly realPath: string;
+}
+
+interface ToolVmTestProviderOverrides {
+	readonly prepareImage?: () => Promise<{
+		readonly built: boolean;
+		readonly fingerprint: string;
+		readonly imageReference: string;
+	}>;
+	readonly closeOwnedDirectoryBacking?: (root: OwnedDirectoryBackingFixture) => void;
+	readonly createManagedVm?: (request: ManagedVmCreateRequest) => Promise<ManagedVm>;
+	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
+	readonly openOwnedDirectoryBacking?: (hostPath: string) => OwnedDirectoryBackingFixture;
+	readonly validateResolvedToolWorkMountDir?: ToolVmLifecycleDependencies['validateResolvedToolWorkMountDir'];
+}
+
+function createToolVmTestDependencies(
+	options: ToolVmTestProviderOverrides,
+): ToolVmLifecycleDependencies {
+	return {
+		managedVmFactory: {
+			async createManagedVm(request): Promise<ManagedVm> {
+				const transfers = Object.values(request.mounts).flatMap((mount) =>
+					mount.kind === 'owned-host-directory' ? [mount.directory.consume()] : [],
+				);
+				try {
+					return await (
+						options.createManagedVm ??
+						(async () => {
+							throw new Error('Unexpected managed VM creation.');
+						})
+					)(request);
+				} catch (error) {
+					for (const transfer of transfers) transfer.close();
+					throw error;
+				}
+			},
+		},
+		managedVmImages: {
+			prepareImage: async () => {
+				const image = await (
+					options.prepareImage ??
+					(async () => ({
+						built: true,
+						fingerprint: 'tool-fingerprint',
+						imageReference: '/cache/tool-fingerprint',
+					}))
+				)();
+				return {
+					built: image.built,
+					fingerprint: image.fingerprint,
+					imageReference: image.imageReference,
+				};
+			},
+		},
+		managedVmOwnedDirectories: {
+			openHostDirectory(hostPath): OwnedHostDirectory {
+				const directoryBacking = (
+					options.openOwnedDirectoryBacking ?? createOwnedDirectoryBackingFixture
+				)(hostPath);
+				let state: OwnedHostDirectory['state'] = 'acquired';
+				return {
+					close(): void {
+						if (state === 'closed') return;
+						state = 'closed';
+						options.closeOwnedDirectoryBacking?.(directoryBacking);
+					},
+					consume() {
+						if (state !== 'acquired') throw new Error('owned directory consumed twice');
+						state = 'adapter-owned';
+						return {
+							close: () => {
+								state = 'closed';
+								options.closeOwnedDirectoryBacking?.(directoryBacking);
+							},
+							identity: {
+								canonicalPath: directoryBacking.realPath,
+								device: directoryBacking.device,
+								inode: directoryBacking.inode,
+							},
+							get state() {
+								return state === 'closed' ? ('closed' as const) : ('adapter-owned' as const);
+							},
+						};
+					},
+					identity: {
+						canonicalPath: directoryBacking.realPath,
+						device: directoryBacking.device,
+						inode: directoryBacking.inode,
+					},
+					get state() {
+						return state;
+					},
+				};
+			},
+		},
+		managedVmKillDependencies:
+			options.managedVmKillDependencies ?? createManagedVmKillDependencies(),
+		...(options.validateResolvedToolWorkMountDir
+			? { validateResolvedToolWorkMountDir: options.validateResolvedToolWorkMountDir }
+			: {}),
+	};
+}
+
+async function createToolVm(
+	options: Parameters<typeof createToolVmWithManagedProvider>[0],
+	dependencies: ToolVmTestProviderOverrides,
+): Promise<ManagedVm> {
+	return await createToolVmWithManagedProvider(options, createToolVmTestDependencies(dependencies));
+}
 
 const createdDirectories: string[] = [];
 const testToolVmProcessIdentity = {
@@ -163,16 +275,7 @@ async function createWorkMountDirectory(
 	return hostWorkMountDir;
 }
 
-async function writeFakeImageAssets(imagePath: string): Promise<void> {
-	await mkdir(imagePath, { recursive: true });
-	await Promise.all(
-		buildImageAssetFileNames.map(
-			async (fileName) => await writeFile(path.join(imagePath, fileName), '', 'utf8'),
-		),
-	);
-}
-
-function createPinnedRealFsRoot(hostPath: string): PinnedRealFsRoot {
+function createOwnedDirectoryBackingFixture(hostPath: string): OwnedDirectoryBackingFixture {
 	return {
 		device: 1,
 		fd: -1,
@@ -207,23 +310,12 @@ function createSshAccessStub(): Awaited<ReturnType<ManagedVm['enableSsh']>> {
 	};
 }
 
-function createManagedVmSshAccessStub(): ManagedVmSshAccess {
-	return {
-		close: vi.fn(async () => {}),
-		command: 'ssh -i /tmp/tool-vm-key root@127.0.0.1 -p 19000',
-		host: '127.0.0.1',
-		identityFile: '/tmp/tool-vm-key',
-		port: 19000,
-		user: 'root',
-	};
-}
-
 function createManagedVmStub(
 	options: {
 		readonly close?: ManagedVm['close'];
 		readonly enableSsh?: ManagedVm['enableSsh'];
 		readonly exec?: ManagedVm['exec'];
-		readonly getHostPid?: ManagedVm['getHostPid'];
+		readonly getHostProcessId?: ManagedVm['getHostProcessId'];
 		readonly id?: string;
 		readonly start?: ManagedVm['start'];
 	} = {},
@@ -231,34 +323,208 @@ function createManagedVmStub(
 	const close = options.close ?? vi.fn(async () => {});
 	const exec = options.exec ?? vi.fn(() => createManagedExecProcessStub());
 	const start = options.start ?? vi.fn(async () => {});
-	const fs = createManagedVmFsStub();
 	const id = options.id ?? 'managed-vm';
-	const vmInstance = {
-		close,
-		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
-		enableSsh: async () => createManagedVmSshAccessStub(),
-		exec,
-		fs,
-		getHostPid: options.getHostPid ?? (() => 28_282),
-		id,
-		setIngressRoutes: () => {},
-		start,
-	} satisfies ManagedVmInstance;
+	let defaultHostProcessIdReadCount = 0;
 	return {
 		close,
+		configureIngressRoutes: () => {},
 		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
 		enableSsh: options.enableSsh ?? (async () => createSshAccessStub()),
 		exec,
-		fs,
-		getHostPid: options.getHostPid ?? (() => 28_282),
-		getVmInstance: () => vmInstance,
+		getHostProcessId:
+			options.getHostProcessId ??
+			(() => {
+				defaultHostProcessIdReadCount += 1;
+				return defaultHostProcessIdReadCount <= 2 ? 28_282 : null;
+			}),
 		id,
-		setIngressRoutes: () => {},
 		start,
 	};
 }
 
 describe('createToolVm', () => {
+	function createOwnedDirectoryFixture(options: {
+		readonly canonicalPath: string;
+		readonly closeError?: Error;
+	}): { readonly close: ReturnType<typeof vi.fn>; readonly directory: OwnedHostDirectory } {
+		let state: OwnedHostDirectory['state'] = 'acquired';
+		const close = vi.fn(() => {
+			if (state === 'closed') return;
+			state = 'closed';
+			if (options.closeError) throw options.closeError;
+		});
+		return {
+			close,
+			directory: {
+				close,
+				consume() {
+					if (state !== 'acquired') throw new Error('owned directory consumed twice');
+					state = 'adapter-owned';
+					return {
+						close,
+						identity: { canonicalPath: options.canonicalPath, device: 1, inode: 1 },
+						get state() {
+							return state === 'closed' ? ('closed' as const) : ('adapter-owned' as const);
+						},
+					};
+				},
+				identity: { canonicalPath: options.canonicalPath, device: 1, inode: 1 },
+				get state() {
+					return state;
+				},
+			},
+		};
+	}
+
+	it('closes an acquired owned directory when the factory rejects before consumption', async () => {
+		const systemConfig = await createToolVmSystemConfig();
+		const profile = systemConfig.toolVmProfiles.standard;
+		if (!profile) throw new Error('Expected standard Tool VM profile.');
+		const hostWorkMountDir = await realpath(
+			await createWorkMountDirectory(systemConfig, 'reject-before-consume'),
+		);
+		const ownedDirectory = createOwnedDirectoryFixture({ canonicalPath: hostWorkMountDir });
+		const createError = new Error('factory rejected before consuming mounts');
+
+		await expect(
+			createToolVmWithManagedProvider(
+				{
+					agentId: 'sun',
+					cacheDir: systemConfig.cacheDir,
+					hostWorkMountDir,
+					profile,
+					secretResolver: createSecretResolver({}),
+					systemConfig,
+					tcpSlot: 0,
+					zoneId: 'shravan',
+				},
+				{
+					managedVmFactory: {
+						createManagedVm: async () => {
+							throw createError;
+						},
+					},
+					managedVmImages: {
+						prepareImage: async () => ({
+							built: true,
+							fingerprint: 'image',
+							imageReference: '/image',
+						}),
+					},
+					managedVmOwnedDirectories: { openHostDirectory: () => ownedDirectory.directory },
+				},
+			),
+		).rejects.toBe(createError);
+		expect(ownedDirectory.close).toHaveBeenCalledOnce();
+	});
+
+	it('aggregates an acquired-directory close failure with factory rejection', async () => {
+		const systemConfig = await createToolVmSystemConfig();
+		const profile = systemConfig.toolVmProfiles.standard;
+		if (!profile) throw new Error('Expected standard Tool VM profile.');
+		const hostWorkMountDir = await realpath(
+			await createWorkMountDirectory(systemConfig, 'reject-close-failure'),
+		);
+		const closeError = new Error('owned directory close failed');
+		const ownedDirectory = createOwnedDirectoryFixture({
+			canonicalPath: hostWorkMountDir,
+			closeError,
+		});
+		const createError = new Error('factory rejected before consuming mounts');
+
+		const creation = createToolVmWithManagedProvider(
+			{
+				agentId: 'sun',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkMountDir,
+				profile,
+				secretResolver: createSecretResolver({}),
+				systemConfig,
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			},
+			{
+				managedVmFactory: {
+					createManagedVm: async () => {
+						throw createError;
+					},
+				},
+				managedVmImages: {
+					prepareImage: async () => ({
+						built: true,
+						fingerprint: 'image',
+						imageReference: '/image',
+					}),
+				},
+				managedVmOwnedDirectories: { openHostDirectory: () => ownedDirectory.directory },
+			},
+		);
+		await expect(creation).rejects.toEqual(
+			expect.objectContaining({ errors: [createError, closeError] }),
+		);
+	});
+
+	it('closes only the still-acquired directory when the factory consumes one mount then rejects', async () => {
+		const systemConfig = await createToolVmSystemConfig();
+		const profile = systemConfig.toolVmProfiles.standard;
+		const zone = systemConfig.zones[0];
+		if (!profile || zone?.gateway.type !== 'openclaw') throw new Error('Expected Tool VM fixture.');
+		const hostWorkMountDir = await realpath(
+			await createWorkMountDirectory(systemConfig, 'agents/sun'),
+		);
+		const hostZoneFilesDir = await realpath(zone.gateway.zoneFilesDir);
+		const hostZoneGitRoot = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'zone-git');
+		await mkdir(hostZoneGitRoot, { recursive: true });
+		const canonicalZoneGitRoot = await realpath(hostZoneGitRoot);
+		const zoneFilesDirectory = createOwnedDirectoryFixture({ canonicalPath: hostZoneFilesDir });
+		const zoneGitDirectory = createOwnedDirectoryFixture({ canonicalPath: canonicalZoneGitRoot });
+		const directories = [zoneFilesDirectory.directory, zoneGitDirectory.directory];
+
+		await expect(
+			createToolVmWithManagedProvider(
+				{
+					agentId: 'sun',
+					cacheDir: systemConfig.cacheDir,
+					hostWorkMountDir,
+					profile,
+					secretResolver: createSecretResolver({}),
+					systemConfig,
+					tcpSlot: 0,
+					zoneGitMount: { hostZoneFilesDir, hostZoneGitRoot: canonicalZoneGitRoot },
+					zoneId: 'shravan',
+				},
+				{
+					managedVmFactory: {
+						createManagedVm: async (request) => {
+							const firstOwnedMount = Object.values(request.mounts).find(
+								(mount) => mount.kind === 'owned-host-directory',
+							);
+							if (firstOwnedMount?.kind !== 'owned-host-directory')
+								throw new Error('missing owned mount');
+							firstOwnedMount.directory.consume();
+							throw new Error('factory rejected after partial consumption');
+						},
+					},
+					managedVmImages: {
+						prepareImage: async () => ({
+							built: true,
+							fingerprint: 'image',
+							imageReference: '/image',
+						}),
+					},
+					managedVmOwnedDirectories: {
+						openHostDirectory: () => {
+							const directory = directories.shift();
+							if (!directory) throw new Error('unexpected directory open');
+							return directory;
+						},
+					},
+				},
+			),
+		).rejects.toThrow('factory rejected after partial consumption');
+		expect(zoneFilesDirectory.close).toHaveBeenCalledOnce();
+		expect(zoneGitDirectory.close).not.toHaveBeenCalled();
+	});
 	it('mounts the lease host work mount directory at /workspace and leaves /work ephemeral', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
 		const managedVm = createManagedVmStub({ exec });
@@ -290,41 +556,43 @@ describe('createToolVm', () => {
 				secretResolver: createSecretResolver({}),
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
 				createManagedVm,
-				closePinnedRealFsRoot: () => {},
+				closeOwnedDirectoryBacking: () => {},
 				managedVmKillDependencies: createManagedVmKillDependencies(),
-				pinRealFsRoot: createPinnedRealFsRoot,
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
-				vfsMounts: {
+				mounts: {
 					'/workspace': {
-						hostPath: realWorkMountDir,
-						kind: 'realfs',
-						pinnedHostRoot: expect.objectContaining({
-							realPath: realWorkMountDir,
+						access: 'read-write',
+						kind: 'owned-host-directory',
+						directory: expect.objectContaining({
+							identity: expect.objectContaining({ canonicalPath: realWorkMountDir }),
 						}),
 					},
 				},
 			}),
 		);
-		expect(capturedCreateVmOptions?.vfsMounts['/workspace']?.pinnedHostRoot).toEqual(
+		expect(capturedCreateVmOptions?.mounts['/workspace']).toEqual(
 			expect.objectContaining({
-				realPath: realWorkMountDir,
+				directory: expect.objectContaining({
+					identity: expect.objectContaining({ canonicalPath: realWorkMountDir }),
+				}),
 			}),
 		);
-		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/work');
+		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/work');
 		// IPv4-preference egress for Node consumers inside the Tool VM
 		// to defeat Happy Eyeballs racing on gondolin's synthetic AAAA.
-		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
-		expect(capturedCreateVmOptions?.env?.NODE_OPTIONS).toBe(
+		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-lifecycle.
+		expect(capturedCreateVmOptions?.environment.NODE_OPTIONS).toBe(
 			'--dns-result-order=ipv4first --no-network-family-autoselection',
 		);
 		expect(capturedCreateVmOptions?.runtimeRootfsSize).toBe('16G');
@@ -378,12 +646,12 @@ describe('createToolVm', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
-				closePinnedRealFsRoot: () => {},
+				closeOwnedDirectoryBacking: () => {},
 				createManagedVm: async () => managedVm,
 				managedVmKillDependencies: createManagedVmKillDependencies({
 					readProcessIdentity: async () => {
@@ -391,7 +659,7 @@ describe('createToolVm', () => {
 						return testToolVmProcessIdentity;
 					},
 				}),
-				pinRealFsRoot: createPinnedRealFsRoot,
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 		await createdVm.enableSsh();
@@ -420,7 +688,7 @@ describe('createToolVm', () => {
 		const managedVm = createManagedVmStub({
 			close,
 			exec,
-			getHostPid: () => null,
+			getHostProcessId: () => null,
 			start: async () => {
 				throw startError;
 			},
@@ -439,14 +707,14 @@ describe('createToolVm', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
-				closePinnedRealFsRoot: () => {},
+				closeOwnedDirectoryBacking: () => {},
 				createManagedVm: async () => managedVm,
-				pinRealFsRoot: createPinnedRealFsRoot,
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
@@ -471,7 +739,7 @@ describe('createToolVm', () => {
 		const close = vi.fn(async () => {});
 		const managedVm = createManagedVmStub({
 			close,
-			getHostPid: () => 28_282,
+			getHostProcessId: () => 28_282,
 			start: async () => {
 				throw startError;
 			},
@@ -490,14 +758,14 @@ describe('createToolVm', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
-				closePinnedRealFsRoot: () => {},
+				closeOwnedDirectoryBacking: () => {},
 				createManagedVm: async () => managedVm,
-				pinRealFsRoot: createPinnedRealFsRoot,
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
@@ -525,7 +793,7 @@ describe('createToolVm', () => {
 			'construction-failure',
 		);
 		const createError = new Error('stock Tool VM construction failed');
-		const closePinnedRealFsRoot = vi.fn();
+		const closeOwnedDirectoryBacking = vi.fn();
 
 		// Act
 		const creation = createToolVm(
@@ -540,32 +808,31 @@ describe('createToolVm', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
-				closePinnedRealFsRoot,
+				closeOwnedDirectoryBacking,
 				createManagedVm: async (createVmOptions) => {
-					const pinnedRoot = createVmOptions.vfsMounts['/workspace']?.pinnedHostRoot;
-					if (pinnedRoot === undefined) {
-						throw new Error('Expected adapter-owned pinned root.');
+					const workspaceMount = createVmOptions.mounts['/workspace'];
+					if (workspaceMount?.kind !== 'owned-host-directory') {
+						throw new Error('Expected provider-owned workspace directory.');
 					}
-					closePinnedRealFsRoot(pinnedRoot);
 					throw createError;
 				},
-				pinRealFsRoot: createPinnedRealFsRoot,
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
 		// Assert
 		await expect(creation).rejects.toBe(createError);
-		expect(closePinnedRealFsRoot).toHaveBeenCalledOnce();
+		expect(closeOwnedDirectoryBacking).toHaveBeenCalledOnce();
 	});
 
 	it('passes only Tool VM egress hosts and mediated secrets into the Tool VM', async () => {
 		const exec = vi.fn<ManagedVm['exec']>(() => createManagedExecProcessStub());
-		const managedVm = createManagedVmStub({ exec, getHostPid: () => null });
+		const managedVm = createManagedVmStub({ exec });
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
 			capturedCreateVmOptions = createVmOptions;
@@ -669,33 +936,39 @@ describe('createToolVm', () => {
 				secretResolver,
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
 				createManagedVm,
-				closePinnedRealFsRoot: () => {},
-				pinRealFsRoot: createPinnedRealFsRoot,
+				closeOwnedDirectoryBacking: () => {},
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
 		expect(capturedCreateVmOptions).toMatchObject({
 			allowedHosts: ['api.github.com', 'api.linear.app', 'mcp2.readwise.io'],
-			secrets: {
-				GITHUB_TOKEN: {
-					hosts: ['api.github.com'],
+			mediatedSecrets: expect.arrayContaining([
+				{
+					allowedHosts: ['api.github.com'],
+					environmentVariable: 'GITHUB_TOKEN',
 					value: 'github-real-secret',
 				},
-				LINEAR_API_KEY: {
-					hosts: ['api.linear.app'],
+				{
+					allowedHosts: ['api.linear.app'],
+					environmentVariable: 'LINEAR_API_KEY',
 					value: 'linear-real-secret',
 				},
-			},
+			]),
 		});
-		expect(capturedCreateVmOptions?.secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
-		expect(capturedCreateVmOptions?.secrets).not.toHaveProperty('GATEWAY_ONLY_TOKEN');
-		expect(capturedCreateVmOptions?.secrets).not.toHaveProperty('READWISE_ACCESS_TOKEN');
+		expect(capturedCreateVmOptions?.mediatedSecrets).not.toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ environmentVariable: 'DISCORD_BOT_TOKEN' }),
+				expect.objectContaining({ environmentVariable: 'GATEWAY_ONLY_TOKEN' }),
+				expect.objectContaining({ environmentVariable: 'READWISE_ACCESS_TOKEN' }),
+			]),
+		);
 		expect(resolveAll).toHaveBeenCalledWith({
 			GITHUB_TOKEN: { source: 'environment', ref: 'GITHUB_TOKEN' },
 			LINEAR_API_KEY: { source: 'environment', ref: 'LINEAR_API_KEY' },
@@ -731,7 +1004,7 @@ describe('createToolVm', () => {
 	});
 
 	it('uses Tool VM websocket upgrade policy for websocket request guarding', async () => {
-		const managedVm = createManagedVmStub({ getHostPid: () => null });
+		const managedVm = createManagedVmStub();
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
 			capturedCreateVmOptions = createVmOptions;
@@ -781,18 +1054,18 @@ describe('createToolVm', () => {
 				secretResolver: createSecretResolver({}),
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
 				createManagedVm,
-				closePinnedRealFsRoot: () => {},
-				pinRealFsRoot: createPinnedRealFsRoot,
+				closeOwnedDirectoryBacking: () => {},
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
-		const onRequest = capturedCreateVmOptions?.onRequest;
+		const onRequest = capturedCreateVmOptions?.mediation?.onRequest;
 		expect(onRequest).toBeDefined();
 		if (!onRequest) {
 			throw new Error('Expected Tool VM websocket guard');
@@ -817,7 +1090,7 @@ describe('createToolVm', () => {
 		'rejects mediated Tool VM secret name %s because it collides with runtime bootstrap env',
 		async (reservedSecretName) => {
 			const exec = vi.fn<ManagedVm['exec']>(() => createManagedExecProcessStub());
-			const managedVm = createManagedVmStub({ exec, getHostPid: () => null });
+			const managedVm = createManagedVmStub({ exec });
 			const createManagedVm = vi.fn(async () => managedVm);
 			const systemConfig = await createToolVmSystemConfig();
 			const zone = systemConfig.zones[0];
@@ -857,14 +1130,14 @@ describe('createToolVm', () => {
 						secretResolver: createSecretResolver({ [reservedSecretName]: 'real-secret' }),
 					},
 					{
-						buildGondolinImage: async () => ({
+						prepareImage: async () => ({
 							built: true,
 							fingerprint: 'tool-fingerprint',
-							imagePath: '/cache/tool-fingerprint',
+							imageReference: '/cache/tool-fingerprint',
 						}),
 						createManagedVm,
-						closePinnedRealFsRoot: () => {},
-						pinRealFsRoot: createPinnedRealFsRoot,
+						closeOwnedDirectoryBacking: () => {},
+						openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 					},
 				),
 			).rejects.toThrow('reserved by agent-vm runtime bootstrap');
@@ -897,13 +1170,13 @@ describe('createToolVm', () => {
 			systemConfig,
 			'failed-create-rollback',
 		);
-		const closePinnedRealFsRoot = vi.fn();
-		let adapterOwnedPinnedRoot: PinnedRealFsRoot | undefined;
+		const closeOwnedDirectoryBacking = vi.fn();
+		let adapterOwnedDirectory: OwnedHostDirectory | undefined;
 		let runnerAttached = true;
 		const closeError = new Error('stock VM close failed');
 		const closeMock = vi.fn(async () => {
-			if (adapterOwnedPinnedRoot) {
-				closePinnedRealFsRoot(adapterOwnedPinnedRoot);
+			if (adapterOwnedDirectory) {
+				adapterOwnedDirectory.close();
 			}
 			throw closeError;
 		});
@@ -922,7 +1195,7 @@ describe('createToolVm', () => {
 				);
 			},
 			id: 'managed-vm-failed-create-rollback',
-			getHostPid: () => (runnerAttached ? 28_282 : null),
+			getHostProcessId: () => (runnerAttached ? 28_282 : null),
 		});
 
 		let thrownError: unknown;
@@ -939,23 +1212,27 @@ describe('createToolVm', () => {
 					secretResolver: createSecretResolver({ TOOL_TOKEN: 'real-secret' }),
 				},
 				{
-					buildGondolinImage: async () => ({
+					prepareImage: async () => ({
 						built: true,
 						fingerprint: 'tool-fingerprint',
-						imagePath: '/cache/tool-fingerprint',
+						imageReference: '/cache/tool-fingerprint',
 					}),
 					createManagedVm: async (createVmOptions) => {
-						adapterOwnedPinnedRoot = createVmOptions.vfsMounts['/workspace']?.pinnedHostRoot;
+						const workspaceMount = createVmOptions.mounts['/workspace'];
+						adapterOwnedDirectory =
+							workspaceMount?.kind === 'owned-host-directory'
+								? workspaceMount.directory
+								: undefined;
 						return managedVm;
 					},
-					closePinnedRealFsRoot,
+					closeOwnedDirectoryBacking,
 					managedVmKillDependencies: createManagedVmKillDependencies({
 						isProcessAlive: () => runnerAttached,
 						killProcess: (_pid, _signal) => {
 							runnerAttached = false;
 						},
 					}),
-					pinRealFsRoot: createPinnedRealFsRoot,
+					openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 				},
 			);
 		} catch (error) {
@@ -975,12 +1252,12 @@ describe('createToolVm', () => {
 		]);
 		expect(aggregateError.cause).toBe(aggregateError.errors[0]);
 		expect(closeMock).toHaveBeenCalledOnce();
-		expect(closePinnedRealFsRoot).toHaveBeenCalledOnce();
+		expect(closeOwnedDirectoryBacking).toHaveBeenCalledOnce();
 	});
 
 	it('mounts zone Git leases at /zone and /agent-vm/zone-git', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
-		const managedVm = createManagedVmStub({ exec, getHostPid: () => null });
+		const managedVm = createManagedVmStub({ exec });
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
 			capturedCreateVmOptions = createVmOptions;
@@ -1018,33 +1295,33 @@ describe('createToolVm', () => {
 				secretResolver: createSecretResolver({}),
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
 				createManagedVm,
-				closePinnedRealFsRoot: () => {},
-				pinRealFsRoot: createPinnedRealFsRoot,
+				closeOwnedDirectoryBacking: () => {},
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
-		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/work');
+		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/work');
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
-				vfsMounts: {
+				mounts: {
 					'/agent-vm/zone-git': {
-						hostPath: realZoneGitRoot,
-						kind: 'realfs',
-						pinnedHostRoot: expect.objectContaining({
-							realPath: realZoneGitRoot,
+						access: 'read-write',
+						kind: 'owned-host-directory',
+						directory: expect.objectContaining({
+							identity: expect.objectContaining({ canonicalPath: realZoneGitRoot }),
 						}),
 					},
 					'/zone': {
-						hostPath: realZoneFilesDir,
-						kind: 'realfs',
-						pinnedHostRoot: expect.objectContaining({
-							realPath: realZoneFilesDir,
+						access: 'read-write',
+						kind: 'owned-host-directory',
+						directory: expect.objectContaining({
+							identity: expect.objectContaining({ canonicalPath: realZoneFilesDir }),
 						}),
 					},
 				},
@@ -1095,10 +1372,10 @@ describe('createToolVm', () => {
 					secretResolver: createSecretResolver({}),
 				},
 				{
-					buildGondolinImage: async () => ({
+					prepareImage: async () => ({
 						built: true,
 						fingerprint: 'tool-fingerprint',
-						imagePath: '/cache/tool-fingerprint',
+						imageReference: '/cache/tool-fingerprint',
 					}),
 					createManagedVm,
 				},
@@ -1107,8 +1384,8 @@ describe('createToolVm', () => {
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('persists tool writes through the RealFS /workspace backing directory', async () => {
-		const managedVm = createManagedVmStub({ getHostPid: () => null });
+	it('persists tool writes through the owned /workspace backing directory', async () => {
+		const managedVm = createManagedVmStub();
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
@@ -1132,30 +1409,27 @@ describe('createToolVm', () => {
 				secretResolver: createSecretResolver({}),
 			},
 			{
-				buildGondolinImage: async () => ({
+				prepareImage: async () => ({
 					built: true,
 					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
+					imageReference: '/cache/tool-fingerprint',
 				}),
 				createManagedVm: async (createVmOptions) => {
-					const workspaceMount = createVmOptions.vfsMounts['/workspace'];
-					if (!workspaceMount || workspaceMount.kind !== 'realfs') {
-						throw new Error('Expected Tool VM /workspace to be a RealFS mount.');
+					const workspaceMount = createVmOptions.mounts['/workspace'];
+					if (!workspaceMount || workspaceMount.kind !== 'owned-host-directory') {
+						throw new Error('Expected Tool VM /workspace to be an owned host mount.');
 					}
-					if (createVmOptions.vfsMounts['/work']) {
-						throw new Error('Expected Tool VM /work to remain rootfs/COW, not a RealFS mount.');
-					}
-					if (typeof workspaceMount.hostPath !== 'string') {
-						throw new Error('Expected Tool VM /workspace RealFS mount to include hostPath.');
+					if (createVmOptions.mounts['/work']) {
+						throw new Error('Expected Tool VM /work to remain rootfs/COW, not a host mount.');
 					}
 					await writeFile(
-						path.join(workspaceMount.hostPath, 'notes.md'),
+						path.join(requestedWorkMountDir, 'notes.md'),
 						'persisted through /workspace',
 					);
 					return managedVm;
 				},
-				closePinnedRealFsRoot: () => {},
-				pinRealFsRoot: createPinnedRealFsRoot,
+				closeOwnedDirectoryBacking: () => {},
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
@@ -1164,7 +1438,7 @@ describe('createToolVm', () => {
 
 	it('creates the tool VM without running redundant runtime setup commands', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
-		const managedVm = createManagedVmStub({ exec, getHostPid: () => null });
+		const managedVm = createManagedVmStub({ exec });
 
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
@@ -1175,10 +1449,10 @@ describe('createToolVm', () => {
 			systemConfig,
 			'openclaw-work-mount',
 		);
-		const buildGondolinImage = vi.fn(async () => ({
+		const prepareImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'tool-fingerprint',
-			imagePath: '/cache/tool-fingerprint',
+			imageReference: '/cache/tool-fingerprint',
 		}));
 
 		const result = await createToolVm(
@@ -1193,24 +1467,21 @@ describe('createToolVm', () => {
 				secretResolver: createSecretResolver({}),
 			},
 			{
-				buildGondolinImage,
+				prepareImage,
 				createManagedVm: async () => managedVm,
-				closePinnedRealFsRoot: () => {},
-				pinRealFsRoot: createPinnedRealFsRoot,
+				closeOwnedDirectoryBacking: () => {},
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
 		expect(result).toBe(managedVm);
-		expect(buildGondolinImage).toHaveBeenCalledWith({
-			buildConfigPath: '/project/vm-images/tool-vms/default/build-config.json',
-			cacheDir: path.join(systemConfig.cacheDir, 'tool-vm-images', 'default'),
-		});
+		expect(prepareImage).toHaveBeenCalledOnce();
 		expect(exec).toHaveBeenCalledOnce();
 		expect(exec).toHaveBeenCalledWith('rm -f /etc/ssh/ssh_host_*');
 	});
 
-	it('uses a prepared Tool VM image record without rebuilding Gondolin assets', async () => {
-		const managedVm = createManagedVmStub({ getHostPid: () => null });
+	it('uses the image reference returned by the managed VM image capability', async () => {
+		const managedVm = createManagedVmStub();
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
@@ -1220,20 +1491,11 @@ describe('createToolVm', () => {
 			systemConfig,
 			'openclaw-work-mount',
 		);
-		const cacheDir = path.join(systemConfig.cacheDir, 'tool-vm-images', 'default');
-		const imagePath = path.join(cacheDir, 'prepared-fingerprint');
-		await writeFakeImageAssets(imagePath);
-		await writePreparedGondolinImage({
-			buildConfigPath: '/project/vm-images/tool-vms/default/build-config.json',
-			cacheDir,
+		const imagePath = path.join(systemConfig.cacheDir, 'tool-vm-images', 'prepared-fingerprint');
+		const prepareImage = vi.fn(async () => ({
+			built: false,
 			fingerprint: 'prepared-fingerprint',
-			fingerprintInput: { dockerRootfsIdentity: { layers: ['sha256:tool'] }, schemaVersion: 1 },
-			imagePath,
-		});
-		const buildGondolinImage = vi.fn(async () => ({
-			built: true,
-			fingerprint: 'rebuilt-fingerprint',
-			imagePath: '/cache/rebuilt-fingerprint',
+			imageReference: imagePath,
 		}));
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 
@@ -1249,18 +1511,18 @@ describe('createToolVm', () => {
 				secretResolver: createSecretResolver({}),
 			},
 			{
-				buildGondolinImage,
+				prepareImage,
 				createManagedVm: async (createVmOptions) => {
 					capturedCreateVmOptions = createVmOptions;
 					return managedVm;
 				},
-				closePinnedRealFsRoot: () => {},
-				pinRealFsRoot: createPinnedRealFsRoot,
+				closeOwnedDirectoryBacking: () => {},
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
-		expect(buildGondolinImage).not.toHaveBeenCalled();
-		expect(capturedCreateVmOptions?.imagePath).toBe(imagePath);
+		expect(prepareImage).toHaveBeenCalledOnce();
+		expect(capturedCreateVmOptions?.imageReference).toBe(imagePath);
 	});
 
 	it('rejects direct lifecycle calls with host work mount paths outside OpenClaw roots', async () => {
@@ -1269,10 +1531,10 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool VM profile');
 		}
-		const buildGondolinImage = vi.fn(async () => ({
+		const prepareImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'tool-fingerprint',
-			imagePath: '/cache/tool-fingerprint',
+			imageReference: '/cache/tool-fingerprint',
 		}));
 		const createManagedVm = vi.fn();
 
@@ -1289,12 +1551,12 @@ describe('createToolVm', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildGondolinImage,
+					prepareImage,
 					createManagedVm,
 				},
 			),
 		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
-		expect(buildGondolinImage).not.toHaveBeenCalled();
+		expect(prepareImage).not.toHaveBeenCalled();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
@@ -1310,13 +1572,13 @@ describe('createToolVm', () => {
 		);
 		const movedWorkMountDir = path.join(path.dirname(requestedWorkMountDir), 'moved-work-mount');
 		const outsideDirectory = await createTemporaryDirectory();
-		const buildGondolinImage = vi.fn(async () => {
+		const prepareImage = vi.fn(async () => {
 			await rename(requestedWorkMountDir, movedWorkMountDir);
 			await symlink(outsideDirectory, requestedWorkMountDir);
 			return {
 				built: true,
 				fingerprint: 'tool-fingerprint',
-				imagePath: '/cache/tool-fingerprint',
+				imageReference: '/cache/tool-fingerprint',
 			};
 		});
 		const createManagedVm = vi.fn();
@@ -1334,13 +1596,13 @@ describe('createToolVm', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildGondolinImage,
+					prepareImage,
 					createManagedVm,
 				},
 			),
 		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
 
-		expect(buildGondolinImage).toHaveBeenCalledOnce();
+		expect(prepareImage).toHaveBeenCalledOnce();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
@@ -1354,19 +1616,19 @@ describe('createToolVm', () => {
 			systemConfig,
 			'openclaw-work-mount',
 		);
-		const pinnedWorkMountRoot = {
+		const ownedWorkMountBacking = {
 			device: 1,
 			fd: 123,
 			hostPath: requestedWorkMountDir,
 			inode: 456,
 			realPath: requestedWorkMountDir,
-		} satisfies PinnedRealFsRoot;
+		} satisfies OwnedDirectoryBackingFixture;
 		const validateResolvedToolWorkMountDir = vi
 			.fn()
 			.mockResolvedValueOnce(requestedWorkMountDir)
 			.mockResolvedValueOnce(requestedWorkMountDir)
 			.mockRejectedValueOnce(new Error('post-pin validation failed'));
-		const closePinnedRealFsRoot = vi.fn();
+		const closeOwnedDirectoryBacking = vi.fn();
 		const createManagedVm = vi.fn();
 
 		await expect(
@@ -1382,21 +1644,21 @@ describe('createToolVm', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildGondolinImage: async () => ({
+					prepareImage: async () => ({
 						built: true,
 						fingerprint: 'tool-fingerprint',
-						imagePath: '/cache/tool-fingerprint',
+						imageReference: '/cache/tool-fingerprint',
 					}),
-					closePinnedRealFsRoot,
+					closeOwnedDirectoryBacking,
 					createManagedVm,
-					pinRealFsRoot: () => pinnedWorkMountRoot,
+					openOwnedDirectoryBacking: () => ownedWorkMountBacking,
 					validateResolvedToolWorkMountDir,
 				},
 			),
 		).rejects.toThrow('post-pin validation failed');
 
 		expect(validateResolvedToolWorkMountDir).toHaveBeenCalledTimes(3);
-		expect(closePinnedRealFsRoot).toHaveBeenCalledWith(pinnedWorkMountRoot);
+		expect(closeOwnedDirectoryBacking).toHaveBeenCalledWith(ownedWorkMountBacking);
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 });

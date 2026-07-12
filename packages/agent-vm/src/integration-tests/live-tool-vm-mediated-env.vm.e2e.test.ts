@@ -4,10 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
 	terminateLiveManagedVm,
@@ -33,7 +34,7 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 async function captureStartedVmProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
-	const hostPid = managedVm.getHostPid();
+	const hostPid = managedVm.getHostProcessId();
 	if (hostPid === null) {
 		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
 	}
@@ -77,13 +78,13 @@ async function createMediatedEnvSystemConfig(
 				gateways: {
 					openclaw: {
 						type: 'openclaw',
-						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+						buildConfig: '/test-fixtures/gateway-build-config.jsonc',
 					},
 				},
 				toolVms: {
 					default: {
 						type: 'toolVm',
-						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+						buildConfig: '/test-fixtures/tool-vm-build-config.jsonc',
 					},
 				},
 			},
@@ -191,6 +192,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 
 		const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
 		await mkdir(hostWorkMountDir, { recursive: true });
+		const runtimeComposition = createManagedVmRuntimeComposition();
 		const toolVm = await createToolVm(
 			{
 				agentId: 'shravan',
@@ -203,11 +205,14 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 				zoneId: 'shravan',
 			},
 			{
-				buildGondolinImage: async () => ({
-					built: true,
-					fingerprint: 'default-gondolin-image',
-					imagePath: '',
-				}),
+				...runtimeComposition,
+				managedVmImages: {
+					prepareImage: async () => ({
+						built: false,
+						fingerprint: 'live-mediated-env-fixture',
+						imageReference: 'alpine-base:latest',
+					}),
+				},
 			},
 		);
 		const terminationTarget = await captureStartedVmProcess(toolVm);

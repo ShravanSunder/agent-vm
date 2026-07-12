@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { type AgentVmHealthEvent } from '@agent-vm/gateway-interface';
-import { type ManagedVm } from '@agent-vm/gondolin-adapter';
+import { type AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
@@ -15,19 +15,19 @@ import {
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type {
 	OpenClawGatewayProcessEpochBinding,
 	OpenClawGatewayProcessEpochOwner,
 } from '../gateway/openclaw-gateway-process-epoch-owner.js';
 import { stableTelemetryHash } from '../observability/health-event-telemetry.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZoneForController as startGatewayZone,
 	type OpenClawE2eProject,
 	type E2eHarnessRuntime,
 	useLocalOpenClawGatewayImagePackages,
@@ -36,7 +36,7 @@ import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawSubagentE2e =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawSubagentE2e = runOpenClawSubagentE2e ? describe : describe.skip;
 const mainAgentId = 'main';
 const betaAgentId = 'beta';
@@ -1134,7 +1134,7 @@ describeOpenClawSubagentE2e('e2e: OpenClaw subagent Tool VM lease path', () => {
 				gatewayVm = result.vm;
 				gatewayGuestListenPort = result.processSpec.guestListenPort;
 				gatewayProcessEpochOwner = result.openClawProcessEpochOwner;
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{
 						port: result.processSpec.guestListenPort,
 						prefix: '/',

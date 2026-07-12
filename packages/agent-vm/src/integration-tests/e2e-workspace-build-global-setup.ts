@@ -4,20 +4,7 @@ import path from 'node:path';
 
 type E2eWorkspaceBuildResult = 'built' | 'skipped';
 
-type E2eWorkspaceBuildEnvironment = Partial<
-	Record<
-		| 'AGENT_VM_GONDOLIN_E2E'
-		| 'AGENT_VM_1PASSWORD_E2E'
-		| 'AGENT_VM_E2E_CACHE_DIR'
-		| 'AGENT_VM_E2E_SKIP_WORKSPACE_BUILD'
-		| 'AGENT_VM_LLM_E2E'
-		| 'AGENT_VM_OPENCLAW_E2E'
-		| 'AGENT_VM_TEST_OPENAI_API_KEY'
-		| 'AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN'
-		| 'AGENT_VM_WORKER_E2E',
-		string
-	>
->;
+type E2eWorkspaceBuildEnvironment = Partial<Record<string, string>>;
 
 interface E2eWorkspaceBuildProject {
 	provide(key: 'agentVmE2eCacheRoot', value: string): void;

@@ -2,7 +2,11 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
+import type {
+	ManagedVmEnableSshOptions,
+	ManagedVmImageBuildResult,
+	ManagedVmSshAccess,
+} from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, expectTypeOf, it, vi, type Mock } from 'vitest';
 
@@ -16,7 +20,6 @@ import type {
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import { createGatewayControlSessionMaterial } from '../control-session/gateway-control-session.js';
 import type { GatewayDisposableControlSessionClient } from '../control-session/gateway-disposable-control-session-client.js';
@@ -39,8 +42,8 @@ const openClawZoneRuntimeTestRoot = path.join(
 const preflightedGatewayImage = {
 	built: false,
 	fingerprint: 'preflighted-fingerprint',
-	imagePath: '/tmp/preflighted-gateway-image',
-} satisfies BuildImageResult;
+	imageReference: '/tmp/preflighted-gateway-image',
+} satisfies ManagedVmImageBuildResult;
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -109,8 +112,20 @@ afterEach(async () => {
 
 type OpenClawZoneRuntimeOptions = Parameters<typeof createOpenClawZoneRuntimeImpl>[0];
 type OpenClawRestartGatewayZone = NonNullable<OpenClawZoneRuntimeOptions['restartGatewayZone']>;
-type TestGatewayZoneStartResult = Omit<GatewayZoneStartResult, 'terminateVm' | 'vmOwnership'> & {
+type TestManagedVm = Omit<GatewayZoneStartResult['vm'], 'enableSsh'> & {
+	enableSsh(
+		options?: ManagedVmEnableSshOptions,
+	): Promise<
+		Partial<ManagedVmSshAccess> &
+			Pick<ManagedVmSshAccess, 'close' | 'host' | 'port' | 'serverHostKey'>
+	>;
+};
+type TestGatewayZoneStartResult = Omit<
+	GatewayZoneStartResult,
+	'terminateVm' | 'vm' | 'vmOwnership'
+> & {
 	readonly terminateVm?: GatewayZoneStartResult['terminateVm'];
+	readonly vm: TestManagedVm;
 	readonly vmOwnership?: GatewayVmLifecycleAuthority;
 };
 type TestOpenClawZoneRuntimeOptions = Omit<
@@ -344,7 +359,7 @@ function createProcessObservationRuntimeHarness(
 			gatewayClose = vi.fn<() => Promise<void>>(options.gatewayClose ?? (async () => {}));
 			return {
 				controlSession: currentProcessBinding.controlSession,
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18_791 },
 				openClawProcessEpochOwner: {
 					getCurrentBinding: () => currentProcessBinding,
@@ -370,11 +385,9 @@ function createProcessObservationRuntimeHarness(
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => (options.hostPid === undefined ? 48_284 : options.hostPid),
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => (options.hostPid === undefined ? 48_284 : options.hostPid),
 					id: gatewayIdentity.gatewayVmId,
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: gatewayClose,
@@ -431,6 +444,12 @@ function createOpenClawZoneRuntime(
 ): ReturnType<typeof createOpenClawZoneRuntimeImpl> {
 	const { createVmOwnership, restartGatewayZone, ...runtimeOptions } = options;
 	return createOpenClawZoneRuntimeImpl({
+		managedVmFactory: {
+			createManagedVm: async () => {
+				throw new Error('unit test must inject restartGatewayZone');
+			},
+		},
+		managedVmImages: { prepareImage: async () => preflightedGatewayImage },
 		preflightGatewayZoneStart: async (startOptions) => {
 			const secretResolver = startOptions.secretResolver ?? options.secretResolver;
 			const gatewaySecretRefs = {
@@ -470,6 +489,18 @@ function createOpenClawZoneRuntime(
 						return {
 							...result,
 							terminateVm: result.terminateVm ?? (async () => await result.vm.close()),
+							vm: {
+								...result.vm,
+								enableSsh: async (enableSshOptions) => {
+									const access = await result.vm.enableSsh(enableSshOptions);
+									return {
+										command: access.command ?? 'ssh sandbox@127.0.0.1',
+										identityFile: access.identityFile ?? '/tmp/test-identity',
+										user: access.user ?? 'sandbox',
+										...access,
+									};
+								},
+							},
 							vmOwnership: result.vmOwnership ?? createTestVmOwnership({ vmId: result.vm.id }),
 						};
 					},
@@ -527,7 +558,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -556,11 +587,9 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 							stdout: 'command stdout',
 						}),
 					),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-exec-normalized',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -584,7 +613,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -607,11 +636,9 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => null,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => null,
 					id: 'gateway-vm-missing-pid',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -635,7 +662,7 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 			isProcessAlive: () => false,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -658,11 +685,9 @@ describe('createOpenClawZoneRuntime host process liveness', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-dead-pid',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -737,7 +762,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -760,11 +785,9 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-live-before-refresh',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -835,7 +858,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 					}),
 				);
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -858,11 +881,9 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284,
 						id: 'gateway-vm-fresh-resolver',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: getOpenClawZone(),
@@ -953,7 +974,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -976,11 +997,9 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-live-refresh-preflight',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -1069,7 +1088,7 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 			isProcessAlive: () => false,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -1092,11 +1111,9 @@ describe('createOpenClawZoneRuntime credentials refresh', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-dead-before-refresh',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -1199,7 +1216,7 @@ describe('createOpenClawZoneRuntime process recovery wiring', () => {
 				reconnectExhausted = startOptions?.onControlSessionReconnectExhausted;
 				return {
 					controlSession: processOneControlSession,
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18_791 },
 					openClawProcessEpochOwner,
 					processEpoch: 'process-1',
@@ -1218,11 +1235,9 @@ describe('createOpenClawZoneRuntime process recovery wiring', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284,
 						id: 'gateway-vm-1',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					vmOwnership: createTestVmOwnership({
@@ -1359,7 +1374,7 @@ describe('createOpenClawZoneRuntime process recovery wiring', () => {
 				reconnectExhausted = startOptions?.onControlSessionReconnectExhausted;
 				return {
 					controlSession: processOneControlSession,
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18_791 },
 					openClawProcessEpochOwner: {
 						getCurrentBinding: () => ({
@@ -1386,11 +1401,9 @@ describe('createOpenClawZoneRuntime process recovery wiring', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284,
 						id: gatewayIdentity.gatewayVmId,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					vmOwnership: createTestVmOwnership({
@@ -1637,7 +1650,7 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 			callOrder.push(`start-gateway-${String(gatewayStartCount)}`);
 			const hostPid = 48_283 + gatewayStartCount;
 			return {
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -1660,11 +1673,9 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => hostPid,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => hostPid,
 					id: `gateway-vm-${String(gatewayStartCount)}`,
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -1703,7 +1714,7 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 			.fn()
 			.mockRejectedValueOnce(new Error("Failed to resolve zone secrets for zone 'shravan'."))
 			.mockResolvedValueOnce({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -1726,11 +1737,9 @@ describe('createOpenClawZoneRuntime cold-start recovery', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-cold-start',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -1813,7 +1822,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					});
 				}
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -1836,11 +1845,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284,
 						id: startCount === 1 ? 'gateway-vm-live' : 'gateway-vm-replacement',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					vmOwnership: createTestVmOwnership({
@@ -1881,7 +1888,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			restartGatewayZone: async () => {
 				startCount += 1;
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -1904,11 +1911,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284,
 						id: `gateway-vm-${String(startCount)}`,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					vmOwnership: createTestVmOwnership({
@@ -1947,7 +1952,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			gatewayStartCount += 1;
 			const gatewayVmId = `gateway-vm-${String(gatewayStartCount)}`;
 			return {
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -1970,11 +1975,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: gatewayVmId,
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				vmOwnership: createTestVmOwnership({
@@ -2021,7 +2024,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			restartGatewayZone: async () => {
 				startCount += 1;
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -2044,11 +2047,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284,
 						id: 'gateway-vm-incomplete-close',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: getOpenClawZone(),
@@ -2081,7 +2082,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -2104,11 +2105,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-live-before-preflight-failure',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				vmOwnership: createTestVmOwnership({
@@ -2154,7 +2153,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				throw new Error('gateway image build failed before replacement close');
 			},
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -2177,11 +2176,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-live-before-image-preflight-failure',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				vmOwnership: createTestVmOwnership({
@@ -2221,7 +2218,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -2248,11 +2245,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						executedCommands.push(command);
 						return createManagedExecProcessStub({ stdout: '200' });
 					}),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-liveness',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -2298,7 +2293,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -2321,11 +2316,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						port: 22,
 					})),
 					exec: gatewayExec,
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-stopping',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm,
@@ -2380,7 +2373,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -2403,11 +2396,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-retained-after-stop-failure',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: closeGateway,
@@ -2454,7 +2445,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				gatewayStartCount += 1;
 				const hostPid = 48_284 + gatewayStartCount;
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18_791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -2477,11 +2468,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => hostPid,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => hostPid,
 						id: `gateway-vm-${String(gatewayStartCount)}`,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: getOpenClawZone(),
@@ -2519,7 +2508,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -2551,11 +2540,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							gatewayStartCount === 1
 								? oldGatewayExec
 								: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284 + gatewayStartCount,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284 + gatewayStartCount,
 						id: `gateway-vm-${String(gatewayStartCount)}`,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: getOpenClawZone(),
@@ -2606,7 +2593,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
 				const gatewayStartResult: TestGatewayZoneStartResult = {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -2629,11 +2616,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284 + gatewayStartCount,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284 + gatewayStartCount,
 						id: `gateway-vm-${gatewayStartCount}`,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: getOpenClawZone(),
@@ -2678,7 +2663,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledOnce();
 		expect(shutdownSettled).toBe(false);
 		resolveStaleGatewayStart({
-			image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+			image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 			ingress: { host: '127.0.0.1', port: 18791 },
 			processSpec: {
 				bootstrapCommand: 'bootstrap',
@@ -2701,11 +2686,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					port: 22,
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-				fs: createManagedVmFsStub(),
-				getHostPid: () => 48_286,
-				getVmInstance: vi.fn(),
+				getHostProcessId: () => 48_286,
 				id: 'gateway-vm-stale',
-				setIngressRoutes: vi.fn(),
+				configureIngressRoutes: vi.fn(),
 				start: async () => {},
 			},
 			zone: getOpenClawZone(),
@@ -2742,7 +2725,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -2765,11 +2748,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284,
 						id: `gateway-vm-${String(gatewayStartCount)}`,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					vmOwnership: createTestVmOwnership({
@@ -2799,7 +2780,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		await expect(restartPromise).rejects.toThrow('restart timed out');
 
 		preflightDeferred.resolve({
-			image: { built: false, fingerprint: 'preflighted', imagePath: '/tmp/preflighted-image' },
+			image: { built: false, fingerprint: 'preflighted', imageReference: '/tmp/preflighted-image' },
 			secretResolver: createResolvingSecretResolver(),
 		});
 		await vi.waitFor(() => {
@@ -2832,7 +2813,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			restartGatewayZone: async () => {
 				gatewayStartCount += 1;
 				const gatewayStartResult: TestGatewayZoneStartResult = {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -2855,11 +2836,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284 + gatewayStartCount,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284 + gatewayStartCount,
 						id: `gateway-vm-${gatewayStartCount}`,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: getOpenClawZone(),
@@ -2893,7 +2872,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			throw new Error('Expected stale gateway start to be pending.');
 		}
 		resolveStaleGatewayStart({
-			image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+			image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 			ingress: { host: '127.0.0.1', port: 18791 },
 			processSpec: {
 				bootstrapCommand: 'bootstrap',
@@ -2916,11 +2895,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					port: 22,
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-				fs: createManagedVmFsStub(),
-				getHostPid: () => 48_286,
-				getVmInstance: vi.fn(),
+				getHostProcessId: () => 48_286,
 				id: 'gateway-vm-stale',
-				setIngressRoutes: vi.fn(),
+				configureIngressRoutes: vi.fn(),
 				start: async () => {},
 			},
 			zone: getOpenClawZone(),
@@ -2945,7 +2922,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			restartGatewayZone: async (_zoneId, startOptions) => {
 				gatewayStartCount += 1;
 				const gatewayStartResult: TestGatewayZoneStartResult = {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -2968,11 +2945,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_284 + gatewayStartCount,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => 48_284 + gatewayStartCount,
 						id: `gateway-vm-${gatewayStartCount}`,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: getOpenClawZone(),
@@ -3014,7 +2989,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 		expect(stopSettled).toBe(false);
 
 		resolveStaleGatewayStart?.({
-			image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+			image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 			ingress: { host: '127.0.0.1', port: 18791 },
 			processSpec: {
 				bootstrapCommand: 'bootstrap',
@@ -3037,11 +3012,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 					port: 22,
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-				fs: createManagedVmFsStub(),
-				getHostPid: () => 48_286,
-				getVmInstance: vi.fn(),
+				getHostProcessId: () => 48_286,
 				id: 'gateway-vm-stale',
-				setIngressRoutes: vi.fn(),
+				configureIngressRoutes: vi.fn(),
 				start: async () => {},
 			},
 			zone: getOpenClawZone(),
@@ -3076,7 +3049,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						return await pendingGatewayCreate.promise;
 					}
 					return {
-						image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+						image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 						ingress: { host: '127.0.0.1', port: 18791 },
 						processSpec: {
 							bootstrapCommand: 'bootstrap',
@@ -3099,11 +3072,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 								port: 22,
 							})),
 							exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-							fs: createManagedVmFsStub(),
-							getHostPid: () => 48_284 + gatewayStartCount,
-							getVmInstance: vi.fn(),
+							getHostProcessId: () => 48_284 + gatewayStartCount,
 							id: `gateway-vm-${String(gatewayStartCount)}`,
-							setIngressRoutes: vi.fn(),
+							configureIngressRoutes: vi.fn(),
 							start: async () => {},
 						},
 						zone: getOpenClawZone(),
@@ -3189,7 +3160,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 			isProcessAlive: () => true,
 			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
 			restartGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -3212,11 +3183,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: vi.fn(),
+					getHostProcessId: () => 48_284,
 					id: 'gateway-vm-cold-start-from-restart',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: getOpenClawZone(),
@@ -3255,7 +3224,7 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 				const hostPid = 48_284 + gatewayStartCount;
 				const vmId = `gateway-vm-${String(gatewayStartCount)}`;
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -3278,11 +3247,9 @@ describe('createOpenClawZoneRuntime stop and restart safety', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => hostPid,
-						getVmInstance: vi.fn(),
+						getHostProcessId: () => hostPid,
 						id: vmId,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: getOpenClawZone(),

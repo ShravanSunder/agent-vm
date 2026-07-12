@@ -1401,7 +1401,7 @@ printf '{"ok":true}\\n'
 					stopController: async () => ({}),
 					upgradeZone: async () => ({}),
 				}),
-				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				runControllerDoctor: () => ({ ok: true, checks: [] }),
 			},
 			io: {

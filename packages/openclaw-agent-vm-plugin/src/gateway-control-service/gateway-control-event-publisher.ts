@@ -12,7 +12,7 @@ import {
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayControlRpcOperation,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import type { GatewayControlIdentity, GatewayControlService } from './gateway-control-service.js';

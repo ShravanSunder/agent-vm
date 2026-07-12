@@ -4,7 +4,7 @@ import type { LoadedSystemConfig, SystemConfig } from '../../config/system-confi
 import { ManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveWorkerTask } from '../active-task-registry.js';
 import type { PreparedWorkerTask } from '../worker-task-runner.js';
-import { createWorkerZoneRuntime } from './worker-zone-runtime.js';
+import { createWorkerZoneRuntime as createWorkerZoneRuntimeImpl } from './worker-zone-runtime.js';
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -44,6 +44,29 @@ const loadedSystemConfig = {
 	...systemConfig,
 	systemConfigPath: '/tmp/system.json',
 } satisfies LoadedSystemConfig;
+
+function createWorkerZoneRuntime(
+	options: Omit<
+		Parameters<typeof createWorkerZoneRuntimeImpl>[0],
+		'managedVmFactory' | 'managedVmImages'
+	>,
+): ReturnType<typeof createWorkerZoneRuntimeImpl> {
+	return createWorkerZoneRuntimeImpl({
+		...options,
+		managedVmFactory: {
+			createManagedVm: async () => {
+				throw new Error('worker unit test must inject executeWorkerTask');
+			},
+		},
+		managedVmImages: {
+			prepareImage: async () => ({
+				built: false,
+				fingerprint: 'test-fingerprint',
+				imageReference: '/tmp/test-image',
+			}),
+		},
+	});
+}
 
 function getWorkerZone(): Extract<
 	(typeof systemConfig.zones)[number],

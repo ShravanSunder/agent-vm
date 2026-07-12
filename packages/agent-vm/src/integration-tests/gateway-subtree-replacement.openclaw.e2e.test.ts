@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
@@ -19,19 +19,19 @@ import {
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
 import { loadGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
-import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	expectedControlLeaseReliabilityEvidenceWriteKind,
 	hashControlLeaseReliabilityArtifact,
 	writeControlLeaseReliabilityEvidence,
 } from './control-lease-reliability-evidence.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZoneForController as startGatewayZone,
 	type E2eHarnessRuntime,
 	type OpenClawE2eProject,
 	useLocalOpenClawGatewayImagePackages,
@@ -40,7 +40,7 @@ import { withProtocolDeadline } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runGatewaySubtreeReplacementE2e =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeGatewaySubtreeReplacementE2e = runGatewaySubtreeReplacementE2e
 	? describe
 	: describe.skip;
@@ -314,12 +314,12 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 					await allowSuccessorStart.promise;
 				}
 				const result = await startGatewayZone(startOptions);
-				const qemuPid = result.vm.getHostPid();
+				const qemuPid = result.vm.getHostProcessId();
 				if (qemuPid === null) {
 					throw new Error('Started Gateway omitted its host QEMU pid.');
 				}
 				gatewayStarts.push({ qemuPid, vm: result.vm, vmId: result.vm.id });
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{ port: result.processSpec.guestListenPort, prefix: '/', stripPrefix: true },
 				]);
 				if (gatewayStarts.length === 1) {

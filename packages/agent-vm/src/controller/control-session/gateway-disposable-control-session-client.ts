@@ -30,7 +30,7 @@ import {
 	type GatewayControlLeaseRejectionReason,
 	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { io, type Socket } from 'socket.io-client';
 
 import {

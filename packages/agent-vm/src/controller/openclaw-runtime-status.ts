@@ -11,7 +11,7 @@ export interface OpenClawRuntimeStatusReport {
 	readonly controllerEpoch: string;
 	readonly findings: readonly OpenClawDeploymentRequirementFinding[];
 	readonly peerId: string;
-	readonly pluginId: 'gondolin';
+	readonly pluginId: string;
 	readonly sessionId: string;
 	readonly zoneId: string;
 }

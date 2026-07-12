@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { appendDurableHealthEvent, readDurableHealthEvents } from './durable-health-event-log.js';

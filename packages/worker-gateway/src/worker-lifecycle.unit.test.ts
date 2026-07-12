@@ -1,4 +1,4 @@
-import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
+import type { GatewayZoneConfig } from '@agent-vm/gateway-lifecycle';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { workerLifecycle } from './worker-lifecycle.js';
@@ -35,7 +35,7 @@ describe('workerLifecycle', () => {
 	});
 
 	it('builds a worker VM spec with /state mounted and /work on rootfs', () => {
-		const vmSpec = workerLifecycle.buildVmSpec({
+		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -48,42 +48,43 @@ describe('workerLifecycle', () => {
 			zone,
 		});
 
-		expect(vmSpec.vfsMounts['/state']).toEqual({
+		expect(vmRequirements.mounts['/state']).toEqual({
 			hostPath: '/host/state/shravan',
-			kind: 'realfs',
+			access: 'read-write',
+			kind: 'host-directory',
 		});
-		expect(vmSpec.vfsMounts['/work']).toBeUndefined();
-		expect(vmSpec.vfsMounts['/workspace']).toBeUndefined();
-		expect(vmSpec.environment.OPENAI_API_KEY).toBe('openai-token');
-		expect(vmSpec.environment.AGENT_VM_ZONE_ID).toBe('shravan');
-		expect(vmSpec.environment.CONTROLLER_BASE_URL).toBeUndefined();
-		expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
-		expect(vmSpec.environment.PATH).toBe(
+		expect(vmRequirements.mounts['/work']).toBeUndefined();
+		expect(vmRequirements.mounts['/workspace']).toBeUndefined();
+		expect(vmRequirements.environment.OPENAI_API_KEY).toBe('openai-token');
+		expect(vmRequirements.environment.AGENT_VM_ZONE_ID).toBe('shravan');
+		expect(vmRequirements.environment.CONTROLLER_BASE_URL).toBeUndefined();
+		expect(vmRequirements.environment.PNPM_HOME).toBe('/pnpm');
+		expect(vmRequirements.environment.PATH).toBe(
 			'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
 		);
 		// IPv4-preference egress for the Node controller-client to defeat
 		// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
-		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
-		expect(vmSpec.environment.NODE_OPTIONS).toBe(
+		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-lifecycle.
+		expect(vmRequirements.environment.NODE_OPTIONS).toBe(
 			'--dns-result-order=ipv4first --no-network-family-autoselection',
 		);
-		expect(vmSpec.environment.WORKER_CONFIG_PATH).toBe('/state/effective-worker.json');
-		expect(vmSpec.environment.WORK_DIR).toBe('/work');
-		expect(vmSpec.environment.REPOS_DIR).toBe('/work/repos');
-		expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
-		expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
-		expect(vmSpec.environment.pnpm_config_store_dir).toBe('/work/cache/pnpm/store');
-		expect(vmSpec.allowedHosts).toEqual(['api.openai.com']);
-		expect(vmSpec.allowedHosts).not.toContain('controller.vm.host');
-		expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
-		expect(vmSpec.tcpHosts['controller.vm.host:18800']).toBeUndefined();
-		expect(vmSpec.tcpHosts).toEqual({});
+		expect(vmRequirements.environment.WORKER_CONFIG_PATH).toBe('/state/effective-worker.json');
+		expect(vmRequirements.environment.WORK_DIR).toBe('/work');
+		expect(vmRequirements.environment.REPOS_DIR).toBe('/work/repos');
+		expect(vmRequirements.environment.TMPDIR).toBe('/work/tmp');
+		expect(vmRequirements.environment.npm_config_cache).toBe('/work/cache/npm');
+		expect(vmRequirements.environment.pnpm_config_store_dir).toBe('/work/cache/pnpm/store');
+		expect(vmRequirements.allowedHosts).toEqual(['api.openai.com']);
+		expect(vmRequirements.allowedHosts).not.toContain('controller.vm.host');
+		expect(vmRequirements.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
+		expect(vmRequirements.tcpHosts['controller.vm.host:18800']).toBeUndefined();
+		expect(vmRequirements.tcpHosts).toEqual({});
 	});
 
 	it('denies Worker Git SSH reads when no trusted repo allowlist is available', async () => {
 		vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
 
-		const vmSpec = workerLifecycle.buildVmSpec({
+		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -96,13 +97,13 @@ describe('workerLifecycle', () => {
 			zone,
 		});
 
-		expect(vmSpec.sshEgress).toBeUndefined();
+		expect(vmRequirements.sshEgress).toBeUndefined();
 	});
 
 	it('allows only trusted Worker Git SSH reads from prepared repos', async () => {
 		vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
 
-		const vmSpec = workerLifecycle.buildVmSpec({
+		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -118,61 +119,18 @@ describe('workerLifecycle', () => {
 			},
 		});
 
-		expect(vmSpec.sshEgress?.allowedHosts).toEqual(['git.example.com']);
-		expect(vmSpec.sshEgress?.agent).toBe('/tmp/agent-vm-test-agent.sock');
-		if (!vmSpec.sshEgress?.execPolicy) {
-			throw new Error('Expected Worker gateway read-only Git SSH policy');
-		}
-		await expect(
-			Promise.resolve(
-				vmSpec.sshEgress.execPolicy({
-					command: "git-upload-pack 'org/repo.git'",
-					guestUsername: 'git',
-					hostname: 'git.example.com',
-					port: 22,
-					src: { ip: '198.18.0.2', port: 48_000 },
-				}),
-			),
-		).resolves.toEqual({ allow: true });
-		await expect(
-			Promise.resolve(
-				vmSpec.sshEgress.execPolicy({
-					command: "git-upload-pack 'org/other-private.git'",
-					guestUsername: 'git',
-					hostname: 'git.example.com',
-					port: 22,
-					src: { ip: '198.18.0.2', port: 48_003 },
-				}),
-			),
-		).resolves.toMatchObject({ allow: false });
-		await expect(
-			Promise.resolve(
-				vmSpec.sshEgress.execPolicy({
-					command: "git-receive-pack 'org/repo.git'",
-					guestUsername: 'git',
-					hostname: 'git.example.com',
-					port: 22,
-					src: { ip: '198.18.0.2', port: 48_001 },
-				}),
-			),
-		).resolves.toMatchObject({ allow: false });
-		await expect(
-			Promise.resolve(
-				vmSpec.sshEgress.execPolicy({
-					command: 'bash',
-					guestUsername: 'git',
-					hostname: 'git.example.com',
-					port: 22,
-					src: { ip: '198.18.0.2', port: 48_002 },
-				}),
-			),
-		).resolves.toMatchObject({ allow: false });
+		expect(vmRequirements.sshEgress).toEqual({
+			agentSocket: '/tmp/agent-vm-test-agent.sock',
+			allowedHosts: ['git.example.com'],
+			allowedRepositories: ['org/repo'],
+			kind: 'git-read-only',
+		});
 	});
 
 	it('omits Worker SSH egress when no host SSH agent is available', () => {
 		vi.stubEnv('SSH_AUTH_SOCK', '');
 
-		const vmSpec = workerLifecycle.buildVmSpec({
+		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -185,7 +143,7 @@ describe('workerLifecycle', () => {
 			zone,
 		});
 
-		expect(vmSpec.sshEgress).toBeUndefined();
+		expect(vmRequirements.sshEgress).toBeUndefined();
 	});
 
 	it('keeps Tool VM audience secrets out of worker gateway env and mediation', () => {
@@ -215,7 +173,7 @@ describe('workerLifecycle', () => {
 			},
 		};
 
-		const vmSpec = workerLifecycle.buildVmSpec({
+		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -232,16 +190,18 @@ describe('workerLifecycle', () => {
 			zone: mixedAudienceZone,
 		});
 
-		expect(vmSpec.environment).toEqual(expect.objectContaining({ OPENAI_API_KEY: 'openai-token' }));
-		expect(vmSpec.environment).not.toHaveProperty('LINEAR_API_KEY');
-		expect(vmSpec.mediatedSecrets).toEqual({
+		expect(vmRequirements.environment).toEqual(
+			expect.objectContaining({ OPENAI_API_KEY: 'openai-token' }),
+		);
+		expect(vmRequirements.environment).not.toHaveProperty('LINEAR_API_KEY');
+		expect(vmRequirements.mediatedSecrets).toEqual({
 			GITHUB_TOKEN: {
 				hosts: ['api.github.com'],
 				value: 'github-token',
 			},
 		});
-		expect(vmSpec.allowedHosts).toEqual(['api.openai.com', 'api.github.com']);
-		expect(vmSpec.allowedHosts).not.toContain('controller.vm.host');
+		expect(vmRequirements.allowedHosts).toEqual(['api.openai.com', 'api.github.com']);
+		expect(vmRequirements.allowedHosts).not.toContain('controller.vm.host');
 	});
 
 	it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
@@ -262,7 +222,7 @@ describe('workerLifecycle', () => {
 			},
 		};
 
-		const vmSpec = workerLifecycle.buildVmSpec({
+		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -279,7 +239,7 @@ describe('workerLifecycle', () => {
 		});
 
 		// Forced flags lead; user value follows.
-		expect(vmSpec.environment.NODE_OPTIONS).toBe(
+		expect(vmRequirements.environment.NODE_OPTIONS).toBe(
 			'--dns-result-order=ipv4first --no-network-family-autoselection --inspect=0.0.0.0:9229',
 		);
 	});

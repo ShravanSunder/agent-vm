@@ -15,14 +15,14 @@ export interface VmOwnershipBoundaryAuditFinding {
 	readonly reason: string;
 }
 
-const AUDIT_SOURCE_ROOTS = ['packages/agent-vm/src', 'packages/gondolin-adapter/src'] as const;
+const AUDIT_SOURCE_ROOTS = ['packages/agent-vm/src', 'packages/gondolin-vm-adapter/src'] as const;
 const STOCK_GONDOLIN_PACKAGE_NAME = '@earendil-works/gondolin';
 const STOCK_GONDOLIN_VERSION = '0.12.0';
 const STOCK_GONDOLIN_REPOSITORY_METADATA_PATHS = [
 	'package.json',
 	'pnpm-lock.yaml',
 	'pnpm-workspace.yaml',
-	'packages/gondolin-adapter/package.json',
+	'packages/gondolin-vm-adapter/package.json',
 ] as const;
 
 const LEASE_MANAGER_FILE_PATH = 'packages/agent-vm/src/controller/leases/lease-manager.ts';
@@ -153,7 +153,7 @@ function gondolinResolutionProtocol(
 }
 
 function repositoryGondolinVersion(source: VmOwnershipBoundaryAuditSource): string | undefined {
-	if (normalizeFilePath(source.filePath) !== 'packages/gondolin-adapter/package.json') {
+	if (normalizeFilePath(source.filePath) !== 'packages/gondolin-vm-adapter/package.json') {
 		return undefined;
 	}
 	const parsed = parseJsonObject(source.content);
@@ -177,6 +177,29 @@ function installedGondolinVersion(source: VmOwnershipBoundaryAuditSource): strin
 	return parsed?.name === STOCK_GONDOLIN_PACKAGE_NAME && typeof parsed.version === 'string'
 		? parsed.version
 		: undefined;
+}
+
+function exactGondolinLockPackageStanza(content: string): string | undefined {
+	const lines = content.split('\n');
+	const packageKey = `  '${STOCK_GONDOLIN_PACKAGE_NAME}@${STOCK_GONDOLIN_VERSION}':`;
+	const packageLineIndex = lines.findIndex((line) => line === packageKey);
+	if (packageLineIndex === -1) {
+		return undefined;
+	}
+	const followingPackageIndex = lines.findIndex(
+		(line, lineIndex) => lineIndex > packageLineIndex && /^  \S/u.test(line),
+	);
+	return lines
+		.slice(packageLineIndex, followingPackageIndex === -1 ? undefined : followingPackageIndex)
+		.join('\n');
+}
+
+function hasRegistryIntegrityInExactGondolinLockStanza(content: string): boolean {
+	const stanza = exactGondolinLockPackageStanza(content);
+	return (
+		stanza !== undefined &&
+		/^    resolution: \{integrity: (?:sha512|sha256|sha1)-[^}\s]+\}$/mu.test(stanza)
+	);
 }
 
 export function auditStockGondolinDependencyBoundary(
@@ -231,11 +254,18 @@ export function auditStockGondolinDependencyBoundary(
 				);
 			}
 		}
-		if (
-			normalizedPath.endsWith('pnpm-lock.yaml') &&
-			source.content.includes(`'${STOCK_GONDOLIN_PACKAGE_NAME}@${STOCK_GONDOLIN_VERSION}':`)
-		) {
-			exactLockIdentityFound = true;
+		if (normalizedPath.endsWith('pnpm-lock.yaml')) {
+			const exactLockStanza = exactGondolinLockPackageStanza(source.content);
+			if (exactLockStanza !== undefined) {
+				exactLockIdentityFound = hasRegistryIntegrityInExactGondolinLockStanza(source.content);
+				if (!exactLockIdentityFound && resolutionProtocol === undefined) {
+					insertDependencyFinding(
+						findings,
+						source,
+						'Exact Gondolin lockfile package stanza must contain nonempty registry integrity',
+					);
+				}
+			}
 		}
 		const installedVersion = installedGondolinVersion(source);
 		if (installedVersion !== undefined) {
@@ -327,7 +357,7 @@ export async function readStockGondolinDependencyAuditSources(
 			path.join(
 				repositoryRoot,
 				'packages',
-				'gondolin-adapter',
+				'gondolin-vm-adapter',
 				'node_modules',
 				'@earendil-works',
 				'gondolin',
@@ -410,12 +440,27 @@ function hostPidReceiverFromCall(
 	if (
 		!ts.isCallExpression(expression) ||
 		!ts.isPropertyAccessExpression(expression.expression) ||
-		expression.expression.name.text !== 'getHostPid' ||
+		!['getHostPid', 'getHostProcessId'].includes(expression.expression.name.text) ||
 		expression.arguments.length !== 0
 	) {
 		return undefined;
 	}
 	return expression.expression.expression.getText(sourceFile).replaceAll(/\s+/gu, '');
+}
+
+function isProjectedIntoControllerManagedTermination(closeCall: ts.CallExpression): boolean {
+	let ancestor: ts.Node | undefined = closeCall.parent;
+	while (ancestor !== undefined) {
+		if (
+			ts.isCallExpression(ancestor) &&
+			ts.isIdentifier(ancestor.expression) &&
+			ancestor.expression.text === 'terminateLiveManagedVm'
+		) {
+			return true;
+		}
+		ancestor = ancestor.parent;
+	}
+	return false;
 }
 
 function priorVariableHostPidReceiver(options: {
@@ -579,6 +624,7 @@ function auditSource(
 			if (
 				receiver !== undefined &&
 				!isInsideControllerManagedTerminationPrimitive(node, normalizedPath) &&
+				!isProjectedIntoControllerManagedTermination(node) &&
 				!isInsideUnstartedVmConstructionCleanup(node, normalizedPath) &&
 				!hasLexicalRunnerAbsenceProof(node, receiver, sourceFile)
 			) {

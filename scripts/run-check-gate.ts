@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export type CheckGateCommandId =
 	| 'build'
 	| 'lint'
+	| 'managed-vm-boundaries'
+	| 'managed-vm-contracts'
 	| 'package-versions'
 	| 'portal-architecture'
 	| 'portal-exports'
@@ -105,6 +107,18 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					command: 'pnpm',
 					id: 'portal-exports',
 					label: 'portal package export audit',
+				},
+				{
+					args: ['run', 'test:managed-vm-boundaries'],
+					command: 'pnpm',
+					id: 'managed-vm-boundaries',
+					label: 'managed VM package boundary audit',
+				},
+				{
+					args: ['run', 'test:managed-vm-contracts'],
+					command: 'pnpm',
+					id: 'managed-vm-contracts',
+					label: 'managed VM contract and declaration verifier',
 				},
 				{
 					args: ['run', 'test:vm-ownership-boundaries'],

@@ -1,0 +1,11 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"paths": {
+			"@agent-vm/managed-vm": ["../managed-vm/src/index.ts"],
+			"@agent-vm/secret-management": ["../secret-management/src/index.ts"]
+		}
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["dist"]
+}

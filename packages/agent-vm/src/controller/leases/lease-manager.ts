@@ -11,8 +11,12 @@ import {
 	type StartToolVmActiveUseResponse,
 	type ToolVmActiveUseCorrelation,
 	type ToolVmActiveUseOperationReport,
-} from '@agent-vm/gateway-interface';
-import type { ManagedVm, SshAccess, SshServerHostKey } from '@agent-vm/gondolin-adapter';
+} from '@agent-vm/gateway-lifecycle';
+import type {
+	ManagedVm,
+	ManagedVmSshAccess,
+	ManagedVmSshServerHostKey,
+} from '@agent-vm/managed-vm';
 
 import { terminateLiveManagedVm } from '../../shared/controller-managed-vm-termination.js';
 import {
@@ -53,6 +57,7 @@ import {
 	type ToolVmRuntimeRecord,
 	writeToolVmRuntimeRecord,
 } from './tool-vm-runtime-record.js';
+import { buildToolVmKnownHostsLine } from './tool-vm-ssh-server-identity.js';
 
 export interface ToolVmProfile {
 	readonly cpus: number;
@@ -77,7 +82,7 @@ export interface Lease {
 		readonly host: string;
 		readonly identityFile?: string;
 		readonly port: number;
-		readonly serverHostKey: SshServerHostKey;
+		readonly serverHostKey: ManagedVmSshServerHostKey;
 		readonly user?: string;
 	};
 	readonly tcpSlot: number;
@@ -98,7 +103,7 @@ interface ToolVmLeaseCleanupContext {
 		readonly processIdentity: ToolVmRuntimeRecord['processIdentity'];
 		readonly vmId: string;
 	};
-	readonly sshAccess?: SshAccess;
+	readonly sshAccess?: ManagedVmSshAccess;
 	readonly tcpSlot: number;
 	readonly vm?: ManagedVm;
 }
@@ -579,7 +584,7 @@ export function createLeaseManager(options: {
 		await cleanupContext.sshAccess?.close();
 		if (cleanupContext.vm !== undefined) {
 			if (cleanupContext.processTarget === undefined) {
-				const unrecordedHostPid = cleanupContext.vm.getHostPid();
+				const unrecordedHostPid = cleanupContext.vm.getHostProcessId();
 				if (unrecordedHostPid !== null) {
 					throw new Error(
 						`Tool VM '${cleanupContext.vm.id}' exposes unrecorded live pid ${String(unrecordedHostPid)}; refusing stock close without exact process identity.`,
@@ -591,7 +596,11 @@ export function createLeaseManager(options: {
 					contextLabel: `Tool VM '${cleanupContext.vm.id}'`,
 					dependencies: managedVmKillDependencies,
 					target: cleanupContext.processTarget,
-					vm: cleanupContext.vm,
+					vm: {
+						close: async () => await cleanupContext.vm?.close(),
+						getHostProcessId: () => cleanupContext.vm?.getHostProcessId() ?? null,
+						id: cleanupContext.vm.id,
+					},
 				});
 			}
 		}
@@ -947,6 +956,11 @@ export function createLeaseManager(options: {
 							tcpSlot,
 							vm,
 						});
+						buildToolVmKnownHostsLine({
+							leaseId: authority.leaseId,
+							serverHostKey: sshAccess.serverHostKey,
+							tcpSlot,
+						});
 						const lease: Lease = {
 							agentId: leaseOptions.agentId,
 							agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
@@ -995,7 +1009,7 @@ export function createLeaseManager(options: {
 							if (
 								cleanupContext.vm !== undefined &&
 								cleanupContext.processTarget === undefined &&
-								cleanupContext.vm.getHostPid() !== null
+								cleanupContext.vm.getHostProcessId() !== null
 							) {
 								const fallbackRuntimeRecordId = createRuntimeRecordId();
 								const fallbackRuntimeRecord = await buildToolVmRuntimeRecord({

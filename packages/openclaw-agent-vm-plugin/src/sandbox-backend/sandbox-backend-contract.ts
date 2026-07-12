@@ -1,4 +1,4 @@
-import type { AgentVmHealthEvent, ToolVmSshLease } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent, ToolVmSshLease } from '@agent-vm/gateway-lifecycle';
 
 import type { LeaseClient, OpenClawRuntimeStatusReport } from '../lease-client-contract.js';
 

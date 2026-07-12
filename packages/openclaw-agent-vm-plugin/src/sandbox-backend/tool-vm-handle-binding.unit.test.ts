@@ -1,4 +1,4 @@
-import { parseToolVmLeaseId, type ToolVmSshLease } from '@agent-vm/gateway-interface';
+import { parseToolVmLeaseId, type ToolVmSshLease } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ControllerLeaseRequestError, type LeaseClient } from '../lease-client-contract.js';
@@ -6,11 +6,11 @@ import type {
 	OpenClawFsBridgeLeaseContext,
 	OpenClawSandboxBackendHandle,
 } from './sandbox-backend-contract.js';
-import { createGondolinSandboxBackendFactory } from './sandbox-backend-handle-factory.js';
+import { createAgentVmSandboxBackendFactory } from './sandbox-backend-handle-factory.js';
 import { createToolVmHandleBinding } from './tool-vm-handle-binding.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
-type BackendDependencies = Parameters<typeof createGondolinSandboxBackendFactory>[1];
+type BackendDependencies = Parameters<typeof createAgentVmSandboxBackendFactory>[1];
 type BuildExecSpec = BackendDependencies['buildExecSpec'];
 type CreateFsBridgeBuilder = NonNullable<BackendDependencies['createFsBridgeBuilder']>;
 type RunRemoteShellScript = BackendDependencies['runRemoteShellScript'];
@@ -90,7 +90,7 @@ function createBindingHarness(options: BindingHarnessOptions = {}): BindingHarne
 	const runRemoteShellScript =
 		options.runRemoteShellScript ??
 		vi.fn(async () => ({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('ok') }));
-	const factory = createGondolinSandboxBackendFactory(
+	const factory = createAgentVmSandboxBackendFactory(
 		{
 			controllerUrl: 'http://controller.vm.host:18800',
 			zoneId: 'shravan',

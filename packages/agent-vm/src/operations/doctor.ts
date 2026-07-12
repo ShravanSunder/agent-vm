@@ -2,10 +2,10 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
-	BuildGatewayVmSpecOptions,
-	GatewayVmSpec,
+	BuildGatewayVmRequirementsOptions,
+	GatewayVmRequirements,
 	GatewayZoneConfig,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { workerLifecycle } from '@agent-vm/worker-gateway';
 
 import {
@@ -19,7 +19,7 @@ import {
 	type PackageOverrides,
 	resolveEffectivePackageOverrides,
 } from '../build/package-overrides.js';
-import { buildZigInstallHint, checkGondolinZigCompatibility } from '../build/zig-compatibility.js';
+import { buildZigInstallHint, checkManagedVmZigCompatibility } from '../build/zig-compatibility.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import { buildOpenClawAgentSecretAccessChecks } from './agent-secret-access-checks.js';
 import { hasRuntimeConfigReferences, isRuntimeSystemConfigPath } from './runtime-config-paths.js';
@@ -41,9 +41,9 @@ export interface RunControllerDoctorOptions {
 	readonly requiredZigVersion?: string;
 	readonly systemConfig: SystemConfig;
 	readonly totalMemoryBytes?: number;
-	readonly workerGatewayVmSpecBuilder?: (
-		options: BuildGatewayVmSpecOptions,
-	) => Pick<GatewayVmSpec, 'vfsMounts'>;
+	readonly workerGatewayVmRequirementsBuilder?: (
+		options: BuildGatewayVmRequirementsOptions,
+	) => Pick<GatewayVmRequirements, 'mounts'>;
 	readonly zigVersion?: string;
 }
 
@@ -87,7 +87,7 @@ function buildZigVersionCheck(
 			value: zigVersion,
 		};
 	}
-	const compatibility = checkGondolinZigCompatibility({
+	const compatibility = checkManagedVmZigCompatibility({
 		requiredVersion: requiredZigVersion,
 		installedVersion: zigVersion,
 	});
@@ -252,7 +252,9 @@ function isWorkerRootfsWorkMountPath(guestPath: string): boolean {
 
 function buildWorkerWorkRootfsChecks(
 	systemConfig: SystemConfig,
-	buildWorkerVmSpec: (options: BuildGatewayVmSpecOptions) => Pick<GatewayVmSpec, 'vfsMounts'>,
+	buildWorkerVmSpec: (
+		options: BuildGatewayVmRequirementsOptions,
+	) => Pick<GatewayVmRequirements, 'mounts'>,
 ): readonly DoctorCheck[] {
 	return systemConfig.zones
 		.filter((zone) => zone.gateway.type === 'worker')
@@ -283,7 +285,7 @@ function buildWorkerWorkRootfsChecks(
 				tcpPool: systemConfig.tcpPool,
 				zone: gatewayZone,
 			});
-			const vfsWorkMount = Object.keys(vmSpec.vfsMounts).find(isWorkerRootfsWorkMountPath);
+			const vfsWorkMount = Object.keys(vmSpec.mounts).find(isWorkerRootfsWorkMountPath);
 			if (vfsWorkMount) {
 				return {
 					name: `worker-work-rootfs-${zone.id}`,
@@ -593,13 +595,13 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		options.dockerDaemonReady,
 	);
 	const openClawCliChecks = buildOpenClawCliCheck(options.systemConfig, availableBinaries);
-	const workerGatewayVmSpecBuilder =
-		options.workerGatewayVmSpecBuilder ??
-		((buildOptions: BuildGatewayVmSpecOptions): Pick<GatewayVmSpec, 'vfsMounts'> =>
-			workerLifecycle.buildVmSpec(buildOptions));
+	const workerGatewayVmRequirementsBuilder =
+		options.workerGatewayVmRequirementsBuilder ??
+		((buildOptions: BuildGatewayVmRequirementsOptions): Pick<GatewayVmRequirements, 'mounts'> =>
+			workerLifecycle.buildVmRequirements(buildOptions));
 	const workerWorkRootfsChecks = buildWorkerWorkRootfsChecks(
 		options.systemConfig,
-		workerGatewayVmSpecBuilder,
+		workerGatewayVmRequirementsBuilder,
 	);
 	const configuredGatewayBytes = options.systemConfig.zones.reduce((totalBytes, zone) => {
 		const memoryMatch = /^(\d+)([GgMm])$/u.exec(zone.gateway.memory);

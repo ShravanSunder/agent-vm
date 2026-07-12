@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm, ManagedVmFactory, ManagedVmImageCapability } from '@agent-vm/managed-vm';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -17,7 +17,6 @@ import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js'
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import type { ControlSessionClient, WorkerControlRpcOperations } from './control-session/index.js';
 import type { WorkerTaskInput } from './worker-task-runner.js';
@@ -63,6 +62,16 @@ const closedTaskStateSchema = z.object({
 
 const workerControllerEpoch = 'worker-controller-epoch-test';
 const workerVmId = 'worker-vm-1';
+const managedVmFactoryStub: ManagedVmFactory = {
+	createManagedVm: async () => {
+		throw new Error('The gateway-zone mock owns VM creation in this test.');
+	},
+};
+const managedVmImagesStub: ManagedVmImageCapability = {
+	prepareImage: async () => {
+		throw new Error('The gateway-zone mock owns image preparation in this test.');
+	},
+};
 
 function buildWorkerConfigInput(): Record<string, unknown> {
 	return {
@@ -210,6 +219,8 @@ async function executePreparedWorkerTaskForTest(options: {
 	return await executeWorkerTask(prepared, {
 		...(options.onTaskFinished ? { onTaskFinished: options.onTaskFinished } : {}),
 		controllerEpoch: workerControllerEpoch,
+		managedVmFactory: managedVmFactoryStub,
+		managedVmImages: managedVmImagesStub,
 		...(options.managedVmKillDependencies === undefined
 			? {}
 			: { managedVmKillDependencies: options.managedVmKillDependencies }),
@@ -341,16 +352,16 @@ describe('worker-task-runner', () => {
 			})),
 			enableSsh: vi.fn(async () => ({
 				close: async () => {},
+				command: 'ssh worker-vm',
+				identityFile: '/tmp/worker-vm-identity',
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				host: '127.0.0.1',
 				port: 2222,
 				user: 'root',
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: () => null,
-			getVmInstance: vi.fn(),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: () => null,
 			start: async () => await managedVmStartMock(),
 		};
 
@@ -495,7 +506,7 @@ describe('worker-task-runner', () => {
 		let runnerAttached = true;
 		managedVm = {
 			...managedVm,
-			getHostPid: () => (runnerAttached ? 48_282 : null),
+			getHostProcessId: () => (runnerAttached ? 48_282 : null),
 		};
 		managedVmCloseMock.mockImplementation(async () => {
 			orderedEvents.push('stock-close');
@@ -503,7 +514,7 @@ describe('worker-task-runner', () => {
 		const managedVmKillDependencies = {
 			isProcessAlive: () => runnerAttached,
 			killProcess: (pid: number, signal: NodeJS.Signals) => {
-				orderedEvents.push(`${String(signal)}:${String(pid)}`);
+				orderedEvents.push(`${signal}:${String(pid)}`);
 				runnerAttached = false;
 			},
 			readProcessCommand: async () => processIdentity.command,
@@ -680,13 +691,14 @@ describe('worker-task-runner', () => {
 		await expect(fs.readFile(path.join(result.workDir, 'AGENTS.md'), 'utf8')).rejects.toThrow();
 		await expect(fs.readlink(path.join(result.workDir, 'CLAUDE.md'))).rejects.toThrow();
 		expect(result.vfsMounts['/agent-vm']).toEqual(
-			expect.objectContaining({ kind: 'realfs-readonly' }),
+			expect.objectContaining({ access: 'read-only', kind: 'host-directory' }),
 		);
 		expect(result.vfsMounts['/work/repos']).toBeUndefined();
 		expect(result.vfsMounts['/gitdirs']).toEqual(
 			expect.objectContaining({
+				access: 'read-write',
 				hostPath: path.join(result.taskRuntimeRoot, 'gitdirs'),
-				kind: 'realfs',
+				kind: 'host-directory',
 			}),
 		);
 	});
@@ -1582,14 +1594,15 @@ describe('worker-task-runner', () => {
 			tempDir,
 			'agent-vm-worker-control-contracts-local.tgz',
 		);
-		const localGatewayInterfaceTarballPath = path.join(
+		const localGatewayLifecycleTarballPath = path.join(
 			tempDir,
-			'agent-vm-gateway-interface-local.tgz',
+			'agent-vm-gateway-lifecycle-local.tgz',
 		);
-		const localGondolinAdapterTarballPath = path.join(
+		const localGondolinVmAdapterTarballPath = path.join(
 			tempDir,
-			'agent-vm-gondolin-adapter-local.tgz',
+			'agent-vm-gondolin-vm-adapter-local.tgz',
 		);
+		const localManagedVmTarballPath = path.join(tempDir, 'agent-vm-managed-vm-local.tgz');
 		const localSecretManagementTarballPath = path.join(
 			tempDir,
 			'agent-vm-secret-management-local.tgz',
@@ -1598,15 +1611,17 @@ describe('worker-task-runner', () => {
 			fs.writeFile(localWorkerTarballPath, 'local worker tarball bytes'),
 			fs.writeFile(localControlProtocolTarballPath, 'local control protocol tarball bytes'),
 			fs.writeFile(localWorkerControlTarballPath, 'local worker control tarball bytes'),
-			fs.writeFile(localGatewayInterfaceTarballPath, 'local gateway interface tarball bytes'),
-			fs.writeFile(localGondolinAdapterTarballPath, 'local gondolin adapter tarball bytes'),
+			fs.writeFile(localGatewayLifecycleTarballPath, 'local gateway lifecycle tarball bytes'),
+			fs.writeFile(localGondolinVmAdapterTarballPath, 'local gondolin VM adapter tarball bytes'),
+			fs.writeFile(localManagedVmTarballPath, 'local managed VM tarball bytes'),
 			fs.writeFile(localSecretManagementTarballPath, 'local secret management tarball bytes'),
 		]);
 		process.env.AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON = JSON.stringify([
 			{ packageName: 'agent-vm-worker', sourcePath: localWorkerTarballPath },
 			{ packageName: 'control-protocol-contracts', sourcePath: localControlProtocolTarballPath },
-			{ packageName: 'gateway-interface', sourcePath: localGatewayInterfaceTarballPath },
-			{ packageName: 'gondolin-adapter', sourcePath: localGondolinAdapterTarballPath },
+			{ packageName: 'gateway-lifecycle', sourcePath: localGatewayLifecycleTarballPath },
+			{ packageName: 'gondolin-vm-adapter', sourcePath: localGondolinVmAdapterTarballPath },
+			{ packageName: 'managed-vm', sourcePath: localManagedVmTarballPath },
 			{ packageName: 'secret-management', sourcePath: localSecretManagementTarballPath },
 			{ packageName: 'worker-control-contracts', sourcePath: localWorkerControlTarballPath },
 		]);
@@ -1635,10 +1650,11 @@ describe('worker-task-runner', () => {
 			'@agent-vm/agent-vm-worker': 'file:/state/agent-vm-worker-packages/agent-vm-worker-local.tgz',
 			'@agent-vm/control-protocol-contracts':
 				'file:/state/agent-vm-worker-packages/agent-vm-control-protocol-contracts-local.tgz',
-			'@agent-vm/gateway-interface':
-				'file:/state/agent-vm-worker-packages/agent-vm-gateway-interface-local.tgz',
-			'@agent-vm/gondolin-adapter':
-				'file:/state/agent-vm-worker-packages/agent-vm-gondolin-adapter-local.tgz',
+			'@agent-vm/gateway-lifecycle':
+				'file:/state/agent-vm-worker-packages/agent-vm-gateway-lifecycle-local.tgz',
+			'@agent-vm/gondolin-vm-adapter':
+				'file:/state/agent-vm-worker-packages/agent-vm-gondolin-vm-adapter-local.tgz',
+			'@agent-vm/managed-vm': 'file:/state/agent-vm-worker-packages/agent-vm-managed-vm-local.tgz',
 			'@agent-vm/secret-management':
 				'file:/state/agent-vm-worker-packages/agent-vm-secret-management-local.tgz',
 			'@agent-vm/worker-control-contracts':
@@ -1773,6 +1789,8 @@ describe('worker-task-runner', () => {
 
 		const result = await executeWorkerTask(prepared, {
 			controllerEpoch: workerControllerEpoch,
+			managedVmFactory: managedVmFactoryStub,
+			managedVmImages: managedVmImagesStub,
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
 		});
@@ -1898,6 +1916,8 @@ describe('worker-task-runner', () => {
 				controllerEpoch: 'worker-epoch-a',
 				operations: createWorkerControlOperationsStub(),
 			},
+			managedVmFactory: managedVmFactoryStub,
+			managedVmImages: managedVmImagesStub,
 			pollClock: createInstantPollClock(),
 			pollIntervalMs: 1,
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
@@ -1951,6 +1971,8 @@ describe('worker-task-runner', () => {
 					controllerEpoch: 'worker-epoch-a',
 					operations: createWorkerControlOperationsStub(),
 				},
+				managedVmFactory: managedVmFactoryStub,
+				managedVmImages: managedVmImagesStub,
 				pollClock: createInstantPollClock(),
 				pollIntervalMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
 				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
@@ -2005,6 +2027,8 @@ describe('worker-task-runner', () => {
 					controllerEpoch: 'worker-epoch-a',
 					operations: createWorkerControlOperationsStub(),
 				},
+				managedVmFactory: managedVmFactoryStub,
+				managedVmImages: managedVmImagesStub,
 				pollClock: createInstantPollClock(),
 				pollIntervalMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
 				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },

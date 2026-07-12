@@ -373,7 +373,7 @@ describe('runAgentVmCli', () => {
 			...defaultCliDependencies,
 			getCurrentWorkingDirectory: () => targetDir,
 			promptAndStoreServiceAccountToken,
-			resolveGondolinMinimumZigVersion: async () => '0.15.2',
+			resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 		} satisfies CliDependencies;
 
 		await runAgentVmCli(
@@ -1819,7 +1819,7 @@ describe('runAgentVmCli', () => {
 				}),
 				collectDynamicDoctorChecks: async () => [],
 				isGatewayImageCached: async () => true,
-				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
@@ -1933,7 +1933,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
-				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
@@ -2055,7 +2055,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
-				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
@@ -2382,7 +2382,7 @@ describe('runAgentVmCli', () => {
 				restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 				listBackups: () => [],
 			}),
-			resolveGondolinMinimumZigVersion: async () => '0.15.2',
+			resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 			probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
@@ -3163,7 +3163,7 @@ describe('runAgentVmCli', () => {
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
-				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
@@ -3331,7 +3331,7 @@ describe('runAgentVmCli', () => {
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
-				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),

@@ -2,17 +2,17 @@ import {
 	isToolVmLeaseId,
 	parseToolVmLeaseId,
 	type ToolVmLeaseId,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	ControllerLeaseRequestError,
 	type LeaseClient,
-	type OpenClawGondolinLeaseReacquireRequest,
+	type OpenClawAgentVmLeaseReacquireRequest,
 } from './lease-client-contract.js';
 import {
-	createGondolinSandboxBackendFactory,
-	createGondolinSandboxBackendManager,
+	createAgentVmSandboxBackendFactory,
+	createAgentVmSandboxBackendManager,
 	type OpenClawFsBridgeLeaseContext,
 	type OpenClawSandboxFsBridge,
 } from './sandbox-backend-factory.js';
@@ -147,21 +147,21 @@ function createActiveUseLeaseClientMethods(): Pick<
 
 function createFactoryParamsForAgent(agentId: string): {
 	readonly agentWorkspaceDir: string;
-	readonly cfg: ReturnType<typeof gondolinSandboxConfig>;
+	readonly cfg: ReturnType<typeof agentVmSandboxConfig>;
 	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly workspaceDir: string;
 } {
 	return {
 		agentWorkspaceDir: `/zone/agents/${agentId}`,
-		cfg: gondolinSandboxConfig(),
+		cfg: agentVmSandboxConfig(),
 		scopeKey: `agent:${agentId}:discord:channel:123`,
 		sessionKey: `agent:${agentId}:discord:channel:123`,
 		workspaceDir: `/zone/agents/${agentId}`,
 	};
 }
 
-function gondolinSandboxConfig(
+function agentVmSandboxConfig(
 	overrides: Partial<{
 		readonly backend: unknown;
 		readonly mode: unknown;
@@ -194,10 +194,10 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-describe('createGondolinSandboxBackendFactory', () => {
+describe('createAgentVmSandboxBackendFactory', () => {
 	it('rejects unsupported OpenClaw sandbox config before requesting a lease', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-123'));
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -222,7 +222,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(
 			factory({
 				agentWorkspaceDir: '/zone/agents/main',
-				cfg: gondolinSandboxConfig({ scope: 'session' }),
+				cfg: agentVmSandboxConfig({ scope: 'session' }),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-abc',
 				workspaceDir: '/work',
@@ -237,7 +237,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				agentId: 'main',
 			}),
 		);
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -261,7 +261,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta',
 			sessionKey: 'agent:main:session-abc',
 			workspaceDir: '/work',
@@ -294,7 +294,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stdinMode: 'pipe-open' as const,
 		}));
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				openClawRuntimeStatusProvider: () => ({
@@ -329,7 +329,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const backend = await factory({
 			agentWorkspaceDir: '/home/openclaw/work',
 			cfg: {
-				...gondolinSandboxConfig(),
+				...agentVmSandboxConfig(),
 				docker: {
 					env: {
 						OPENCLAW_LOG_LEVEL: 'debug',
@@ -417,7 +417,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			createLeaseResponse('lease-workspace-subpath'),
 		);
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -441,7 +441,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const handle = await factory({
 			agentWorkspaceDir: '/zone/agents/beta',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:subagent:child',
 			sessionKey: 'agent:beta:subagent:child',
 			workspaceDir: '/workspace/app',
@@ -468,7 +468,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			}),
 		);
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				openClawDefaultWorkspaceDirProvider: () => '/home/openclaw/.openclaw/workspace',
@@ -497,7 +497,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const handle = await factory({
 			agentWorkspaceDir: '/workspace',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:subagent:child',
 			sessionKey: 'agent:beta:subagent:child',
 			workspaceDir: '/workspace',
@@ -521,7 +521,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			}),
 		);
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				openClawDefaultWorkspaceDirProvider: () => '/home/openclaw/.openclaw/workspace',
@@ -550,7 +550,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const handle = await factory({
 			agentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:subagent:child',
 			sessionKey: 'agent:beta:subagent:child',
 			workspaceDir: '/home/openclaw/.openclaw/workspace',
@@ -576,7 +576,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		vi.stubEnv('HOME', '/home/openclaw');
 
 		try {
-			const factory = createGondolinSandboxBackendFactory(
+			const factory = createAgentVmSandboxBackendFactory(
 				{
 					controllerUrl: 'http://controller.vm.host:18800',
 					openClawRuntimeConfigProvider: () => ({
@@ -603,7 +603,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 			const handle = await factory({
 				agentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:beta:subagent:child',
 				sessionKey: 'agent:beta:subagent:child',
 				workspaceDir: '/home/openclaw/.openclaw/workspace',
@@ -633,7 +633,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		vi.stubEnv('OPENCLAW_PROFILE', 'beta');
 
 		try {
-			const factory = createGondolinSandboxBackendFactory(
+			const factory = createAgentVmSandboxBackendFactory(
 				{
 					controllerUrl: 'http://controller.vm.host:18800',
 					openClawRuntimeConfigProvider: () => ({
@@ -668,7 +668,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			await expect(
 				factory({
 					agentWorkspaceDir: '/workspace',
-					cfg: gondolinSandboxConfig(),
+					cfg: agentVmSandboxConfig(),
 					scopeKey: 'agent:beta:subagent:child',
 					sessionKey: 'agent:beta:subagent:child',
 					workspaceDir: '/workspace',
@@ -687,7 +687,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			}),
 		);
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				openClawDefaultWorkspaceDirProvider: () => '/home/openclaw/.openclaw/workspace',
@@ -716,7 +716,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const handle = await factory({
 			agentWorkspaceDir: '/home/openclaw/.openclaw/state/sandboxes/child-123/work',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:subagent:child',
 			sessionKey: 'agent:beta:subagent:child',
 			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/child-123/work/project',
@@ -750,7 +750,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stdinMode: 'pipe-open' as const,
 		}));
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -774,14 +774,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const firstHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/beta',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:discord:channel:123',
 			sessionKey: 'agent:beta:discord:channel:123',
 			workspaceDir: '/workspace/app',
 		});
 		const secondHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/beta',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:subagent:child',
 			sessionKey: 'agent:beta:subagent:child',
 			workspaceDir: '/work/tmp',
@@ -806,7 +806,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	it('reuses the same lease for repeated requests from the same agent', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-reuse'));
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -830,14 +830,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const firstHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-reuse',
 			workspaceDir: '/work',
 		});
 		const secondHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-reuse',
 			workspaceDir: '/work',
@@ -857,7 +857,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			.fn()
 			.mockRejectedValueOnce(new Error('kex reset'))
 			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) });
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -902,7 +902,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			.mockResolvedValueOnce(createLeaseResponse('01890f00-0000-7000-8000-000000000001'))
 			.mockResolvedValueOnce(createLeaseResponse('01890f00-0000-7000-8000-000000000002'));
 		const releaseLease = vi.fn(async () => {});
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -964,7 +964,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			oldLeaseAuthorityAvailable = false;
 		});
 		const retainRetiredLeaseReacquireRequest = vi.fn(
-			(leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
+			(leaseId: string, reacquireRequest: OpenClawAgentVmLeaseReacquireRequest) => {
 				retiredLeaseId = leaseId;
 				if (
 					reacquireRequest.staleEvidence.kind === 'tool-vm-ssh' &&
@@ -999,7 +999,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			retainRetiredLeaseReacquireRequest,
 			startActiveUse,
 		};
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1052,7 +1052,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	it('shares a local stale marker without pre-releasing authority for sibling handles', async () => {
 		const oldLease = createLeaseResponse('sibling-release-fails-old');
 		const replacementLease = createLeaseResponse('sibling-release-fails-new');
-		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
+		let retainedReacquireRequest: OpenClawAgentVmLeaseReacquireRequest | undefined;
 		const requestLease = vi.fn(async () => oldLease);
 		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
 			expiresAt: 2_000,
@@ -1105,7 +1105,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 			startActiveUse,
 		} satisfies LeaseClient;
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1143,7 +1143,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const oldLease = createLeaseResponse('cached-probe-old');
 		const replacementLease = createLeaseResponse('cached-probe-new');
 		const publishHealthEvent = vi.fn(async () => {});
-		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
+		let retainedReacquireRequest: OpenClawAgentVmLeaseReacquireRequest | undefined;
 		let oldLeaseAuthorityAvailable = true;
 		const requestLease = vi.fn(async () => {
 			oldLeaseAuthorityAvailable = true;
@@ -1184,7 +1184,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			oldLeaseAuthorityAvailable = false;
 		});
 		const retainRetiredLeaseReacquireRequest = vi.fn(
-			(_leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
+			(_leaseId: string, reacquireRequest: OpenClawAgentVmLeaseReacquireRequest) => {
 				retainedReacquireRequest = reacquireRequest;
 				return true;
 			},
@@ -1209,7 +1209,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			retainRetiredLeaseReacquireRequest,
 			startActiveUse,
 		} satisfies LeaseClient;
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1273,7 +1273,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	it('retains a cached-probe reacquire hint across direct reacquire failures without cleanup', async () => {
 		const oldLease = createLeaseResponse('cached-probe-retain-old');
 		const replacementLease = createLeaseResponse('cached-probe-retain-new');
-		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
+		let retainedReacquireRequest: OpenClawAgentVmLeaseReacquireRequest | undefined;
 		let reacquireAttempt = 0;
 		const requestLease = vi.fn(async () => oldLease);
 		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
@@ -1298,7 +1298,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			throw new Error('controller release transport failed');
 		});
 		const retainRetiredLeaseReacquireRequest = vi.fn(
-			(_leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
+			(_leaseId: string, reacquireRequest: OpenClawAgentVmLeaseReacquireRequest) => {
 				retainedReacquireRequest = reacquireRequest;
 				return true;
 			},
@@ -1323,7 +1323,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			retainRetiredLeaseReacquireRequest,
 			startActiveUse,
 		} satisfies LeaseClient;
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1376,7 +1376,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			}),
 		);
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1400,7 +1400,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await factory({
 			agentWorkspaceDir: '/zone/agents/beta',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:discord:channel:123',
 			sessionKey: 'agent:beta:discord:channel:123',
 			workspaceDir: '/zone/agents/beta',
@@ -1408,7 +1408,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(
 			factory({
 				agentWorkspaceDir: '/zone/agents/beta-edited',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:beta:discord:channel:999',
 				sessionKey: 'agent:beta:discord:channel:999',
 				workspaceDir: '/zone/agents/beta-edited',
@@ -1431,7 +1431,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				agentId: 'beta',
 			});
 		});
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1483,7 +1483,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			.mockResolvedValueOnce(createLeaseResponse('lease-old'))
 			.mockRejectedValueOnce(createControllerLeaseError(404));
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1508,21 +1508,21 @@ describe('createGondolinSandboxBackendFactory', () => {
 		try {
 			const firstHandle = await factory({
 				agentWorkspaceDir: '/zone/agents/main',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
 			});
 			const secondHandle = await factory({
 				agentWorkspaceDir: '/zone/agents/main',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
 			});
 			const thirdHandle = await factory({
 				agentWorkspaceDir: '/zone/agents/main',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
@@ -1550,7 +1550,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-client-error'));
 		const renewLease = vi.fn().mockRejectedValueOnce(createControllerLeaseError(409));
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1574,7 +1574,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-client-error',
 			workspaceDir: '/work',
@@ -1583,7 +1583,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(
 			factory({
 				agentWorkspaceDir: '/zone/agents/main',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-client-error',
 				workspaceDir: '/work',
@@ -1598,7 +1598,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-server-error'));
 		const renewLease = vi.fn().mockRejectedValueOnce(createControllerLeaseError(503));
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1622,7 +1622,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-server-error',
 			workspaceDir: '/work',
@@ -1631,7 +1631,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(
 			factory({
 				agentWorkspaceDir: '/zone/agents/main',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-server-error',
 				workspaceDir: '/work',
@@ -1646,7 +1646,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-network-error'));
 		const renewLease = vi.fn().mockRejectedValueOnce(new Error('temporary network failure'));
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1670,7 +1670,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-network-error',
 			workspaceDir: '/work',
@@ -1679,7 +1679,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(
 			factory({
 				agentWorkspaceDir: '/zone/agents/main',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-network-error',
 				workspaceDir: '/work',
@@ -1695,7 +1695,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			return createLeaseResponse(`lease-${leaseCounter}`);
 		});
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1719,14 +1719,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const handleA = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:alpha',
 			sessionKey: 'agent:alpha:session-a',
 			workspaceDir: '/work',
 		});
 		const handleB = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta',
 			sessionKey: 'agent:beta:session-b',
 			workspaceDir: '/work',
@@ -1751,7 +1751,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			return createLeaseResponse(`lease-${leaseCounter}`);
 		});
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1775,14 +1775,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const firstHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-stale',
 			workspaceDir: '/work',
 		});
 		const secondHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-stale',
 			workspaceDir: '/work',
@@ -1795,7 +1795,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('finalizeExec calls dispose on token when dispose is present', async () => {
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1819,7 +1819,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const backend = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-finalize',
 			workspaceDir: '/work',
@@ -1838,7 +1838,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	it('finalizeExec does not stale the cached lease for a nonzero user command exit', async () => {
 		const releaseLease = vi.fn(async () => {});
 		const endActiveUse = vi.fn(async () => {});
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1863,7 +1863,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const backend = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-command-failed',
 			workspaceDir: '/work',
@@ -1891,7 +1891,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 	it('finalizeExec publishes Tool VM SSH finalize health', async () => {
 		const publishHealthEvent = vi.fn(async () => {});
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1916,7 +1916,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const backend = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-finalize-health',
 			workspaceDir: '/work',
@@ -1949,7 +1949,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 	it('finalizeExec does not wait for Tool VM SSH finalize health publishing', async () => {
 		const publishHealthEvent = vi.fn(async () => new Promise<void>(() => {}));
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -1974,7 +1974,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const backend = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-finalize-health',
 			workspaceDir: '/work',
@@ -2003,7 +2003,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('finalizeExec is a no-op when token has no dispose', async () => {
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2027,7 +2027,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const backend = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-noop',
 			workspaceDir: '/work',
@@ -2060,7 +2060,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			return vi.fn(() => createMockFsBridge());
 		});
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2085,7 +2085,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:test',
 			workspaceDir: '/work',
@@ -2119,7 +2119,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('rethrows undefined finalize token disposal failures', async () => {
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2142,7 +2142,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 		const backend = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-dispose-throws',
 			workspaceDir: '/work',
@@ -2169,7 +2169,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('throws TypeError when the controller returns an invalid lease response', async () => {
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2192,7 +2192,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(
 			factory({
 				agentWorkspaceDir: '/zone/agents/main',
-				cfg: gondolinSandboxConfig(),
+				cfg: agentVmSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:test',
 				workspaceDir: '/work',
@@ -2206,7 +2206,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const createFsBridgeBuilder = vi.fn(
 			(_leaseContext: OpenClawFsBridgeLeaseContext) => createFsBridge,
 		);
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2231,7 +2231,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const backend = await factory({
 			agentWorkspaceDir: '/home/openclaw/work',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-abc',
 			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
@@ -2252,7 +2252,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	it('omits env and createFsBridge from handle when createFsBridgeBuilder is not provided', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-456'));
 
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2276,7 +2276,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		const backend = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:test',
 			workspaceDir: '/work',
@@ -2288,13 +2288,13 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 });
 
-describe('createGondolinSandboxBackendManager', () => {
+describe('createAgentVmSandboxBackendManager', () => {
 	it('describeRuntime returns running true when peekLease succeeds', async () => {
 		const renewLease = vi.fn(async () => {
 			throw new Error('describeRuntime should not extend lease idle timers');
 		});
 		const peekLease = vi.fn(async () => createLeasePeekResponse());
-		const manager = createGondolinSandboxBackendManager(
+		const manager = createAgentVmSandboxBackendManager(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2322,7 +2322,7 @@ describe('createGondolinSandboxBackendManager', () => {
 	});
 
 	it('describeRuntime returns running false when peekLease returns not found', async () => {
-		const manager = createGondolinSandboxBackendManager(
+		const manager = createAgentVmSandboxBackendManager(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2350,7 +2350,7 @@ describe('createGondolinSandboxBackendManager', () => {
 	});
 
 	it('describeRuntime rethrows controller errors other than not found', async () => {
-		const manager = createGondolinSandboxBackendManager(
+		const manager = createAgentVmSandboxBackendManager(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2378,7 +2378,7 @@ describe('createGondolinSandboxBackendManager', () => {
 	});
 
 	it('describeRuntime rethrows network errors instead of treating them as missing leases', async () => {
-		const manager = createGondolinSandboxBackendManager(
+		const manager = createAgentVmSandboxBackendManager(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -2407,7 +2407,7 @@ describe('createGondolinSandboxBackendManager', () => {
 
 	it('removeRuntime calls releaseLease with the containerName', async () => {
 		const releaseLease = vi.fn(async () => {});
-		const manager = createGondolinSandboxBackendManager(
+		const manager = createAgentVmSandboxBackendManager(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',

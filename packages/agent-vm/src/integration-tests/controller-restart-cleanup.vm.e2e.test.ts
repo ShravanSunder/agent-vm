@@ -3,9 +3,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import {
@@ -35,6 +36,8 @@ import {
 import { waitForProtocolRetryInterval, withProtocolDeadline } from './e2e-protocol-wait.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
+const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
+const { managedVmFactory } = managedVmRuntimeComposition;
 const describeLiveVmE2e = shouldRunLiveVmE2e() ? describe : describe.skip;
 const reliabilityOperationId = 'controller-restart-cleanup';
 const zoneId = 'controller-restart-cleanup';
@@ -146,15 +149,16 @@ async function createTestDeployment(): Promise<TestDeployment> {
 }
 
 async function createStartedRealVm(sessionLabel: string): Promise<ManagedVm> {
-	const managedVm = await createManagedVm({
+	const managedVm = await managedVmFactory.createManagedVm({
 		allowedHosts: [],
-		cpus: 1,
-		imagePath: '',
-		memory: '512M',
+		environment: {},
+		imageReference: 'alpine-base:latest',
+		mediatedSecrets: [],
+		mounts: {},
+		resources: { cpuCount: 1, memory: '512M' },
 		rootfsMode: 'memory',
-		secrets: {},
 		sessionLabel,
-		vfsMounts: {},
+		tcpHosts: [],
 	});
 	await managedVm.start();
 	managedVmTerminationsForHarnessCleanup.push(await captureManagedVmTermination(managedVm));
@@ -374,6 +378,7 @@ describeLiveVmE2e('live e2e: controller restart composed cleanup', () => {
 			runtime = await startControllerRuntime(
 				{ systemConfig: deployment.systemConfig, zoneIds: [zoneId] },
 				{
+					...managedVmRuntimeComposition,
 					controllerEpoch: 'c2-controller-epoch',
 					createSecretResolver: async () => ({
 						resolve: async () => '',
@@ -383,7 +388,7 @@ describeLiveVmE2e('live e2e: controller restart composed cleanup', () => {
 						image: {
 							built: false,
 							fingerprint: 'controller-restart-cleanup-c2',
-							imagePath: '',
+							imageReference: 'alpine-base:latest',
 						},
 						secretResolver: startOptions.secretResolver,
 					}),
@@ -410,15 +415,16 @@ describeLiveVmE2e('live e2e: controller restart composed cleanup', () => {
 							sessionLabel: 'c2-gateway-after-controller-restart',
 							zoneId,
 						});
-						c2GatewayVm = await createManagedVm({
+						c2GatewayVm = await managedVmFactory.createManagedVm({
 							allowedHosts: [],
-							cpus: 1,
-							imagePath: '',
-							memory: '512M',
+							environment: {},
+							imageReference: 'alpine-base:latest',
+							mediatedSecrets: [],
+							mounts: {},
+							resources: { cpuCount: 1, memory: '512M' },
 							rootfsMode: 'memory',
-							secrets: {},
 							sessionLabel: 'c2-gateway-after-controller-restart',
-							vfsMounts: {},
+							tcpHosts: [],
 						});
 						vmOwnership.attachGatewayVm(c2GatewayVm.id);
 						await c2GatewayVm.start();
@@ -437,7 +443,7 @@ describeLiveVmE2e('live e2e: controller restart composed cleanup', () => {
 							image: {
 								built: false,
 								fingerprint: 'controller-restart-cleanup-c2',
-								imagePath: '',
+								imageReference: 'alpine-base:latest',
 							},
 							ingress: { host: '127.0.0.1', port: 28_892 },
 							processSpec: {

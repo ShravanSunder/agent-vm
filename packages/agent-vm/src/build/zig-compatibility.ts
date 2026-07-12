@@ -1,7 +1,8 @@
-import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import { execa } from 'execa';
 
-export type GondolinZigCompatibilityResult =
+import { resolveManagedVmMinimumZigVersion } from './gondolin-managed-vm-build-tooling.js';
+
+export type ManagedVmZigCompatibilityResult =
 	| {
 			readonly compatible: true;
 			readonly hint: string;
@@ -23,8 +24,8 @@ export type GondolinZigCompatibilityResult =
 			readonly requiredVersion: string;
 	  };
 
-export async function resolveGondolinCompatibleZigVersion(
-	resolveRequiredVersion: () => Promise<string> = resolveGondolinMinimumZigVersion,
+export async function resolveManagedVmCompatibleZigVersion(
+	resolveRequiredVersion: () => Promise<string> = resolveManagedVmMinimumZigVersion,
 ): Promise<string> {
 	return await resolveRequiredVersion();
 }
@@ -158,10 +159,10 @@ export function buildZigUpgradeHint(requiredZigVersion: string): string {
 	return `Requires Zig >= ${requiredZigVersion}. On macOS: brew install zig.`;
 }
 
-export function checkGondolinZigCompatibility(options: {
+export function checkManagedVmZigCompatibility(options: {
 	readonly installedVersion?: string;
 	readonly requiredVersion: string;
-}): GondolinZigCompatibilityResult {
+}): ManagedVmZigCompatibilityResult {
 	if (!options.installedVersion) {
 		return {
 			compatible: false,
@@ -188,11 +189,11 @@ export function checkGondolinZigCompatibility(options: {
 	};
 }
 
-export function assertGondolinZigCompatibility(options: {
+export function assertManagedVmZigCompatibility(options: {
 	readonly installedVersion?: string;
 	readonly requiredVersion: string;
 }): void {
-	const result = checkGondolinZigCompatibility(options);
+	const result = checkManagedVmZigCompatibility(options);
 	if (result.compatible) {
 		return;
 	}

@@ -2,11 +2,12 @@
 
 [Overview](../README.md) > [Architecture](../architecture/overview.md) > Gateway Lifecycle
 
-The gateway lifecycle abstraction decouples "what a gateway needs" from
-"how the controller boots it."  Each gateway type (OpenClaw, Worker)
-implements a single `GatewayLifecycle` interface.  The controller never
-knows which type it is driving -- it calls the same four methods and gets
-back pure data specs that Gondolin consumes.
+The gateway lifecycle abstraction decouples "what a gateway workload needs"
+from "how the controller boots it." Each gateway type (OpenClaw, Worker)
+implements a single `GatewayLifecycle` interface. The lifecycle returns
+backend-neutral workload requirements and process intent. The controller adds
+image, resource, authority, and recovery decisions before passing a neutral
+`ManagedVmCreateRequest` to the injected `ManagedVmFactory`.
 
 ```
                         GatewayLifecycle
@@ -25,24 +26,40 @@ back pure data specs that Gondolin consumes.
                         Controller
 ```
 
+Package ownership follows the same split:
+
+- `@agent-vm/gateway-lifecycle` owns gateway-kind configuration projections,
+  workload/lifecycle intent, process specs, and shared Node policy (with room
+  for equivalent future Python policy).
+- `@agent-vm/managed-vm` owns backend-neutral VM, mount, process, SSH, ingress,
+  image, and owned-directory contracts.
+- `@agent-vm/gondolin-vm-adapter` implements those neutral contracts for the
+  shipping backend. Gateway lifecycle implementations never import it.
+
+The application composition root selects Gondolin once and injects narrow
+neutral capabilities. Controller authority -- PID/process identity admission,
+lease ownership, recovery, and destructive termination fencing -- does not move
+into either lifecycle packages or the adapter.
+
 ---
 
 ## GatewayLifecycle interface
 
-Defined in `packages/gateway-interface/src/gateway-lifecycle.ts`.
+Defined in `packages/gateway-lifecycle/src/gateway-lifecycle.ts`.
 
 ```
 GatewayLifecycle
-  |-- buildVmSpec(options)        -> GatewayVmSpec       pure data
+  |-- buildVmRequirements(options)-> GatewayVmRequirements pure data
   |-- buildProcessSpec(zone, rs)  -> GatewayProcessSpec  pure data
   |-- preflightHostState?(zone,sr)-> Promise<void>       secret preflight
   |-- prepareHostState?(zone, sr) -> Promise<void>       side effects
   |-- authConfig?                 -> GatewayAuthConfig    static
 ```
 
-### buildVmSpec
+### buildVmRequirements
 
-Accepts `BuildGatewayVmSpecOptions` and returns a `GatewayVmSpec`.  Pure
+Accepts `BuildGatewayVmRequirementsOptions` and returns
+`GatewayVmRequirements`. Pure
 data assembly -- no side effects.  The options carry:
 
 | Field              | Type                          | Purpose                                  |
@@ -82,24 +99,27 @@ Only OpenClaw defines this; Worker has no interactive auth.
 
 ---
 
-## GatewayVmSpec
+## GatewayVmRequirements
 
-Defined in `packages/gateway-interface/src/gateway-vm-spec.ts`.  This is
-the full Gondolin-facing contract -- everything needed to create a VM.
+Defined in `packages/gateway-lifecycle/src/gateway-vm-spec.ts`. This is guest
+workload intent, not a provider create request. Image selection, CPU/memory,
+owned host-directory authority, and VM construction remain controller and
+composition responsibilities.
 
 | Field              | Type                            | Purpose                                         |
 |--------------------|---------------------------------|-------------------------------------------------|
 | `environment`      | `Record<string, string>`        | Environment variables injected into the guest    |
-| `vfsMounts`        | `Record<string, VfsMountSpec>`  | Host-to-guest filesystem mounts                  |
-| `mediatedSecrets`  | `Record<string, SecretSpec>`    | Secrets delivered via HTTP mediation (not env)    |
+| `mounts`           | `Record<string, ManagedVmMount>` | Backend-neutral host-to-guest filesystem mounts |
+| `mediatedSecrets`  | `Record<string, MediatedSecretSpec>` | Gateway secret-placement intent for later provider-request translation |
 | `tcpHosts`         | `Record<string, string>`        | Guest hostname:port -> host address:port mapping |
 | `allowedHosts`     | `readonly string[]`             | Hostnames the VM is permitted to reach           |
 | `rootfsMode`       | `'readonly' | 'memory' | 'cow'` | Root filesystem strategy (both impls use `cow`)  |
-| `sessionLabel`     | `string`                        | Gondolin session identifier                      |
+| `sessionLabel`     | `string`                        | Backend-neutral diagnostic session label         |
 
-`allowedHosts` is the low-level Gondolin VM field. Controller `system.json`
-zones declare audience-scoped `egressHosts`; gateway lifecycle code passes only
-`gateway` and `both` entries into this VM spec.
+Controller `system.json` zones declare audience-scoped `egressHosts`; gateway
+lifecycle code passes only `gateway` and `both` entries into these workload
+requirements. The selected provider translates the resulting neutral request
+to Gondolin policy only at the adapter boundary.
 
 Secrets are split by `splitResolvedGatewaySecrets` based on each zone secret's
 `audience` and `injection` fields. Gateway VMs receive only `gateway` and
@@ -110,7 +130,7 @@ Secrets are split by `splitResolvedGatewaySecrets` based on each zone secret's
 
 ## GatewayProcessSpec
 
-Defined in `packages/gateway-interface/src/gateway-process-spec.ts`.
+Defined in `packages/gateway-lifecycle/src/gateway-process-spec.ts`.
 
 | Field              | Type                  | Purpose                                      |
 |--------------------|-----------------------|----------------------------------------------|
@@ -158,7 +178,7 @@ Resolves configured auth-profile secrets without writing the corresponding
 `auth-profiles.json` files. This mirrors the secret-resolution part of
 `prepareHostState` for protected restart preflight.
 
-### buildVmSpec
+### buildVmRequirements
 
 ```
 environment:
@@ -177,7 +197,7 @@ environment:
   NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
   + allowed env-injected secrets, including gateway.controlAuth.secret
 
-vfsMounts:
+mounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
   /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
   /home/openclaw/.openclaw/state     -> stateDir         (realfs)
@@ -237,7 +257,7 @@ Defined in `packages/worker-gateway/src/worker-lifecycle.ts`.
 
 Not implemented.  Worker has no host-side preparation.
 
-### buildVmSpec
+### buildVmRequirements
 
 ```
 environment:
@@ -257,7 +277,7 @@ environment:
   UV_CACHE_DIR          = /work/cache/uv
   + env-injected secrets
 
-vfsMounts:
+mounts:
   /state                -> task stateDir       (realfs)
   /gitdirs              -> runtimeDir task root (realfs)
 
@@ -295,7 +315,7 @@ Not implemented.  Worker has no interactive auth.
 | **prepareHostState**  | Writes effective config + auth profiles          | None                                            |
 | **authConfig**        | list providers / login command                   | None                                            |
 | **HOME**              | `/home/openclaw`                                 | `/home/coder`                                   |
-| **vfsMounts**         | config, cache, state, logs, zone files          | state + task gitdirs; `/work/repos` is rootfs/COW |
+| **mounts**            | config, cache, state, logs, zone files          | state + task gitdirs; `/work/repos` is rootfs/COW |
 | **tcpHosts**          | Tool VM SSH + explicit TCP resources             | explicit TCP resources only                    |
 | **bootstrap**         | Shell env file in `/etc/profile.d/`              | `npm install -g` codex + worker tarball         |
 | **startCommand**      | `openclaw gateway --port 18789`                  | `agent-vm-worker serve --port 18789`            |
@@ -332,9 +352,9 @@ and the TypeScript compiler will enforce the contract.
 
 ## Session labels
 
-Defined in `packages/gateway-interface/src/gateway-runtime-contract.ts`.
+Defined in `packages/gateway-lifecycle/src/gateway-runtime-contract.ts`.
 
-Two naming conventions for Gondolin session identifiers:
+Two naming conventions for backend-neutral diagnostic session labels:
 
 ```
 Gateway:  <projectNamespace>:<zoneId>:gateway
@@ -355,11 +375,11 @@ with `GatewayType` derived as the union of those literal strings.
 
 | File | Package |
 |------|---------|
-| `packages/gateway-interface/src/gateway-lifecycle.ts` | gateway-interface |
-| `packages/gateway-interface/src/gateway-runtime-contract.ts` | gateway-interface |
-| `packages/gateway-interface/src/gateway-vm-spec.ts` | gateway-interface |
-| `packages/gateway-interface/src/gateway-process-spec.ts` | gateway-interface |
-| `packages/gateway-interface/src/split-resolved-gateway-secrets.ts` | gateway-interface |
+| `packages/gateway-lifecycle/src/gateway-lifecycle.ts` | gateway-lifecycle |
+| `packages/gateway-lifecycle/src/gateway-runtime-contract.ts` | gateway-lifecycle |
+| `packages/gateway-lifecycle/src/gateway-vm-spec.ts` | gateway-lifecycle |
+| `packages/gateway-lifecycle/src/gateway-process-spec.ts` | gateway-lifecycle |
+| `packages/gateway-lifecycle/src/split-resolved-gateway-secrets.ts` | gateway-lifecycle |
 | `packages/openclaw-gateway/src/openclaw-lifecycle.ts` | openclaw-gateway |
 | `packages/worker-gateway/src/worker-lifecycle.ts` | worker-gateway |
 | `packages/agent-vm/src/gateway/gateway-lifecycle-loader.ts` | agent-vm |

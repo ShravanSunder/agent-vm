@@ -59,7 +59,7 @@ describe('controller-managed VM termination', () => {
 			orderedEvents.push(`signal-${signal}`);
 			processAlive = false;
 		});
-		const getHostPid = vi
+		const getHostProcessId = vi
 			.fn<() => number | null>()
 			.mockReturnValueOnce(hostPid)
 			.mockImplementation(() => {
@@ -74,7 +74,7 @@ describe('controller-managed VM termination', () => {
 		await terminateLiveManagedVm({
 			dependencies,
 			target: terminationTarget,
-			vm: { close, getHostPid, id: terminationTarget.vmId },
+			vm: { close, getHostProcessId, id: terminationTarget.vmId },
 		});
 
 		// Assert
@@ -98,7 +98,7 @@ describe('controller-managed VM termination', () => {
 		await terminateLiveManagedVm({
 			dependencies,
 			target: terminationTarget,
-			vm: { close, getHostPid: () => null, id: terminationTarget.vmId },
+			vm: { close, getHostProcessId: () => null, id: terminationTarget.vmId },
 		});
 
 		// Assert
@@ -135,7 +135,7 @@ describe('controller-managed VM termination', () => {
 		const termination = terminateLiveManagedVm({
 			dependencies,
 			target: terminationTarget,
-			vm: { close, getHostPid: () => hostPid, id: terminationTarget.vmId },
+			vm: { close, getHostProcessId: () => hostPid, id: terminationTarget.vmId },
 		});
 
 		// Assert
@@ -155,7 +155,7 @@ describe('controller-managed VM termination', () => {
 		const termination = terminateLiveManagedVm({
 			dependencies,
 			target: terminationTarget,
-			vm: { close, getHostPid: () => hostPid, id: terminationTarget.vmId },
+			vm: { close, getHostProcessId: () => hostPid, id: terminationTarget.vmId },
 		});
 
 		// Assert
@@ -173,7 +173,7 @@ describe('controller-managed VM termination', () => {
 		const termination = terminateLiveManagedVm({
 			dependencies,
 			target: terminationTarget,
-			vm: { close, getHostPid: () => hostPid, id: 'different-vm' },
+			vm: { close, getHostProcessId: () => hostPid, id: 'different-vm' },
 		});
 
 		// Assert
@@ -194,7 +194,7 @@ describe('controller-managed VM termination', () => {
 		const termination = terminateLiveManagedVm({
 			dependencies,
 			target: terminationTarget,
-			vm: { close, getHostPid: () => null, id: terminationTarget.vmId },
+			vm: { close, getHostProcessId: () => null, id: terminationTarget.vmId },
 		});
 
 		// Assert

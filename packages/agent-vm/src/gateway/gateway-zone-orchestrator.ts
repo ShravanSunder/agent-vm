@@ -13,15 +13,12 @@ import type {
 	GatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayZoneConfig,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import {
 	createWebSocketUpgradeRequestGuard,
 	translateRuntimePath,
-} from '@agent-vm/gateway-interface';
-import {
-	createManagedVm as createManagedVmFromCore,
-	type ManagedVm,
-} from '@agent-vm/gondolin-adapter';
+} from '@agent-vm/gateway-lifecycle';
+import type { ManagedVm, ManagedVmFactory, ManagedVmImageBuildResult } from '@agent-vm/managed-vm';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import {
@@ -93,7 +90,6 @@ import {
 	type GatewayZone,
 	type GatewayControlSessionConnector,
 	type GatewayControlSessionMaterialFactory,
-	type GatewayManagedVmFactoryOptions,
 	type GatewayZonePreflightOptions,
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
@@ -348,7 +344,7 @@ function verifyGatewayControlCallerContextProof(options: {
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadinessDefault;
 	readonly connectGatewayControlSession?: GatewayControlSessionConnector;
-	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
+	readonly managedVmFactory: ManagedVmFactory;
 	readonly createGatewayControlSessionMaterial?: GatewayControlSessionMaterialFactory;
 	readonly createOpenClawProcessSupervisorPorts?: typeof createManagedVmOpenClawProcessSupervisorPorts;
 	readonly gatewayReadinessMaxAttempts?: number;
@@ -380,7 +376,7 @@ interface ControllerStartGatewayZoneOptions extends StartGatewayZoneOptions {
 }
 
 export interface GatewayZoneStartPreflightResult {
-	readonly image?: import('@agent-vm/gondolin-adapter').BuildImageResult | undefined;
+	readonly image?: ManagedVmImageBuildResult | undefined;
 	readonly secretResolver: SecretResolver;
 }
 
@@ -852,8 +848,8 @@ async function buildGatewayImageForZone(
 		readonly systemConfig: StartGatewayZoneOptions['systemConfig'];
 		readonly zone: GatewayZone;
 	},
-	dependencies: GatewayImageBuilderDependencies = {},
-): Promise<import('@agent-vm/gondolin-adapter').BuildImageResult> {
+	dependencies: GatewayImageBuilderDependencies,
+): Promise<ManagedVmImageBuildResult> {
 	const gatewayImageProfile = selectGatewayImageProfile({
 		systemConfig: options.systemConfig,
 		zone: options.zone,
@@ -867,13 +863,7 @@ async function buildGatewayImageForZone(
 				options.zone.gateway.imageProfile,
 			),
 		},
-		{
-			...(dependencies.buildImage ? { buildImage: dependencies.buildImage } : {}),
-			...(dependencies.buildGondolinImage
-				? { buildGondolinImage: dependencies.buildGondolinImage }
-				: {}),
-			...(dependencies.loadBuildConfig ? { loadBuildConfig: dependencies.loadBuildConfig } : {}),
-		},
+		dependencies,
 	);
 }
 
@@ -881,12 +871,8 @@ export async function preflightGatewayZoneStart(
 	options: GatewayZonePreflightOptions,
 	dependencies: Pick<
 		GatewayManagerDependencies,
-		| 'buildGondolinImage'
-		| 'buildImage'
-		| 'checkObservabilityStackReadiness'
-		| 'loadBuildConfig'
-		| 'loadGatewayLifecycle'
-	> = {},
+		'checkObservabilityStackReadiness' | 'loadGatewayLifecycle' | 'managedVmImages'
+	>,
 ): Promise<GatewayZoneStartPreflightResult> {
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
@@ -988,14 +974,14 @@ async function preflightGatewayZoneStartPrerequisites(
 
 export async function startGatewayZone(
 	options: StartGatewayZoneOptions,
-	dependencies: GatewayManagerDependencies = {},
+	dependencies: GatewayManagerDependencies,
 ): Promise<GatewayZoneStartResult> {
 	return await startGatewayZoneImplementation(options, dependencies);
 }
 
 export async function startGatewayZoneForController(
 	options: ControllerStartGatewayZoneOptions,
-	dependencies: GatewayManagerDependencies = {},
+	dependencies: GatewayManagerDependencies,
 ): Promise<GatewayZoneStartResult> {
 	return await startGatewayZoneImplementation(
 		options,
@@ -1198,7 +1184,7 @@ async function startGatewayZoneImplementation(
 		await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
 		await fs.chmod(logDir, 0o700);
 	}
-	const vmSpec = lifecycle.buildVmSpec({
+	const vmSpec = lifecycle.buildVmRequirements({
 		controllerPort: options.systemConfig.host.controllerPort,
 		gatewayCacheDir,
 		projectNamespace: options.systemConfig.host.projectNamespace,
@@ -1221,10 +1207,9 @@ async function startGatewayZoneImplementation(
 		...options.tcpHostsOverride,
 	};
 	const vfsMounts = {
-		...vmSpec.vfsMounts,
+		...vmSpec.mounts,
 		...options.vfsMountsOverride,
 	};
-	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	// Phase E: write host state before creating a new VM. This is deliberately
 	// sequential: if the final write fails after orphan cleanup, startup aborts
 	// without creating a second gateway VM that then needs cleanup.
@@ -1269,8 +1254,9 @@ async function startGatewayZoneImplementation(
 		exactGatewayVfsMounts = {
 			...vfsMounts,
 			[supervisorStateMount.guestPath]: {
+				access: 'read-write',
 				hostPath: supervisorStateMount.hostPath,
-				kind: 'realfs',
+				kind: 'host-directory',
 			},
 		};
 	}
@@ -1279,20 +1265,30 @@ async function startGatewayZoneImplementation(
 		runTaskStep,
 		'Booting gateway VM',
 		async () =>
-			await createManagedVm({
+			await dependencies.managedVmFactory.createManagedVm({
 				allowedHosts: vmSpec.allowedHosts,
-				cpus: zone.gateway.cpus,
-				env: environment,
-				imagePath: image.imagePath,
-				memory: zone.gateway.memory,
+				environment,
+				imageReference: image.imageReference,
+				mediatedSecrets: Object.entries(vmSpec.mediatedSecrets).map(
+					([environmentVariable, secret]) => ({
+						allowedHosts: secret.hosts,
+						environmentVariable,
+						value: secret.value,
+					}),
+				),
+				mediation: {
+					onRequest: createGatewayVmRequestHook({ vmSpec, zone: lifecycleZone }),
+				},
+				mounts: exactGatewayVfsMounts,
+				resources: {
+					cpuCount: zone.gateway.cpus,
+					memory: zone.gateway.memory,
+				},
 				rootfsMode: vmSpec.rootfsMode,
 				...(vmSpec.runtimeRootfsSize ? { runtimeRootfsSize: vmSpec.runtimeRootfsSize } : {}),
-				onRequest: createGatewayVmRequestHook({ vmSpec, zone: lifecycleZone }),
-				secrets: vmSpec.mediatedSecrets,
 				sessionLabel: vmSpec.sessionLabel,
 				...(vmSpec.sshEgress ? { sshEgress: vmSpec.sshEgress } : {}),
-				tcpHosts,
-				vfsMounts: exactGatewayVfsMounts,
+				tcpHosts: Object.entries(tcpHosts).map(([guestHost, target]) => ({ guestHost, target })),
 			}),
 	);
 	if (options.onPendingVmCreation !== undefined) {
@@ -1335,7 +1331,7 @@ async function startGatewayZoneImplementation(
 		sleep,
 	};
 	const captureGatewayProcessTarget = async (): Promise<ManagedVmProcessTarget> => {
-		const hostPid = managedVm.getHostPid();
+		const hostPid = managedVm.getHostProcessId();
 		if (hostPid === null || !Number.isInteger(hostPid) || hostPid <= 0) {
 			throw new Error(
 				`Gateway VM '${managedVm.id}' does not expose a valid live runner pid for controller-owned cleanup.`,
@@ -1359,7 +1355,7 @@ async function startGatewayZoneImplementation(
 	};
 	const terminateManagedGatewayVm = async (): Promise<void> => {
 		if (startupProcessTarget === undefined) {
-			if (managedVm.getHostPid() === null) {
+			if (managedVm.getHostProcessId() === null) {
 				await managedVm.close();
 				return;
 			}
@@ -1369,7 +1365,11 @@ async function startGatewayZoneImplementation(
 			contextLabel: `Gateway VM '${managedVm.id}' for zone '${zone.id}'`,
 			dependencies: managedVmKillDependencies,
 			target: startupProcessTarget,
-			vm: managedVm,
+			vm: {
+				close: async () => await managedVm.close(),
+				getHostProcessId: () => managedVm.getHostProcessId(),
+				id: managedVm.id,
+			},
 		});
 	};
 	const performGatewayTermination = async (): Promise<void> => {
@@ -1517,7 +1517,7 @@ async function startGatewayZoneImplementation(
 					: {}),
 			});
 		});
-		managedVm.setIngressRoutes([
+		managedVm.configureIngressRoutes([
 			{
 				port: processSpec.guestListenPort,
 				prefix: '/',

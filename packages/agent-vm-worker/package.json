@@ -42,7 +42,7 @@
 	},
 	"dependencies": {
 		"@agent-vm/control-protocol-contracts": "workspace:*",
-		"@agent-vm/gateway-interface": "workspace:*",
+		"@agent-vm/gateway-lifecycle": "workspace:*",
 		"@agent-vm/worker-control-contracts": "workspace:*",
 		"@hono/node-server": "^2.0.2",
 		"@hono/zod-validator": "^0.8.0",

@@ -1,6 +1,7 @@
 import http, { type Server } from 'node:http';
 
-import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
+import { createGondolinManagedVmProvider } from '@agent-vm/gondolin-vm-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
@@ -16,6 +17,8 @@ import {
 } from '../shared/managed-vm-process.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
+const managedVmFactory = createGondolinManagedVmProvider().factory;
+
 const TEST_SECRET_VALUE = 'agent-vm-http-mediation-test-secret';
 const mediationHost = 'mediation-test.vm.host';
 const mediationUpstreamHost = '127.0.0.1';
@@ -23,7 +26,7 @@ const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.ski
 
 async function startVmAndCaptureProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
 	await managedVm.start();
-	const hostPid = managedVm.getHostPid();
+	const hostPid = managedVm.getHostProcessId();
 	if (hostPid === null) {
 		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
 	}
@@ -115,24 +118,28 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 	beforeAll(async () => {
 		const headerEchoServer = await createHeaderEchoServer();
 		echoServer = headerEchoServer.server;
-		const vm = await createManagedVm({
-			imagePath: '',
-			memory: '512M',
-			cpus: 1,
-			rootfsMode: 'cow',
+		const vm = await managedVmFactory.createManagedVm({
 			allowedHosts: [mediationHost, mediationUpstreamHost],
-			secrets: {
-				TEST_TOKEN: {
-					hosts: [mediationHost, mediationUpstreamHost],
+			environment: {},
+			imageReference: 'alpine-base:latest',
+			mediatedSecrets: [
+				{
+					allowedHosts: [mediationHost, mediationUpstreamHost],
+					environmentVariable: 'TEST_TOKEN',
 					value: TEST_SECRET_VALUE,
 				},
-			},
-			onRequest: rewriteMediationHostToLoopback(headerEchoServer.port),
-			tcpHosts: {
-				[`${mediationUpstreamHost}:${String(headerEchoServer.port)}`]: `${mediationUpstreamHost}:${String(headerEchoServer.port)}`,
-			},
-			vfsMounts: {},
+			],
+			mediation: { onRequest: rewriteMediationHostToLoopback(headerEchoServer.port) },
+			mounts: {},
+			resources: { cpuCount: 1, memory: '512M' },
+			rootfsMode: 'cow',
 			sessionLabel: 'agent-vm-live-http-mediation-test',
+			tcpHosts: [
+				{
+					guestHost: `${mediationUpstreamHost}:${String(headerEchoServer.port)}`,
+					target: `${mediationUpstreamHost}:${String(headerEchoServer.port)}`,
+				},
+			],
 		});
 		vmRuntime = { managedVm: vm, target: await startVmAndCaptureProcess(vm) };
 	}, 60_000);

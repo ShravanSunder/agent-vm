@@ -14,13 +14,13 @@ import {
 	createConfigContractSchemaArtifacts,
 	mcpPortalConfigSchemaPaths,
 } from '@agent-vm/config-contracts';
-import type { EgressHostConfig, GatewayType, VmAudience } from '@agent-vm/gateway-interface';
-import {
-	resolveGondolinMinimumZigVersion,
-	resolveGondolinPackageSpec,
-} from '@agent-vm/gondolin-adapter';
+import type { EgressHostConfig, GatewayType, VmAudience } from '@agent-vm/gateway-lifecycle';
 import { z } from 'zod';
 
+import {
+	resolveManagedVmBackendPackageSpec,
+	resolveManagedVmMinimumZigVersion,
+} from '../build/managed-vm-build-tooling.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
 import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
@@ -71,7 +71,7 @@ interface ScaffoldAgentVmProjectDependencies {
 		profileName: string,
 	) => Promise<'created' | 'skipped'>;
 	readonly getHomeDir?: () => string;
-	readonly resolveGondolinMinimumZigVersion?: typeof resolveGondolinMinimumZigVersion;
+	readonly resolveManagedVmMinimumZigVersion?: typeof resolveManagedVmMinimumZigVersion;
 }
 
 export interface PromptAndStoreTokenDependencies {
@@ -83,7 +83,7 @@ export interface PromptAndStoreTokenDependencies {
 	readonly createReadlineInterface?: () => readline.Interface;
 }
 
-export type { GatewayType } from '@agent-vm/gateway-interface';
+export type { GatewayType } from '@agent-vm/gateway-lifecycle';
 
 export type ScaffoldPathMode = 'local' | 'pod' | 'user-dir';
 
@@ -1292,14 +1292,14 @@ async function scaffoldAgentVmProjectInternal(
 
 	if (options.hostSystemType === 'container') {
 		const resolveZigVersion =
-			dependencies.resolveGondolinMinimumZigVersion ?? resolveGondolinMinimumZigVersion;
+			dependencies.resolveManagedVmMinimumZigVersion ?? resolveManagedVmMinimumZigVersion;
 		const zigVersion = await resolveZigVersion();
-		const gondolinPackageSpec = await resolveGondolinPackageSpec();
+		const managedVmBackendPackageSpec = await resolveManagedVmBackendPackageSpec();
 		const vmHostSystemFiles = [
 			[
 				'Dockerfile',
 				renderVmHostSystemDockerfile({
-					gondolinPackageSpec,
+					managedVmBackendPackageSpec,
 					imageArchitecture: options.architecture,
 					zigVersion,
 				}),

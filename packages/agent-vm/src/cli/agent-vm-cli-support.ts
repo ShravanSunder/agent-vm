@@ -1,4 +1,3 @@
-import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import {
 	createSecretResolver,
 	probeOnePasswordServiceAccountHeadlessAuth,
@@ -8,6 +7,8 @@ import {
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
+import { resolveManagedVmMinimumZigVersion } from '../build/managed-vm-build-tooling.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import {
 	loadSystemConfig,
 	type LoadedSystemConfig,
@@ -94,7 +95,7 @@ export interface CliDependencies {
 		arguments_: readonly string[],
 	) => Promise<void>;
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
-	readonly resolveGondolinMinimumZigVersion: typeof resolveGondolinMinimumZigVersion;
+	readonly resolveManagedVmMinimumZigVersion: typeof resolveManagedVmMinimumZigVersion;
 	readonly runControllerDoctor: typeof runControllerDoctor;
 	readonly runControllerOfflineCleanup?: typeof runControllerOfflineCleanup;
 	readonly runConfigValidation?: typeof runConfigValidation;
@@ -115,7 +116,13 @@ export interface CliDependencies {
 			readonly systemConfig: LoadedSystemConfig;
 			readonly zoneId: string;
 		},
-		runtimeDependencies?: ControllerRuntimeDependencies,
+		runtimeDependencies?: Omit<
+			ControllerRuntimeDependencies,
+			| 'configureManagedVmHostNetworkDefaults'
+			| 'managedVmFactory'
+			| 'managedVmImages'
+			| 'managedVmOwnedDirectories'
+		>,
 	) => Promise<ControllerRuntime>;
 	readonly startGatewayZone: typeof startGatewayZone;
 }
@@ -136,7 +143,7 @@ export const defaultCliDependencies: CliDependencies = {
 	runBuildCommand,
 	runCacheCommand,
 	probeOnePasswordServiceAccountHeadlessAuth,
-	resolveGondolinMinimumZigVersion,
+	resolveManagedVmMinimumZigVersion: resolveManagedVmMinimumZigVersion,
 	resolveServiceAccountToken,
 	runControllerDoctor,
 	runControllerOfflineCleanup,
@@ -149,8 +156,16 @@ export const defaultCliDependencies: CliDependencies = {
 	initRepoResources,
 	updateRepoResources,
 	validateRepoResources,
-	startControllerRuntime: async (runtimeOptions, runtimeDependencies) =>
-		await startControllerRuntime(runtimeOptions, runtimeDependencies ?? {}),
+	startControllerRuntime: async (runtimeOptions, runtimeDependencies) => {
+		const managedVmRuntime = createManagedVmRuntimeComposition();
+		return await startControllerRuntime(runtimeOptions, {
+			...runtimeDependencies,
+			configureManagedVmHostNetworkDefaults: managedVmRuntime.configureManagedVmHostNetworkDefaults,
+			managedVmFactory: managedVmRuntime.managedVmFactory,
+			managedVmImages: managedVmRuntime.managedVmImages,
+			managedVmOwnedDirectories: managedVmRuntime.managedVmOwnedDirectories,
+		});
+	},
 	startGatewayZone,
 };
 

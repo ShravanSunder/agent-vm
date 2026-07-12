@@ -313,7 +313,7 @@ export async function collectControllerDoctorEnvironment(
 		] as const,
 		path.resolve(path.dirname(systemConfig.systemConfigPath), '..', 'node_modules', '.bin'),
 	);
-	const requiredZigVersion = await dependencies.resolveGondolinMinimumZigVersion();
+	const requiredZigVersion = await dependencies.resolveManagedVmMinimumZigVersion();
 	const zigVersion = await collectCommandOutput('zig', ['version']);
 	const dockerDaemonReady = await collectDockerDaemonReady(availableBinaries);
 	return {

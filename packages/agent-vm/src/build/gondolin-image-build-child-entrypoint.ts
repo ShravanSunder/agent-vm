@@ -1,7 +1,7 @@
-import type { GondolinImageBuildRequest } from './gondolin-image-builder.js';
+import type { ManagedVmImageBuildRequest } from './gondolin-image-builder.js';
 
 interface GondolinBuildRequestMessage {
-	readonly request: GondolinImageBuildRequest;
+	readonly request: ManagedVmImageBuildRequest;
 	readonly type: 'build-request';
 }
 
@@ -52,8 +52,8 @@ process.once('message', (message: unknown) => {
 		}
 
 		try {
-			const { runGondolinImageBuildRequest } = await import('./gondolin-image-builder.js');
-			const result = await runGondolinImageBuildRequest(message.request);
+			const { runManagedVmImageBuildRequest } = await import('./gondolin-image-builder.js');
+			const result = await runManagedVmImageBuildRequest(message.request);
 			process.send?.({ result, type: 'result' });
 		} catch (error) {
 			sendStructuredError(error);

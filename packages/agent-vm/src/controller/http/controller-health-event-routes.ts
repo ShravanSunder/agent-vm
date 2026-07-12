@@ -2,7 +2,7 @@ import type {
 	AgentVmHealthEvent,
 	ZoneHealthIssue,
 	ZoneHealthSnapshot,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { type Hono } from 'hono';
 
 import { stableTelemetryHash } from '../../observability/health-event-telemetry.js';

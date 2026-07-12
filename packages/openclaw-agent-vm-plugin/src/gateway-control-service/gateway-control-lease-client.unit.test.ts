@@ -7,7 +7,7 @@ import type {
 	GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
 import { gatewayControlCommandExecutionTimeoutMsByOperation } from '@agent-vm/gateway-control-contracts';
-import { isToolVmSshLease } from '@agent-vm/gateway-interface';
+import { isToolVmSshLease } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createGatewayControlCallerContextStore } from './gateway-control-caller-context-store.js';

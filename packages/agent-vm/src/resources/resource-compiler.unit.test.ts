@@ -41,8 +41,9 @@ describe('compileResourceOverlay', () => {
 		});
 		expect(overlay.vfsMounts).toEqual({
 			'/agent-vm/resources/repo-a': {
+				access: 'read-only',
 				hostPath: '/tmp/task/resources/repo-a',
-				kind: 'realfs-readonly',
+				kind: 'host-directory',
 			},
 		});
 	});
@@ -64,8 +65,9 @@ describe('compileResourceOverlay', () => {
 
 		expect(overlay.vfsMounts).toEqual({
 			'/agent-vm/resources/repo-a': {
+				access: 'read-only',
 				hostPath: '/tmp/task/resources/repo-a',
-				kind: 'realfs-readonly',
+				kind: 'host-directory',
 			},
 		});
 	});

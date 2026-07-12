@@ -1,4 +1,4 @@
-import type { GatewayRecoveryHealthReason } from '@agent-vm/gateway-interface';
+import type { GatewayRecoveryHealthReason } from '@agent-vm/gateway-lifecycle';
 
 export type GatewayVmRecoveryObservationResult =
 	| 'failed'

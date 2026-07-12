@@ -8,7 +8,7 @@ import {
 } from './vm-host-system-templates.js';
 
 const renderOptions = {
-	gondolinPackageSpec: '@earendil-works/gondolin@0.9.1',
+	managedVmBackendPackageSpec: '@earendil-works/gondolin@0.9.1',
 	imageArchitecture: 'x86_64',
 	zigVersion: '0.15.2',
 } as const satisfies Parameters<typeof renderVmHostSystemDockerfile>[0];

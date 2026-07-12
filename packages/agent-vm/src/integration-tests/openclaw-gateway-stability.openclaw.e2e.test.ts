@@ -3,19 +3,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
-import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-lifecycle';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { readDurableHealthEvents } from '../controller/health/durable-health-event-log.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZone as startGatewayZone,
 	type E2eHarnessRuntime,
 	type OpenClawE2eProject,
 	useLocalOpenClawPluginGatewayImage,
@@ -29,7 +29,7 @@ import {
 
 const architecture = currentE2eArchitecture();
 const runOpenClawStability =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawStability = runOpenClawStability ? describe : describe.skip;
 const agentId = 'stability';
 const gatewayToken = 'openclaw-stability-gateway-token';
@@ -278,7 +278,7 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
 				gatewayVmIds.push(result.vm.id);
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{
 						port: result.processSpec.guestListenPort,
 						prefix: '/',

@@ -13,18 +13,18 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZone as startGatewayZone,
 	type E2eHarnessRuntime,
 	type OpenClawE2eProject,
 	useLocalOpenClawPluginGatewayImage,
@@ -33,7 +33,7 @@ import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawControlSession =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawControlSession = runOpenClawControlSession ? describe : describe.skip;
 const agentId = 'control-session';
 const gatewayToken = 'openclaw-control-session-gateway-token';

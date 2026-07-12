@@ -235,7 +235,7 @@ function createGatewayRuntimeHandle(): Extract<
 			exec: (): never => {
 				throw new Error('not used');
 			},
-			getHostPid: () => 42,
+			getHostProcessId: () => 42,
 			id: 'gateway-vm-1',
 		},
 		vmOwnership: createGatewayVmOwnershipStub('gateway-vm-1'),

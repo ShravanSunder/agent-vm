@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVmInstance } from '@agent-vm/gondolin-adapter';
+import type { ManagedVmEnableSshOptions, ManagedVmSshAccess } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,7 +11,6 @@ import type { GatewayZone, GatewayZoneStartResult } from '../../gateway/gateway-
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import { ActiveTaskRegistry, type ActiveWorkerTask } from '../active-task-registry.js';
 import { GatewayDestructionTimeoutError } from '../vm-ownership/gateway-destruction-budget.js';
@@ -30,27 +29,6 @@ const zoneRuntimeRegistryTestRoot = path.join(
 	os.tmpdir(),
 	`agent-vm-zone-runtime-registry-test-${process.pid}`,
 );
-
-function createManagedVmInstanceStub(vmId: string, hostPid: number | null): ManagedVmInstance {
-	return {
-		close: async () => {},
-		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
-		enableSsh: async () => ({
-			close: async () => {},
-			command: 'ssh root@127.0.0.1',
-			host: '127.0.0.1',
-			identityFile: '/tmp/test-key',
-			port: 22,
-			user: 'root',
-		}),
-		exec: () => createManagedExecProcessStub({ stdout: 'ok' }),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => hostPid,
-		id: vmId,
-		setIngressRoutes: () => {},
-		start: async () => {},
-	};
-}
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -162,8 +140,20 @@ afterEach(async () => {
 
 type OpenClawZoneRuntimeOptions = Parameters<typeof createOpenClawZoneRuntimeImpl>[0];
 type OpenClawRestartGatewayZone = NonNullable<OpenClawZoneRuntimeOptions['restartGatewayZone']>;
-type TestGatewayZoneStartResult = Omit<GatewayZoneStartResult, 'terminateVm' | 'vmOwnership'> & {
+type TestManagedVm = Omit<GatewayZoneStartResult['vm'], 'enableSsh'> & {
+	enableSsh(
+		options?: ManagedVmEnableSshOptions,
+	): Promise<
+		Partial<ManagedVmSshAccess> &
+			Pick<ManagedVmSshAccess, 'close' | 'host' | 'port' | 'serverHostKey'>
+	>;
+};
+type TestGatewayZoneStartResult = Omit<
+	GatewayZoneStartResult,
+	'terminateVm' | 'vm' | 'vmOwnership'
+> & {
 	readonly terminateVm?: () => Promise<void>;
+	readonly vm: TestManagedVm;
 	readonly vmOwnership?: GatewayVmLifecycleAuthority;
 };
 type TestOpenClawZoneRuntimeOptions = Omit<
@@ -216,6 +206,18 @@ function createOpenClawZoneRuntime(
 ): ReturnType<typeof createOpenClawZoneRuntimeImpl> {
 	const { createVmOwnership, restartGatewayZone, ...runtimeOptions } = options;
 	return createOpenClawZoneRuntimeImpl({
+		managedVmFactory: {
+			createManagedVm: async () => {
+				throw new Error('unit test must inject restartGatewayZone');
+			},
+		},
+		managedVmImages: {
+			prepareImage: async () => ({
+				built: false,
+				fingerprint: 'test-fingerprint',
+				imageReference: '/tmp/test-image',
+			}),
+		},
 		preflightGatewayZoneStart: async (startOptions) => {
 			const secretResolver = startOptions.secretResolver ?? options.secretResolver;
 			const gatewaySecretRefs = {
@@ -254,6 +256,18 @@ function createOpenClawZoneRuntime(
 						return {
 							...result,
 							terminateVm: result.terminateVm ?? (async () => await result.vm.close()),
+							vm: {
+								...result.vm,
+								enableSsh: async (enableSshOptions) => {
+									const sshAccess = await result.vm.enableSsh(enableSshOptions);
+									return {
+										command: sshAccess.command ?? 'ssh sandbox@127.0.0.1',
+										identityFile: sshAccess.identityFile ?? '/tmp/test-identity',
+										user: sshAccess.user ?? 'sandbox',
+										...sshAccess,
+									};
+								},
+							},
 							vmOwnership: result.vmOwnership ?? createTestVmOwnership({ vmId: result.vm.id }),
 						};
 					},
@@ -263,13 +277,28 @@ function createOpenClawZoneRuntime(
 }
 
 function createWorkerZoneRuntime(
-	options: Omit<Parameters<typeof createWorkerZoneRuntimeImpl>[0], 'controllerEpoch'> & {
+	options: Omit<
+		Parameters<typeof createWorkerZoneRuntimeImpl>[0],
+		'controllerEpoch' | 'managedVmFactory' | 'managedVmImages'
+	> & {
 		readonly controllerEpoch?: string;
 	},
 ): ReturnType<typeof createWorkerZoneRuntimeImpl> {
 	return createWorkerZoneRuntimeImpl({
 		...options,
 		controllerEpoch: options.controllerEpoch ?? 'controller-epoch-test',
+		managedVmFactory: {
+			createManagedVm: async () => {
+				throw new Error('worker unit test must inject executeWorkerTask');
+			},
+		},
+		managedVmImages: {
+			prepareImage: async () => ({
+				built: false,
+				fingerprint: 'test-fingerprint',
+				imageReference: '/tmp/test-image',
+			}),
+		},
 	});
 }
 
@@ -443,6 +472,8 @@ describe('zone runtime contracts', () => {
 				close: async () => {},
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				command: 'ssh root@127.0.0.1',
+				identityFile: '/tmp/test-identity',
+				user: 'root',
 				host: '127.0.0.1',
 				port: 22,
 			}),
@@ -531,7 +562,7 @@ describe('createOpenClawZoneRuntime', () => {
 			restartGatewayZone: async (zoneId) => {
 				expect(zoneId).toBe('shravan');
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -555,11 +586,9 @@ describe('createOpenClawZoneRuntime', () => {
 							port: 22,
 						})),
 						exec,
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 48_282,
-						getVmInstance: () => createManagedVmInstanceStub('vm-shravan', 48_282),
+						getHostProcessId: () => 48_282,
 						id: 'vm-shravan',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					zone: openClawZone,
@@ -663,7 +692,7 @@ describe('createOpenClawZoneRuntime', () => {
 				const gatewayVmId = `gateway-vm-${gatewayStartCount}`;
 				const gatewayHostPid = 48_282 + gatewayStartCount;
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -687,11 +716,9 @@ describe('createOpenClawZoneRuntime', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => gatewayHostPid,
-						getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, gatewayHostPid),
+						getHostProcessId: () => gatewayHostPid,
 						id: gatewayVmId,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					vmOwnership: createTestVmOwnership({
@@ -737,7 +764,7 @@ describe('createOpenClawZoneRuntime', () => {
 				const gatewayVmId = `gateway-vm-${gatewayStartCount}`;
 				const gatewayHostPid = 48_282 + gatewayStartCount;
 				return {
-					image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
@@ -766,11 +793,9 @@ describe('createOpenClawZoneRuntime', () => {
 							port: 22,
 						})),
 						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => gatewayHostPid,
-						getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, gatewayHostPid),
+						getHostProcessId: () => gatewayHostPid,
 						id: gatewayVmId,
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
 					vmOwnership: createTestVmOwnership({
@@ -826,7 +851,7 @@ describe('createOpenClawZoneRuntime', () => {
 		const createGatewayStartResult = (
 			gatewayVmId: string,
 		): Awaited<ReturnType<RestartGatewayZone>> => ({
-			image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+			image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 			ingress: { host: '127.0.0.1', port: 18791 },
 			processSpec: {
 				bootstrapCommand: 'bootstrap',
@@ -850,11 +875,9 @@ describe('createOpenClawZoneRuntime', () => {
 					port: 22,
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-				fs: createManagedVmFsStub(),
-				getHostPid: () => 48_282,
-				getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, 48_282),
+				getHostProcessId: () => 48_282,
 				id: gatewayVmId,
-				setIngressRoutes: vi.fn(),
+				configureIngressRoutes: vi.fn(),
 				start: async () => {},
 			},
 			zone: openClawZone,
@@ -934,7 +957,7 @@ describe('createOpenClawZoneRuntime', () => {
 			const gatewayHostPid = 48_282 + gatewayStartCount;
 			const close = vi.fn(async () => {});
 			const result = {
-				image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'bootstrap',
@@ -958,11 +981,9 @@ describe('createOpenClawZoneRuntime', () => {
 						port: 22,
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => gatewayHostPid,
-					getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, gatewayHostPid),
+					getHostProcessId: () => gatewayHostPid,
 					id: gatewayVmId,
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				zone: openClawZone,
@@ -998,7 +1019,7 @@ describe('createOpenClawZoneRuntime', () => {
 			throw new Error('Expected second gateway start to be pending.');
 		}
 		resolveSecondGatewayStart({
-			image: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/image' },
+			image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 			ingress: { host: '127.0.0.1', port: 18791 },
 			processSpec: {
 				bootstrapCommand: 'bootstrap',
@@ -1022,11 +1043,9 @@ describe('createOpenClawZoneRuntime', () => {
 					port: 22,
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
-				fs: createManagedVmFsStub(),
-				getHostPid: () => 48_284,
-				getVmInstance: () => createManagedVmInstanceStub('gateway-vm-2', 48_284),
+				getHostProcessId: () => 48_284,
 				id: 'gateway-vm-2',
-				setIngressRoutes: vi.fn(),
+				configureIngressRoutes: vi.fn(),
 				start: async () => {},
 			},
 			zone: openClawZone,
@@ -1597,6 +1616,8 @@ function createFakeOpenClawRuntime(
 			close: async () => {},
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh root@127.0.0.1',
+			identityFile: '/tmp/test-identity',
+			user: 'root',
 			host: '127.0.0.1',
 			port: 22,
 		}),
@@ -1640,11 +1661,13 @@ function createFakeOpenClawRuntime(
 									close: async () => {},
 									serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 									command: 'ssh root@127.0.0.1',
+									identityFile: '/tmp/test-identity',
+									user: 'root',
 									host: '127.0.0.1',
 									port: 22,
 								}),
 								exec: () => createManagedExecProcessStub({ stdout: 'ok' }),
-								getHostPid: () => 12345,
+								getHostProcessId: () => 12345,
 								id: 'fake-openclaw-runtime',
 							},
 							terminateVm: async () => {},

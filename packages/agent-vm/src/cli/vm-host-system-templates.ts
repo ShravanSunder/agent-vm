@@ -1,6 +1,6 @@
 export interface RenderVmHostSystemDockerfileOptions {
 	readonly imageArchitecture: 'aarch64' | 'x86_64';
-	readonly gondolinPackageSpec: string;
+	readonly managedVmBackendPackageSpec: string;
 	readonly zigVersion: string;
 }
 
@@ -69,7 +69,7 @@ COPY --from=builder /deploy-agent-vm-worker /etc/agent-vm/vm-images/gateways/wor
 
 RUN npm install -g pnpm@10
 
-RUN pnpm dlx ${options.gondolinPackageSpec} image pull alpine-base:latest --arch ${options.imageArchitecture} \\
+RUN pnpm dlx ${options.managedVmBackendPackageSpec} image pull alpine-base:latest --arch ${options.imageArchitecture} \\
     || echo "[WARN] Gondolin guest asset warmup failed; cold starts will be slow"
 
 COPY config/ /etc/agent-vm/

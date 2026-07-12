@@ -2,10 +2,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { buildImageAssetFileNames } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { writePreparedGondolinImage } from '../../build/prepared-gondolin-image-cache.js';
+import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
+import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig } from '../../config/system-config.js';
 import { isGatewayImageCached } from './controller-definition.js';
 
@@ -20,7 +20,7 @@ async function createTemporaryDirectory(): Promise<string> {
 async function writeFakeImageAssets(imagePath: string): Promise<void> {
 	await fs.mkdir(imagePath, { recursive: true });
 	await Promise.all(
-		buildImageAssetFileNames.map(
+		managedVmImageAssetFileNames.map(
 			async (fileName) => await fs.writeFile(path.join(imagePath, fileName), '', 'utf8'),
 		),
 	);
@@ -49,7 +49,7 @@ describe('isGatewayImageCached', () => {
 			'utf8',
 		);
 		await writeFakeImageAssets(imagePath);
-		await writePreparedGondolinImage({
+		await writePreparedManagedVmImage({
 			buildConfigPath,
 			cacheDir: gatewayProfileCacheDirectory,
 			fingerprint: 'docker-backed-fingerprint',
