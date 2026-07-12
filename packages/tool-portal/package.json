@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/tool-portal",
-	"version": "0.0.113",
+	"version": "0.0.114",
 	"description": "Cross-backend capability portal contracts and MCP-backed in-process runtime.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
