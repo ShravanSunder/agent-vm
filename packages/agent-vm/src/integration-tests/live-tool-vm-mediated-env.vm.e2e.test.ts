@@ -78,13 +78,13 @@ async function createMediatedEnvSystemConfig(
 				gateways: {
 					openclaw: {
 						type: 'openclaw',
-						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+						buildConfig: '/test-fixtures/gateway-build-config.jsonc',
 					},
 				},
 				toolVms: {
 					default: {
 						type: 'toolVm',
-						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+						buildConfig: '/test-fixtures/tool-vm-build-config.jsonc',
 					},
 				},
 			},
@@ -192,6 +192,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 
 		const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
 		await mkdir(hostWorkMountDir, { recursive: true });
+		const runtimeComposition = createManagedVmRuntimeComposition();
 		const toolVm = await createToolVm(
 			{
 				agentId: 'shravan',
@@ -203,7 +204,16 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 				tcpSlot: 0,
 				zoneId: 'shravan',
 			},
-			createManagedVmRuntimeComposition(),
+			{
+				...runtimeComposition,
+				managedVmImages: {
+					prepareImage: async () => ({
+						built: false,
+						fingerprint: 'live-mediated-env-fixture',
+						imageReference: 'alpine-base:latest',
+					}),
+				},
+			},
 		);
 		const terminationTarget = await captureStartedVmProcess(toolVm);
 		let sshAccess: Awaited<ReturnType<ManagedVm['enableSsh']>> | undefined;

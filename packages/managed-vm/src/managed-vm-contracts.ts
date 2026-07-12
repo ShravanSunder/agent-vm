@@ -192,7 +192,7 @@ export interface ManagedVm {
 	enableIngress(options?: ManagedVmIngressOptions): Promise<ManagedVmAccessHandle>;
 	enableSsh(options?: ManagedVmEnableSshOptions): Promise<ManagedVmSshAccess>;
 	exec(command: ManagedVmExecCommand, options?: ManagedVmExecOptions): ManagedVmExecProcess;
-	/** Null is permitted only before start resolves successfully. */
+	/** Null before start succeeds or after the owned host process exits. */
 	getHostProcessId(): number | null;
 	readonly id: string;
 	start(): Promise<void>;

@@ -36,7 +36,7 @@ function createLiveVmRequest(
 	return {
 		allowedHosts: [],
 		environment: {},
-		imageReference: '',
+		imageReference: 'alpine-base:latest',
 		mediatedSecrets: [],
 		mounts: {},
 		resources: { cpuCount: 1, memory: '512M' },
@@ -181,6 +181,8 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 
 		const installGitUploadPack = await upstreamVm.exec(
 			[
+				'adduser -D git',
+				'passwd -d git',
 				"cat > /usr/local/bin/git-upload-pack <<'EOF'",
 				'#!/bin/sh',
 				'printf "upload-pack-allowed:%s\\n" "$1"',
@@ -192,7 +194,7 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 
 		const upstreamSshPort = await allocateLocalTcpPortExcluding([crossVmSshFixturePort]);
 		upstreamSsh = await upstreamVm.enableSsh({
-			user: 'root',
+			user: 'git',
 			listenHost: '127.0.0.1',
 			listenPort: upstreamSshPort,
 		});
@@ -212,6 +214,29 @@ describeLiveVmIntegration('live e2e: SSH Git egress policy', () => {
 		await execFileAsync('ssh-add', [upstreamSsh.identityFile], {
 			env: { ...process.env, ...sshAgentEnvironment },
 		});
+		await execFileAsync('ssh-add', ['-l'], {
+			env: { ...process.env, ...sshAgentEnvironment },
+		});
+		await execFileAsync(
+			'ssh',
+			[
+				'-p',
+				String(upstreamSsh.port),
+				'-i',
+				upstreamSsh.identityFile,
+				'-o',
+				'BatchMode=yes',
+				'-o',
+				'IdentitiesOnly=yes',
+				'-o',
+				'StrictHostKeyChecking=no',
+				'-o',
+				'UserKnownHostsFile=/dev/null',
+				`git@${upstreamSsh.host}`,
+				'true',
+			],
+			{ env: { ...process.env, ...sshAgentEnvironment } },
+		);
 		const knownHostKey = `${upstreamSsh.serverHostKey.algorithm} ${upstreamSsh.serverHostKey.publicKeyBase64}`;
 		await writeFile(
 			knownHostsFile,

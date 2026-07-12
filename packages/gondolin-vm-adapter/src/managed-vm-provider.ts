@@ -323,7 +323,7 @@ function wrapManagedVm(
 			return wrapExecProcess(nativeProcess);
 		},
 		getHostProcessId(): number | null {
-			return hostProcessId;
+			return hostProcessId === null ? null : nativeVm.getHostPid();
 		},
 		id: nativeVm.id,
 		async start(): Promise<void> {

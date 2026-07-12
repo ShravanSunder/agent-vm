@@ -214,6 +214,7 @@ describe('createGondolinManagedVmProvider', () => {
 
 	it('translates neutral request fields without putting raw mediated values in guest env', async () => {
 		const nativeExecProcess = createFakeNativeExecProcess();
+		let nativeHostProcessId: number | null = 4321;
 		const closeSshAccess = vi.fn(async () => {});
 		const serverHostKey = {
 			algorithm: 'ssh-ed25519' as const,
@@ -232,7 +233,7 @@ describe('createGondolinManagedVmProvider', () => {
 				user: 'root',
 			})),
 			exec: vi.fn(() => nativeExecProcess),
-			getHostPid: vi.fn(() => 4321),
+			getHostPid: vi.fn((): number | null => nativeHostProcessId),
 			id: 'gondolin-1',
 			setIngressRoutes: vi.fn(),
 			start: vi.fn(async () => {}),
@@ -283,9 +284,10 @@ describe('createGondolinManagedVmProvider', () => {
 		);
 		expect(vm.getHostProcessId()).toBeNull();
 		await vm.start();
-		nativeVm.getHostPid.mockReturnValue(9876);
-		expect(vm.getHostProcessId()).toBe(4321);
-		expect(vm.getHostProcessId()).toBe(4321);
+		nativeHostProcessId = 9876;
+		expect(vm.getHostProcessId()).toBe(9876);
+		nativeHostProcessId = null;
+		expect(vm.getHostProcessId()).toBeNull();
 
 		const abortController = new AbortController();
 		const manualStdin = Uint8Array.from([1, 2, 3]);
