@@ -1030,6 +1030,8 @@ describe('openclawLifecycle', () => {
 			expect(helperSource).toContain("refuse('process-overlap')");
 			expect(helperSource).toContain("path.join(groupPath, 'cgroup.kill')");
 			expect(helperSource).toContain("path.join(groupPath, 'cgroup.events')");
+			expect(helperSource).toContain('const maximumAttempts = 500;');
+			expect(helperSource).toContain('Atomics.wait(sleeper, 0, 0, 10);');
 			expect(helperSource).toContain('rmdirSync(groupPath)');
 			expect(helperSource).not.toContain('rmSync(groupPath, { recursive: false })');
 			expect(helperSource).toContain('emptyObserved: true');

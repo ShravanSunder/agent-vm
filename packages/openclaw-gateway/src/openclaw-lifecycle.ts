@@ -430,7 +430,8 @@ const populated = (groupPath) => {
 };
 const waitForPopulation = (groupPath, expected) => {
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const maximumAttempts = 500;
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     if (populated(groupPath) === expected) return true;
     Atomics.wait(sleeper, 0, 0, 10);
   }
