@@ -18,11 +18,11 @@ import {
 } from '@agent-vm/gateway-control-contracts';
 import type { GatewayZoneConfig } from '@agent-vm/gateway-lifecycle';
 import type {
-	BuildConfig,
-	BuildImageResult,
 	ManagedVm,
-	ManagedVmInstance,
-} from '@agent-vm/gondolin-adapter';
+	ManagedVmCreateRequest,
+	ManagedVmFactory,
+	ManagedVmImageCapability,
+} from '@agent-vm/managed-vm';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
@@ -48,7 +48,6 @@ import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownersh
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';
 import { loadGatewayRuntimeRecord } from './gateway-runtime-record.js';
@@ -63,11 +62,12 @@ import {
 } from './gateway-zone-orchestrator.js';
 import type {
 	GatewayControlSessionConnector,
-	GatewayManagedVmFactoryOptions,
 	GatewayZoneStartResult,
 	PendingGatewayVmCreationContainment,
 	StartGatewayZoneOptions,
 } from './gateway-zone-support.js';
+
+type GatewayManagedVmFactoryOptions = ManagedVmCreateRequest;
 
 interface DeferredPromise<TResult> {
 	readonly promise: Promise<TResult>;
@@ -88,6 +88,18 @@ interface TestVmOwnershipHarness {
 
 const testGatewayBootId = 'gateway-boot-exact';
 const testGatewayGenerationId = 'gateway-generation-exact';
+const testManagedVmImages = {
+	prepareImage: vi.fn(async () => ({
+		built: false,
+		fingerprint: 'test-gateway-image',
+		imageReference: '/tmp/gateway-image',
+	})),
+} satisfies ManagedVmImageCapability;
+const unexpectedManagedVmFactory = {
+	createManagedVm: vi.fn(async (): Promise<ManagedVm> => {
+		throw new Error('Managed VM creation was not expected in this test.');
+	}),
+} satisfies ManagedVmFactory;
 
 function createTestGatewayEpochIdentity(
 	vmId: string,
@@ -274,12 +286,12 @@ function createTestOpenClawProcessSupervisor(
 
 function startGatewayZone(
 	options: TestStartGatewayZoneOptions,
-	dependencies: GatewayManagerDependencies = {},
+	dependencies: GatewayManagerDependencies,
 	entrypoint: 'controller-internal' | 'public' = 'controller-internal',
 ): Promise<GatewayZoneStartResult> {
 	let createdVmId: string | undefined;
 	let runnerDetached = false;
-	const createManagedVm = dependencies.createManagedVm;
+	const suppliedManagedVmFactory = dependencies.managedVmFactory;
 	const startOptions = withTestVmOwnership(
 		{
 			controlSession: { controllerEpoch: 'controller-epoch-test' },
@@ -310,20 +322,18 @@ function startGatewayZone(
 			sleep: async () => {},
 		},
 		...dependencies,
-		...(createManagedVm === undefined
-			? {}
-			: {
-					createManagedVm: async (createOptions: GatewayManagedVmFactoryOptions) => {
-						const managedVm = await createManagedVm(createOptions);
-						const getHostPid = managedVm.getHostPid.bind(managedVm);
-						Object.defineProperty(managedVm, 'getHostPid', {
-							configurable: true,
-							value: (): number | null => (runnerDetached ? null : getHostPid()),
-						});
-						createdVmId = managedVm.id;
-						return managedVm;
-					},
-				}),
+		managedVmFactory: {
+			createManagedVm: async (createOptions: GatewayManagedVmFactoryOptions) => {
+				const managedVm = await suppliedManagedVmFactory.createManagedVm(createOptions);
+				const getHostProcessId = managedVm.getHostProcessId.bind(managedVm);
+				Object.defineProperty(managedVm, 'getHostProcessId', {
+					configurable: true,
+					value: (): number | null => (runnerDetached ? null : getHostProcessId()),
+				});
+				createdVmId = managedVm.id;
+				return managedVm;
+			},
+		},
 	};
 	return entrypoint === 'public'
 		? startGatewayZonePublicProduction(startOptions, effectiveDependencies)
@@ -743,11 +753,6 @@ function createObservabilitySystemConfig(
 	);
 }
 
-const minimalBuildConfig: BuildConfig = {
-	arch: 'aarch64',
-	distro: 'alpine',
-};
-
 function completeGatewayVmClose(_vmId: string): void {}
 
 function createTestSshAccess(port = 2222): Awaited<ReturnType<ManagedVm['enableSsh']>> {
@@ -770,34 +775,6 @@ function createTestIngressAccess(port = 18791): Awaited<ReturnType<ManagedVm['en
 	};
 }
 
-function createTestManagedVmSshAccess(
-	port = 2222,
-): Awaited<ReturnType<ManagedVmInstance['enableSsh']>> {
-	return {
-		close: vi.fn(async () => {}),
-		command: `ssh -i /tmp/key sandbox@127.0.0.1 -p ${String(port)}`,
-		host: '127.0.0.1',
-		identityFile: '/tmp/key',
-		port,
-		user: 'sandbox',
-	};
-}
-
-function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
-	const vmId = `vm-instance-${pid}`;
-	return {
-		close: async () => {},
-		enableIngress: async () => createTestIngressAccess(),
-		enableSsh: async () => createTestManagedVmSshAccess(19000),
-		exec: () => createManagedExecProcessStub(),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => pid,
-		id: vmId,
-		setIngressRoutes: () => {},
-		start: async () => {},
-	};
-}
-
 function createHealthyGatewayVmStub(
 	vmId: string,
 	pid: number,
@@ -810,7 +787,6 @@ function createHealthyGatewayVmStub(
 	const close = vi.fn(async () => {});
 	const enableIngress = vi.fn(async () => createTestIngressAccess());
 	const exec = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
-	const vmInstance = createVmInstanceStub(pid);
 	return {
 		close,
 		enableIngress,
@@ -822,10 +798,8 @@ function createHealthyGatewayVmStub(
 			enableIngress,
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec,
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => pid),
-			getVmInstance: vi.fn(() => vmInstance),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => pid),
+			configureIngressRoutes: vi.fn(),
 		},
 	};
 }
@@ -907,7 +881,7 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		const startMock = vi.fn(async () => {});
-		const setIngressRoutesMock = vi.fn();
+		const configureIngressRoutesMock = vi.fn();
 		const writeGatewayRuntimeRecord = vi.fn<
 			NonNullable<GatewayManagerDependencies['writeGatewayRuntimeRecord']>
 		>(async () => {});
@@ -918,24 +892,22 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: enableSshMock,
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28282),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
-			setIngressRoutes: setIngressRoutesMock,
+			getHostProcessId: vi.fn(() => 28282),
+			configureIngressRoutes: configureIngressRoutesMock,
 		};
 		const secretResolver = createOpenClawSecretResolver({
 			PERPLEXITY_API_KEY: 'resolved-key',
 			DISCORD_BOT_TOKEN: 'resolved-key',
 			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 		});
-		const buildImage = vi.fn(
-			async (_options: unknown): Promise<BuildImageResult> => ({
-				built: true,
-				fingerprint: 'fingerprint-123',
-				imagePath: '/tmp/gateway-image',
-			}),
+		const buildImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fingerprint-123',
+			imageReference: '/tmp/gateway-image',
+		}));
+		const createManagedVm = vi.fn(
+			async (_options: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
 		);
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 		const processStart = vi.fn<OpenClawProcessSupervisor['start']>();
 		const createOpenClawProcessSupervisorPorts = vi.fn(
 			({ gateway }: { readonly gateway: OpenClawProcessSupervisorGateway }) => {
@@ -951,14 +923,6 @@ describe('startGatewayZone', () => {
 				};
 			},
 		);
-		const buildConfig: BuildConfig = {
-			arch: 'aarch64',
-			distro: 'alpine',
-			rootfs: {
-				label: 'gateway-root',
-			},
-		};
-		const loadBuildConfig = vi.fn(async (): Promise<BuildConfig> => buildConfig);
 		vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
 
 		const systemConfig = await createSystemConfig();
@@ -978,16 +942,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage,
+				managedVmImages: { prepareImage: buildImage },
 				createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
-				createManagedVm,
+				managedVmFactory: { createManagedVm },
 				createOpenClawProcessSupervisorPorts,
-				loadBuildConfig,
 				writeGatewayRuntimeRecord,
 			},
 		);
 
-		expect(loadBuildConfig).toHaveBeenCalledWith('./vm-images/gateways/openclaw/build-config.json');
 		const logDirectoryPath = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs');
 		expect((await stat(logDirectoryPath)).mode & 0o777).toBe(0o700);
 		expect(buildImage).toHaveBeenCalled();
@@ -1024,8 +986,7 @@ describe('startGatewayZone', () => {
 					'api.openai.com',
 					'api.perplexity.ai',
 				]),
-				cpus: 2,
-				env: expect.objectContaining({
+				environment: expect.objectContaining({
 					HOME: '/home/openclaw',
 					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 					OPENCLAW_HOME: '/home/openclaw',
@@ -1033,80 +994,60 @@ describe('startGatewayZone', () => {
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 				}),
-				imagePath: '/tmp/gateway-image',
-				memory: '2G',
+				imageReference: '/tmp/gateway-image',
+				mediatedSecrets: [
+					{
+						allowedHosts: ['api.perplexity.ai'],
+						environmentVariable: 'PERPLEXITY_API_KEY',
+						value: 'resolved-key',
+					},
+				],
+				mounts: expect.objectContaining({
+					'/agent-vm/logs': {
+						access: 'read-write',
+						hostPath: path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs'),
+						kind: 'host-directory',
+					},
+					'/home/openclaw/.openclaw/cache': {
+						access: 'read-write',
+						hostPath: path.join(systemConfig.cacheDir, 'gateways', 'shravan'),
+						kind: 'host-directory',
+					},
+				}),
+				resources: { cpuCount: 2, memory: '2G' },
 				rootfsMode: 'cow',
 				runtimeRootfsSize: '12G',
 				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-				secrets: {
-					PERPLEXITY_API_KEY: {
-						hosts: ['api.perplexity.ai'],
-						value: 'resolved-key',
-					},
-				},
 				sshEgress: expect.objectContaining({
-					agent: '/tmp/agent-vm-test-agent.sock',
+					agentSocket: '/tmp/agent-vm-test-agent.sock',
 					allowedHosts: ['github.com'],
-					execPolicy: expect.any(Function),
+					kind: 'git-read-only',
 				}),
-				tcpHosts: expect.not.objectContaining({
-					'controller.vm.host:18800': expect.any(String),
-				}),
-				vfsMounts: expect.objectContaining({
-					'/agent-vm/logs': {
-						hostPath: path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs'),
-						kind: 'realfs',
-					},
-					'/home/openclaw/.openclaw/cache': {
-						hostPath: path.join(systemConfig.cacheDir, 'gateways', 'shravan'),
-						kind: 'realfs',
-					},
-				}),
+				tcpHosts: expect.not.arrayContaining([
+					expect.objectContaining({ guestHost: 'controller.vm.host:18800' }),
+				]),
 			}),
 		);
-		const createdVmOptions = createManagedVm.mock.calls[0]?.[0] as
-			| {
-					readonly allowedHosts: readonly string[];
-					readonly sshEgress?: {
-						readonly agent?: string;
-						readonly execPolicy?: (request: {
-							readonly command: string;
-							readonly guestUsername: string;
-							readonly hostname: string;
-							readonly port: number;
-							readonly src: { readonly ip: string; readonly port: number };
-						}) => unknown;
-					};
-					readonly tcpHosts: Record<string, string>;
-					readonly vfsMounts: Record<string, { readonly hostPath: string; readonly kind: string }>;
-			  }
-			| undefined;
+		const createdVmOptions = createManagedVm.mock.calls[0]?.[0];
 		if (createdVmOptions === undefined) {
 			throw new Error('Expected gateway VM creation call');
 		}
 		expect(createdVmOptions.allowedHosts).not.toContain('controller.vm.host');
-		expect(createdVmOptions.sshEgress?.agent).toBe('/tmp/agent-vm-test-agent.sock');
+		expect(createdVmOptions.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
+		expect(createdVmOptions.sshEgress?.agentSocket).toBe('/tmp/agent-vm-test-agent.sock');
 		const expectedSupervisorMount = resolveOpenClawProcessSupervisorStateMount({
 			gatewaySeed: ownership.vmOwnership.gatewaySeed,
 			runtimeDirectory: systemConfig.runtimeDir,
 		});
-		expect(createdVmOptions.vfsMounts[expectedSupervisorMount.guestPath]).toEqual({
+		expect(createdVmOptions.mounts[expectedSupervisorMount.guestPath]).toEqual({
+			access: 'read-write',
 			hostPath: expectedSupervisorMount.hostPath,
-			kind: 'realfs',
+			kind: 'host-directory',
 		});
 		expect((await stat(expectedSupervisorMount.hostPath)).mode & 0o777).toBe(0o700);
-		await expect(
-			Promise.resolve(
-				createdVmOptions.sshEgress?.execPolicy?.({
-					command: "git-receive-pack 'shravan/zone-files.git'",
-					guestUsername: 'git',
-					hostname: 'github.com',
-					port: 22,
-					src: { ip: '198.18.0.2', port: 48_001 },
-				}),
-			),
-		).resolves.toMatchObject({ allow: false });
-		expect(createdVmOptions.tcpHosts).not.toHaveProperty('controller.vm.host:18800');
+		expect(createdVmOptions.tcpHosts).not.toContainEqual(
+			expect.objectContaining({ guestHost: 'controller.vm.host:18800' }),
+		);
 		expect(execMock).toHaveBeenCalledWith(buildExpectedOpenClawGatewayStartCommandForTest());
 		expect(createOpenClawProcessSupervisorPorts).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1123,7 +1064,7 @@ describe('startGatewayZone', () => {
 			expectedProcessEpoch: null,
 			selectedProcessEpoch: result.processEpoch,
 		});
-		expect(setIngressRoutesMock).toHaveBeenCalledWith([
+		expect(configureIngressRoutesMock).toHaveBeenCalledWith([
 			{
 				port: 18789,
 				prefix: '/',
@@ -1158,7 +1099,7 @@ describe('startGatewayZone', () => {
 		expect(result).toMatchObject({
 			image: {
 				fingerprint: 'fingerprint-123',
-				imagePath: '/tmp/gateway-image',
+				imageReference: '/tmp/gateway-image',
 			},
 			ingress: {
 				host: '127.0.0.1',
@@ -1193,7 +1134,7 @@ describe('startGatewayZone', () => {
 			host: '127.0.0.1',
 			port: 18791,
 		}));
-		managedVm.getHostPid = vi.fn(() => (runnerAlive ? 28_294 : null));
+		managedVm.getHostProcessId = vi.fn(() => (runnerAlive ? 28_294 : null));
 		const connectGatewayControlSession = vi.fn<GatewayControlSessionConnector>(
 			async (connectOptions) => ({
 				...(await connectTestGatewayControlSession(connectOptions)),
@@ -1212,14 +1153,15 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
 				connectGatewayControlSession,
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				managedVmKillDependencies: {
 					isProcessAlive: () => runnerAlive,
 					killProcess: () => {
@@ -1269,10 +1211,8 @@ describe('startGatewayZone', () => {
 					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
 				}),
 			),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28282),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28282),
+			configureIngressRoutes: vi.fn(),
 		};
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
@@ -1309,13 +1249,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fingerprint-123',
-					imagePath: '/tmp/gateway-image',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fingerprint-123',
+						imageReference: '/tmp/gateway-image',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -1340,10 +1281,8 @@ describe('startGatewayZone', () => {
 					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
 				}),
 			),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28282),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28282),
+			configureIngressRoutes: vi.fn(),
 		};
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
@@ -1379,13 +1318,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fingerprint-123',
-					imagePath: '/tmp/gateway-image',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fingerprint-123',
+						imageReference: '/tmp/gateway-image',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -1409,10 +1349,8 @@ describe('startGatewayZone', () => {
 					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
 				}),
 			),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28282),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28282),
+			configureIngressRoutes: vi.fn(),
 		};
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
@@ -1448,13 +1386,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fingerprint-123',
-					imagePath: '/tmp/gateway-image',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fingerprint-123',
+						imageReference: '/tmp/gateway-image',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -1492,7 +1431,7 @@ describe('startGatewayZone', () => {
 		const buildImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'fp',
-			imagePath: '/tmp/img',
+			imageReference: '/tmp/img',
 		}));
 
 		await expect(
@@ -1503,8 +1442,8 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmFactory: unexpectedManagedVmFactory,
+					managedVmImages: { prepareImage: buildImage },
 				},
 			),
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
@@ -1518,7 +1457,7 @@ describe('startGatewayZone', () => {
 		const buildImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'fp',
-			imagePath: '/tmp/img',
+			imageReference: '/tmp/img',
 		}));
 		const secretResolver: SecretResolver = {
 			resolve: async () => {
@@ -1537,8 +1476,8 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmFactory: unexpectedManagedVmFactory,
+					managedVmImages: { prepareImage: buildImage },
 				},
 			),
 		).rejects.toThrow('Failed to resolve zone secrets: op failed');
@@ -1573,15 +1512,18 @@ describe('startGatewayZone', () => {
 		);
 
 		await expect(
-			preflightGatewayZoneStart({
-				secretResolver: createOpenClawSecretResolver({
-					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-				}),
-				systemConfig,
-				zoneId: 'shravan',
-			}),
+			preflightGatewayZoneStart(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'resolved-discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+					}),
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{ managedVmImages: testManagedVmImages },
+			),
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 	});
 
@@ -1591,7 +1533,7 @@ describe('startGatewayZone', () => {
 		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
 			throw new Error('createManagedVm should not run after image build fails');
 		});
-		const buildImage = vi.fn(async (): Promise<BuildImageResult> => {
+		const buildImage = vi.fn(async () => {
 			throw buildError;
 		});
 
@@ -1607,9 +1549,8 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage,
-					createManagedVm,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmImages: { prepareImage: buildImage },
+					managedVmFactory: { createManagedVm },
 				},
 			),
 		).rejects.toBe(buildError);
@@ -1632,7 +1573,7 @@ describe('startGatewayZone', () => {
 		const buildImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'fp',
-			imagePath: '/tmp/img',
+			imageReference: '/tmp/img',
 		}));
 
 		await expect(
@@ -1643,8 +1584,8 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmFactory: unexpectedManagedVmFactory,
+					managedVmImages: { prepareImage: buildImage },
 				},
 			),
 		).rejects.toThrow(
@@ -1668,7 +1609,7 @@ describe('startGatewayZone', () => {
 		const buildImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'fp',
-			imagePath: '/tmp/img',
+			imageReference: '/tmp/img',
 		}));
 		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
 			throw new Error('createManagedVm should not be called');
@@ -1690,10 +1631,9 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage,
+					managedVmImages: { prepareImage: buildImage },
 					checkObservabilityStackReadiness,
-					createManagedVm,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmFactory: { createManagedVm },
 				},
 			),
 		).rejects.toThrow('createManagedVm should not be called');
@@ -1729,13 +1669,14 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm },
 				},
 			),
 		).rejects.toThrow('stop after vm options');
@@ -1745,15 +1686,15 @@ describe('startGatewayZone', () => {
 			throw new Error('Expected gateway VM creation call.');
 		}
 		expect(vmOptions.allowedHosts).toContain('otel-collector.observability.vm.host');
-		expect(vmOptions.tcpHosts).toEqual({
-			'tool-0.vm.host:22': '127.0.0.1:19000',
-			'tool-1.vm.host:22': '127.0.0.1:19001',
-			'tool-2.vm.host:22': '127.0.0.1:19002',
-			'tool-3.vm.host:22': '127.0.0.1:19003',
-			'tool-4.vm.host:22': '127.0.0.1:19004',
-		});
-		expect(vmOptions.onRequest).toEqual(expect.any(Function));
-		const rewrittenRequest = await vmOptions.onRequest?.(
+		expect(vmOptions.tcpHosts).toEqual([
+			{ guestHost: 'tool-0.vm.host:22', target: '127.0.0.1:19000' },
+			{ guestHost: 'tool-1.vm.host:22', target: '127.0.0.1:19001' },
+			{ guestHost: 'tool-2.vm.host:22', target: '127.0.0.1:19002' },
+			{ guestHost: 'tool-3.vm.host:22', target: '127.0.0.1:19003' },
+			{ guestHost: 'tool-4.vm.host:22', target: '127.0.0.1:19004' },
+		]);
+		expect(vmOptions.mediation?.onRequest).toEqual(expect.any(Function));
+		const rewrittenRequest = await vmOptions.mediation?.onRequest?.(
 			new Request('http://otel-collector.observability.vm.host:4318/v1/traces', {
 				body: 'trace-payload',
 				headers: { 'content-type': 'application/x-protobuf' },
@@ -1789,13 +1730,14 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm },
 				},
 			),
 		).rejects.toThrow(
@@ -1812,7 +1754,7 @@ describe('startGatewayZone', () => {
 		const buildImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'fp',
-			imagePath: '/tmp/img',
+			imageReference: '/tmp/img',
 		}));
 
 		await preflightGatewayZoneStart(
@@ -1826,12 +1768,16 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage,
 				checkObservabilityStackReadiness: vi.fn(async () => ({
 					ok: true as const,
 					status: 'ready' as const,
 				})),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: async () => {
+						const result = await buildImage();
+						return result;
+					},
+				},
 				loadGatewayLifecycle: () => ({
 					...createHttpHealthGatewayLifecycle(),
 					preflightHostState,
@@ -1854,10 +1800,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28301),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28301)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28301),
+			configureIngressRoutes: vi.fn(),
 		};
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
@@ -1875,13 +1819,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -1896,10 +1841,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28303),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28303)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28303),
+			configureIngressRoutes: vi.fn(),
 		};
 		await startGatewayZone(
 			{
@@ -1912,13 +1855,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -1957,12 +1901,10 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 12346),
-			getVmInstance: vi.fn(() => createVmInstanceStub(12346)),
+			getHostProcessId: vi.fn(() => 12346),
 			id: 'worker-vm-no-legacy-cleanup',
 			start: vi.fn(async () => {}),
-			setIngressRoutes: vi.fn(),
+			configureIngressRoutes: vi.fn(),
 		};
 		const createManagedVm = vi.fn(async () => managedVm);
 
@@ -1977,13 +1919,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp-worker',
-					imagePath: '/tmp/worker-image',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp-worker',
+						imageReference: '/tmp/worker-image',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 				writeGatewayRuntimeRecord: vi.fn(async () => {}),
 			},
 		);
@@ -2006,10 +1949,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28286),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28286),
+			configureIngressRoutes: vi.fn(),
 		};
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
@@ -2025,7 +1966,9 @@ describe('startGatewayZone', () => {
 			agentAccess: 'all',
 		};
 		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
-		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -2038,25 +1981,26 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
 				allowedHosts: expect.not.arrayContaining(['api.linear.app']),
-				env: expect.not.objectContaining({
+				environment: expect.not.objectContaining({
 					LINEAR_API_KEY: expect.any(String),
 				}),
-				secrets: expect.not.objectContaining({
-					LINEAR_API_KEY: expect.anything(),
-				}),
+				mediatedSecrets: expect.not.arrayContaining([
+					expect.objectContaining({ environmentVariable: 'LINEAR_API_KEY' }),
+				]),
 			}),
 		);
 	});
@@ -2077,10 +2021,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28290),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28290),
+			configureIngressRoutes: vi.fn(),
 		};
 
 		await startGatewayZone(
@@ -2097,13 +2039,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				loadGatewayLifecycle: () => ({
 					buildProcessSpec: () => ({
 						bootstrapCommand: 'bootstrap',
@@ -2155,21 +2098,28 @@ describe('startGatewayZone', () => {
 			'tool-portal-effective',
 		);
 
-		await preflightGatewayZoneStart({
-			prebuiltImage: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/gateway-image' },
-			secretResolver: createOpenClawSecretResolver({
-				DISCORD_BOT_TOKEN: 'resolved-discord-token',
-				OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-				PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-			}),
-			systemConfig,
-			zoneId: 'shravan',
-			zoneOverride: {
-				...baseZone,
-				agents: [{ id: 'shravan' }],
-				toolPortal: { configDir },
+		await preflightGatewayZoneStart(
+			{
+				prebuiltImage: {
+					built: false,
+					fingerprint: 'fingerprint',
+					imageReference: '/tmp/gateway-image',
+				},
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'resolved-discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					agents: [{ id: 'shravan' }],
+					toolPortal: { configDir },
+				},
 			},
-		});
+			{ managedVmImages: testManagedVmImages },
+		);
 
 		await expect(readdir(effectiveConfigDir)).resolves.toEqual([]);
 	});
@@ -2248,17 +2198,24 @@ describe('startGatewayZone', () => {
 			resolveAll: resolveAllMock,
 		};
 
-		const preflightPromise = preflightGatewayZoneStart({
-			prebuiltImage: { built: false, fingerprint: 'fingerprint', imagePath: '/tmp/gateway-image' },
-			secretResolver,
-			systemConfig,
-			zoneId: 'shravan',
-			zoneOverride: {
-				...baseZone,
-				agents: [{ id: 'shravan' }],
-				toolPortal: { configDir },
+		const preflightPromise = preflightGatewayZoneStart(
+			{
+				prebuiltImage: {
+					built: false,
+					fingerprint: 'fingerprint',
+					imageReference: '/tmp/gateway-image',
+				},
+				secretResolver,
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					agents: [{ id: 'shravan' }],
+					toolPortal: { configDir },
+				},
 			},
-		});
+			{ managedVmImages: testManagedVmImages },
+		);
 		await firstResolveAllStarted.promise;
 		await flushPendingEventLoopWork();
 		releaseFirstResolveAll.resolve(undefined);
@@ -2288,10 +2245,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28290),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28290),
+			configureIngressRoutes: vi.fn(),
 		};
 
 		await startGatewayZone(
@@ -2308,13 +2263,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				loadGatewayLifecycle: () => ({
 					buildProcessSpec: () => ({
 						bootstrapCommand: 'bootstrap',
@@ -2366,12 +2322,12 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28291),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28291),
+			configureIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -2386,13 +2342,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -2427,12 +2384,12 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28291),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28291),
+			configureIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -2448,13 +2405,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -2467,7 +2425,7 @@ describe('startGatewayZone', () => {
 		if (!createManagedVmCall) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		const [vmOptions] = createManagedVmCall as [{ readonly allowedHosts: readonly string[] }];
+		const [vmOptions] = createManagedVmCall;
 		expect(vmOptions.allowedHosts.filter((host) => host === 'mcp.deepwiki.com')).toHaveLength(1);
 	});
 
@@ -2484,12 +2442,12 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28291),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28291),
+			configureIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -2524,13 +2482,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -2538,19 +2497,15 @@ describe('startGatewayZone', () => {
 		if (!createManagedVmCall) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		const [vmOptions] = createManagedVmCall as [
-			{
-				readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
-			},
-		];
-		expect(vmOptions.onRequest).toEqual(expect.any(Function));
-		const allowedResult = await vmOptions.onRequest?.(
+		const [vmOptions] = createManagedVmCall;
+		expect(vmOptions.mediation?.onRequest).toEqual(expect.any(Function));
+		const allowedResult = await vmOptions.mediation?.onRequest?.(
 			new Request('https://gateway-us-east1-c.discord.gg/?v=10&encoding=json', {
 				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
 			}),
 		);
 		expect(allowedResult).toBeUndefined();
-		const blockedResult = await vmOptions.onRequest?.(
+		const blockedResult = await vmOptions.mediation?.onRequest?.(
 			new Request('https://unapproved.discord.gg/?v=10&encoding=json', {
 				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
 			}),
@@ -2572,12 +2527,12 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28292),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28292)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28292),
+			configureIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -2602,13 +2557,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -2616,13 +2572,9 @@ describe('startGatewayZone', () => {
 		if (!createManagedVmCall) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		const [vmOptions] = createManagedVmCall as [
-			{
-				readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
-			},
-		];
-		expect(vmOptions.onRequest).toEqual(expect.any(Function));
-		const blockedResult = await vmOptions.onRequest?.(
+		const [vmOptions] = createManagedVmCall;
+		expect(vmOptions.mediation?.onRequest).toEqual(expect.any(Function));
+		const blockedResult = await vmOptions.mediation?.onRequest?.(
 			new Request('https://tool-websocket.example.com/socket', {
 				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
 			}),
@@ -2644,12 +2596,12 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28293),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28293)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28293),
+			configureIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -2668,13 +2620,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -2682,13 +2635,9 @@ describe('startGatewayZone', () => {
 		if (!createManagedVmCall) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		const [vmOptions] = createManagedVmCall as [
-			{
-				readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
-			},
-		];
-		expect(vmOptions.onRequest).toEqual(expect.any(Function));
-		const blockedResult = await vmOptions.onRequest?.(
+		const [vmOptions] = createManagedVmCall;
+		expect(vmOptions.mediation?.onRequest).toEqual(expect.any(Function));
+		const blockedResult = await vmOptions.mediation?.onRequest?.(
 			new Request('https://ordinary-websocket.example.com/socket', {
 				headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
 			}),
@@ -2739,12 +2688,12 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28293),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28293)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28293),
+			configureIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -2791,13 +2740,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -2805,16 +2755,13 @@ describe('startGatewayZone', () => {
 		if (!createManagedVmCall) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		const [vmOptions] = createManagedVmCall as [
-			{ readonly env: Record<string, string>; readonly secrets: Record<string, unknown> },
-		];
-		expect(vmOptions.secrets).toMatchObject({
-			AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: {
-				hosts: ['api.perplexity.ai'],
-				value: 'resolved-pplx-key',
-			},
+		const [vmOptions] = createManagedVmCall;
+		expect(vmOptions.mediatedSecrets).toContainEqual({
+			allowedHosts: ['api.perplexity.ai'],
+			environmentVariable: 'AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY',
+			value: 'resolved-pplx-key',
 		});
-		expect(vmOptions.env).not.toHaveProperty('AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY');
+		expect(vmOptions.environment).not.toHaveProperty('AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY');
 	});
 
 	it('keeps loopback MCP Portal provider URLs out of gateway egress', async () => {
@@ -2841,10 +2788,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28292),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28292)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28292),
+			configureIngressRoutes: vi.fn(),
 		};
 		const createManagedVm = vi.fn(async () => managedVm);
 
@@ -2861,13 +2806,14 @@ describe('startGatewayZone', () => {
 				},
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -2886,12 +2832,12 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28286),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28286),
+			configureIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -2907,19 +2853,20 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp-env-override',
-					imagePath: '/tmp/gateway-image',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp-env-override',
+						imageReference: '/tmp/gateway-image',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
-				env: expect.objectContaining({
+				environment: expect.objectContaining({
 					DATABASE_URL: 'postgres://app:secret@postgres.local:5432/app',
 				}),
 			}),
@@ -2942,9 +2889,8 @@ describe('startGatewayZone', () => {
 					zoneId: 'does-not-exist',
 				},
 				{
-					buildImage: vi.fn(),
-					createManagedVm: vi.fn(),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmImages: { prepareImage: vi.fn() },
+					managedVmFactory: { createManagedVm: vi.fn() },
 				},
 			),
 		).rejects.toThrow("Unknown zone 'does-not-exist'.");
@@ -2976,7 +2922,7 @@ describe('startGatewayZone', () => {
 			resolveAll: async () => ({ OPENAI_API_KEY: 'openai-key' }),
 		};
 		const execMock = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
-		const setIngressRoutesMock = vi.fn();
+		const configureIngressRoutesMock = vi.fn();
 		const enableIngressMock = vi.fn(async () => createTestIngressAccess());
 
 		const result = await startGatewayZone(
@@ -2986,24 +2932,25 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp-worker',
-					imagePath: '/tmp/worker-image',
-				})),
-				createManagedVm: vi.fn(async () => ({
-					close: vi.fn(async () => completeGatewayVmClose('worker-vm-123')),
-					enableIngress: enableIngressMock,
-					enableSsh: vi.fn(),
-					exec: execMock,
-					fs: createManagedVmFsStub(),
-					getHostPid: vi.fn(() => 12345),
-					getVmInstance: vi.fn(() => createVmInstanceStub(12345)),
-					id: 'worker-vm-123',
-					start: vi.fn(async () => {}),
-					setIngressRoutes: setIngressRoutesMock,
-				})),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp-worker',
+						imageReference: '/tmp/worker-image',
+					})),
+				},
+				managedVmFactory: {
+					createManagedVm: vi.fn(async () => ({
+						close: vi.fn(async () => completeGatewayVmClose('worker-vm-123')),
+						enableIngress: enableIngressMock,
+						enableSsh: vi.fn(),
+						exec: execMock,
+						getHostProcessId: vi.fn(() => 12345),
+						id: 'worker-vm-123',
+						start: vi.fn(async () => {}),
+						configureIngressRoutes: configureIngressRoutesMock,
+					})),
+				},
 				writeGatewayRuntimeRecord: vi.fn(async () => {}),
 			},
 		);
@@ -3032,10 +2979,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28285),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28285),
 		};
 
 		const result = await startGatewayZone(
@@ -3047,13 +2992,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -3072,7 +3018,7 @@ describe('startGatewayZone', () => {
 		const closeMock = vi.fn(async () => completeGatewayVmClose('vm-456'));
 		const enableIngressMock = vi.fn(async () => createTestIngressAccess());
 		const execMock = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
-		const setIngressRoutesMock = vi.fn();
+		const configureIngressRoutesMock = vi.fn();
 		const managedVm: ManagedVm = {
 			id: 'vm-456',
 			start: vi.fn(async () => {}),
@@ -3080,17 +3026,17 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28283),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28283)),
-			setIngressRoutes: setIngressRoutesMock,
+			getHostProcessId: vi.fn(() => 28283),
+			configureIngressRoutes: configureIngressRoutesMock,
 		};
 		const secretResolver = createOpenClawSecretResolver({
 			PERPLEXITY_API_KEY: 'pplx-key',
 			DISCORD_BOT_TOKEN: 'discord-token',
 			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 		});
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -3099,13 +3045,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -3113,23 +3060,24 @@ describe('startGatewayZone', () => {
 		if (!createManagedVmCall) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		const [vmOptions] = createManagedVmCall as [Record<string, unknown>];
+		const [vmOptions] = createManagedVmCall;
 
-		// PERPLEXITY_API_KEY should be in secrets (http-mediation) with hosts
-		expect(vmOptions.secrets).toEqual({
-			PERPLEXITY_API_KEY: {
-				hosts: ['api.perplexity.ai'],
+		// PERPLEXITY_API_KEY should be mediated only to its allowed hosts.
+		expect(vmOptions.mediatedSecrets).toEqual([
+			{
+				allowedHosts: ['api.perplexity.ai'],
+				environmentVariable: 'PERPLEXITY_API_KEY',
 				value: 'pplx-key',
 			},
-		});
+		]);
 
-		// DISCORD_BOT_TOKEN should be in env (env injection)
-		expect(vmOptions.env).toMatchObject({
+		// DISCORD_BOT_TOKEN should be in the guest environment.
+		expect(vmOptions.environment).toMatchObject({
 			DISCORD_BOT_TOKEN: 'discord-token',
 		});
 
-		// PERPLEXITY_API_KEY should NOT be in env
-		expect(vmOptions.env).not.toHaveProperty('PERPLEXITY_API_KEY');
+		// The raw mediated value must not enter the guest environment.
+		expect(vmOptions.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
 	});
 
 	it('builds tcp hosts with Tool VM SSH entries only', async () => {
@@ -3142,12 +3090,12 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28284),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28284)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28284),
 		};
-		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(
+			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
+		);
 
 		await startGatewayZone(
 			{
@@ -3160,13 +3108,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -3174,14 +3123,14 @@ describe('startGatewayZone', () => {
 		if (!createManagedVmCall) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		const [vmOptions] = createManagedVmCall as [Record<string, unknown>];
-		expect(vmOptions.tcpHosts).toEqual({
-			'tool-0.vm.host:22': '127.0.0.1:19000',
-			'tool-1.vm.host:22': '127.0.0.1:19001',
-			'tool-2.vm.host:22': '127.0.0.1:19002',
-			'tool-3.vm.host:22': '127.0.0.1:19003',
-			'tool-4.vm.host:22': '127.0.0.1:19004',
-		});
+		const [vmOptions] = createManagedVmCall;
+		expect(vmOptions.tcpHosts).toEqual([
+			{ guestHost: 'tool-0.vm.host:22', target: '127.0.0.1:19000' },
+			{ guestHost: 'tool-1.vm.host:22', target: '127.0.0.1:19001' },
+			{ guestHost: 'tool-2.vm.host:22', target: '127.0.0.1:19002' },
+			{ guestHost: 'tool-3.vm.host:22', target: '127.0.0.1:19003' },
+			{ guestHost: 'tool-4.vm.host:22', target: '127.0.0.1:19004' },
+		]);
 	});
 
 	it('throws with the gateway log tail and closes the vm when service health polling exhausts all attempts', async () => {
@@ -3204,10 +3153,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28285),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28285),
 		};
 
 		await expect(
@@ -3220,15 +3167,16 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm: vi.fn(async () => managedVm),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 					gatewayReadinessMaxAttempts: 2,
 					gatewayReadinessRetryDelayMs: 0,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
 		).rejects.toThrow(
@@ -3257,10 +3205,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28285),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28285),
 		};
 
 		await expect(
@@ -3273,14 +3219,15 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm: vi.fn(async () => managedVm),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 					gatewayReadinessRetryDelayMs: 0,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
 		).rejects.toThrow(/Gateway service health check failed after 120 attempts/su);
@@ -3303,10 +3250,8 @@ describe('startGatewayZone', () => {
 						})
 					: createManagedExecProcessStub({ stdout: '200' }),
 			),
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28285),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28285),
 		};
 
 		await expect(
@@ -3319,15 +3264,16 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm: vi.fn(async () => managedVm),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 					gatewayReadinessMaxAttempts: 5,
 					gatewayReadinessRetryDelayMs: 0,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
 		).rejects.toThrow(/Configuring gateway failed.*exit 42.*bootstrap stdout.*bootstrap stderr/su);
@@ -3349,10 +3295,8 @@ describe('startGatewayZone', () => {
 				.mockReturnValueOnce(createManagedExecProcessStub({ stdout: '500' }))
 				.mockReturnValueOnce(createManagedExecProcessStub({ stdout: '500' }))
 				.mockReturnValue(createManagedExecProcessStub({ stdout: '500' })),
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28286),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28286),
 		};
 
 		await expect(
@@ -3365,15 +3309,16 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm: vi.fn(async () => managedVm),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 					gatewayReadinessMaxAttempts: 5,
 					gatewayReadinessRetryDelayMs: 0,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 					loadGatewayLifecycle: createHttpHealthGatewayLifecycle,
 				},
 			),
@@ -3389,10 +3334,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28287),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28287),
 		};
 
 		const result = await startGatewayZone(
@@ -3404,13 +3347,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				loadGatewayLifecycle: () => ({
 					buildProcessSpec: () => ({
 						bootstrapCommand: 'bootstrap-worker',
@@ -3454,10 +3398,8 @@ describe('startGatewayZone', () => {
 						})
 					: createManagedExecProcessStub({ stdout: '200' }),
 			),
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28287),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28287),
 		};
 		const systemConfig = await createSystemConfig();
 
@@ -3471,13 +3413,14 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm: vi.fn(async () => managedVm),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 					loadGatewayLifecycle: () => ({
 						buildProcessSpec: () => ({
 							bootstrapCommand: secretBearingBootstrapCommand,
@@ -3526,10 +3469,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28288),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28288)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28288),
 		};
 
 		await startGatewayZone(
@@ -3541,13 +3482,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				loadGatewayLifecycle: createHttpHealthGatewayLifecycle,
 			},
 		);
@@ -3613,10 +3555,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: execMock,
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28289),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28289)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28289),
 		};
 
 		await startGatewayZone(
@@ -3630,13 +3570,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -3679,14 +3620,15 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
 				createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmFactory: { createManagedVm },
 			},
 		);
 
@@ -3748,14 +3690,15 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
 				createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
-				createManagedVm: vi.fn(async () => await pendingManagedVm.promise),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmFactory: { createManagedVm: vi.fn(async () => await pendingManagedVm.promise) },
 			},
 		);
 		await containmentPublished.promise;
@@ -3796,14 +3739,15 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
 					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
-					createManagedVm,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmFactory: { createManagedVm },
 				},
 			),
 		).rejects.toBe(createError);
@@ -3842,14 +3786,15 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
 					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
-					createManagedVm: vi.fn(async () => managedVm),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 					writeGatewayRuntimeRecord: vi.fn(async () => {
 						throw recordError;
 					}),
@@ -3900,14 +3845,16 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
 				connectGatewayControlSession,
 				createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
-				createManagedVm: vi.fn(async () => managedVm),
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				createOpenClawProcessSupervisorPorts: ({ gateway }) => {
 					const supervisor = createTestOpenClawProcessSupervisor(gateway);
 					processStart.mockImplementation(async (request) => await supervisor.start(request));
@@ -3930,7 +3877,6 @@ describe('startGatewayZone', () => {
 						supervisor: { ...supervisor, observe: processObserve, start: processStart },
 					};
 				},
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				writeGatewayRuntimeRecord,
 			},
 		);
@@ -3963,10 +3909,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28290),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28290),
 		};
 
 		await expect(
@@ -3981,13 +3925,14 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm: vi.fn(async () => managedVm),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 					writeGatewayRuntimeRecord: vi.fn(async () => {
 						throw new Error('disk full');
 					}),
@@ -4010,10 +3955,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getHostPid: vi.fn(() => 28290),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28290),
 		};
 
 		let thrownError: unknown;
@@ -4029,13 +3972,14 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm: vi.fn(async () => managedVm),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 					writeGatewayRuntimeRecord: vi.fn(async () => {
 						throw new Error('disk full');
 					}),
@@ -4088,16 +4032,17 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
 					connectGatewayControlSession: vi.fn(async () => {
 						throw startupError;
 					}),
-					createManagedVm: vi.fn(async () => managedVm),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				},
 			);
 		} catch (error) {
@@ -4136,13 +4081,14 @@ describe('startGatewayZone', () => {
 					zoneId: 'shravan',
 				},
 				{
-					buildImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imagePath: '/tmp/img',
-					})),
-					createManagedVm,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					managedVmImages: {
+						prepareImage: vi.fn(async () => ({
+							built: true,
+							fingerprint: 'fp',
+							imageReference: '/tmp/img',
+						})),
+					},
+					managedVmFactory: { createManagedVm },
 					loadGatewayLifecycle: () => ({
 						...createHttpHealthGatewayLifecycle(),
 						prepareHostState,
@@ -4165,10 +4111,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
-			getHostPid: vi.fn(() => 28291),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28291),
 		};
 		const createManagedVm = vi.fn(async () => managedVm);
 
@@ -4183,13 +4127,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm,
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm },
 				loadGatewayLifecycle: () => ({
 					...createHttpHealthGatewayLifecycle(),
 					prepareHostState,
@@ -4210,10 +4155,8 @@ describe('startGatewayZone', () => {
 			enableIngress: vi.fn(async () => createTestIngressAccess()),
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28293),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28293)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28293),
+			configureIngressRoutes: vi.fn(),
 		};
 
 		const result = await startGatewayZone(
@@ -4227,13 +4170,14 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -4313,10 +4257,8 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			fs: createManagedVmFsStub(),
-			getHostPid: vi.fn(() => 28283),
-			getVmInstance: vi.fn(() => createVmInstanceStub(28283)),
-			setIngressRoutes: vi.fn(),
+			getHostProcessId: vi.fn(() => 28283),
+			configureIngressRoutes: vi.fn(),
 		};
 		const systemConfig = await createSystemConfig();
 		const configuredZone = systemConfig.zones[0];
@@ -4383,14 +4325,15 @@ describe('startGatewayZone', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'fp',
-					imagePath: '/tmp/img',
-				})),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imageReference: '/tmp/img',
+					})),
+				},
 				connectGatewayControlSession,
-				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 			},
 		);
 
@@ -5184,14 +5127,16 @@ describe('startGatewayZone', () => {
 			};
 			expect(startOptions).not.toHaveProperty('onControlSessionAttemptOutcome');
 			const result = await startGatewayZone(startOptions, {
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'successor-control-observation-image',
-					imagePath: '/tmp/successor-control-observation-image',
-				})),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'successor-control-observation-image',
+						imageReference: '/tmp/successor-control-observation-image',
+					})),
+				},
 				connectGatewayControlSession,
 				createGatewayControlSessionMaterial: () => initialMaterial,
-				createManagedVm: vi.fn(async () => managedVm),
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				createOpenClawProcessSupervisorPorts: ({ gateway }) => {
 					const supervisor = createTestOpenClawProcessSupervisor(gateway);
 					return {
@@ -5220,7 +5165,6 @@ describe('startGatewayZone', () => {
 						},
 					};
 				},
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			});
 			const processEpochOwner = result.openClawProcessEpochOwner;
 			expect(processEpochOwner).toBeDefined();
@@ -5432,14 +5376,16 @@ describe('startGatewayZone', () => {
 		const result = await startGatewayZone(
 			startOptions,
 			{
-				buildImage: vi.fn(async () => ({
-					built: true,
-					fingerprint: 'process-owner-image',
-					imagePath: '/tmp/process-owner-image',
-				})),
+				managedVmImages: {
+					prepareImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'process-owner-image',
+						imageReference: '/tmp/process-owner-image',
+					})),
+				},
 				connectGatewayControlSession,
 				createGatewayControlSessionMaterial: () => initialMaterial,
-				createManagedVm: vi.fn(async () => managedVm),
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
 				createOpenClawProcessSupervisorPorts: () => ({
 					reliabilityFaultActuator: {
 						terminateOwnedProcess: vi.fn(async () => {
@@ -5448,7 +5394,6 @@ describe('startGatewayZone', () => {
 					},
 					supervisor: processSupervisor,
 				}),
-				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				loadGatewayLifecycle: (gatewayType) => {
 					const lifecycle = loadGatewayLifecycle(gatewayType);
 					return {

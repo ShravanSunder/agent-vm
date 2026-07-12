@@ -1,4 +1,4 @@
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -101,11 +101,11 @@ describe('Gateway VM lifecycle authority', () => {
 		/* oxlint-disable-next-line typescript/no-unsafe-type-assertion, typescript-eslint/no-unsafe-type-assertion -- the containment boundary only preserves and forwards the unresolved stock VM handle. */
 		const unstartedVm = {
 			close,
-			getHostPid: () => null,
+			getHostProcessId: () => null,
 			id: 'late-gateway-vm',
 		} as unknown as ManagedVm;
 		const closeLateCreatedVm = vi.fn(async (createdVm: ManagedVm) => {
-			expect(createdVm.getHostPid()).toBeNull();
+			expect(createdVm.getHostProcessId()).toBeNull();
 			await createdVm.close();
 		});
 

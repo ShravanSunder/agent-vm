@@ -1,12 +1,11 @@
 import { Readable } from 'node:stream';
 
 import type {
-	ManagedExecProcess,
-	ManagedExecResult,
+	ManagedVmExecProcess,
+	ManagedVmExecResult,
 	ManagedVm,
-	ManagedVmFs,
-	SshServerHostKey,
-} from '@agent-vm/gondolin-adapter';
+	ManagedVmSshServerHostKey,
+} from '@agent-vm/managed-vm';
 
 import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
 import {
@@ -20,7 +19,7 @@ import {
 export const TEST_SSH_SERVER_HOST_KEY = {
 	algorithm: 'ssh-ed25519',
 	publicKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-} satisfies SshServerHostKey;
+} satisfies ManagedVmSshServerHostKey;
 
 export interface CapturedManagedVmTermination {
 	terminate(): Promise<void>;
@@ -29,7 +28,7 @@ export interface CapturedManagedVmTermination {
 export async function captureManagedVmTermination(
 	managedVm: ManagedVm,
 ): Promise<CapturedManagedVmTermination> {
-	const hostPid = managedVm.getHostPid();
+	const hostPid = managedVm.getHostProcessId();
 	if (hostPid === null) {
 		throw new Error(`Managed VM '${managedVm.id}' has no live runner to capture.`);
 	}
@@ -51,7 +50,11 @@ export async function captureManagedVmTermination(
 					sleep,
 				},
 				target: { hostPid, processIdentity, vmId: managedVm.id },
-				vm: managedVm,
+				vm: {
+					close: async () => await managedVm.close(),
+					getHostPid: () => managedVm.getHostProcessId(),
+					id: managedVm.id,
+				},
 			});
 		},
 	};
@@ -71,7 +74,7 @@ export interface ManagedExecProcessStubOptions {
    structural test double needs a narrow assertion at the boundary. */
 export function createManagedExecProcessStub(
 	options: ManagedExecProcessStubOptions = {},
-): ManagedExecProcess {
+): ManagedVmExecProcess {
 	const stdout = options.stdout ?? '';
 	const stderr = options.stderr ?? '';
 	const execResult = {
@@ -92,8 +95,8 @@ export function createManagedExecProcessStub(
 		toString(): string {
 			return stdout;
 		},
-	} as ManagedExecResult;
-	const resultPromise = (async (): Promise<ManagedExecResult> => {
+	} as ManagedVmExecResult;
+	const resultPromise = (async (): Promise<ManagedVmExecResult> => {
 		options.beforeResolve?.();
 		await options.waitFor;
 		return execResult;
@@ -103,30 +106,30 @@ export function createManagedExecProcessStub(
 			yield stdout;
 		},
 		catch: resultPromise.catch.bind(resultPromise),
+		end: () => {},
 		finally: resultPromise.finally.bind(resultPromise),
-		stderr: Readable.from([stderr]),
-		stdout: Readable.from([stdout]),
+		lines: async function* (): AsyncIterable<string> {
+			yield* stdout.split(/\r?\n/u);
+		},
+		output: async function* () {
+			yield { data: Buffer.from(stdout), stream: 'stdout' as const, text: stdout };
+		},
+		result: resultPromise,
+		resize: () => {},
 		then: resultPromise.then.bind(resultPromise),
-	} as ManagedExecProcess;
+		write: () => {},
+	} as ManagedVmExecProcess;
 }
 /* oxlint-enable typescript/no-unnecessary-type-parameters, typescript/no-unsafe-type-assertion, typescript-eslint/no-unsafe-type-assertion, unicorn/no-thenable */
 
-async function readManagedVmFsStubFile(
-	_filePath: string,
-	options?: { readonly encoding?: BufferEncoding | null },
-): Promise<Buffer | string> {
-	return options?.encoding ? '' : Buffer.from('');
-}
-
-export function createManagedVmFsStub(): ManagedVmFs {
+export function createManagedVmFsStub(): Record<string, unknown> {
 	return {
 		access: async () => {},
 		deleteFile: async () => {},
 		listDir: async () => [],
 		mkdir: async () => {},
-		/* oxlint-disable-next-line typescript/no-unsafe-type-assertion -- VmFs.readFile is
-		   overloaded; the stub handles text and buffer modes and asserts at the overload boundary. */
-		readFile: readManagedVmFsStubFile as unknown as ManagedVmFs['readFile'],
+		readFile: async (_filePath: string, options?: { readonly encoding?: BufferEncoding | null }) =>
+			options?.encoding ? '' : Buffer.from(''),
 		readFileStream: async () => Readable.from([]),
 		rename: async () => {},
 		stat: async () => {

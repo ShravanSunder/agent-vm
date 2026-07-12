@@ -1,4 +1,4 @@
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 
 import {
 	createGatewayDestructionBudget,

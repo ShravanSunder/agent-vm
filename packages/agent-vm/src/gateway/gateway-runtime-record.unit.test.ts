@@ -2,14 +2,13 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	buildGatewayRuntimeRecord,
@@ -46,27 +45,6 @@ async function createStateDirectory(): Promise<string> {
 	return directoryPath;
 }
 
-function createVmInstanceStub(hostPid: number, vmId: string): ManagedVmInstance {
-	return {
-		close: async () => {},
-		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
-		enableSsh: async () => ({
-			close: async () => {},
-			command: 'ssh ...',
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 19_000,
-			user: 'sandbox',
-		}),
-		exec: () => createManagedExecProcessStub(),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => hostPid,
-		id: vmId,
-		setIngressRoutes: () => {},
-		start: async () => {},
-	};
-}
-
 function createManagedVmStub(options: {
 	readonly hostPid: number;
 	readonly id: string;
@@ -76,16 +54,17 @@ function createManagedVmStub(options: {
 		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
 			close: async () => {},
+			command: 'ssh -i /tmp/key sandbox@127.0.0.1 -p 19000',
+			identityFile: '/tmp/key',
 			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			host: '127.0.0.1',
 			port: 19_000,
+			user: 'sandbox',
 		}),
 		exec: () => createManagedExecProcessStub(),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => options.hostPid,
-		getVmInstance: () => createVmInstanceStub(options.hostPid, options.id),
+		getHostProcessId: () => options.hostPid,
 		id: options.id,
-		setIngressRoutes: () => {},
+		configureIngressRoutes: () => {},
 		start: async () => {},
 	};
 }
@@ -341,10 +320,10 @@ describe('gateway runtime record', () => {
 		).rejects.toThrow("Failed to capture process identity for gateway VM 'gateway-vm-123'");
 	});
 
-	it('buildGatewayRuntimeRecord throws when Gondolin does not expose an active host PID', async () => {
+	it('buildGatewayRuntimeRecord throws when the managed VM does not expose an active host process id', async () => {
 		const managedVm = {
 			...createManagedVmStub({ hostPid: 28_282, id: 'gateway-vm-123' }),
-			getHostPid: () => null,
+			getHostProcessId: () => null,
 		} satisfies ManagedVm;
 
 		await expect(
@@ -365,13 +344,13 @@ describe('gateway runtime record', () => {
 				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow(/does not expose an active host pid/u);
+		).rejects.toThrow(/does not expose an active host process id/u);
 	});
 
-	it('buildGatewayRuntimeRecord throws when Gondolin exposes an invalid host PID', async () => {
+	it('buildGatewayRuntimeRecord throws when the managed VM exposes an invalid host process id', async () => {
 		const managedVm = {
 			...createManagedVmStub({ hostPid: 28_282, id: 'gateway-vm-123' }),
-			getHostPid: () => 0,
+			getHostProcessId: () => 0,
 		} satisfies ManagedVm;
 
 		await expect(
@@ -392,6 +371,6 @@ describe('gateway runtime record', () => {
 				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow(/invalid host pid/u);
+		).rejects.toThrow(/invalid host process id/u);
 	});
 });

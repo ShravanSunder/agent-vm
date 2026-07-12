@@ -1,4 +1,4 @@
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createManagedExecProcessStub } from '../../testing/managed-vm-test-helpers.js';

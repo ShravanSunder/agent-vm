@@ -2,13 +2,12 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, SshAccess } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm, ManagedVmSshAccess } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import {
 	createGatewayOwnershipCoordinator,
@@ -77,6 +76,7 @@ function createManagedVmStub(options: {
 	readonly id: string;
 	readonly pid: number;
 	readonly runtime: FakeVmRuntime;
+	readonly serverHostKey?: ManagedVmSshAccess['serverHostKey'];
 	readonly sshFailure?: Error;
 }): ManagedVm {
 	const sshAccess = {
@@ -88,9 +88,9 @@ function createManagedVmStub(options: {
 		host: '127.0.0.1',
 		identityFile: '/tmp/tool-vm-key',
 		port: 19_000 + options.pid,
-		serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		serverHostKey: options.serverHostKey ?? TEST_SSH_SERVER_HOST_KEY,
 		user: 'sandbox',
-	} satisfies SshAccess;
+	} satisfies ManagedVmSshAccess;
 	return {
 		async close(): Promise<void> {
 			options.events.push(`vm-close:${options.id}`);
@@ -99,7 +99,7 @@ function createManagedVmStub(options: {
 		async enableIngress() {
 			return { close: async () => {}, host: '127.0.0.1', port: 18_791 };
 		},
-		async enableSsh(enableOptions): Promise<SshAccess> {
+		async enableSsh(enableOptions): Promise<ManagedVmSshAccess> {
 			options.events.push(`ssh-enable:${options.id}`);
 			if (options.sshFailure !== undefined) {
 				throw options.sshFailure;
@@ -109,13 +109,11 @@ function createManagedVmStub(options: {
 			return sshAccess;
 		},
 		exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0 })),
-		fs: createManagedVmFsStub(),
-		getHostPid(): number | null {
+		configureIngressRoutes: vi.fn(),
+		getHostProcessId(): number | null {
 			return options.runtime.started && options.runtime.alive ? options.pid : null;
 		},
-		getVmInstance: vi.fn<ManagedVm['getVmInstance']>(),
 		id: options.id,
-		setIngressRoutes: vi.fn(),
 		async start(): Promise<void> {
 			options.events.push(`vm-start:${options.id}`);
 			options.runtime.started = true;
@@ -393,6 +391,32 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		expect(harness.tcpPool.allocate()).toBe(0);
 	});
 
+	it('rejects a malformed SSH server identity before lease admission and destroys the VM', async () => {
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) =>
+				createManagedVmStub({
+					events,
+					id,
+					pid,
+					runtime,
+					serverHostKey: { algorithm: 'ssh-ed25519', publicKeyBase64: 'malformed' },
+				}),
+		});
+
+		await expect(harness.leaseManager.createLease(createLeaseOptions())).rejects.toThrow(
+			'does not have a valid ssh-ed25519 server host key',
+		);
+		expect(harness.leaseManager.listLeases()).toEqual([]);
+		expect(harness.events).toEqual(
+			expect.arrayContaining([
+				'membership-destroying:beta',
+				'ssh-close:tool-vm-1',
+				'process-SIGTERM:12001',
+				'membership-destroyed:beta',
+			]),
+		);
+	});
+
 	it('captures fallback runtime evidence when start rejects after spawning a runner', async () => {
 		const harness = createHarness({
 			createManagedVm: async ({ events, id, pid, runtime }) => {
@@ -469,7 +493,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 				const vm = createManagedVmStub({ events, id, pid, runtime });
 				return {
 					...vm,
-					async enableSsh(enableOptions): Promise<SshAccess> {
+					async enableSsh(enableOptions): Promise<ManagedVmSshAccess> {
 						const access = await vm.enableSsh(enableOptions);
 						return { ...access, close: async () => {} };
 					},
@@ -890,7 +914,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 				const vm = createManagedVmStub({ events, id, pid, runtime });
 				return {
 					...vm,
-					async enableSsh(enableOptions): Promise<SshAccess> {
+					async enableSsh(enableOptions): Promise<ManagedVmSshAccess> {
 						const access = await vm.enableSsh(enableOptions);
 						return {
 							...access,
@@ -930,7 +954,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 				const vm = createManagedVmStub({ events, id, pid, runtime });
 				return {
 					...vm,
-					async enableSsh(enableOptions): Promise<SshAccess> {
+					async enableSsh(enableOptions): Promise<ManagedVmSshAccess> {
 						const access = await vm.enableSsh(enableOptions);
 						return {
 							...access,
@@ -973,7 +997,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 				const vm = createManagedVmStub({ events, id, pid, runtime });
 				return {
 					...vm,
-					async enableSsh(enableOptions): Promise<SshAccess> {
+					async enableSsh(enableOptions): Promise<ManagedVmSshAccess> {
 						const access = await vm.enableSsh(enableOptions);
 						return {
 							...access,

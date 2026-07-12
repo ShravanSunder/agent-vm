@@ -4,6 +4,11 @@ import type {
 	GatewayZoneConfig,
 	GatewayZoneObservabilityConfig,
 } from '@agent-vm/gateway-lifecycle';
+import type {
+	ManagedVm,
+	ManagedVmCreateRequest,
+	ManagedVmImageBuildResult,
+} from '@agent-vm/managed-vm';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import type {
@@ -89,14 +94,14 @@ export interface StartGatewayZoneOptions {
 	readonly onControlSessionReconnectExhausted?: (
 		transition: GatewayControlSessionReconnectExhausted,
 	) => void;
-	readonly prebuiltImage?: import('@agent-vm/gondolin-adapter').BuildImageResult | undefined;
+	readonly prebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 	readonly secretResolver: import('@agent-vm/secret-management').SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tcpHostsOverride?: Record<string, string>;
-	readonly vfsMountsOverride?: GatewayManagedVmFactoryOptions['vfsMounts'];
+	readonly vfsMountsOverride?: ManagedVmCreateRequest['mounts'];
 	readonly writeLog?: (message: string) => void;
 	readonly zoneId: string;
 	readonly zoneOverride?: GatewayZone;
@@ -107,7 +112,7 @@ export type GatewayZonePreflightOptions = Omit<StartGatewayZoneOptions, 'createV
 export interface GatewayZoneStartResult {
 	readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
 	readonly controlSessionRecoverySourceKey?: GatewayVmRecoverySourceKey | undefined;
-	readonly image: import('@agent-vm/gondolin-adapter').BuildImageResult;
+	readonly image: ManagedVmImageBuildResult;
 	readonly ingress: {
 		readonly host: string;
 		readonly port: number;
@@ -117,7 +122,7 @@ export interface GatewayZoneStartResult {
 	readonly processEpoch?: string | undefined;
 	readonly processSpec: GatewayProcessSpec;
 	readonly terminateVm: () => Promise<void>;
-	readonly vm: import('@agent-vm/gondolin-adapter').ManagedVm;
+	readonly vm: ManagedVm;
 	readonly vmOwnership: GatewayVmLifecycleAuthority;
 	readonly zone: GatewayZone;
 }
@@ -144,43 +149,6 @@ export type GatewayControlSessionConnector = (options: {
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
 	readonly signal?: AbortSignal;
 }) => Promise<GatewayDisposableControlSessionClient>;
-
-export interface GatewayBuildImageOptions {
-	readonly buildConfig: unknown;
-	readonly cacheDir: string;
-	readonly fullReset?: boolean;
-}
-
-export interface GatewayManagedVmFactoryOptions {
-	readonly allowedHosts: readonly string[];
-	readonly cpus: number;
-	readonly env?: Record<string, string>;
-	readonly imagePath: string;
-	readonly memory: string;
-	readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
-	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
-	readonly runtimeRootfsSize?: string;
-	readonly secrets: Record<
-		string,
-		{
-			readonly hosts: readonly string[];
-			readonly value: string;
-		}
-	>;
-	readonly sessionLabel?: string;
-	readonly tcpHosts?: Record<string, string>;
-	readonly vfsMounts: Record<
-		string,
-		{
-			readonly kind: 'realfs' | 'realfs-readonly' | 'memory' | 'shadow';
-			readonly hostPath?: string;
-			readonly shadowConfig?: {
-				readonly deny: readonly string[];
-				readonly tmpfs: readonly string[];
-			};
-		}
-	>;
-}
 
 export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): GatewayZone {
 	const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === zoneId);

@@ -9,16 +9,15 @@ import {
 	splitResolvedSecretsByInjection,
 } from '@agent-vm/gateway-lifecycle';
 import {
-	closePinnedRealFsRoot as closePinnedRealFsRootDefault,
-	createManagedVm as createManagedVmFromCore,
-	pinRealFsRoot as pinRealFsRootDefault,
 	type ManagedVm,
-	type PinnedRealFsRoot,
-} from '@agent-vm/gondolin-adapter';
+	type ManagedVmFactory,
+	type ManagedVmImageCapability,
+	type ManagedVmMount,
+	type ManagedVmOwnedDirectoryCapability,
+	type OwnedHostDirectory,
+} from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
-import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
-import { readPreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolVmProfile } from '../controller/leases/lease-manager.js';
 import {
@@ -60,15 +59,10 @@ const reservedToolVmMediatedSecretNames = new Set([
 const shellEnvironmentNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 export interface ToolVmLifecycleDependencies {
-	readonly buildGondolinImage?: (options: {
-		readonly buildConfigPath: string;
-		readonly cacheDir: string;
-		readonly fullReset?: boolean;
-	}) => ReturnType<typeof buildGondolinImageDefault>;
-	readonly createManagedVm?: typeof createManagedVmFromCore;
+	readonly managedVmFactory: ManagedVmFactory;
+	readonly managedVmImages: ManagedVmImageCapability;
+	readonly managedVmOwnedDirectories: ManagedVmOwnedDirectoryCapability;
 	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
-	readonly closePinnedRealFsRoot?: (root: PinnedRealFsRoot) => void;
-	readonly pinRealFsRoot?: (hostPath: string) => PinnedRealFsRoot;
 	readonly validateResolvedToolWorkMountDir?: typeof validateResolvedToolWorkMountDirDefault;
 }
 
@@ -243,12 +237,8 @@ export async function createUnstartedToolVm(
 		readonly zoneId: string;
 		readonly secretResolver: SecretResolver;
 	},
-	dependencies: ToolVmLifecycleDependencies = {},
+	dependencies: ToolVmLifecycleDependencies,
 ): Promise<UnstartedToolVmProvisioning> {
-	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
-	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
-	const closePinnedRealFsRoot = dependencies.closePinnedRealFsRoot ?? closePinnedRealFsRootDefault;
-	const pinRealFsRoot = dependencies.pinRealFsRoot ?? pinRealFsRootDefault;
 	const validateResolvedToolWorkMountDir =
 		dependencies.validateResolvedToolWorkMountDir ?? validateResolvedToolWorkMountDirDefault;
 	const zone = options.systemConfig.zones.find(
@@ -287,33 +277,38 @@ export async function createUnstartedToolVm(
 		'tool-vm-images',
 		options.profile.imageProfile,
 	);
-	const preparedToolImage = await readPreparedGondolinImage({
-		buildConfigPath: toolImageProfile.buildConfig,
-		cacheDir: toolImageCacheDir,
+	const toolImage = await dependencies.managedVmImages.prepareImage({
+		cacheDirectory: toolImageCacheDir,
+		recipePath: toolImageProfile.buildConfig,
 	});
-	const toolImage =
-		preparedToolImage ??
-		(await buildGondolinImage({
-			buildConfigPath: toolImageProfile.buildConfig,
-			cacheDir: toolImageCacheDir,
-		}));
 
-	// Internal createToolVm callers bypass the /lease route; validate and pin
-	// immediately before handing the RealFS root to the VM adapter.
+	// Internal createToolVm callers bypass the /lease route; validate and acquire
+	// host-directory authority immediately before handing it to the provider.
 	const hostWorkMountDirectory = await validateResolvedToolWorkMountDir({
 		hostWorkMountDir: options.hostWorkMountDir,
 		zone,
 	});
-	const pinnedRoots: PinnedRealFsRoot[] = [];
-	const pinRoot = (hostPath: string): PinnedRealFsRoot => {
-		const pinnedRoot = pinRealFsRoot(hostPath);
-		pinnedRoots.push(pinnedRoot);
-		return pinnedRoot;
+	const ownedDirectories: OwnedHostDirectory[] = [];
+	const openOwnedDirectory = (hostPath: string): OwnedHostDirectory => {
+		const ownedDirectory = dependencies.managedVmOwnedDirectories.openHostDirectory(hostPath);
+		if (
+			ownedDirectory.identity.canonicalPath !== hostPath ||
+			!Number.isSafeInteger(ownedDirectory.identity.device) ||
+			ownedDirectory.identity.device < 0 ||
+			!Number.isSafeInteger(ownedDirectory.identity.inode) ||
+			ownedDirectory.identity.inode <= 0
+		) {
+			ownedDirectory.close();
+			throw new Error(
+				`Managed VM provider returned an invalid owned-directory identity for '${hostPath}'.`,
+			);
+		}
+		ownedDirectories.push(ownedDirectory);
+		return ownedDirectory;
 	};
-	let pinnedRootsTransferredToManagedVm = false;
 	let toolVm: ManagedVm | undefined;
 	try {
-		let vfsMounts: Parameters<typeof createManagedVm>[0]['vfsMounts'];
+		let mounts: Readonly<Record<string, ManagedVmMount>>;
 		if (options.zoneGitMount) {
 			const hostZoneFilesDirectory = await validateResolvedToolWorkMountDir({
 				hostWorkMountDir: options.zoneGitMount.hostZoneFilesDir,
@@ -331,65 +326,67 @@ export async function createUnstartedToolVm(
 					`Zone Git root '${hostZoneGitRoot}' does not match expected runtime path '${expectedZoneGitRoot}' for zone '${options.zoneId}'.`,
 				);
 			}
-			const pinnedZoneFilesRoot = pinRoot(hostZoneFilesDirectory);
-			const pinnedZoneGitRoot = pinRoot(hostZoneGitRoot);
+			const ownedZoneFilesDirectory = openOwnedDirectory(hostZoneFilesDirectory);
+			const ownedZoneGitDirectory = openOwnedDirectory(hostZoneGitRoot);
 			await validateResolvedToolWorkMountDir({
-				hostWorkMountDir: pinnedZoneFilesRoot.realPath,
+				hostWorkMountDir: ownedZoneFilesDirectory.identity.canonicalPath,
 				zone,
 			});
-			vfsMounts = {
+			mounts = {
 				[OPENCLAW_ZONE_GIT_GUEST_ROOT]: {
-					hostPath: hostZoneGitRoot,
-					kind: 'realfs',
-					pinnedHostRoot: pinnedZoneGitRoot,
+					access: 'read-write',
+					directory: ownedZoneGitDirectory,
+					kind: 'owned-host-directory',
 				},
 				[OPENCLAW_ZONE_FILES_GUEST_ROOT]: {
-					hostPath: hostZoneFilesDirectory,
-					kind: 'realfs',
-					pinnedHostRoot: pinnedZoneFilesRoot,
+					access: 'read-write',
+					directory: ownedZoneFilesDirectory,
+					kind: 'owned-host-directory',
 				},
 			};
 		} else {
-			const pinnedWorkMountRoot = pinRoot(hostWorkMountDirectory);
+			const ownedWorkMountDirectory = openOwnedDirectory(hostWorkMountDirectory);
 			await validateResolvedToolWorkMountDir({
-				hostWorkMountDir: pinnedWorkMountRoot.realPath,
+				hostWorkMountDir: ownedWorkMountDirectory.identity.canonicalPath,
 				zone,
 			});
-			vfsMounts = {
+			mounts = {
 				[OPENCLAW_TOOL_VM_WORKSPACE_MOUNT]: {
-					hostPath: hostWorkMountDirectory,
-					kind: 'realfs',
-					pinnedHostRoot: pinnedWorkMountRoot,
+					access: 'read-write',
+					directory: ownedWorkMountDirectory,
+					kind: 'owned-host-directory',
 				},
 			};
 		}
-		// createManagedVm owns every pinned root in vfsMounts once invoked. It
-		// closes them on construction failure and through ManagedVm.close().
-		// The lifecycle retains ownership only for failures before this boundary.
-		pinnedRootsTransferredToManagedVm = true;
-		toolVm = await createManagedVm({
+		toolVm = await dependencies.managedVmFactory.createManagedVm({
 			allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
-			cpus: options.profile.cpus,
-			env: {
+			environment: {
 				NODE_OPTIONS: FORCE_IPV4_EGRESS_NODE_OPTIONS,
 			},
-			imagePath: toolImage.imagePath,
-			memory: options.profile.memory,
+			imageReference: toolImage.imageReference,
+			mediatedSecrets: Object.entries(mediatedSecrets).map(([environmentVariable, secret]) => ({
+				allowedHosts: secret.hosts,
+				environmentVariable,
+				value: secret.value,
+			})),
+			mediation: {
+				onRequest: createWebSocketUpgradeRequestGuard({
+					rules: zone.websocketUpgrades ?? [],
+					runtimeAudience: 'tool-vm',
+				}),
+			},
+			mounts,
+			resources: { cpuCount: options.profile.cpus, memory: options.profile.memory },
 			rootfsMode: 'cow',
 			...(options.profile.runtimeRootfsSize
 				? { runtimeRootfsSize: options.profile.runtimeRootfsSize }
 				: {}),
-			onRequest: createWebSocketUpgradeRequestGuard({
-				rules: zone.websocketUpgrades ?? [],
-				runtimeAudience: 'tool-vm',
-			}),
 			sessionLabel: buildToolSessionLabel(
 				options.systemConfig.host.projectNamespace,
 				options.zoneId,
 				options.tcpSlot,
 			),
-			secrets: mediatedSecrets,
-			vfsMounts,
+			tcpHosts: [],
 		});
 		const createdToolVm = toolVm;
 		return {
@@ -404,22 +401,27 @@ export async function createUnstartedToolVm(
 			vm: createdToolVm,
 		};
 	} catch (error) {
-		let closeError: unknown;
+		const cleanupErrors: unknown[] = [];
 		if (toolVm) {
 			try {
 				await toolVm.close();
 			} catch (caughtCloseError) {
-				closeError = caughtCloseError;
+				cleanupErrors.push(caughtCloseError);
 			}
 		}
-		if (!pinnedRootsTransferredToManagedVm) {
-			for (const pinnedRoot of pinnedRoots) {
-				closePinnedRealFsRoot(pinnedRoot);
+		for (const ownedDirectory of ownedDirectories) {
+			if (ownedDirectory.state !== 'acquired') {
+				continue;
+			}
+			try {
+				ownedDirectory.close();
+			} catch (ownedDirectoryCloseError) {
+				cleanupErrors.push(ownedDirectoryCloseError);
 			}
 		}
-		if (closeError !== undefined) {
+		if (cleanupErrors.length > 0) {
 			const aggregateError = new AggregateError(
-				[error, closeError],
+				[error, ...cleanupErrors],
 				'Tool VM creation failed and cleanup also failed.',
 			);
 			aggregateError.cause = error;
@@ -431,7 +433,7 @@ export async function createUnstartedToolVm(
 
 export async function createToolVm(
 	options: Parameters<typeof createUnstartedToolVm>[0],
-	dependencies: ToolVmLifecycleDependencies = {},
+	dependencies: ToolVmLifecycleDependencies,
 ): Promise<ManagedVm> {
 	const provisioning = await createUnstartedToolVm(options, dependencies);
 	const { vm } = provisioning;
@@ -444,25 +446,26 @@ export async function createToolVm(
 		| undefined;
 	try {
 		await vm.start();
-		const hostPid = vm.getHostPid();
-		if (hostPid !== null) {
-			const identityReader =
-				dependencies.managedVmKillDependencies?.readProcessIdentity ?? readProcessIdentity;
-			const processIdentity = await identityReader(hostPid);
-			if (processIdentity === null) {
-				throw new Error(
-					`Tool VM '${vm.id}' pid ${String(hostPid)} disappeared before process identity capture.`,
-				);
-			}
-			processTarget = { hostPid, processIdentity, vmId: vm.id };
+		const hostPid = vm.getHostProcessId();
+		if (hostPid === null || !Number.isSafeInteger(hostPid) || hostPid <= 0) {
+			throw new Error(`Tool VM '${vm.id}' did not expose a positive host process id after start.`);
 		}
+		const identityReader =
+			dependencies.managedVmKillDependencies?.readProcessIdentity ?? readProcessIdentity;
+		const processIdentity = await identityReader(hostPid);
+		if (processIdentity === null) {
+			throw new Error(
+				`Tool VM '${vm.id}' pid ${String(hostPid)} disappeared before process identity capture.`,
+			);
+		}
+		processTarget = { hostPid, processIdentity, vmId: vm.id };
 		await provisioning.prepareStartedVm();
 		return vm;
 	} catch (error) {
 		let cleanupError: unknown;
 		try {
 			if (processTarget === undefined) {
-				if (vm.getHostPid() !== null) {
+				if (vm.getHostProcessId() !== null) {
 					throw new Error(
 						`Tool VM '${vm.id}' has a live runner without captured process identity; refusing stock close.`,
 						{ cause: error },
@@ -480,7 +483,11 @@ export async function createToolVm(
 						sleep,
 					},
 					target: processTarget,
-					vm,
+					vm: {
+						close: async () => await vm.close(),
+						getHostPid: () => vm.getHostProcessId(),
+						id: vm.id,
+					},
 				});
 			}
 		} catch (caughtCleanupError) {
