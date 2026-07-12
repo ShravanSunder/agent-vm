@@ -79,9 +79,9 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
   5. prepareHostState using preflight-cached secrets:
      - Write effective-openclaw.json (env SecretRef for gateway token)
      - Write per-agent auth-profiles.json files from configured sources
-  6. buildVmSpec → GatewayVmSpec (4 mounts, TCP pool, env)
+  6. buildVmRequirements → GatewayVmRequirements (mounts, TCP pool, env)
   7. buildProcessSpec → bootstrap + start commands
-  8. createManagedVm → Gondolin VM
+  8. injected ManagedVmFactory.createManagedVm → backend-neutral ManagedVm
   9. Bootstrap: write shell/admin profiles and runtime secret env files
   10. Start: source runtime secrets, then run openclaw gateway --port 18789
   11. Wait for service liveness check (GET /health on :18789)
@@ -190,7 +190,7 @@ Gondolin ingress.
        |     agentWorkspaceDir match
        |  3. Probe existing VM; evict stale leases
        |  4. tcpPool.allocate() → slot 0 (port 19000)
-       |  5. createManagedVm() → boot tool VM
+       |  5. injected ManagedVmFactory.createManagedVm() → boot tool VM
        |  6. vm.enableSsh() → client credential + exact server identity
        |  7. Store lease record
        v
@@ -516,7 +516,7 @@ Tool VM SSH path is healthy.
 
 | Package | File | Responsibility |
 |---------|------|---------------|
-| openclaw-gateway | `openclaw-lifecycle.ts` | buildVmSpec, buildProcessSpec, prepareHostState, authConfig |
+| openclaw-gateway | `openclaw-lifecycle.ts` | buildVmRequirements, buildProcessSpec, prepareHostState, authConfig |
 | openclaw-agent-vm-plugin | `openclaw-plugin-registration.ts` | Plugin discovery, sandbox backend factory |
 | openclaw-agent-vm-plugin | `sandbox-backend-contract.ts` | File bridge, shell execution interface |
 | agent-vm | `controller-runtime-operations.ts` | Zone operations (destroy, upgrade, logs, etc.) |

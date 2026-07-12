@@ -55,9 +55,17 @@ zone files; the OpenClaw VM path is `/zone`.
   +----------------------------------------------------+
 ```
 
-### Controller ↔ Gondolin
+### Controller ↔ Managed VM Provider
 
-The controller calls `gondolin-adapter` to create VMs. It passes a `GatewayVmSpec` (VFS mounts, secrets, tcpHosts, derived VM `allowedHosts`, rootfsMode) and gets back a `ManagedVm` handle with `exec()`, `enableSsh()`, `enableIngress()`, `close()`. Zone config uses audience-scoped `egressHosts`; lifecycle code derives the per-VM `allowedHosts` list from that higher-level policy.
+The `agent-vm` composition root selects `gondolin-vm-adapter` and projects its
+provider into narrow `managed-vm` capabilities for VM creation, owned host
+directories, images, and diagnostics. Gateway lifecycles supply neutral
+`GatewayVmRequirements`; the controller authorizes paths, resolves resources,
+and constructs a neutral VM request. Domain code receives a `ManagedVm` handle
+with structural operations such as `exec()`, `enableSsh()`, `enableIngress()`,
+and `close()`—never a native Gondolin instance or filesystem object. Zone config
+uses audience-scoped `egressHosts`; lifecycle code derives the per-VM
+`allowedHosts` list from that higher-level policy.
 
 → Deep dive: [subsystems/gondolin-vm-layer.md](../subsystems/gondolin-vm-layer.md)
 → Upstream Gondolin sandbox example:
@@ -164,7 +172,7 @@ resource boundary.
 
 ### Gateway Lifecycle Contract
 
-Both modes implement the same `GatewayLifecycle` interface. The controller calls `buildVmSpec()` + `buildProcessSpec()` and gets pure data specs back — it never knows the specifics of Worker or OpenClaw.
+Both modes implement the same `GatewayLifecycle` interface. The controller calls `buildVmRequirements()` + `buildProcessSpec()` and gets pure data back — it never knows the specifics of Worker or OpenClaw.
 
 → Deep dive: [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md)
 
@@ -194,27 +202,21 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Seventeen workspace packages compose the system. Dependencies flow downward.
+Eighteen workspace packages compose the system. Dependencies flow downward.
 
 ```
-  @earendil-works/gondolin
-        |
-        v
-  gondolin-adapter
-        |
-        v
-  gateway-interface --------------+
-        |                          |
-        v                          v
-  openclaw-gateway          worker-gateway
-        |                          |
-        +------------+-------------+
-                     |
-                     v
-                 agent-vm
-                     |
-                     v
-              agent-vm-worker
+  openclaw-gateway ----+
+                       +--> gateway-lifecycle --> managed-vm
+  worker-gateway ------+                           ^
+                                                   |
+  agent-vm -----------------------------------------+
+      |
+      +--> gondolin-vm-adapter ---------------------+
+                 |
+                 v
+         @earendil-works/gondolin
+
+  agent-vm --> agent-vm-worker
 
   control-protocol-contracts
         |
@@ -253,15 +255,16 @@ Seventeen workspace packages compose the system. Dependencies flow downward.
 | **control-protocol-contracts** | Shared Socket.IO control-session envelope, identity, fencing, delivery, sequencing, close reason, and ack/result Zod contracts. |
 | **gateway-control-contracts** | Gateway-domain control RPC Zod contracts for gateway readiness, lease intent/observation, health, recovery, and controller-host-action requests. |
 | **worker-control-contracts** | Worker-domain control RPC Zod contracts for worker readiness, task lifecycle observations, runtime status, and controller-backed git operations. |
-| **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
-| **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
+| **managed-vm** | Backend-neutral structural contracts for VM creation/runtime, images, diagnostics, and owned host-directory capabilities. It exposes no native provider handle or filesystem escape hatch. |
+| **gondolin-vm-adapter** | Implements `managed-vm` with the Gondolin SDK, including VM translation, owned host directories, image builds, VFS, ingress, SSH, and HTTP mediation. |
+| **gateway-lifecycle** | The gateway contract: `GatewayLifecycle`, neutral `GatewayVmRequirements`, process specs, shared runtime policy, and secret-placement intent. |
 | **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
 | **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, private control-session ingress wiring, no auth, no `prepareHostState`. |
 | **agent-portal-sdk** | Portal-neutral Zod v4 contracts for list/search/describe/call results, capability descriptions, approvals, artifacts, diagnostics, and adapter envelopes. |
 | **mcp-portal** | MCP-specific capability facade, upstream MCP client runtime, scoped catalog/search, schema validation, approval evaluation, external MCP proxy, and MCP provider backend for Tool Portal composition. |
 | **tool-portal** | Cross-backend capability portal contracts, CLI allowance validation, and in-process entrypoint that dispatches MCP-backed capabilities through the MCP Portal backend and controller-owned host actions. |
 | **controller-execution-contracts** | Zod contracts for controller dispatch, controller host-action, and Tool VM runner boundaries. |
-| **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), Socket.IO control-session clients, lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
+| **agent-vm** | The controller and application composition root. Its regular Gondolin adapter dependency is confined to the provider-composition and build-tooling modules; controller domains consume narrow `managed-vm` projections. |
 | **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and control-session-backed controller tools such as `git-push` and `git-pull-default`. |
 | **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox and Tool Portal systems. Registers Gondolin VMs as an OpenClaw sandbox backend, registers Tool Portal native tools, and uses the private gateway control session for controller-owned operations. |
 
@@ -330,7 +333,7 @@ and the default 100 minute fallback.
 
 ## Gateway Abstraction
 
-The `GatewayLifecycle` interface (`gateway-interface` package) is the contract every gateway type must implement. The controller never knows the specifics of OpenClaw or worker -- it calls the lifecycle methods and gets back pure data specs.
+The `GatewayLifecycle` interface (`gateway-lifecycle` package) is the contract every gateway type must implement. The controller never knows the specifics of OpenClaw or worker -- it calls the lifecycle methods and gets back pure data requirements and process specs.
 
 ### Interface
 
@@ -342,7 +345,7 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
   |     buildLoginCommand(provider,    Shell command for interactive login
   |       options?)
   |
-  |-- buildVmSpec(options)            Pure data -> GatewayVmSpec
+  |-- buildVmRequirements(options)   Pure data -> GatewayVmRequirements
   |     environment                    Env vars for the VM
   |     vfsMounts                      Host-to-guest folder mappings
   |     mediatedSecrets                Secrets injected via HTTP mediation
@@ -388,7 +391,7 @@ Both implementations call `splitResolvedGatewaySecrets()` to partition resolved 
 
 ## Gondolin VM Layer
 
-Gondolin (`@earendil-works/gondolin`) provides QEMU micro-VMs with sub-second boot times and strong host isolation. The `gondolin-adapter` package wraps the SDK and exposes a simplified interface.
+Gondolin (`@earendil-works/gondolin`) provides QEMU micro-VMs with sub-second boot times and strong host isolation. The `gondolin-vm-adapter` package implements the neutral `managed-vm` contracts with that SDK.
 
 ### What Gondolin Provides
 
@@ -403,13 +406,23 @@ Gondolin (`@earendil-works/gondolin`) provides QEMU micro-VMs with sub-second bo
 | **SSH** | On-demand SSH access into the VM for debugging |
 | **Image build** | `buildAssets()` converts a build config into a VM image: `rootfs.ext4`, `initramfs.cpio.lz4`, `vmlinuz-virt` |
 
-### gondolin-adapter Wrapper
+### gondolin-vm-adapter Provider
 
-The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
+The `gondolin-vm-adapter` package keeps raw SDK operations behind the neutral provider:
 
-- **`createManagedVm(options)`** -- assembles VFS mounts and HTTP hooks, then returns an unstarted `ManagedVm` handle (`start`, `exec`, `enableSsh`, `enableIngress`, `close`).
-- **`buildImage(options)`** -- fingerprint-cached image builds (SHA-256 of build config + runtime build version tag + fingerprint input).
-- **`SecretResolver` / `resolveServiceAccountToken`** -- resolve `SecretRef` values from 1Password, environment variables, or inline config values.
+- **VM provider** -- translates neutral creation requests into Gondolin VFS,
+  mediation, networking, ingress, SSH, and runtime operations.
+- **Owned directories** -- pins and revalidates security-sensitive host
+  directories without exporting native filesystem handles.
+- **Image tooling** -- performs fingerprint-cached Gondolin image builds and
+  projects only the primitive build metadata needed by `agent-vm`.
+
+`agent-vm` imports this package only from
+`packages/agent-vm/src/composition/gondolin-managed-vm-provider.ts` and
+`packages/agent-vm/src/build/gondolin-managed-vm-build-tooling.ts`. Gateway
+orchestration, Tool VM orchestration, leases, health, runtime records, recovery,
+and supervision use `managed-vm` contracts and cannot call a backend escape
+hatch such as `getVmInstance()`.
 
 ### VFS Mount Types
 
@@ -427,7 +440,7 @@ The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
 
 ## Gateway Zone Orchestrator
 
-`gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM, regardless of type. It coordinates the lifecycle, image builder, and Gondolin adapter.
+`gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM, regardless of type. It coordinates the lifecycle, neutral image capability, and injected `ManagedVmFactory`.
 
 Before successor admission, controller startup performs record-based cleanup from schema-v2 Gateway and Tool VM runtime records; controller restart never adopts an existing VM. `startGatewayZone` then owns the new Gateway epoch and its exact runner identity. See [OpenClaw Gateway](openclaw-gateway.md), [Controller](../subsystems/controller.md), and [Gondolin VM Layer](../subsystems/gondolin-vm-layer.md) for the subsystem contracts.
 
@@ -534,7 +547,7 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
      |-- Start only selected repo-local Compose providers
      |
   2. BOOT VM (startGatewayZone with zoneOverride)
-     |-- Use worker lifecycle (buildVmSpec, buildProcessSpec)
+     |-- Use worker lifecycle (buildVmRequirements, buildProcessSpec)
      |-- Keep /work/repos as VM-local rootfs/COW
      |-- Mount task state -> /state
      |-- Mount task gitdirs -> /gitdirs
@@ -651,9 +664,11 @@ the system build environment, not an individual gateway or tool VM.
 | Image | Config Path | Used By | Rootfs Mode |
 |-------|-------------|---------|-------------|
 | Gateway | `imageProfiles.gateways.<name>.buildConfig` | Gateway VMs (OpenClaw or Worker) | `cow` |
-| Tool | `imageProfiles.toolVms.<name>.buildConfig` | Tool VMs (on-demand code execution) | `memory` |
+| Tool | `imageProfiles.toolVms.<name>.buildConfig` | Tool VMs (on-demand code execution) | `cow` |
 
-Gateway images use copy-on-write rootfs so the gateway process can install packages and modify the filesystem within the session. Tool images use memory-backed rootfs for full ephemeral isolation -- everything is lost when the VM closes.
+Gateway and Tool VM images use copy-on-write rootfs so their processes can
+modify the filesystem within the session without mutating the base image. Tool
+VM teardown still discards that session-local copy-on-write state.
 
 ---
 

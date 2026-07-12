@@ -383,15 +383,23 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 ## Packages
 
 ```text
-secrets                   → SecretRef/SecretResolver contracts, env + 1Password resolution
-gondolin-adapter          → VM build pipeline and adapter (→ secrets)
-gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter, secrets)
-openclaw-gateway          → OpenClaw lifecycle (→ gateway-interface, gondolin-adapter)
-worker-gateway            → Worker lifecycle (→ gateway-interface, gondolin-adapter)
-openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ gondolin-adapter)
-agent-vm-worker           → Worker process, runs inside VM (standalone)
-agent-vm                  → Controller CLI + HTTP server (→ all above)
+secret-management        → SecretRef/SecretResolver contracts, env + 1Password resolution
+managed-vm               → Backend-neutral VM capabilities and structural contracts
+gateway-lifecycle        → GatewayLifecycle, VM requirements, and process specs (→ managed-vm)
+gondolin-vm-adapter      → Gondolin provider and image tooling (→ managed-vm, Gondolin SDK)
+openclaw-gateway         → OpenClaw lifecycle (→ gateway-lifecycle, managed-vm)
+worker-gateway           → Worker lifecycle (→ gateway-lifecycle, managed-vm)
+openclaw-agent-vm-plugin → OpenClaw sandbox and Tool Portal bridge
+agent-vm-worker          → Worker process, runs inside VM (standalone)
+agent-vm                 → Controller CLI + HTTP server; composes the selected provider
 ```
+
+`agent-vm` has a regular runtime dependency on `gondolin-vm-adapter`, but only
+`packages/agent-vm/src/composition/gondolin-managed-vm-provider.ts` and
+`packages/agent-vm/src/build/gondolin-managed-vm-build-tooling.ts` may import
+it. Controller domains, Gateway and Tool VM orchestration, leases, health, and
+recovery consume narrow `managed-vm` capabilities. Do not expose native
+Gondolin handles, filesystem objects, or `getVmInstance()` across that boundary.
 
 ## Layout
 
