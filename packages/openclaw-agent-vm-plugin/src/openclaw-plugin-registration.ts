@@ -84,7 +84,7 @@ function resolveGatewayControlCallerContextAgentAuthorityKeys(): Readonly<Record
 	return parsedKeys;
 }
 
-export function registerGondolinPlugin(
+export function registerAgentVmPlugin(
 	api: {
 		readonly config?: GondolinPluginConfigJsonObject;
 		readonly pluginConfig: GondolinPluginConfigInput;
@@ -277,8 +277,8 @@ const plugin = {
 	name: 'Gondolin VM Sandbox',
 	description: 'Sandbox backend powered by Gondolin micro-VMs.',
 
-	register(api: Parameters<typeof registerGondolinPlugin>[0]): void {
-		registerGondolinPlugin(api, { enableToolVmWriteReadE2eRoute: true });
+	register(api: Parameters<typeof registerAgentVmPlugin>[0]): void {
+		registerAgentVmPlugin(api, { enableToolVmWriteReadE2eRoute: true });
 	},
 };
 
