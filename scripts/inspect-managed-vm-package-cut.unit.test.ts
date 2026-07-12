@@ -12,6 +12,7 @@ import {
 	inspectPackedPackage,
 	parseInspectManagedVmPackageCutArgs,
 	prepareCleanBuildDirectories,
+	readWorkspacePackages,
 	validateTarMemberNames,
 	type PackedPackageInput,
 	type WorkspacePackage,
@@ -98,6 +99,37 @@ function packedPackage(
 }
 
 describe('managed VM exact-HEAD package inspector', () => {
+	it('ignores non-package directories while discovering workspace packages', async () => {
+		// Arrange
+		const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'package-inspector-workspace-'));
+		const packageDirectory = path.join(temporaryRoot, 'packages', 'managed-vm');
+		await mkdir(packageDirectory, { recursive: true });
+		await mkdir(path.join(temporaryRoot, 'packages', 'gateway-contracts'), { recursive: true });
+		await writeFile(
+			path.join(packageDirectory, 'package.json'),
+			JSON.stringify(manifest('@agent-vm/managed-vm')),
+			'utf8',
+		);
+
+		try {
+			// Act
+			const workspacePackages = await readWorkspacePackages(temporaryRoot);
+
+			// Assert
+			expect(workspacePackages).toMatchObject([
+				{
+					directory: packageDirectory,
+					manifest: {
+						name: '@agent-vm/managed-vm',
+						version: '1.2.3',
+					},
+				},
+			]);
+		} finally {
+			await rm(temporaryRoot, { force: true, recursive: true });
+		}
+	});
+
 	it('parses the required exact HEAD argument and rejects stale HEAD', () => {
 		// Arrange
 		const options = parseInspectManagedVmPackageCutArgs(['--expected-head', 'expected-head']);

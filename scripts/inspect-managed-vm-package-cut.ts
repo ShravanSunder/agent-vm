@@ -432,20 +432,37 @@ export function inspectPackedPackage(
 	};
 }
 
-async function readWorkspacePackages(repositoryRoot: string): Promise<readonly WorkspacePackage[]> {
+function isFileNotFoundError(error: unknown): error is NodeJS.ErrnoException {
+	return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+export async function readWorkspacePackages(
+	repositoryRoot: string,
+): Promise<readonly WorkspacePackage[]> {
 	const packagesDirectory = path.join(repositoryRoot, 'packages');
 	const entries = await readdir(packagesDirectory, { withFileTypes: true });
 	const packageDirectories = entries
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => path.join(packagesDirectory, entry.name));
-	return await Promise.all(
-		packageDirectories.map(async (directory): Promise<WorkspacePackage> => {
+	const workspacePackages = await Promise.all(
+		packageDirectories.map(async (directory): Promise<WorkspacePackage | undefined> => {
 			const manifestPath = path.join(directory, 'package.json');
-			return {
-				directory,
-				manifest: parseWorkspacePackageManifest(await readFile(manifestPath, 'utf8'), manifestPath),
-			};
+			try {
+				return {
+					directory,
+					manifest: parseWorkspacePackageManifest(
+						await readFile(manifestPath, 'utf8'),
+						manifestPath,
+					),
+				};
+			} catch (error: unknown) {
+				if (isFileNotFoundError(error)) return undefined;
+				throw error;
+			}
 		}),
+	);
+	return workspacePackages.filter(
+		(workspacePackage): workspacePackage is WorkspacePackage => workspacePackage !== undefined,
 	);
 }
 
