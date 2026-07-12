@@ -30,10 +30,10 @@ export interface ManagedVmExecResult {
 export interface ManagedVmExecProcess
 	extends PromiseLike<ManagedVmExecResult>, AsyncIterable<string> {
 	catch<TResult = never>(
-		onRejected?: ((reason: Error) => TResult | PromiseLike<TResult>) | undefined,
+		onRejected?: (reason: Error) => TResult | PromiseLike<TResult>,
 	): Promise<ManagedVmExecResult | TResult>;
 	end(): void;
-	finally(onFinally?: (() => void) | undefined): Promise<ManagedVmExecResult>;
+	finally(onFinally?: () => void): Promise<ManagedVmExecResult>;
 	lines(): AsyncIterable<string>;
 	output(): AsyncIterable<ManagedVmExecOutputChunk>;
 	readonly result: Promise<ManagedVmExecResult>;
