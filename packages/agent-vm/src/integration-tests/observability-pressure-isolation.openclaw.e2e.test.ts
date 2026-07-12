@@ -29,7 +29,7 @@ import {
 	writeControlLeaseReliabilityEvidence,
 } from './control-lease-reliability-evidence.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
@@ -44,7 +44,7 @@ import { withProtocolDeadline } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runObservabilityPressureE2e =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeObservabilityPressureE2e = runObservabilityPressureE2e ? describe : describe.skip;
 const reliabilityOperationId = 'observability-pressure-isolation';
 const zoneId = 'observability-pressure-isolation';

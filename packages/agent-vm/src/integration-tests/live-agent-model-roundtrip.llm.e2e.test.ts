@@ -7,7 +7,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { runBuildCommand } from '../cli/build-command.js';
-import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
@@ -287,7 +287,7 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 					systemConfig: liveSystemConfig,
 					zoneIds: [zone.id],
 				},
-				createGondolinManagedVmRuntimeComposition(),
+				createManagedVmRuntimeComposition(),
 			);
 			await waitForControllerHealth(runtime.controllerPort);
 

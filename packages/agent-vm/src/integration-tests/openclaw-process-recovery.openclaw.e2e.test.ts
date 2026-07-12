@@ -29,7 +29,7 @@ import {
 	writeControlLeaseReliabilityEvidence,
 } from './control-lease-reliability-evidence.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
@@ -44,7 +44,7 @@ import { waitForProtocolRetryInterval, withProtocolDeadline } from './e2e-protoc
 
 const architecture = currentE2eArchitecture();
 const runOpenClawProcessRecoveryE2e =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawProcessRecoveryE2e = runOpenClawProcessRecoveryE2e ? describe : describe.skip;
 const zoneId = 'process-recovery-smoke';
 const gatewayToken = 'process-recovery-smoke-gateway-token';

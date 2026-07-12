@@ -8,7 +8,7 @@ import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod/v4';
 
-import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import type { WorkerControlRpcOperations } from '../controller/control-session/worker-control-domain-handler.js';
 import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';
 import {
@@ -35,7 +35,7 @@ const workerE2eFinalStateSchema = z
 		status: z.string().optional(),
 	})
 	.passthrough();
-const managedVmRuntimeComposition = createGondolinManagedVmRuntimeComposition();
+const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 
 async function createSampleRepo(baseDir: string): Promise<string> {
 	const repoDir = path.join(baseDir, 'sample-repo');

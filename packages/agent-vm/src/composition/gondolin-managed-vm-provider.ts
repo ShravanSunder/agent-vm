@@ -50,8 +50,8 @@ function createAuthoritativeManagedVmImageCapability(
 	};
 }
 
-/** Select Gondolin once while keeping its aggregate provider inside composition. */
-export function createGondolinManagedVmRuntimeComposition(): ManagedVmRuntimeComposition {
+/** Select the configured backend once while keeping its aggregate provider inside composition. */
+export function createManagedVmRuntimeComposition(): ManagedVmRuntimeComposition {
 	const provider = createGondolinManagedVmProvider();
 	return {
 		configureManagedVmHostNetworkDefaults: configureHostNetworkDefaults,

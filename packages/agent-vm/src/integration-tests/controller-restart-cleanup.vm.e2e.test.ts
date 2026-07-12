@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import {
@@ -36,7 +36,7 @@ import {
 import { waitForProtocolRetryInterval, withProtocolDeadline } from './e2e-protocol-wait.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
-const managedVmRuntimeComposition = createGondolinManagedVmRuntimeComposition();
+const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 const { managedVmFactory } = managedVmRuntimeComposition;
 const describeLiveVmE2e = shouldRunLiveVmE2e() ? describe : describe.skip;
 const reliabilityOperationId = 'controller-restart-cleanup';

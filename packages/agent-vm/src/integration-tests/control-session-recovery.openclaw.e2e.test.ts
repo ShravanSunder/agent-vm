@@ -38,7 +38,7 @@ import {
 	writeControlLeaseReliabilityEvidence,
 } from './control-lease-reliability-evidence.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
@@ -53,7 +53,7 @@ import { waitForProtocolRetryInterval, withProtocolDeadline } from './e2e-protoc
 
 const architecture = currentE2eArchitecture();
 const runControlSessionRecoveryE2e =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeControlSessionRecoveryE2e = runControlSessionRecoveryE2e ? describe : describe.skip;
 const zoneId = 'control-session-recovery';
 const gatewayToken = 'control-session-recovery-gateway-token';

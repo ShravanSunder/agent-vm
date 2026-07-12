@@ -20,7 +20,7 @@ import { z } from 'zod';
 import {
 	resolveManagedVmBackendPackageSpec,
 	resolveManagedVmMinimumZigVersion,
-} from '../build/gondolin-managed-vm-build-tooling.js';
+} from '../build/managed-vm-build-tooling.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
 import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
@@ -71,7 +71,7 @@ interface ScaffoldAgentVmProjectDependencies {
 		profileName: string,
 	) => Promise<'created' | 'skipped'>;
 	readonly getHomeDir?: () => string;
-	readonly resolveGondolinMinimumZigVersion?: typeof resolveManagedVmMinimumZigVersion;
+	readonly resolveManagedVmMinimumZigVersion?: typeof resolveManagedVmMinimumZigVersion;
 }
 
 export interface PromptAndStoreTokenDependencies {
@@ -1292,14 +1292,14 @@ async function scaffoldAgentVmProjectInternal(
 
 	if (options.hostSystemType === 'container') {
 		const resolveZigVersion =
-			dependencies.resolveGondolinMinimumZigVersion ?? resolveManagedVmMinimumZigVersion;
+			dependencies.resolveManagedVmMinimumZigVersion ?? resolveManagedVmMinimumZigVersion;
 		const zigVersion = await resolveZigVersion();
-		const gondolinPackageSpec = await resolveManagedVmBackendPackageSpec();
+		const managedVmBackendPackageSpec = await resolveManagedVmBackendPackageSpec();
 		const vmHostSystemFiles = [
 			[
 				'Dockerfile',
 				renderVmHostSystemDockerfile({
-					gondolinPackageSpec,
+					managedVmBackendPackageSpec,
 					imageArchitecture: options.architecture,
 					zigVersion,
 				}),

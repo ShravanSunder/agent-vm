@@ -17,7 +17,7 @@ import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
 	prepareGatewayE2eProjectImages,
@@ -33,7 +33,7 @@ import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawControlSession =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawControlSession = runOpenClawControlSession ? describe : describe.skip;
 const agentId = 'control-session';
 const gatewayToken = 'openclaw-control-session-gateway-token';

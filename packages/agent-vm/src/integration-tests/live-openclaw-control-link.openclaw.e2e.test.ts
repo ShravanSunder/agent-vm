@@ -15,7 +15,7 @@ import type {
 	OpenClawGatewayProcessEpochOwner,
 } from '../gateway/openclaw-gateway-process-epoch-owner.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
 	prepareGatewayE2eProjectImages,
@@ -32,7 +32,7 @@ import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawControlLinkSmoke =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawControlLinkSmoke = runOpenClawControlLinkSmoke ? describe : describe.skip;
 const agentId = 'smoke';
 const gatewayToken = 'control-session-smoke-gateway-token';

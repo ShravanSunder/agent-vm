@@ -9,14 +9,19 @@ import {
 	type DockerRootfsIdentity,
 } from '../build/docker-image-builder.js';
 import {
-	buildGondolinImage as buildGondolinImageDefault,
+	buildManagedVmImage as buildManagedVmImageDefault,
 	computeFingerprintFromConfigPath,
 } from '../build/gondolin-image-builder.js';
 import {
 	hasManagedVmImageAssets,
 	managedVmImageAssetFileNames,
-	type ManagedVmBackendImageBuildResult,
 } from '../build/gondolin-managed-vm-build-tooling.js';
+
+interface ManagedVmBackendImageBuildResult {
+	readonly built: boolean;
+	readonly fingerprint: string;
+	readonly imagePath: string;
+}
 import {
 	generateManagedDockerfile as generateManagedDockerfileDefault,
 	resolveManagedImageRelease as resolveManagedImageReleaseDefault,
@@ -64,14 +69,14 @@ export interface BuildCommandDependencies {
 		readonly quiet?: boolean;
 		readonly streamPreview?: TaskOutput;
 	}) => Promise<void>;
-	readonly buildGondolinImage?: (options: {
+	readonly buildManagedVmImage?: (options: {
 		readonly buildConfigPath: string;
 		readonly cacheDir: string;
 		readonly fingerprintInput?: unknown;
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
 	}) => Promise<ManagedVmBackendImageBuildResult>;
-	readonly computeGondolinFingerprint?: (options: {
+	readonly computeManagedVmFingerprint?: (options: {
 		readonly buildConfigPath: string;
 		readonly fingerprintInput?: unknown;
 	}) => Promise<string>;
@@ -743,9 +748,9 @@ export async function runBuildCommand(
 	const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
 	const resolveDockerRootfsIdentity =
 		dependencies.resolveDockerRootfsIdentity ?? resolveDockerRootfsIdentityDefault;
-	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
-	const computeGondolinFingerprint =
-		dependencies.computeGondolinFingerprint ??
+	const buildManagedVmImage = dependencies.buildManagedVmImage ?? buildManagedVmImageDefault;
+	const computeManagedVmFingerprint =
+		dependencies.computeManagedVmFingerprint ??
 		(async (fingerprintOptions): Promise<string> =>
 			fingerprintOptions.fingerprintInput === undefined
 				? await computeFingerprintFromConfigPath(fingerprintOptions.buildConfigPath)
@@ -930,7 +935,7 @@ export async function runBuildCommand(
 		let fingerprint = fingerprintByInputKey.get(fingerprintInputKey);
 		if (fingerprint === undefined) {
 			// oxlint-disable-next-line no-await-in-loop -- fingerprint errors should identify the matching profile path
-			fingerprint = await computeGondolinFingerprint({
+			fingerprint = await computeManagedVmFingerprint({
 				buildConfigPath: imageTarget.buildConfigPath,
 				...(fingerprintInput === undefined ? {} : { fingerprintInput }),
 			});
@@ -981,7 +986,7 @@ export async function runBuildCommand(
 					const gondolinTaskOutput = createGondolinPhaseTaskOutput(taskContext, statusController);
 					let result: ManagedVmBackendImageBuildResult;
 					try {
-						result = await buildGondolinImage({
+						result = await buildManagedVmImage({
 							buildConfigPath: targetPlan.imageTarget.buildConfigPath,
 							cacheDir: targetPlan.imageTarget.cacheDirectory,
 							...(targetPlan.fingerprintInput === undefined

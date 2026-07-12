@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { readDurableHealthEvents } from '../controller/health/durable-health-event-log.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
 	prepareGatewayE2eProjectImages,
@@ -29,7 +29,7 @@ import {
 
 const architecture = currentE2eArchitecture();
 const runOpenClawStability =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawStability = runOpenClawStability ? describe : describe.skip;
 const agentId = 'stability';
 const gatewayToken = 'openclaw-stability-gateway-token';

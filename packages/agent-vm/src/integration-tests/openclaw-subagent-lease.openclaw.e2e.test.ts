@@ -21,7 +21,7 @@ import type {
 } from '../gateway/openclaw-gateway-process-epoch-owner.js';
 import { stableTelemetryHash } from '../observability/health-event-telemetry.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
@@ -36,7 +36,7 @@ import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawSubagentE2e =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawSubagentE2e = runOpenClawSubagentE2e ? describe : describe.skip;
 const mainAgentId = 'main';
 const betaAgentId = 'beta';

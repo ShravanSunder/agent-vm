@@ -14,7 +14,7 @@ import {
 	type GatewayApiClient,
 } from '../gateway-api-client/gateway-api-client.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
@@ -28,7 +28,7 @@ import {
 
 const architecture = currentE2eArchitecture();
 const runOpenClawMcpPortalSmoke =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawMcpPortalSmoke = runOpenClawMcpPortalSmoke ? describe : describe.skip;
 const agentIds = ['main', 'beta'] as const;
 const mainAgentId = agentIds[0];

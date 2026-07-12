@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import {
@@ -23,7 +23,7 @@ import {
 import { runControllerOfflineCleanup } from '../operations/controller-offline-cleanup.js';
 import { isProcessAlive } from '../shared/managed-vm-process.js';
 
-const managedVmRuntimeComposition = createGondolinManagedVmRuntimeComposition();
+const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 const { managedVmFactory } = managedVmRuntimeComposition;
 import {
 	captureManagedVmTermination,

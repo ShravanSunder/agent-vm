@@ -26,7 +26,7 @@ import {
 import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { runBuildCommand } from '../cli/build-command.js';
 import { scaffoldAgentVmProject, type ImageArchitecture } from '../cli/init-command.js';
-import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import type {
@@ -41,7 +41,7 @@ import {
 } from '../gateway/gateway-zone-orchestrator.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 
-const managedVmRuntimeComposition = createGondolinManagedVmRuntimeComposition();
+const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 
 export async function startE2eGatewayZone(
 	options: StartGatewayZoneOptions,
@@ -197,7 +197,7 @@ export interface ScaffoldGatewayE2eProjectOptions {
 	readonly zoneId: string;
 }
 
-export interface GondolinE2ePrerequisiteOptions {
+export interface ManagedVmE2ePrerequisiteOptions {
 	readonly architecture: ImageArchitecture;
 	readonly commandExists?: (command: string) => boolean;
 	readonly resolveRequiredZigVersion?: () => Promise<string>;
@@ -266,7 +266,9 @@ export async function removeE2eTempRoot(tempRoot: string): Promise<void> {
 	await fs.rm(tempRoot, { force: true, recursive: true });
 }
 
-export async function canRunGondolinE2e(options: GondolinE2ePrerequisiteOptions): Promise<boolean> {
+export async function canRunManagedVmE2e(
+	options: ManagedVmE2ePrerequisiteOptions,
+): Promise<boolean> {
 	const commandExists = options.commandExists ?? hasCommand;
 	if (
 		!commandExists(qemuCommandForArchitecture(options.architecture)) ||
@@ -299,7 +301,7 @@ export async function shouldRunWorkerGatewayE2e(options: {
 	) {
 		return false;
 	}
-	return await canRunGondolinE2e({
+	return await canRunManagedVmE2e({
 		architecture: options.architecture,
 		...(options.commandExists ? { commandExists: options.commandExists } : {}),
 		...(options.resolveRequiredZigVersion

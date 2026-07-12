@@ -307,7 +307,7 @@ export async function runGondolinBuildChildProcess(
 	});
 }
 
-export async function buildGondolinImage(
+export async function buildManagedVmImage(
 	options: {
 		readonly buildConfigPath: string;
 		readonly cacheDir: string;

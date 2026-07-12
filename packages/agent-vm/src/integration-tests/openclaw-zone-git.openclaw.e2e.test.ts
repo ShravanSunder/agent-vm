@@ -12,7 +12,7 @@ import {
 import { resolveZoneGitPaths } from '../controller/zone-git/zone-git-paths.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
-	canRunGondolinE2e,
+	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	disableOpenClawMcpPortalPlugin,
 	prepareGatewayE2eProjectImages,
@@ -27,7 +27,7 @@ import {
 
 const architecture = currentE2eArchitecture();
 const runOpenClawZoneGitSmoke =
-	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
+	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawZoneGitSmoke = runOpenClawZoneGitSmoke ? describe : describe.skip;
 const portalToolNames = [
 	'tool_portal_list',

@@ -22,9 +22,9 @@ vi.mock('@agent-vm/gondolin-vm-adapter', () => ({
 	hasBuiltImageAssets: vi.fn(async () => false),
 }));
 
-import { createGondolinManagedVmRuntimeComposition } from './gondolin-managed-vm-provider.js';
+import { createManagedVmRuntimeComposition } from './gondolin-managed-vm-provider.js';
 
-describe('createGondolinManagedVmRuntimeComposition', () => {
+describe('createManagedVmRuntimeComposition', () => {
 	beforeEach(() => {
 		createGondolinManagedVmProvider.mockReset();
 	});
@@ -44,7 +44,7 @@ describe('createGondolinManagedVmRuntimeComposition', () => {
 		});
 
 		// Act
-		const composition = createGondolinManagedVmRuntimeComposition();
+		const composition = createManagedVmRuntimeComposition();
 
 		// Assert
 		expect(createGondolinManagedVmProvider).toHaveBeenCalledOnce();
@@ -82,7 +82,7 @@ describe('createGondolinManagedVmRuntimeComposition', () => {
 		});
 
 		// Act
-		const composition = createGondolinManagedVmRuntimeComposition();
+		const composition = createManagedVmRuntimeComposition();
 
 		// Assert
 		// @ts-expect-error The aggregate provider is composition-private.

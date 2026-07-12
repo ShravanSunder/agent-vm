@@ -7,7 +7,7 @@ import { Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-	buildGondolinImage,
+	buildManagedVmImage,
 	computeFingerprintFromConfigPath,
 } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames as buildImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
@@ -309,7 +309,7 @@ async function runBuildCommand(
 	dependencies: BuildCommandDependencies = {},
 ): Promise<void> {
 	await runBuildCommandDefault(options, {
-		computeGondolinFingerprint: async (fingerprintOptions) =>
+		computeManagedVmFingerprint: async (fingerprintOptions) =>
 			`test-fingerprint:${fingerprintOptions.buildConfigPath}`,
 		resolveDockerRootfsIdentity: async (imageTag) => ({
 			architecture: 'arm64',
@@ -332,7 +332,7 @@ describe('runBuildCommand', () => {
 			buildDockerImage: async (options) => {
 				dockerBuilds.push(options);
 			},
-			buildGondolinImage: async () => ({
+			buildManagedVmImage: async () => ({
 				built: true,
 				fingerprint: 'abc123',
 				imagePath: '/cache/abc123',
@@ -369,7 +369,7 @@ describe('runBuildCommand', () => {
 			buildDockerImage: async () => {
 				events.push('docker');
 			},
-			buildGondolinImage: async () => {
+			buildManagedVmImage: async () => {
 				events.push('gondolin');
 				return {
 					built: true,
@@ -396,7 +396,7 @@ describe('runBuildCommand', () => {
 		const dependencies: BuildCommandDependencies = {
 			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async () => {},
-			buildGondolinImage: async () => ({
+			buildManagedVmImage: async () => ({
 				built: true,
 				fingerprint: 'abc123',
 				imagePath: '/cache/abc123',
@@ -423,7 +423,7 @@ describe('runBuildCommand', () => {
 		const dependencies: BuildCommandDependencies = {
 			runTask: createRecordingRunTask(outputLines),
 			buildDockerImage: async () => {},
-			buildGondolinImage: async () => ({
+			buildManagedVmImage: async () => ({
 				built: true,
 				fingerprint: 'abc123',
 				imagePath: '/cache/abc123',
@@ -452,7 +452,7 @@ describe('runBuildCommand', () => {
 		const dependencies: BuildCommandDependencies = {
 			runTask: createRecordingRunTask(outputLines),
 			buildDockerImage: async () => {},
-			buildGondolinImage: async () => ({
+			buildManagedVmImage: async () => ({
 				built: true,
 				fingerprint: 'abc123',
 				imagePath: '/cache/abc123',
@@ -492,7 +492,7 @@ describe('runBuildCommand', () => {
 		const dependencies: BuildCommandDependencies = {
 			runTask: createRecordingRunTask(outputLines),
 			buildDockerImage: async () => {},
-			buildGondolinImage: async () => ({
+			buildManagedVmImage: async () => ({
 				built: true,
 				fingerprint: 'abc123',
 				imagePath: '/cache/abc123',
@@ -577,7 +577,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options);
 				},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'managed-fp',
 					imagePath: '/cache/managed',
@@ -688,7 +688,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options);
 				},
-				buildGondolinImage: async (options) => ({
+				buildManagedVmImage: async (options) => ({
 					built: true,
 					fingerprint: 'plan-fp',
 					imagePath: path.join(options.cacheDir, 'plan-fp'),
@@ -775,7 +775,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async (options) => ({
+				buildManagedVmImage: async (options) => ({
 					built: true,
 					fingerprint: 'warning-fp',
 					imagePath: path.join(options.cacheDir, 'warning-fp'),
@@ -848,7 +848,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options);
 				},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'discord-fp',
 					imagePath: '/cache/discord',
@@ -922,7 +922,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options);
 				},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'observability-fp',
 					imagePath: '/cache/observability',
@@ -1005,7 +1005,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options);
 				},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'observability-fp',
 					imagePath: '/cache/observability',
@@ -1083,7 +1083,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options);
 				},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'disabled-discord-fp',
 					imagePath: '/cache/disabled-discord',
@@ -1137,7 +1137,7 @@ describe('runBuildCommand', () => {
 			{
 				runTask: async (_title, fn) => fn(),
 				buildDockerImage: async () => {},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'abc123',
 					imagePath: '/cache/abc123',
@@ -1160,7 +1160,7 @@ describe('runBuildCommand', () => {
 			buildDockerImage: async (options) => {
 				dockerBuilds.push(options);
 			},
-			buildGondolinImage: async () => ({
+			buildManagedVmImage: async () => ({
 				built: false,
 				fingerprint: 'cached',
 				imagePath: '/cache/cached',
@@ -1210,7 +1210,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'abc123',
 					imagePath: '/cache/abc123',
@@ -1235,7 +1235,7 @@ describe('runBuildCommand', () => {
 		const dependencies: BuildCommandDependencies = {
 			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async () => {},
-			buildGondolinImage: async (options) => {
+			buildManagedVmImage: async (options) => {
 				gondolinBuilds.push({
 					cacheDir: options.cacheDir,
 					fullReset: options.fullReset,
@@ -1276,7 +1276,7 @@ describe('runBuildCommand', () => {
 			{ systemConfig: createTestSystemConfig() },
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					gondolinBuilds.push({
 						cacheDir: options.cacheDir,
 						fingerprintInput: options.fingerprintInput,
@@ -1290,7 +1290,7 @@ describe('runBuildCommand', () => {
 						imagePath: '/cache/docker-refresh',
 					};
 				},
-				computeGondolinFingerprint: async (options) => {
+				computeManagedVmFingerprint: async (options) => {
 					fingerprintInputs.push(options.fingerprintInput);
 					return options.fingerprintInput === undefined
 						? 'tool-fingerprint'
@@ -1358,7 +1358,7 @@ describe('runBuildCommand', () => {
 		const dependencies: BuildCommandDependencies = {
 			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async () => {},
-			buildGondolinImage: async (options) => {
+			buildManagedVmImage: async (options) => {
 				gondolinBuilds.push({ cacheDir: options.cacheDir });
 				return { built: true, fingerprint: 'zone-fp', imagePath: '/cache/zone-fp' };
 			},
@@ -1484,7 +1484,7 @@ describe('runBuildCommand', () => {
 				systemConfig,
 			},
 			{
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					gondolinBuilds.push({
 						cacheDir: options.cacheDir,
 						fullReset: options.fullReset,
@@ -1508,7 +1508,7 @@ describe('runBuildCommand', () => {
 					});
 					return [];
 				},
-				computeGondolinFingerprint: async (options) => {
+				computeManagedVmFingerprint: async (options) => {
 					fingerprintComputations.push(options.buildConfigPath);
 					return options.buildConfigPath === gatewayBuildConfigPath
 						? 'gateway-fingerprint'
@@ -1535,7 +1535,7 @@ describe('runBuildCommand', () => {
 				expect(fs.existsSync(path.join(imagePath, fileName))).toBe(true);
 			}
 		}
-		const duplicateProfileCacheResult = await buildGondolinImage(
+		const duplicateProfileCacheResult = await buildManagedVmImage(
 			{
 				buildConfigPath,
 				cacheDir: path.join(cacheDirectory, 'tool-vm-images', 'sun'),
@@ -1587,12 +1587,12 @@ describe('runBuildCommand', () => {
 			runBuildCommand(
 				{ systemConfig },
 				{
-					buildGondolinImage: async (options) => {
+					buildManagedVmImage: async (options) => {
 						const imagePath = path.join(options.cacheDir, fingerprint);
 						writeFakeImageAssets(imagePath, 'canonical');
 						return { built: true, fingerprint, imagePath };
 					},
-					computeGondolinFingerprint: async () => fingerprint,
+					computeManagedVmFingerprint: async () => fingerprint,
 					findPrunableImageDirectories: async () => [],
 					runTask: async (_title, fn) => fn(),
 				},
@@ -1634,12 +1634,12 @@ describe('runBuildCommand', () => {
 			await runBuildCommand(
 				{ systemConfig },
 				{
-					buildGondolinImage: async (options) => {
+					buildManagedVmImage: async (options) => {
 						const imagePath = path.join(options.cacheDir, fingerprint);
 						writeFakeImageAssets(imagePath, `canonical-${hardlinkErrorCode}`);
 						return { built: true, fingerprint, imagePath };
 					},
-					computeGondolinFingerprint: async () => fingerprint,
+					computeManagedVmFingerprint: async () => fingerprint,
 					findPrunableImageDirectories: async () => [],
 					runTask: async (_title, fn) => fn(),
 				},
@@ -1694,12 +1694,12 @@ describe('runBuildCommand', () => {
 			await runBuildCommand(
 				{ systemConfig },
 				{
-					buildGondolinImage: async (options) => {
+					buildManagedVmImage: async (options) => {
 						const imagePath = path.join(options.cacheDir, fingerprint);
 						writeFakeImageAssets(imagePath, 'canonical');
 						return { built: true, fingerprint, imagePath };
 					},
-					computeGondolinFingerprint: async () => fingerprint,
+					computeManagedVmFingerprint: async () => fingerprint,
 					findPrunableImageDirectories: async () => [],
 					runTask: async (_title, fn) => fn(),
 				},
@@ -1735,7 +1735,7 @@ describe('runBuildCommand', () => {
 			runBuildCommand(
 				{ systemConfig },
 				{
-					buildGondolinImage: async (options) => {
+					buildManagedVmImage: async (options) => {
 						const fingerprint = options.cacheDir.includes('gateway-images')
 							? 'gateway-fingerprint'
 							: 'actual-fingerprint';
@@ -1745,7 +1745,7 @@ describe('runBuildCommand', () => {
 							imagePath: path.join(options.cacheDir, fingerprint),
 						};
 					},
-					computeGondolinFingerprint: async (options) =>
+					computeManagedVmFingerprint: async (options) =>
 						options.buildConfigPath.includes('gateway-build-config')
 							? 'gateway-fingerprint'
 							: 'precomputed-fingerprint',
@@ -1782,12 +1782,12 @@ describe('runBuildCommand', () => {
 		await runBuildCommand(
 			{ forceRebuild: true, systemConfig },
 			{
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					const imagePath = path.join(options.cacheDir, fingerprint);
 					writeFakeImageAssets(imagePath, 'fresh-force');
 					return { built: true, fingerprint, imagePath };
 				},
-				computeGondolinFingerprint: async () => fingerprint,
+				computeManagedVmFingerprint: async () => fingerprint,
 				findPrunableImageDirectories: async () => [],
 				runTask: async (_title, fn) => fn(),
 			},
@@ -1825,12 +1825,12 @@ describe('runBuildCommand', () => {
 		await runBuildCommand(
 			{ systemConfig },
 			{
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					const imagePath = path.join(options.cacheDir, fingerprint);
 					writeFakeImageAssets(imagePath, 'fresh-partial');
 					return { built: true, fingerprint, imagePath };
 				},
-				computeGondolinFingerprint: async () => fingerprint,
+				computeManagedVmFingerprint: async () => fingerprint,
 				findPrunableImageDirectories: async () => [],
 				runTask: async (_title, fn) => fn(),
 			},
@@ -1934,7 +1934,7 @@ describe('runBuildCommand', () => {
 		await runBuildCommand(
 			{ systemConfig },
 			{
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					gondolinBuilds.push(options.cacheDir);
 					const fingerprint = options.cacheDir.includes('gateway-images')
 						? 'gateway-fingerprint'
@@ -1946,7 +1946,7 @@ describe('runBuildCommand', () => {
 					}
 					return { built: true, fingerprint, imagePath };
 				},
-				computeGondolinFingerprint: async (options) =>
+				computeManagedVmFingerprint: async (options) =>
 					options.buildConfigPath === gatewayBuildConfigPath
 						? 'gateway-fingerprint'
 						: 'same-tool-fingerprint',
@@ -2013,7 +2013,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options.imageTag);
 				},
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					gondolinBuilds.push({
 						cacheDir: options.cacheDir,
 						fullReset: options.fullReset,
@@ -2025,7 +2025,7 @@ describe('runBuildCommand', () => {
 					}
 					return { built: true, fingerprint: sharedFingerprint, imagePath };
 				},
-				computeGondolinFingerprint: async () => sharedFingerprint,
+				computeManagedVmFingerprint: async () => sharedFingerprint,
 				findPrunableImageDirectories: async (options) => {
 					expect(options.currentFingerprints).toEqual({
 						gateways: { openclaw: sharedFingerprint },
@@ -2111,7 +2111,7 @@ describe('runBuildCommand', () => {
 					await new Promise<void>((resolve) => setImmediate(resolve));
 					activeDockerBuilds -= 1;
 				},
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					const imagePath = path.join(options.cacheDir, 'fingerprint');
 					writeFakeImageAssets(imagePath, options.cacheDir);
 					return {
@@ -2184,7 +2184,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options.imageTag);
 				},
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					const imagePath = path.join(options.cacheDir, 'fingerprint');
 					writeFakeImageAssets(imagePath, options.cacheDir);
 					return {
@@ -2220,7 +2220,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					gondolinBuilds.push({
 						cacheDir: options.cacheDir,
 						fullReset: options.fullReset,
@@ -2273,7 +2273,7 @@ describe('runBuildCommand', () => {
 						'View build details: docker-desktop://dashboard/build/orbstack/orbstack/test-build\n',
 					);
 				},
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					gondolinStreamPreviews.push(options.streamPreview);
 					options.streamPreview?.write(
 						'Extracting OCI rootfs from agent-vm-gateway:latest (docker)...\n',
@@ -2333,7 +2333,7 @@ describe('runBuildCommand', () => {
 				},
 			},
 			{
-				buildGondolinImage: async () => {
+				buildManagedVmImage: async () => {
 					await new Promise<void>((resolve) => {
 						finishGondolinBuild = resolve;
 					});
@@ -2386,7 +2386,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: false,
 					fingerprint: 'cached-fp',
 					imagePath: '/cache/cached',
@@ -2429,7 +2429,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async (options) => ({
+				buildManagedVmImage: async (options) => ({
 					built: false,
 					fingerprint: options.cacheDir.includes('gateway-images')
 						? 'current-gateway'
@@ -2479,7 +2479,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					buildOrder.push(`gondolin:${options.cacheDir}`);
 					return {
 						built: false,
@@ -2526,7 +2526,7 @@ describe('runBuildCommand', () => {
 					buildDockerImage: async () => {
 						throw new Error('docker failed');
 					},
-					buildGondolinImage: async () => ({
+					buildManagedVmImage: async () => ({
 						built: false,
 						fingerprint: 'current',
 						imagePath: '/cache/current',
@@ -2561,7 +2561,7 @@ describe('runBuildCommand', () => {
 				},
 				{
 					buildDockerImage: async () => {},
-					buildGondolinImage: async () => {
+					buildManagedVmImage: async () => {
 						throw new Error('gondolin failed');
 					},
 					deleteStaleImageDirectories,
@@ -2593,7 +2593,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async (options) => ({
+				buildManagedVmImage: async (options) => ({
 					built: false,
 					fingerprint: options.cacheDir.includes('gateway-images')
 						? 'current-gateway'
@@ -2669,7 +2669,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async (options) => ({
+				buildManagedVmImage: async (options) => ({
 					built: false,
 					fingerprint: options.cacheDir.includes('gateway-images')
 						? 'current-gateway'
@@ -2714,7 +2714,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildDockerImage: async () => {},
-				buildGondolinImage: async (options) => ({
+				buildManagedVmImage: async (options) => ({
 					built: false,
 					fingerprint: options.cacheDir.includes('gateway-images')
 						? 'current-gateway'
@@ -2763,11 +2763,11 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push(options.imageTag);
 				},
-				buildGondolinImage: async (options) => {
+				buildManagedVmImage: async (options) => {
 					gondolinBuilds.push(options.buildConfigPath);
 					return { built: true, fingerprint: 'zig-fp', imagePath: '/cache/zig' };
 				},
-				computeGondolinFingerprint: async () => 'zig-fp',
+				computeManagedVmFingerprint: async () => 'zig-fp',
 				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
 				resolveDockerRootfsIdentity: async () => ({
 					architecture: 'arm64',
@@ -2808,7 +2808,7 @@ describe('runBuildCommand', () => {
 						buildDockerImage: async (options) => {
 							dockerBuilds.push(options.imageTag);
 						},
-						buildGondolinImage: async (options) => {
+						buildManagedVmImage: async (options) => {
 							gondolinBuilds.push(options.buildConfigPath);
 							return { built: true, fingerprint: 'zig-fp', imagePath: '/cache/zig' };
 						},
@@ -2870,7 +2870,7 @@ describe('resolveOciImageTagFromConfig', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push({ imageTag: options.imageTag });
 				},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'fp',
 					imagePath: '/cache/fp',
@@ -2921,7 +2921,7 @@ describe('resolveOciImageTagFromConfig', () => {
 				buildDockerImage: async (options) => {
 					dockerBuilds.push({ imageTag: options.imageTag });
 				},
-				buildGondolinImage: async () => ({
+				buildManagedVmImage: async () => ({
 					built: true,
 					fingerprint: 'fp',
 					imagePath: '/cache/fp',
@@ -2959,7 +2959,7 @@ describe('resolveOciImageTagFromConfig', () => {
 				},
 				{
 					buildDockerImage: async () => {},
-					buildGondolinImage: async () => ({
+					buildManagedVmImage: async () => ({
 						built: true,
 						fingerprint: 'fp',
 						imagePath: '/cache/fp',
@@ -3009,7 +3009,7 @@ describe('resolveOciImageTagFromConfig', () => {
 				},
 				{
 					buildDockerImage: async () => {},
-					buildGondolinImage: async () => ({
+					buildManagedVmImage: async () => ({
 						built: true,
 						fingerprint: 'fp',
 						imagePath: '/cache/fp',
@@ -3052,7 +3052,7 @@ describe('resolveOciImageTagFromConfig', () => {
 				},
 				{
 					buildDockerImage: async () => {},
-					buildGondolinImage: async () => ({
+					buildManagedVmImage: async () => ({
 						built: true,
 						fingerprint: 'fp',
 						imagePath: '/cache/fp',
@@ -3089,7 +3089,7 @@ describe('resolveOciImageTagFromConfig', () => {
 				},
 				{
 					buildDockerImage: async () => {},
-					buildGondolinImage: async () => ({
+					buildManagedVmImage: async () => ({
 						built: true,
 						fingerprint: 'fp',
 						imagePath: '/cache/fp',
@@ -3125,7 +3125,7 @@ describe('resolveOciImageTagFromConfig', () => {
 					},
 				},
 				{
-					buildGondolinImage: async () => ({
+					buildManagedVmImage: async () => ({
 						built: true,
 						fingerprint: 'fp',
 						imagePath: '/cache/fp',

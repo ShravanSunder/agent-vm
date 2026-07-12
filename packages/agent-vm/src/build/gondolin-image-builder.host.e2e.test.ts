@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
-	buildGondolinImage,
+	buildManagedVmImage,
 	computeFingerprintFromConfigPath,
 	resolveDefaultGondolinBuildChildModuleUrl,
 	runGondolinBuildChildProcess,
@@ -15,7 +15,7 @@ import {
 	type GondolinImageBuildRequest,
 } from './gondolin-image-builder.js';
 
-describe('buildGondolinImage', () => {
+describe('buildManagedVmImage', () => {
 	it('resolves the default child-process entrypoint from source modules to built dist output', () => {
 		const packageRootPath = path.resolve('/repo/packages/agent-vm');
 		const sourceModuleUrl = pathToFileURL(
@@ -178,7 +178,7 @@ process.exit(1);
 			},
 		};
 
-		const result = await buildGondolinImage(
+		const result = await buildManagedVmImage(
 			{
 				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
 				cacheDir: '/cache/gateway-images/openclaw',
@@ -223,7 +223,7 @@ process.exit(1);
 			},
 		};
 
-		const result = await buildGondolinImage(
+		const result = await buildManagedVmImage(
 			{
 				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
 				cacheDir: '/cache/gateway-images/openclaw',
@@ -281,7 +281,7 @@ process.exit(1);
 			},
 		};
 
-		const result = await buildGondolinImage(
+		const result = await buildManagedVmImage(
 			{
 				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
 				cacheDir: '/cache/gateway-images/openclaw',

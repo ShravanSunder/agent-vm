@@ -7,6 +7,7 @@ import {
 	isRootPosixPath,
 	pathContainsParentTraversal,
 } from '../leases/lease-path-helpers.js';
+import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 
 const controllerLeaseAgentWorkspacePathSchema = z
 	.string()
@@ -90,7 +91,9 @@ export const controllerEndActiveUseRequestSchema = z.strictObject({
 	report: controllerToolVmActiveUseOperationReportSchema.optional(),
 });
 
-export const controllerOpenClawRuntimeStatusRequestSchema = z.strictObject({
+export const controllerOpenClawRuntimeStatusRequestSchema: z.ZodType<
+	Pick<OpenClawRuntimeStatusReport, 'findings' | 'pluginId' | 'zoneId'>
+> = z.strictObject({
 	findings: z
 		.array(
 			z.strictObject({

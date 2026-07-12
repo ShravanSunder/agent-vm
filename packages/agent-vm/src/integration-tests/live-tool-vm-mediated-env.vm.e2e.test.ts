@@ -8,7 +8,7 @@ import type { ManagedVm } from '@agent-vm/managed-vm';
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
 	terminateLiveManagedVm,
@@ -203,7 +203,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 				tcpSlot: 0,
 				zoneId: 'shravan',
 			},
-			createGondolinManagedVmRuntimeComposition(),
+			createManagedVmRuntimeComposition(),
 		);
 		const terminationTarget = await captureStartedVmProcess(toolVm);
 		let sshAccess: Awaited<ReturnType<ManagedVm['enableSsh']>> | undefined;
