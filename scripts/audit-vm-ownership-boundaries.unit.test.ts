@@ -36,7 +36,7 @@ describe('auditStockGondolinDependencyBoundary', () => {
 					content: JSON.stringify({
 						dependencies: { '@earendil-works/gondolin': `${resolutionProtocol}../gondolin` },
 					}),
-					filePath: 'packages/gondolin-adapter/package.json',
+					filePath: 'packages/gondolin-vm-adapter/package.json',
 				},
 			]);
 
@@ -59,11 +59,28 @@ describe('auditStockGondolinDependencyBoundary', () => {
 		]);
 	});
 
+	it('rejects an exact Gondolin lock stanza without registry integrity', () => {
+		const findings = auditStockGondolinDependencyBoundary([
+			{
+				content: [
+					"  '@earendil-works/gondolin@0.12.0':",
+					'    resolution: {}',
+					'    engines: {node: ">=23.6.0"}',
+				].join('\n'),
+				filePath: 'pnpm-lock.yaml',
+			},
+		]);
+
+		expect(findings.map((finding) => finding.reason)).toEqual([
+			'Exact Gondolin lockfile package stanza must contain nonempty registry integrity',
+		]);
+	});
+
 	it('rejects non-stock repository and installed Gondolin versions', () => {
 		const findings = auditStockGondolinDependencyBoundary([
 			{
 				content: JSON.stringify({ dependencies: { '@earendil-works/gondolin': '0.13.0' } }),
-				filePath: 'packages/gondolin-adapter/package.json',
+				filePath: 'packages/gondolin-vm-adapter/package.json',
 			},
 			{
 				content: JSON.stringify({ name: '@earendil-works/gondolin', version: '0.13.0' }),
@@ -84,7 +101,7 @@ describe('auditStockGondolinDependencyBoundary', () => {
 				content: JSON.stringify({
 					dependencies: { '@earendil-works/gondolin': '0.12.0' },
 				}),
-				filePath: 'packages/gondolin-adapter/package.json',
+				filePath: 'packages/gondolin-vm-adapter/package.json',
 			},
 			{
 				content: "'@earendil-works/gondolin@0.12.0':\n  resolution: {integrity: sha512-safe}",
@@ -226,7 +243,7 @@ describe('auditVmOwnershipBoundaries', () => {
 			{
 				content: [
 					'async function cleanupRecordedVm(vm) {',
-					'  if (vm.getHostPid() !== null) {',
+					'  if (vm.getHostProcessId() !== null) {',
 					"    throw new Error('runner still active');",
 					'  }',
 					'  await vm.close();',
@@ -242,6 +259,24 @@ describe('auditVmOwnershipBoundaries', () => {
 					'}',
 				].join('\n'),
 				filePath: 'packages/agent-vm/src/tool-vm/tool-vm-lifecycle.ts',
+			},
+		]);
+
+		expect(findings).toEqual([]);
+	});
+
+	it('allows close projected into the exact controller-managed termination primitive', () => {
+		const findings = auditVmOwnershipBoundaries([
+			{
+				content: [
+					'await terminateLiveManagedVm({',
+					'  vm: {',
+					'    close: async () => await managedVm.close(),',
+					'    getHostProcessId: () => managedVm.getHostProcessId(),',
+					'  },',
+					'});',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts',
 			},
 		]);
 
