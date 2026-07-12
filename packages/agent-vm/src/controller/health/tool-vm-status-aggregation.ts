@@ -1,4 +1,4 @@
-import { healthEventBucketKey, type AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import { healthEventBucketKey, type AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 
 import type { GatewayToolVmPlane } from '../zone-runtimes/gateway-zone-state-machine.js';
 import type { GatewayToolVmLeaseState } from '../zone-runtimes/gateway-zone-state-machine.js';

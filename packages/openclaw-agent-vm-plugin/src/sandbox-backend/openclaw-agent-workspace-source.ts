@@ -4,7 +4,7 @@ import {
 	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 	TOOL_VM_SCRATCH_GUEST_ROOT,
 	TOOL_VM_WORKSPACE_GUEST_ROOT,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 
 import { normalizeOpenClawAgentId } from '../openclaw-gondolin-contract.js';
 

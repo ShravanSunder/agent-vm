@@ -9,7 +9,7 @@ import type {
 	GatewayControlHello,
 	GatewayControlHelloResponse,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGatewayControlProcessAdmissionCoordinator } from './gateway-control-process-admission-coordinator.js';

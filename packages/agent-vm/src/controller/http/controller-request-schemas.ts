@@ -1,4 +1,4 @@
-import { isToolVmActiveUseId } from '@agent-vm/gateway-interface';
+import { isToolVmActiveUseId } from '@agent-vm/gateway-lifecycle';
 import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';

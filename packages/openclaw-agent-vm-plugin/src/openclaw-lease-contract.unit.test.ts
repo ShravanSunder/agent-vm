@@ -2,7 +2,7 @@ import {
 	parseToolVmLeaseId,
 	type ToolVmLeasePeek,
 	type ToolVmSshLease,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LeaseClient, OpenClawGondolinLeaseRequest } from './lease-client-contract.js';

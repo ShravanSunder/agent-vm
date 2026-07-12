@@ -39,7 +39,6 @@
 		"@agent-vm/control-protocol-contracts": "workspace:*",
 		"@agent-vm/gateway-control-contracts": "workspace:*",
 		"@agent-vm/gateway-lifecycle": "workspace:*",
-		"@agent-vm/gondolin-adapter": "workspace:*",
 		"@agent-vm/tool-portal": "workspace:*",
 		"engine.io": "6.6.9",
 		"socket.io": "4.8.1",

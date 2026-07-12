@@ -9,7 +9,7 @@
 		"noEmit": false,
 		"paths": {
 			"@agent-vm/gateway-lifecycle": ["../gateway-lifecycle/dist/index.d.ts"],
-			"@agent-vm/gondolin-adapter": ["../gondolin-adapter/dist/index.d.ts"]
+			"@agent-vm/managed-vm": ["../managed-vm/dist/index.d.ts"]
 		}
 	},
 	"exclude": ["src/**/*.test.ts"]

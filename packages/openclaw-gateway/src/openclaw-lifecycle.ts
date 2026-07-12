@@ -3,13 +3,13 @@ import { chmod, lstat, mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
-	BuildGatewayVmSpecOptions,
+	BuildGatewayVmRequirementsOptions,
 	GatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayZoneConfig,
-	GatewayVmSpec,
+	GatewayVmRequirements,
 	SplitResolvedGatewaySecretsResult,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	composeNodeOptions,
@@ -19,11 +19,8 @@ import {
 	mergeRuntimeGatewaySecrets,
 	normalizeGitReposForSshReadAllowlist,
 	splitResolvedGatewaySecrets,
-} from '@agent-vm/gateway-interface';
-import {
-	createGitReadOnlySshEgressOptions,
-	type ManagedSshEgressOptions,
-} from '@agent-vm/gondolin-adapter';
+} from '@agent-vm/gateway-lifecycle';
+import type { ManagedVmGitReadOnlySshEgress } from '@agent-vm/managed-vm';
 import {
 	redactOnePasswordReferences,
 	type SecretRef,
@@ -122,7 +119,7 @@ function mergeGatewayAllowedHosts(
 
 function createManagedGitReadOnlySshEgressOptions(options: {
 	readonly gitReadAllowlistRepos: readonly string[] | undefined;
-}): ManagedSshEgressOptions | undefined {
+}): ManagedVmGitReadOnlySshEgress | undefined {
 	const agent = process.env.SSH_AUTH_SOCK;
 	if (agent === undefined || agent.length === 0) {
 		return undefined;
@@ -134,11 +131,12 @@ function createManagedGitReadOnlySshEgressOptions(options: {
 	) {
 		return undefined;
 	}
-	return createGitReadOnlySshEgressOptions({
-		agent,
+	return {
+		agentSocket: agent,
 		allowedHosts: normalizedAllowlist.allowedHosts,
-		allowedRepos: normalizedAllowlist.allowedRepos,
-	});
+		allowedRepositories: normalizedAllowlist.allowedRepos,
+		kind: 'git-read-only',
+	};
 }
 
 function buildOpenClawBootstrapCommand(
@@ -1526,14 +1524,14 @@ export const openclawLifecycle: GatewayLifecycle = {
 			].join(' '),
 	},
 
-	buildVmSpec({
+	buildVmRequirements({
 		gatewayCacheDir,
 		projectNamespace,
 		resolvedSecrets,
 		runtimeDir,
 		tcpPool,
 		zone,
-	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
+	}: BuildGatewayVmRequirementsOptions): GatewayVmRequirements {
 		if (zone.gateway.type !== 'openclaw') {
 			throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 		}
@@ -1600,34 +1598,40 @@ export const openclawLifecycle: GatewayLifecycle = {
 			...(sshEgress === undefined ? {} : { sshEgress }),
 			tcpHosts: buildGatewayTcpHosts(tcpPool),
 			websocketUpgrades: zone.websocketUpgrades ?? [],
-			vfsMounts: {
+			mounts: {
 				'/home/openclaw/.openclaw/config': {
+					access: 'read-write',
 					hostPath: configDirectory,
-					kind: 'realfs',
+					kind: 'host-directory',
 				},
 				[openClawCacheDirVmPath]: {
+					access: 'read-write',
 					hostPath: gatewayCacheDir,
-					kind: 'realfs',
+					kind: 'host-directory',
 				},
 				...(toolPortalEffectiveConfigMount === undefined
 					? {}
 					: {
 							[toolPortalEffectiveConfigMount.guestPath]: {
+								access: 'read-only',
 								hostPath: toolPortalEffectiveConfigMount.hostPath,
-								kind: 'realfs-readonly',
+								kind: 'host-directory',
 							},
 						}),
 				'/home/openclaw/.openclaw/state': {
+					access: 'read-write',
 					hostPath: zone.gateway.stateDir,
-					kind: 'realfs',
+					kind: 'host-directory',
 				},
 				[openClawZoneFilesDirVmPath]: {
+					access: 'read-write',
 					hostPath: zone.gateway.zoneFilesDir,
-					kind: 'realfs',
+					kind: 'host-directory',
 				},
 				[agentVmLogsDirVmPath]: {
+					access: 'read-write',
 					hostPath: path.join(runtimeDir, 'zones', zone.id, 'logs'),
-					kind: 'realfs',
+					kind: 'host-directory',
 				},
 			},
 		};
@@ -1643,7 +1647,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 			// (e.g. a future secrets.env or merge change that drops the
 			// FORCE_IPV4_EGRESS_NODE_OPTIONS flags) is visible in the log
 			// stream without SSHing into the VM.  See
-			// FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			// FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-lifecycle.
 			startCommand: buildOpenClawGatewayStartCommand(),
 			healthCheck: {
 				type: 'http',

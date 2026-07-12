@@ -1,4 +1,4 @@
-import type { ToolVmSshFailureKind, ToolVmSshLease } from '@agent-vm/gateway-interface';
+import type { ToolVmSshFailureKind, ToolVmSshLease } from '@agent-vm/gateway-lifecycle';
 
 import {
 	ControllerLeaseRequestError,

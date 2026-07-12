@@ -7,7 +7,7 @@ import {
 	egressHostsForAudience,
 	FORCE_IPV4_EGRESS_NODE_OPTIONS,
 	splitResolvedSecretsByInjection,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import {
 	closePinnedRealFsRoot as closePinnedRealFsRootDefault,
 	createManagedVm as createManagedVmFromCore,

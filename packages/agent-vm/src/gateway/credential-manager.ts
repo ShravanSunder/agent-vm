@@ -1,4 +1,4 @@
-import { targetsAudience, type RuntimeVmAudience } from '@agent-vm/gateway-interface';
+import { targetsAudience, type RuntimeVmAudience } from '@agent-vm/gateway-lifecycle';
 import {
 	redactOnePasswordReferences,
 	type SecretRef,

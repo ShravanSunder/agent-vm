@@ -1,4 +1,4 @@
-import type { GatewayAuthConfig } from '@agent-vm/gateway-interface';
+import type { GatewayAuthConfig } from '@agent-vm/gateway-lifecycle';
 import { execa } from 'execa';
 
 import { agentIdSchema, type SystemConfig } from '../config/system-config.js';

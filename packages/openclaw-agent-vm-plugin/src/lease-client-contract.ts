@@ -7,7 +7,7 @@ import type {
 	StartToolVmActiveUseResponse,
 	ToolVmLeasePeek,
 	ToolVmSshLease,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { z } from 'zod';
 
 export type { OpenClawRuntimeStatusReport } from './openclaw-runtime-status.js';

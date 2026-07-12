@@ -1,4 +1,4 @@
-import type { GatewayLifecycle, GatewayZoneConfig } from '@agent-vm/gateway-interface';
+import type { GatewayLifecycle, GatewayZoneConfig } from '@agent-vm/gateway-lifecycle';
 import { openclawLifecycle } from '@agent-vm/openclaw-gateway';
 import { workerLifecycle } from '@agent-vm/worker-gateway';
 

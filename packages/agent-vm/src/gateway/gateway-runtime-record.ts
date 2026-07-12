@@ -6,7 +6,7 @@ import {
 	gatewayTypeValues,
 	type GatewayProcessSpec,
 	type GatewayType,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 

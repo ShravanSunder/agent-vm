@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { GatewayLifecycle } from '@agent-vm/gateway-interface';
+import type { GatewayLifecycle } from '@agent-vm/gateway-lifecycle';
 import type { BuildConfig, ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
@@ -218,14 +218,14 @@ describe('smoke: gateway startup secret resolution', () => {
 				guestListenPort: 18789,
 				logPath: '/tmp/gateway.log',
 			}),
-			buildVmSpec: () => ({
+			buildVmRequirements: () => ({
 				allowedHosts: [],
 				environment: {},
 				mediatedSecrets: {},
 				rootfsMode: 'memory',
 				sessionLabel: 'secret-smoke',
 				tcpHosts: {},
-				vfsMounts: {},
+				mounts: {},
 			}),
 			prepareHostState: async () => {},
 		};

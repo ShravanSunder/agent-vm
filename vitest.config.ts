@@ -78,7 +78,7 @@ export default defineConfig({
 			'@agent-vm/controller-execution-contracts': repoPath(
 				'packages/controller-execution-contracts/src/index.ts',
 			),
-			'@agent-vm/gondolin-adapter': repoPath('packages/gondolin-adapter/src/index.ts'),
+			'@agent-vm/gondolin-vm-adapter': repoPath('packages/gondolin-vm-adapter/src/index.ts'),
 			'@agent-vm/agent-vm-worker': repoPath('packages/agent-vm-worker/src/index.ts'),
 			'@agent-vm/gateway-control-contracts': repoPath(
 				'packages/gateway-control-contracts/src/index.ts',

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { type ManagedVm, type ManagedVmInstance } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';

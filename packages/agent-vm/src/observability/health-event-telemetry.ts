@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 
 export type TelemetryAttributeValue = boolean | number | string;
 export type TelemetryAttributes = Readonly<Record<string, TelemetryAttributeValue>>;

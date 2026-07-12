@@ -1,4 +1,4 @@
-import { isAgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import { isAgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it } from 'vitest';
 
 import { buildAgentChannelProviderHealthEvent } from './agent-channel-provider-health.js';

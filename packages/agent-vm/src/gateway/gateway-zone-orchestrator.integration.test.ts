@@ -16,7 +16,7 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	type GatewayControlCallerContextProofPayloadInput,
 } from '@agent-vm/gateway-control-contracts';
-import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
+import type { GatewayZoneConfig } from '@agent-vm/gateway-lifecycle';
 import type {
 	BuildConfig,
 	BuildImageResult,
@@ -553,14 +553,14 @@ function createHttpHealthGatewayLifecycle(): {
 		readonly logPath: string;
 		readonly startCommand: string;
 	};
-	readonly buildVmSpec: () => {
+	readonly buildVmRequirements: () => {
 		readonly allowedHosts: readonly string[];
 		readonly environment: Record<string, never>;
 		readonly mediatedSecrets: Record<string, never>;
 		readonly rootfsMode: 'cow';
 		readonly sessionLabel: string;
 		readonly tcpHosts: Record<string, never>;
-		readonly vfsMounts: Record<string, never>;
+		readonly mounts: Record<string, never>;
 	};
 } {
 	return {
@@ -571,14 +571,14 @@ function createHttpHealthGatewayLifecycle(): {
 			logPath: '/tmp/http-gateway.log',
 			startCommand: 'start-http-gateway',
 		}),
-		buildVmSpec: () => ({
+		buildVmRequirements: () => ({
 			allowedHosts: [],
 			environment: {},
 			mediatedSecrets: {},
 			rootfsMode: 'cow',
 			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 			tcpHosts: {},
-			vfsMounts: {},
+			mounts: {},
 		}),
 	};
 }
@@ -2112,7 +2112,7 @@ describe('startGatewayZone', () => {
 						logPath: '/tmp/gateway.log',
 						startCommand: 'start',
 					}),
-					buildVmSpec: (options) => {
+					buildVmRequirements: (options) => {
 						lifecycleZones.push(options.zone);
 						return {
 							allowedHosts: [],
@@ -2121,7 +2121,7 @@ describe('startGatewayZone', () => {
 							rootfsMode: 'cow' as const,
 							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 							tcpHosts: {},
-							vfsMounts: {},
+							mounts: {},
 						};
 					},
 				}),
@@ -2323,7 +2323,7 @@ describe('startGatewayZone', () => {
 						logPath: '/tmp/gateway.log',
 						startCommand: 'start',
 					}),
-					buildVmSpec: (options) => {
+					buildVmRequirements: (options) => {
 						lifecycleZones.push(options.zone);
 						return {
 							allowedHosts: [],
@@ -2332,7 +2332,7 @@ describe('startGatewayZone', () => {
 							rootfsMode: 'cow' as const,
 							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 							tcpHosts: {},
-							vfsMounts: {},
+							mounts: {},
 						};
 					},
 				}),
@@ -3419,14 +3419,14 @@ describe('startGatewayZone', () => {
 						logPath: '/tmp/worker.log',
 						startCommand: 'start-worker',
 					}),
-					buildVmSpec: () => ({
+					buildVmRequirements: () => ({
 						allowedHosts: [],
 						environment: {},
 						mediatedSecrets: {},
 						rootfsMode: 'cow' as const,
 						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						tcpHosts: {},
-						vfsMounts: {},
+						mounts: {},
 					}),
 				}),
 			},
@@ -3486,14 +3486,14 @@ describe('startGatewayZone', () => {
 							logPath: '/tmp/worker.log',
 							startCommand: 'start-worker',
 						}),
-						buildVmSpec: () => ({
+						buildVmRequirements: () => ({
 							allowedHosts: [],
 							environment: {},
 							mediatedSecrets: {},
 							rootfsMode: 'cow' as const,
 							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 							tcpHosts: {},
-							vfsMounts: {},
+							mounts: {},
 						}),
 					}),
 				},

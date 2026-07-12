@@ -2,7 +2,7 @@ import {
 	isToolVmLeaseId,
 	parseToolVmLeaseId,
 	type ToolVmLeaseId,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

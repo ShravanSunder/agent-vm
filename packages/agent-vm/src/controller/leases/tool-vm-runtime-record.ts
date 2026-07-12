@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
+import { buildToolSessionLabel } from '@agent-vm/gateway-lifecycle';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 

@@ -1,4 +1,4 @@
-import { gatewayRecoveryHealthReasons } from '@agent-vm/gateway-interface';
+import { gatewayRecoveryHealthReasons } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { GatewayOwnershipEvidence } from '../../gateway/gateway-ownership-evidence.js';

@@ -23,7 +23,7 @@ import {
 	parseToolVmLeaseId,
 	type ToolVmLeasePeek,
 	type ToolVmSshLease,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 
 import {
 	ControllerLeaseRequestError,

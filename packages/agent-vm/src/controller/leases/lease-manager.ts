@@ -11,7 +11,7 @@ import {
 	type StartToolVmActiveUseResponse,
 	type ToolVmActiveUseCorrelation,
 	type ToolVmActiveUseOperationReport,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import type { ManagedVm, SshAccess, SshServerHostKey } from '@agent-vm/gondolin-adapter';
 
 import { terminateLiveManagedVm } from '../../shared/controller-managed-vm-termination.js';

@@ -10,7 +10,7 @@ import {
 import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

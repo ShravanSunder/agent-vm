@@ -19,7 +19,7 @@ import { promisify } from 'node:util';
 import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
 	type GatewayZoneConfig,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -452,9 +452,9 @@ describe('openclawLifecycle', () => {
 		});
 	});
 
-	describe('buildVmSpec', () => {
+	describe('buildVmRequirements', () => {
 		it('splits environment and mediated secrets', () => {
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -466,12 +466,12 @@ describe('openclawLifecycle', () => {
 				},
 				zone: createZone(),
 			});
-			expect(vmSpec.vfsMounts).not.toHaveProperty('/run/agent-vm/openclaw-process-supervisor');
+			expect(vmRequirements.mounts).not.toHaveProperty('/run/agent-vm/openclaw-process-supervisor');
 
-			expect(vmSpec.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
-			expect(vmSpec.environment.OPENCLAW_GATEWAY_TOKEN).toBe("gateway'token");
-			expect(vmSpec.environment.PERPLEXITY_API_KEY).toBeUndefined();
-			expect(vmSpec.mediatedSecrets.PERPLEXITY_API_KEY).toEqual({
+			expect(vmRequirements.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
+			expect(vmRequirements.environment.OPENCLAW_GATEWAY_TOKEN).toBe("gateway'token");
+			expect(vmRequirements.environment.PERPLEXITY_API_KEY).toBeUndefined();
+			expect(vmRequirements.mediatedSecrets.PERPLEXITY_API_KEY).toEqual({
 				hosts: ['api.perplexity.ai'],
 				value: 'perplexity-token',
 			});
@@ -479,7 +479,7 @@ describe('openclawLifecycle', () => {
 
 		it('rejects authored env secrets that are not explicit raw-env exceptions', () => {
 			expect(() =>
-				openclawLifecycle.buildVmSpec({
+				openclawLifecycle.buildVmRequirements({
 					controllerPort: 18800,
 					gatewayCacheDir: '/host/cache/gateways/shravan',
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -516,7 +516,7 @@ describe('openclawLifecycle', () => {
 			});
 
 			expect(() =>
-				openclawLifecycle.buildVmSpec({
+				openclawLifecycle.buildVmRequirements({
 					controllerPort: 18800,
 					gatewayCacheDir: '/host/cache/gateways/shravan',
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -535,7 +535,7 @@ describe('openclawLifecycle', () => {
 		});
 
 		it('injects explicitly allowlisted runtime environment without mediating or persisting it', () => {
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -555,12 +555,12 @@ describe('openclawLifecycle', () => {
 				}),
 			});
 
-			expect(vmSpec.environment.OPENCLAW_TEST_RUNTIME_SECRET).toBe('runtime-test-secret');
-			expect(vmSpec.mediatedSecrets.OPENCLAW_TEST_RUNTIME_SECRET).toBeUndefined();
+			expect(vmRequirements.environment.OPENCLAW_TEST_RUNTIME_SECRET).toBe('runtime-test-secret');
+			expect(vmRequirements.mediatedSecrets.OPENCLAW_TEST_RUNTIME_SECRET).toBeUndefined();
 		});
 
 		it('injects controller-owned private environment without runtime secret mediation', () => {
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -577,15 +577,17 @@ describe('openclawLifecycle', () => {
 				}),
 			});
 
-			expect(vmSpec.environment[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBe(
+			expect(vmRequirements.environment[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBe(
 				'private-proof-key',
 			);
-			expect(vmSpec.mediatedSecrets[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBeUndefined();
+			expect(
+				vmRequirements.mediatedSecrets[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV],
+			).toBeUndefined();
 		});
 
 		it('rejects user runtime environment that collides with controller-owned private names', () => {
 			expect(() =>
-				openclawLifecycle.buildVmSpec({
+				openclawLifecycle.buildVmRequirements({
 					controllerPort: 18800,
 					gatewayCacheDir: '/host/cache/gateways/shravan',
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -608,7 +610,7 @@ describe('openclawLifecycle', () => {
 		});
 
 		it('injects generated runtime mediated secrets without authored zone secret config entries', () => {
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -628,16 +630,16 @@ describe('openclawLifecycle', () => {
 				}),
 			});
 
-			expect(vmSpec.mediatedSecrets.AGENT_VM_MCP_TAVILY_API_KEY).toEqual({
+			expect(vmRequirements.mediatedSecrets.AGENT_VM_MCP_TAVILY_API_KEY).toEqual({
 				hosts: ['api.tavily.com'],
 				value: 'runtime-tavily-token',
 			});
-			expect(vmSpec.environment.AGENT_VM_MCP_TAVILY_API_KEY).toBeUndefined();
+			expect(vmRequirements.environment.AGENT_VM_MCP_TAVILY_API_KEY).toBeUndefined();
 		});
 
 		it('rejects generated runtime secrets that collide with authored zone secrets', () => {
 			expect(() =>
-				openclawLifecycle.buildVmSpec({
+				openclawLifecycle.buildVmRequirements({
 					controllerPort: 18800,
 					gatewayCacheDir: '/host/cache/gateways/shravan',
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -661,7 +663,7 @@ describe('openclawLifecycle', () => {
 
 		it('builds the expected OpenClaw environment, mounts, and tcp hosts', () => {
 			vi.stubEnv('PATH', '/host-only/bin');
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -674,56 +676,60 @@ describe('openclawLifecycle', () => {
 				zone: createZone(),
 			});
 
-			expect(vmSpec.environment.OPENCLAW_HOME).toBe('/home/openclaw');
-			expect(vmSpec.environment.OPENCLAW_CONFIG_PATH).toBe(
+			expect(vmRequirements.environment.OPENCLAW_HOME).toBe('/home/openclaw');
+			expect(vmRequirements.environment.OPENCLAW_CONFIG_PATH).toBe(
 				'/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
-			expect(vmSpec.environment.NODE_OPTIONS).toBe(
+			expect(vmRequirements.environment.NODE_OPTIONS).toBe(
 				'--dns-result-order=ipv4first --no-network-family-autoselection',
 			);
-			expect(vmSpec.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBeUndefined();
-			expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
-			expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
-			expect(vmSpec.environment.PATH).toBe(
+			expect(vmRequirements.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBeUndefined();
+			expect(vmRequirements.environment.TMPDIR).toBe('/work/tmp');
+			expect(vmRequirements.environment.PNPM_HOME).toBe('/pnpm');
+			expect(vmRequirements.environment.PATH).toBe(
 				'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
 			);
-			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
+			expect(vmRequirements.environment.npm_config_cache).toBe('/work/cache/npm');
 			// IPv4-preference egress for the Node OpenClaw process to defeat
 			// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
-			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
-			expect(vmSpec.environment.NODE_OPTIONS).toBe(
+			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-lifecycle.
+			expect(vmRequirements.environment.NODE_OPTIONS).toBe(
 				'--dns-result-order=ipv4first --no-network-family-autoselection',
 			);
-			expect(vmSpec.allowedHosts).toEqual(['api.openai.com', 'api.perplexity.ai']);
-			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
+			expect(vmRequirements.allowedHosts).toEqual(['api.openai.com', 'api.perplexity.ai']);
+			expect(vmRequirements.mounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
-				kind: 'realfs',
+				access: 'read-write',
+				kind: 'host-directory',
 			});
-			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/cache']).toEqual({
+			expect(vmRequirements.mounts['/home/openclaw/.openclaw/cache']).toEqual({
 				hostPath: '/host/cache/gateways/shravan',
-				kind: 'realfs',
+				access: 'read-write',
+				kind: 'host-directory',
 			});
-			expect(vmSpec.vfsMounts['/agent-vm/logs']).toEqual({
+			expect(vmRequirements.mounts['/agent-vm/logs']).toEqual({
 				hostPath: '/host/runtime/zones/shravan/logs',
-				kind: 'realfs',
+				access: 'read-write',
+				kind: 'host-directory',
 			});
-			expect(vmSpec.vfsMounts['/zone']).toEqual({
+			expect(vmRequirements.mounts['/zone']).toEqual({
 				hostPath: '/host/zone-files/shravan',
-				kind: 'realfs',
+				access: 'read-write',
+				kind: 'host-directory',
 			});
-			expect(vmSpec.vfsMounts['/work']).toBeUndefined();
-			expect(vmSpec.vfsMounts['/home/openclaw/zone-files']).toBeUndefined();
-			expect(vmSpec.vfsMounts['/home/openclaw/workspace']).toBeUndefined();
-			expect(vmSpec.vfsMounts['/var/lib/openclaw/plugin-runtime-deps']).toBeUndefined();
-			expect(vmSpec.tcpHosts).toEqual({
+			expect(vmRequirements.mounts['/work']).toBeUndefined();
+			expect(vmRequirements.mounts['/home/openclaw/zone-files']).toBeUndefined();
+			expect(vmRequirements.mounts['/home/openclaw/workspace']).toBeUndefined();
+			expect(vmRequirements.mounts['/var/lib/openclaw/plugin-runtime-deps']).toBeUndefined();
+			expect(vmRequirements.tcpHosts).toEqual({
 				'tool-0.vm.host:22': '127.0.0.1:19000',
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
-			expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
+			expect(vmRequirements.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
 		});
 
 		it('mounts managed Tool Portal effective config read-only when configured', () => {
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -744,14 +750,17 @@ describe('openclawLifecycle', () => {
 				}),
 			});
 
-			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/cache/tool-portal-effective']).toEqual({
-				hostPath: '/host/cache/gateways/shravan/tool-portal-effective',
-				kind: 'realfs-readonly',
-			});
+			expect(vmRequirements.mounts['/home/openclaw/.openclaw/cache/tool-portal-effective']).toEqual(
+				{
+					hostPath: '/host/cache/gateways/shravan/tool-portal-effective',
+					access: 'read-only',
+					kind: 'host-directory',
+				},
+			);
 		});
 
 		it('routes collector-mode observability through mediated HTTP instead of raw collector tcp hosts', () => {
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -766,8 +775,8 @@ describe('openclawLifecycle', () => {
 				}),
 			});
 
-			expect(vmSpec.allowedHosts).toContain('otel-collector.observability.vm.host');
-			expect(vmSpec.tcpHosts).toEqual({
+			expect(vmRequirements.allowedHosts).toContain('otel-collector.observability.vm.host');
+			expect(vmRequirements.tcpHosts).toEqual({
 				'tool-0.vm.host:22': '127.0.0.1:19000',
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
@@ -791,7 +800,7 @@ describe('openclawLifecycle', () => {
 				},
 			];
 
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -804,13 +813,13 @@ describe('openclawLifecycle', () => {
 				zone: createZone({ websocketUpgrades }),
 			});
 
-			expect(vmSpec.websocketUpgrades).toEqual(websocketUpgrades);
+			expect(vmRequirements.websocketUpgrades).toEqual(websocketUpgrades);
 		});
 
 		it('denies Git SSH reads when no trusted repo allowlist is available', async () => {
 			vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
 
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -823,13 +832,13 @@ describe('openclawLifecycle', () => {
 				zone: createZone(),
 			});
 
-			expect(vmSpec.sshEgress).toBeUndefined();
+			expect(vmRequirements.sshEgress).toBeUndefined();
 		});
 
 		it('allows only trusted Git SSH reads from the gateway VM spec', async () => {
 			vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
 
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -844,61 +853,18 @@ describe('openclawLifecycle', () => {
 				}),
 			});
 
-			expect(vmSpec.sshEgress?.allowedHosts).toEqual(['git.example.com']);
-			expect(vmSpec.sshEgress?.agent).toBe('/tmp/agent-vm-test-agent.sock');
-			if (!vmSpec.sshEgress?.execPolicy) {
-				throw new Error('Expected OpenClaw gateway read-only Git SSH policy');
-			}
-			await expect(
-				Promise.resolve(
-					vmSpec.sshEgress.execPolicy({
-						command: "git-upload-pack 'shravan/zone-files.git'",
-						guestUsername: 'git',
-						hostname: 'git.example.com',
-						port: 22,
-						src: { ip: '198.18.0.2', port: 48_000 },
-					}),
-				),
-			).resolves.toEqual({ allow: true });
-			await expect(
-				Promise.resolve(
-					vmSpec.sshEgress.execPolicy({
-						command: "git-upload-pack 'shravan/other-private.git'",
-						guestUsername: 'git',
-						hostname: 'git.example.com',
-						port: 22,
-						src: { ip: '198.18.0.2', port: 48_003 },
-					}),
-				),
-			).resolves.toMatchObject({ allow: false });
-			await expect(
-				Promise.resolve(
-					vmSpec.sshEgress.execPolicy({
-						command: "git-receive-pack 'shravan/zone-files.git'",
-						guestUsername: 'git',
-						hostname: 'git.example.com',
-						port: 22,
-						src: { ip: '198.18.0.2', port: 48_001 },
-					}),
-				),
-			).resolves.toMatchObject({ allow: false });
-			await expect(
-				Promise.resolve(
-					vmSpec.sshEgress.execPolicy({
-						command: 'bash',
-						guestUsername: 'git',
-						hostname: 'github.com',
-						port: 22,
-						src: { ip: '198.18.0.2', port: 48_002 },
-					}),
-				),
-			).resolves.toMatchObject({ allow: false });
+			expect(vmRequirements.sshEgress).toEqual({
+				agentSocket: '/tmp/agent-vm-test-agent.sock',
+				allowedHosts: ['git.example.com'],
+				allowedRepositories: ['shravan/zone-files'],
+				kind: 'git-read-only',
+			});
 		});
 
 		it('omits OpenClaw SSH egress when no host SSH agent is available', () => {
 			vi.stubEnv('SSH_AUTH_SOCK', '');
 
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -911,7 +877,7 @@ describe('openclawLifecycle', () => {
 				zone: createZone(),
 			});
 
-			expect(vmSpec.sshEgress).toBeUndefined();
+			expect(vmRequirements.sshEgress).toBeUndefined();
 		});
 
 		it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
@@ -937,7 +903,7 @@ describe('openclawLifecycle', () => {
 				},
 			};
 
-			const vmSpec = openclawLifecycle.buildVmSpec({
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -954,7 +920,7 @@ describe('openclawLifecycle', () => {
 			});
 
 			// Forced flags lead; user value follows.
-			expect(vmSpec.environment.NODE_OPTIONS).toBe(
+			expect(vmRequirements.environment.NODE_OPTIONS).toBe(
 				'--dns-result-order=ipv4first --no-network-family-autoselection --inspect=0.0.0.0:9229',
 			);
 		});

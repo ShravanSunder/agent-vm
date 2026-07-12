@@ -35,6 +35,6 @@
 	},
 	"dependencies": {
 		"@agent-vm/gateway-lifecycle": "workspace:*",
-		"@agent-vm/gondolin-adapter": "workspace:*"
+		"@agent-vm/managed-vm": "workspace:*"
 	}
 }

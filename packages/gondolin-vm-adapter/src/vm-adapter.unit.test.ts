@@ -1132,4 +1132,45 @@ describe('createManagedVm', () => {
 		expect(closePinnedRealFsRoot).toHaveBeenCalledWith(pinnedRoot);
 		expect(createVm).not.toHaveBeenCalled();
 	});
+
+	it('aggregates VM and every pinned-root cleanup failure', async () => {
+		const firstPinnedRoot = createPinnedRoot(401);
+		const secondPinnedRoot = createPinnedRoot(402);
+		const nativeCloseError = new Error('native close failed');
+		const firstRootCloseError = new Error('first root close failed');
+		const secondRootCloseError = new Error('second root close failed');
+		const closePinnedRealFsRoot = vi.fn((root: PinnedRealFsRoot) => {
+			throw root.fd === firstPinnedRoot.fd ? firstRootCloseError : secondRootCloseError;
+		});
+		const vmInstance = createFakeVmInstance();
+		vmInstance.close = vi.fn(async () => {
+			throw nativeCloseError;
+		});
+		const dependencies = createBaseDependencies({
+			closePinnedRealFsRoot,
+			createVm: async () => vmInstance,
+		});
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/tool',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/first': { kind: 'realfs', pinnedHostRoot: firstPinnedRoot },
+					'/second': { kind: 'realfs', pinnedHostRoot: secondPinnedRoot },
+				},
+			},
+			dependencies,
+		);
+
+		const closeResult = managedVm.close();
+		await expect(closeResult).rejects.toBeInstanceOf(AggregateError);
+		await expect(closeResult).rejects.toMatchObject({
+			errors: [nativeCloseError, firstRootCloseError, secondRootCloseError],
+		});
+		expect(closePinnedRealFsRoot).toHaveBeenCalledTimes(2);
+	});
 });

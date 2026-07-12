@@ -323,7 +323,7 @@ describe('createToolVm', () => {
 		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/work');
 		// IPv4-preference egress for Node consumers inside the Tool VM
 		// to defeat Happy Eyeballs racing on gondolin's synthetic AAAA.
-		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-lifecycle.
 		expect(capturedCreateVmOptions?.env?.NODE_OPTIONS).toBe(
 			'--dns-result-order=ipv4first --no-network-family-autoselection',
 		);

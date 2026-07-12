@@ -66,7 +66,7 @@
 			"@agent-vm/controller-execution-contracts/testing": [
 				"./packages/controller-execution-contracts/src/testing/index.ts"
 			],
-			"@agent-vm/gondolin-adapter": ["./packages/gondolin-adapter/src/index.ts"],
+			"@agent-vm/gondolin-vm-adapter": ["./packages/gondolin-vm-adapter/src/index.ts"],
 			"@agent-vm/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
 			"@agent-vm/gateway-control-contracts": ["./packages/gateway-control-contracts/src/index.ts"],
 			"@agent-vm/gateway-lifecycle": ["./packages/gateway-lifecycle/src/index.ts"],

@@ -31,7 +31,7 @@ import {
 import {
 	normalizeToolVmActiveUseCorrelation,
 	type AgentVmHealthEvent,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';

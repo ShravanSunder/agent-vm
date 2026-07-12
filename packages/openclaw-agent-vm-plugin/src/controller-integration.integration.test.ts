@@ -4,7 +4,7 @@ import {
 	type ToolVmLeaseId,
 	type ToolVmLeasePeek,
 	type ToolVmSshLease,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LeaseClient } from './lease-client-contract.js';

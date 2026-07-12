@@ -1,4 +1,4 @@
-import type { GatewayProcessSpec } from '@agent-vm/gateway-interface';
+import type { GatewayProcessSpec } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import {

@@ -18,7 +18,7 @@ import {
 import {
 	normalizeToolVmActiveUseCorrelation,
 	type AgentVmHealthEvent,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 
 import {
 	type ControllerLeaseManager,

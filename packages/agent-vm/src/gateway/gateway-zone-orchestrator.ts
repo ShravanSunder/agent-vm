@@ -13,11 +13,11 @@ import type {
 	GatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayZoneConfig,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import {
 	createWebSocketUpgradeRequestGuard,
 	translateRuntimePath,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-lifecycle';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
@@ -1198,7 +1198,7 @@ async function startGatewayZoneImplementation(
 		await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
 		await fs.chmod(logDir, 0o700);
 	}
-	const vmSpec = lifecycle.buildVmSpec({
+	const vmSpec = lifecycle.buildVmRequirements({
 		controllerPort: options.systemConfig.host.controllerPort,
 		gatewayCacheDir,
 		projectNamespace: options.systemConfig.host.projectNamespace,
@@ -1221,7 +1221,7 @@ async function startGatewayZoneImplementation(
 		...options.tcpHostsOverride,
 	};
 	const vfsMounts = {
-		...vmSpec.vfsMounts,
+		...vmSpec.mounts,
 		...options.vfsMountsOverride,
 	};
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;

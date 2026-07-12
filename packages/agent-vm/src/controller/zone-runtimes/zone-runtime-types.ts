@@ -1,5 +1,5 @@
 import type { TaskState } from '@agent-vm/agent-vm-worker';
-import type { GatewayProcessSpec } from '@agent-vm/gateway-interface';
+import type { GatewayProcessSpec } from '@agent-vm/gateway-lifecycle';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 

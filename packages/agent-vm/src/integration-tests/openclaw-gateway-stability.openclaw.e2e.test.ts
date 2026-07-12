@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
-import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-lifecycle';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { readDurableHealthEvents } from '../controller/health/durable-health-event-log.js';

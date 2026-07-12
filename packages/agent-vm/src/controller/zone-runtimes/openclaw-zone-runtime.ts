@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { GatewayHealthCheck } from '@agent-vm/gateway-interface';
+import type { GatewayHealthCheck } from '@agent-vm/gateway-lifecycle';
 import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 

@@ -403,8 +403,19 @@ function closePinnedRealFsRoots(
 	roots: readonly PinnedRealFsRoot[],
 	dependencies: ManagedVmDependencies,
 ): void {
+	const closeErrors: unknown[] = [];
 	for (const root of roots) {
-		dependencies.closePinnedRealFsRoot(root);
+		try {
+			dependencies.closePinnedRealFsRoot(root);
+		} catch (error) {
+			closeErrors.push(error);
+		}
+	}
+	if (closeErrors.length === 1) {
+		throw closeErrors[0];
+	}
+	if (closeErrors.length > 1) {
+		throw new AggregateError(closeErrors, 'Multiple pinned RealFS roots failed to close.');
 	}
 }
 
@@ -757,19 +768,26 @@ export async function createManagedVm(
 			await vmInstance.start();
 		},
 		async close(): Promise<void> {
-			let closeError: unknown;
+			const closeErrors: unknown[] = [];
 			try {
 				await vmInstance.close();
 			} catch (error) {
-				closeError = error;
+				closeErrors.push(error);
 			}
 			try {
 				closePinnedRealFsRoots(pinnedRealFsRoots, dependencies);
 			} catch (error) {
-				closeError ??= error;
+				if (error instanceof AggregateError) {
+					closeErrors.push(...error.errors);
+				} else {
+					closeErrors.push(error);
+				}
 			}
-			if (closeError !== undefined) {
-				throw closeError;
+			if (closeErrors.length === 1) {
+				throw closeErrors[0];
+			}
+			if (closeErrors.length > 1) {
+				throw new AggregateError(closeErrors, 'Managed Gondolin VM cleanup failed.');
 			}
 		},
 	};
