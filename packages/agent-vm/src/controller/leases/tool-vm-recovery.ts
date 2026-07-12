@@ -7,6 +7,7 @@ import {
 	readProcessCommand,
 	readProcessIdentity,
 	sleep,
+	verifyRecordedManagedVmHostProcess,
 } from '../../shared/managed-vm-process.js';
 import {
 	readTcpListenPortOwner as defaultReadTcpListenPortOwner,
@@ -242,6 +243,22 @@ export async function cleanupRecordedToolVmRuntimes(
 		}
 		cleanupReadyRuntimeRecords.push(provenRuntimeRecord);
 	}
+
+	// Cleanup is a tree-level fail-closed operation. Validate every recorded
+	// process before signaling any one of them so one ambiguous sibling cannot
+	// leave the persisted Tool VM set partially destroyed.
+	await Promise.all(
+		cleanupReadyRuntimeRecords.map(async ({ runtimeRecord }) => {
+			await verifyRecordedManagedVmHostProcess({
+				contextLabel: `Tool VM runtime record for lease '${runtimeRecord.leaseId}' (zone '${runtimeRecord.zoneId}', slot ${runtimeRecord.tcpSlot})`,
+				currentSignalLabel: 'SIGTERM',
+				pid: runtimeRecord.qemuPid,
+				readProcessCommand: killDependencies.readProcessCommand,
+				readProcessIdentity: killDependencies.readProcessIdentity,
+				recordedIdentity: runtimeRecord.processIdentity,
+			});
+		}),
+	);
 
 	const cleanupOutcomes = await Promise.all(
 		cleanupReadyRuntimeRecords.map(async ({ runtimeRecord }) => {

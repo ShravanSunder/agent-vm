@@ -176,14 +176,16 @@ export interface ManagedVmKillDependencies {
 // sending a signal. Returns `null` if the process is gone (signal not needed),
 // otherwise either resolves to the matching identity or throws to refuse the
 // signal because PID was reused by an unrelated process.
-async function verifyIdentityBeforeSignal(options: {
+export async function verifyRecordedManagedVmHostProcess(options: {
 	readonly contextLabel: string;
-	readonly currentSignalLabel: string;
+	readonly currentSignalLabel?: string;
 	readonly pid: number;
 	readonly readProcessCommand: (pid: number) => Promise<string | null>;
 	readonly readProcessIdentity?: (pid: number) => Promise<ProcessIdentity | null>;
 	readonly recordedIdentity?: ProcessIdentity;
 }): Promise<{ readonly proceed: true } | { readonly proceed: false }> {
+	const refusalAction =
+		options.currentSignalLabel === undefined ? 'cleanup of' : `${options.currentSignalLabel} to`;
 	if (options.recordedIdentity !== undefined && options.readProcessIdentity !== undefined) {
 		const currentIdentity = await options.readProcessIdentity(options.pid);
 		if (currentIdentity === null) {
@@ -191,12 +193,12 @@ async function verifyIdentityBeforeSignal(options: {
 		}
 		if (!processIdentityMatches(options.recordedIdentity, currentIdentity)) {
 			throw new Error(
-				`${options.contextLabel} refusing ${options.currentSignalLabel} to pid ${options.pid}: process identity changed (recorded ${JSON.stringify(options.recordedIdentity)}, current ${JSON.stringify(currentIdentity)}). PID was likely reused.`,
+				`${options.contextLabel} refusing ${refusalAction} pid ${options.pid}: process identity changed (recorded ${JSON.stringify(options.recordedIdentity)}, current ${JSON.stringify(currentIdentity)}). PID was likely reused.`,
 			);
 		}
 		if (!isManagedVmProcess(currentIdentity.command)) {
 			throw new Error(
-				`${options.contextLabel} refusing ${options.currentSignalLabel} to pid ${options.pid}: current command is not a managed VM process: ${currentIdentity.command}.`,
+				`${options.contextLabel} refusing ${refusalAction} pid ${options.pid}: current command is not a managed VM process: ${currentIdentity.command}.`,
 			);
 		}
 		return { proceed: true };
@@ -214,6 +216,17 @@ async function verifyIdentityBeforeSignal(options: {
 		);
 	}
 	return { proceed: true };
+}
+
+async function verifyIdentityBeforeSignal(options: {
+	readonly contextLabel: string;
+	readonly currentSignalLabel: string;
+	readonly pid: number;
+	readonly readProcessCommand: (pid: number) => Promise<string | null>;
+	readonly readProcessIdentity?: (pid: number) => Promise<ProcessIdentity | null>;
+	readonly recordedIdentity?: ProcessIdentity;
+}): Promise<{ readonly proceed: true } | { readonly proceed: false }> {
+	return await verifyRecordedManagedVmHostProcess(options);
 }
 
 // Terminate the process selected by a controller-owned runtime record with a

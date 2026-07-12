@@ -345,6 +345,47 @@ describe('cleanupRecordedToolVmRuntimes', () => {
 		expect(deleteToolVmRuntimeRecord).not.toHaveBeenCalled();
 	});
 
+	it('preflights every Tool VM identity before signaling any sibling record', async () => {
+		const firstRecord = createToolVmRuntimeRecord({
+			agentId: 'first-agent',
+			leaseId: 'lease-first-agent',
+			qemuPid: 111,
+			recordId: '01890f00-0000-7000-8000-000000000011',
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:0',
+			tcpSlot: 0,
+		});
+		const secondRecord = createToolVmRuntimeRecord({
+			agentId: 'second-agent',
+			leaseId: 'lease-second-agent',
+			qemuPid: 222,
+			recordId: '01890f00-0000-7000-8000-000000000022',
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:1',
+			tcpSlot: 1,
+		});
+		const killProcess = vi.fn();
+		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
+
+		await expect(
+			cleanupRecordedToolVmRuntimes(createCleanupOptions({ mode: 'offline-cleanup' }), {
+				deleteToolVmRuntimeRecord,
+				isProcessAlive: () => true,
+				killProcess,
+				loadAllToolVmRuntimeRecords: async () =>
+					loadedToolVmRuntimeRecords(firstRecord, secondRecord),
+				log: () => {},
+				readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+				readProcessIdentity: async (pid) =>
+					pid === firstRecord.qemuPid
+						? { ...firstRecord.processIdentity, lstart: 'Thu Jan 01 00:00:00 1970' }
+						: secondRecord.processIdentity,
+				sleep: async () => {},
+			}),
+		).rejects.toThrow(/process identity changed/u);
+
+		expect(killProcess).not.toHaveBeenCalled();
+		expect(deleteToolVmRuntimeRecord).not.toHaveBeenCalled();
+	});
+
 	it('refuses to signal when the live PID identity does not match the recorded one (PID reuse defense)', async () => {
 		const killProcess = vi.fn();
 		// Recorded identity is the original QEMU; live identity is a different
