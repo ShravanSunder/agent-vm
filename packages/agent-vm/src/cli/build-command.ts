@@ -31,7 +31,7 @@ import {
 	type ManagedImageRelease,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
-import { writePreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
+import { writePreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 import {
 	deleteStaleImageDirectories as deleteStaleImageDirectoriesDefault,
 	findPrunableImageDirectories as findPrunableImageDirectoriesDefault,
@@ -39,8 +39,8 @@ import {
 	type StaleImageEntry,
 } from '../build/stale-image-cleaner.js';
 import {
-	assertGondolinZigCompatibility,
-	resolveGondolinCompatibleZigVersion,
+	assertManagedVmZigCompatibility,
+	resolveManagedVmCompatibleZigVersion,
 	resolveHostZigVersion,
 } from '../build/zig-compatibility.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
@@ -430,7 +430,7 @@ async function assertZigBuildPrerequisite(
 ): Promise<void> {
 	const requiredZigVersion = await resolveRequiredZigVersion();
 	const zigVersion = await resolveZigVersion();
-	assertGondolinZigCompatibility({
+	assertManagedVmZigCompatibility({
 		requiredVersion: requiredZigVersion,
 		...(zigVersion ? { installedVersion: zigVersion } : {}),
 	});
@@ -763,7 +763,7 @@ export async function runBuildCommand(
 		dependencies.findPrunableImageDirectories ?? findPrunableImageDirectoriesDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const resolveRequiredZigVersion =
-		dependencies.resolveRequiredZigVersion ?? resolveGondolinCompatibleZigVersion;
+		dependencies.resolveRequiredZigVersion ?? resolveManagedVmCompatibleZigVersion;
 	const resolveZigVersion = dependencies.resolveZigVersion ?? resolveHostZigVersion;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
 	const runTaskGroup = dependencies.runTaskGroup ?? createRunTaskGroupFallback(runTaskStep);
@@ -1035,7 +1035,7 @@ export async function runBuildCommand(
 			targetCacheDirectory: targetPlan.imageTarget.cacheDirectory,
 		});
 		// oxlint-disable-next-line no-await-in-loop -- prepared records are profile-local and must report the matching profile path on failure
-		await writePreparedGondolinImage({
+		await writePreparedManagedVmImage({
 			buildConfigPath: targetPlan.imageTarget.buildConfigPath,
 			cacheDir: targetPlan.imageTarget.cacheDirectory,
 			fingerprint: existingBuild.result.fingerprint,

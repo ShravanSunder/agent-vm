@@ -19,7 +19,7 @@ import {
 	type PackageOverrides,
 	resolveEffectivePackageOverrides,
 } from '../build/package-overrides.js';
-import { buildZigInstallHint, checkGondolinZigCompatibility } from '../build/zig-compatibility.js';
+import { buildZigInstallHint, checkManagedVmZigCompatibility } from '../build/zig-compatibility.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import { buildOpenClawAgentSecretAccessChecks } from './agent-secret-access-checks.js';
 import { hasRuntimeConfigReferences, isRuntimeSystemConfigPath } from './runtime-config-paths.js';
@@ -87,7 +87,7 @@ function buildZigVersionCheck(
 			value: zigVersion,
 		};
 	}
-	const compatibility = checkGondolinZigCompatibility({
+	const compatibility = checkManagedVmZigCompatibility({
 		requiredVersion: requiredZigVersion,
 		installedVersion: zigVersion,
 	});

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
-import { writePreparedGondolinImage } from '../../build/prepared-gondolin-image-cache.js';
+import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig } from '../../config/system-config.js';
 import { isGatewayImageCached } from './controller-definition.js';
 
@@ -49,7 +49,7 @@ describe('isGatewayImageCached', () => {
 			'utf8',
 		);
 		await writeFakeImageAssets(imagePath);
-		await writePreparedGondolinImage({
+		await writePreparedManagedVmImage({
 			buildConfigPath,
 			cacheDir: gatewayProfileCacheDirectory,
 			fingerprint: 'docker-backed-fingerprint',

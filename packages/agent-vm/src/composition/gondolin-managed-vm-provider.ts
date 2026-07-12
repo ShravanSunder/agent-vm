@@ -10,7 +10,7 @@ import type {
 	ManagedVmOwnedDirectoryCapability,
 } from '@agent-vm/managed-vm';
 
-import { readPreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
+import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 
 export interface ManagedVmHostNetworkDefaults {
 	readonly autoSelectFamily: false | 'unavailable';
@@ -33,7 +33,7 @@ function createAuthoritativeManagedVmImageCapability(
 	return {
 		async prepareImage(request: ManagedVmImageBuildRequest): Promise<ManagedVmImageBuildResult> {
 			if (request.forceRebuild !== true) {
-				const preparedImage = await readPreparedGondolinImage({
+				const preparedImage = await readPreparedManagedVmImage({
 					buildConfigPath: request.recipePath,
 					cacheDir: request.cacheDirectory,
 				});

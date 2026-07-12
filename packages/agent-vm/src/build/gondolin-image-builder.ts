@@ -15,7 +15,7 @@ import { resolveRuntimeBuildVersionTag as resolveRuntimeBuildVersionTagDefault }
 type BuildImageResult = ManagedVmBackendImageBuildResult;
 const defaultImageBuildTooling = createManagedVmBackendImageBuildTooling();
 
-export interface GondolinImageBuildRequest {
+export interface ManagedVmImageBuildRequest {
 	readonly buildConfigPath: string;
 	readonly cacheDir: string;
 	readonly fingerprintInput?: unknown;
@@ -23,20 +23,20 @@ export interface GondolinImageBuildRequest {
 	readonly previewOutput?: boolean;
 }
 
-export interface RunGondolinBuildChildProcessOptions {
+export interface RunManagedVmBuildChildProcessOptions {
 	readonly childModuleUrl?: URL;
-	readonly request: GondolinImageBuildRequest;
+	readonly request: ManagedVmImageBuildRequest;
 	readonly streamPreview: TaskOutput;
 }
 
-export interface GondolinImageBuilderDependencies {
+export interface ManagedVmImageBuilderDependencies {
 	readonly buildImage?: (
 		options: ManagedVmBackendImageBuildOptions,
 		dependencies?: { readonly gondolinVersion?: string },
 	) => Promise<BuildImageResult>;
 	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<unknown>;
 	readonly runBuildChildProcess?: (
-		options: RunGondolinBuildChildProcessOptions,
+		options: RunManagedVmBuildChildProcessOptions,
 	) => Promise<BuildImageResult>;
 	readonly resolveRuntimeBuildVersionTag?: () => Promise<string>;
 }
@@ -45,20 +45,20 @@ interface ComputeFingerprintFromConfigPathOptions {
 	readonly fingerprintInput?: unknown;
 }
 
-interface GondolinBuildChildResultMessage {
+interface ManagedVmBuildChildResultMessage {
 	readonly result: BuildImageResult;
 	readonly type: 'result';
 }
 
-interface GondolinBuildChildErrorMessage {
+interface ManagedVmBuildChildErrorMessage {
 	readonly message: string;
 	readonly stack?: string;
 	readonly type: 'error';
 }
 
-type GondolinBuildChildMessage =
-	| GondolinBuildChildErrorMessage
-	| GondolinBuildChildResultMessage;
+type ManagedVmBuildChildMessage =
+	| ManagedVmBuildChildErrorMessage
+	| ManagedVmBuildChildResultMessage;
 
 const CHILD_EXIT_GRACE_MS = 2_000;
 const CHILD_STDERR_TAIL_BYTES = 16_384;
@@ -69,8 +69,8 @@ const silentTaskOutput: TaskOutput = {
 function hasRuntimeBuildVersionDependency(
 	optionsOrDependencies:
 		| ComputeFingerprintFromConfigPathOptions
-		| Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'>,
-): optionsOrDependencies is Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> {
+		| Pick<ManagedVmImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'>,
+): optionsOrDependencies is Pick<ManagedVmImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> {
 	return 'resolveRuntimeBuildVersionTag' in optionsOrDependencies;
 }
 
@@ -94,8 +94,8 @@ export async function computeFingerprintFromConfigPath(
 	buildConfigPath: string,
 	optionsOrDependencies:
 		| ComputeFingerprintFromConfigPathOptions
-		| Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> = {},
-	dependencies: Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> = {},
+		| Pick<ManagedVmImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> = {},
+	dependencies: Pick<ManagedVmImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> = {},
 ): Promise<string> {
 	const options: ComputeFingerprintFromConfigPathOptions = hasRuntimeBuildVersionDependency(
 		optionsOrDependencies,
@@ -118,7 +118,7 @@ export async function computeFingerprintFromConfigPath(
 	});
 }
 
-function isGondolinBuildChildMessage(value: unknown): value is GondolinBuildChildMessage {
+function isManagedVmBuildChildMessage(value: unknown): value is ManagedVmBuildChildMessage {
 	if (typeof value !== 'object' || value === null || !('type' in value)) {
 		return false;
 	}
@@ -183,7 +183,7 @@ function createProcessStderrOutput(): TaskOutput {
 	};
 }
 
-export function resolveDefaultGondolinBuildChildModuleUrl(moduleUrl: URL): URL {
+export function resolveDefaultManagedVmBuildChildModuleUrl(moduleUrl: URL): URL {
 	const modulePath = fileURLToPath(moduleUrl);
 	const sourceBuildDirectory = `${path.sep}src${path.sep}build${path.sep}`;
 	if (modulePath.includes(sourceBuildDirectory)) {
@@ -195,9 +195,9 @@ export function resolveDefaultGondolinBuildChildModuleUrl(moduleUrl: URL): URL {
 	return new URL('./gondolin-image-build-child-entrypoint.js', moduleUrl);
 }
 
-export async function runGondolinImageBuildRequest(
-	request: GondolinImageBuildRequest,
-	dependencies: Omit<GondolinImageBuilderDependencies, 'runBuildChildProcess'> = {},
+export async function runManagedVmImageBuildRequest(
+	request: ManagedVmImageBuildRequest,
+	dependencies: Omit<ManagedVmImageBuilderDependencies, 'runBuildChildProcess'> = {},
 ): Promise<BuildImageResult> {
 	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
 	const buildImage = dependencies.buildImage ?? defaultImageBuildTooling.buildImage;
@@ -224,13 +224,13 @@ export async function runGondolinImageBuildRequest(
 	);
 }
 
-export async function runGondolinBuildChildProcess(
-	options: RunGondolinBuildChildProcessOptions,
+export async function runManagedVmBuildChildProcess(
+	options: RunManagedVmBuildChildProcessOptions,
 ): Promise<BuildImageResult> {
 	return await new Promise<BuildImageResult>((resolve, reject) => {
 		const childModuleUrl =
 			options.childModuleUrl ??
-			resolveDefaultGondolinBuildChildModuleUrl(new URL(import.meta.url));
+			resolveDefaultManagedVmBuildChildModuleUrl(new URL(import.meta.url));
 		const childProcess = fork(childModuleUrl, [], {
 			execArgv: [...childProcessExecArgv()],
 			stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -256,7 +256,7 @@ export async function runGondolinBuildChildProcess(
 			if (settled) {
 				return;
 			}
-			if (!isGondolinBuildChildMessage(message)) {
+			if (!isManagedVmBuildChildMessage(message)) {
 				return;
 			}
 			if (message.type === 'result') {
@@ -315,9 +315,9 @@ export async function buildManagedVmImage(
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
 	},
-	dependencies: GondolinImageBuilderDependencies = {},
+	dependencies: ManagedVmImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
-	const request: GondolinImageBuildRequest = {
+	const request: ManagedVmImageBuildRequest = {
 		buildConfigPath: options.buildConfigPath,
 		cacheDir: options.cacheDir,
 		...(options.fingerprintInput === undefined ? {} : { fingerprintInput: options.fingerprintInput }),
@@ -327,7 +327,7 @@ export async function buildManagedVmImage(
 
 	if (options.streamPreview || dependencies.runBuildChildProcess) {
 		const runBuildChildProcess =
-			dependencies.runBuildChildProcess ?? runGondolinBuildChildProcess;
+			dependencies.runBuildChildProcess ?? runManagedVmBuildChildProcess;
 		return await runBuildChildProcess({
 			request,
 			streamPreview: options.streamPreview ?? silentTaskOutput,
@@ -335,11 +335,11 @@ export async function buildManagedVmImage(
 	}
 
 	if (Object.keys(dependencies).length === 0) {
-		return await runGondolinBuildChildProcess({
+		return await runManagedVmBuildChildProcess({
 			request,
 			streamPreview: silentTaskOutput,
 		});
 	}
 
-	return await runGondolinImageBuildRequest(request, dependencies);
+	return await runManagedVmImageBuildRequest(request, dependencies);
 }

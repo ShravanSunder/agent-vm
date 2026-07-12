@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
-	readPreparedGondolinImage,
-	writePreparedGondolinImage,
+	readPreparedManagedVmImage,
+	writePreparedManagedVmImage,
 } from '../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { createOpenClawProcessReliabilityFaultTargetRegistry } from '../controller/reliability/testing/openclaw-process-reliability-fault-target-registry.js';
@@ -1113,7 +1113,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 											await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
 									),
 								);
-								await writePreparedGondolinImage({
+								await writePreparedManagedVmImage({
 									buildConfigPath: profile.buildConfig,
 									cacheDir,
 									fingerprint,
@@ -1142,7 +1142,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 		if (secondGatewayProfile === undefined) {
 			throw new Error('Expected worker gateway image profile.');
 		}
-		const secondPreparedImage = await readPreparedGondolinImage({
+		const secondPreparedImage = await readPreparedManagedVmImage({
 			buildConfigPath: secondGatewayProfile.buildConfig,
 			cacheDir: path.join(secondProject.systemConfig.cacheDir, 'gateway-images', 'worker'),
 		});
@@ -1200,7 +1200,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 												await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
 										),
 									);
-									await writePreparedGondolinImage({
+									await writePreparedManagedVmImage({
 										buildConfigPath: profile.buildConfig,
 										cacheDir,
 										fingerprint,

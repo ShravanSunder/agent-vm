@@ -8,11 +8,11 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildManagedVmImage,
 	computeFingerprintFromConfigPath,
-	resolveDefaultGondolinBuildChildModuleUrl,
-	runGondolinBuildChildProcess,
-	runGondolinImageBuildRequest,
-	type GondolinImageBuilderDependencies,
-	type GondolinImageBuildRequest,
+	resolveDefaultManagedVmBuildChildModuleUrl,
+	runManagedVmBuildChildProcess,
+	runManagedVmImageBuildRequest,
+	type ManagedVmImageBuilderDependencies,
+	type ManagedVmImageBuildRequest,
 } from './gondolin-image-builder.js';
 
 describe('buildManagedVmImage', () => {
@@ -25,10 +25,10 @@ describe('buildManagedVmImage', () => {
 			path.join(packageRootPath, 'dist/build/gondolin-image-builder.js'),
 		);
 
-		expect(fileURLToPath(resolveDefaultGondolinBuildChildModuleUrl(sourceModuleUrl))).toBe(
+		expect(fileURLToPath(resolveDefaultManagedVmBuildChildModuleUrl(sourceModuleUrl))).toBe(
 			path.join(packageRootPath, 'dist/build/gondolin-image-build-child-entrypoint.js'),
 		);
-		expect(fileURLToPath(resolveDefaultGondolinBuildChildModuleUrl(distModuleUrl))).toBe(
+		expect(fileURLToPath(resolveDefaultManagedVmBuildChildModuleUrl(distModuleUrl))).toBe(
 			path.join(packageRootPath, 'dist/build/gondolin-image-build-child-entrypoint.js'),
 		);
 	});
@@ -55,7 +55,7 @@ process.on('message', () => {
 		);
 		const streamPreviewChunks: string[] = [];
 
-		const result = await runGondolinBuildChildProcess({
+		const result = await runManagedVmBuildChildProcess({
 			childModuleUrl: pathToFileURL(childModulePath),
 			request: {
 				buildConfigPath: '/project/build-config.json',
@@ -99,7 +99,7 @@ process.on('message', () => {
 			'utf8',
 		);
 
-		const result = await runGondolinBuildChildProcess({
+		const result = await runManagedVmBuildChildProcess({
 			childModuleUrl: pathToFileURL(childModulePath),
 			request: {
 				buildConfigPath: '/project/build-config.json',
@@ -136,7 +136,7 @@ process.exit(1);
 		);
 
 		await expect(
-			runGondolinBuildChildProcess({
+			runManagedVmBuildChildProcess({
 				childModuleUrl: pathToFileURL(childModulePath),
 				request: {
 					buildConfigPath: '/project/build-config.json',
@@ -155,11 +155,11 @@ process.exit(1);
 
 	it('delegates interactive builds to the child-process runner', async () => {
 		const childBuildRequests: {
-			readonly request: GondolinImageBuildRequest;
+			readonly request: ManagedVmImageBuildRequest;
 			readonly streamPreviewChunks: readonly string[];
 		}[] = [];
 		const streamPreviewChunks: string[] = [];
-		const dependencies: GondolinImageBuilderDependencies = {
+		const dependencies: ManagedVmImageBuilderDependencies = {
 			loadBuildConfig: async () => ({
 				arch: 'aarch64',
 				distro: 'alpine',
@@ -209,9 +209,9 @@ process.exit(1);
 	});
 
 	it('delegates production builds to the child-process runner without rendering child output', async () => {
-		const childBuildRequests: GondolinImageBuildRequest[] = [];
+		const childBuildRequests: ManagedVmImageBuildRequest[] = [];
 		let childStreamWriteResult: boolean | undefined;
-		const dependencies: GondolinImageBuilderDependencies = {
+		const dependencies: ManagedVmImageBuilderDependencies = {
 			runBuildChildProcess: async (options) => {
 				childBuildRequests.push(options.request);
 				childStreamWriteResult = options.streamPreview.write('hidden rootfs progress\n');
@@ -249,7 +249,7 @@ process.exit(1);
 			readonly gondolinVersion?: string;
 			readonly hasOutput: boolean;
 		}[] = [];
-		const dependencies: GondolinImageBuilderDependencies = {
+		const dependencies: ManagedVmImageBuilderDependencies = {
 			loadBuildConfig: async () => ({
 				arch: 'aarch64',
 				distro: 'alpine',
@@ -304,7 +304,7 @@ process.exit(1);
 
 	it('passes an output stream to the core builder for preview requests', async () => {
 		const outputPresence: boolean[] = [];
-		const dependencies: GondolinImageBuilderDependencies = {
+		const dependencies: ManagedVmImageBuilderDependencies = {
 			loadBuildConfig: async () => ({
 				arch: 'aarch64',
 				distro: 'alpine',
@@ -320,7 +320,7 @@ process.exit(1);
 			},
 		};
 
-		const result = await runGondolinImageBuildRequest(
+		const result = await runManagedVmImageBuildRequest(
 			{
 				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
 				cacheDir: '/cache/gateway-images/openclaw',
@@ -340,7 +340,7 @@ process.exit(1);
 			stderrChunks.push(String(chunk));
 			return true;
 		}) as typeof process.stderr.write;
-		const dependencies: GondolinImageBuilderDependencies = {
+		const dependencies: ManagedVmImageBuilderDependencies = {
 			loadBuildConfig: async () => ({
 				arch: 'aarch64',
 				distro: 'alpine',
@@ -365,7 +365,7 @@ process.exit(1);
 
 		const result = await (async () => {
 			try {
-				return await runGondolinImageBuildRequest(
+				return await runManagedVmImageBuildRequest(
 					{
 						buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
 						cacheDir: '/cache/gateway-images/openclaw',

@@ -6,8 +6,8 @@ import { managedVmImageAssetFileNames as buildImageAssetFileNames } from './gond
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-	readPreparedGondolinImage,
-	writePreparedGondolinImage,
+	readPreparedManagedVmImage,
+	writePreparedManagedVmImage,
 } from './prepared-gondolin-image-cache.js';
 
 const temporaryDirectories: string[] = [];
@@ -52,7 +52,7 @@ describe('prepared Gondolin image cache', () => {
 			schemaVersion: 1,
 		};
 
-		await writePreparedGondolinImage({
+		await writePreparedManagedVmImage({
 			buildConfigPath,
 			cacheDir,
 			fingerprint: 'fingerprint-1',
@@ -60,7 +60,7 @@ describe('prepared Gondolin image cache', () => {
 			imagePath,
 		});
 
-		await expect(readPreparedGondolinImage({ buildConfigPath, cacheDir })).resolves.toEqual({
+		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toEqual({
 			built: false,
 			fingerprint: 'fingerprint-1',
 			fingerprintInput,
@@ -72,7 +72,7 @@ describe('prepared Gondolin image cache', () => {
 		const cacheDir = await createTemporaryDirectory();
 		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
 
-		await writePreparedGondolinImage({
+		await writePreparedManagedVmImage({
 			buildConfigPath,
 			cacheDir,
 			fingerprint: 'fingerprint-1',
@@ -80,7 +80,7 @@ describe('prepared Gondolin image cache', () => {
 			imagePath: path.join(cacheDir, 'fingerprint-1'),
 		});
 
-		await expect(readPreparedGondolinImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
+		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
 	});
 
 	it('ignores a corrupted prepared image record', async () => {
@@ -88,7 +88,7 @@ describe('prepared Gondolin image cache', () => {
 		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
 		await fs.writeFile(path.join(cacheDir, 'prepared-image.json'), '{not-json', 'utf8');
 
-		await expect(readPreparedGondolinImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
+		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
 	});
 
 	it('uses unique temporary record paths for concurrent writers', async () => {
@@ -100,13 +100,13 @@ describe('prepared Gondolin image cache', () => {
 		await writeFakeImageAssets(secondImagePath);
 
 		await Promise.all([
-			writePreparedGondolinImage({
+			writePreparedManagedVmImage({
 				buildConfigPath,
 				cacheDir,
 				fingerprint: 'fingerprint-1',
 				imagePath: firstImagePath,
 			}),
-			writePreparedGondolinImage({
+			writePreparedManagedVmImage({
 				buildConfigPath,
 				cacheDir,
 				fingerprint: 'fingerprint-2',
@@ -114,7 +114,7 @@ describe('prepared Gondolin image cache', () => {
 			}),
 		]);
 
-		const preparedImage = await readPreparedGondolinImage({ buildConfigPath, cacheDir });
+		const preparedImage = await readPreparedManagedVmImage({ buildConfigPath, cacheDir });
 		expect(preparedImage?.fingerprint).toMatch(/^fingerprint-[12]$/u);
 	});
 });

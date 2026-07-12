@@ -19,9 +19,9 @@ import {
 	resolveManagedImageRelease,
 } from '../build/managed-image-dockerfile.js';
 import {
-	readPreparedGondolinImage,
-	writePreparedGondolinImage,
-	type PreparedGondolinImage,
+	readPreparedManagedVmImage,
+	writePreparedManagedVmImage,
+	type PreparedManagedVmImage,
 } from '../build/prepared-gondolin-image-cache.js';
 import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { runBuildCommand } from '../cli/build-command.js';
@@ -604,7 +604,7 @@ async function materializePreparedE2eImagesFromManifest(
 					`Missing prepared e2e image manifest entry for ${target.family}/${target.name}.`,
 				);
 			}
-			await writePreparedGondolinImage({
+			await writePreparedManagedVmImage({
 				buildConfigPath: target.buildConfigPath,
 				cacheDir: target.cacheDirectory,
 				fingerprint: entry.fingerprint,
@@ -631,7 +631,7 @@ async function recordPreparedE2eImages(
 			if (!target.e2eManifestEligible) {
 				return null;
 			}
-			const preparedImage: PreparedGondolinImage | undefined = await readPreparedGondolinImage({
+			const preparedImage: PreparedManagedVmImage | undefined = await readPreparedManagedVmImage({
 				buildConfigPath: target.buildConfigPath,
 				cacheDir: target.cacheDirectory,
 			});

@@ -13,11 +13,11 @@ interface PreparedImageBuildResult {
 	readonly imagePath: string;
 }
 
-export interface PreparedGondolinImage extends PreparedImageBuildResult {
+export interface PreparedManagedVmImage extends PreparedImageBuildResult {
 	readonly fingerprintInput?: unknown;
 }
 
-export interface WritePreparedGondolinImageOptions {
+export interface WritePreparedManagedVmImageOptions {
 	readonly buildConfigPath: string;
 	readonly cacheDir: string;
 	readonly fingerprint: string;
@@ -25,7 +25,7 @@ export interface WritePreparedGondolinImageOptions {
 	readonly imagePath: string;
 }
 
-interface PreparedGondolinImageRecord {
+interface PreparedManagedVmImageRecord {
 	readonly buildConfigPath: string;
 	readonly fingerprint: string;
 	readonly fingerprintInput?: unknown;
@@ -41,7 +41,7 @@ function preparedImageRecordPath(cacheDir: string): string {
 	return path.join(cacheDir, preparedImageRecordFileName);
 }
 
-function parsePreparedGondolinImageRecord(value: unknown): PreparedGondolinImageRecord | undefined {
+function parsePreparedManagedVmImageRecord(value: unknown): PreparedManagedVmImageRecord | undefined {
 	if (!isRecord(value)) {
 		return undefined;
 	}
@@ -66,10 +66,10 @@ function parsePreparedGondolinImageRecord(value: unknown): PreparedGondolinImage
 	};
 }
 
-export async function readPreparedGondolinImage(options: {
+export async function readPreparedManagedVmImage(options: {
 	readonly buildConfigPath: string;
 	readonly cacheDir: string;
-}): Promise<PreparedGondolinImage | undefined> {
+}): Promise<PreparedManagedVmImage | undefined> {
 	let parsedRecord: unknown;
 	try {
 		parsedRecord = JSON.parse(await fs.readFile(preparedImageRecordPath(options.cacheDir), 'utf8'));
@@ -83,7 +83,7 @@ export async function readPreparedGondolinImage(options: {
 		throw error;
 	}
 
-	const record = parsePreparedGondolinImageRecord(parsedRecord);
+	const record = parsePreparedManagedVmImageRecord(parsedRecord);
 	if (!record) {
 		return undefined;
 	}
@@ -107,14 +107,14 @@ export async function readPreparedGondolinImage(options: {
 	};
 }
 
-export async function writePreparedGondolinImage(
-	options: WritePreparedGondolinImageOptions,
+export async function writePreparedManagedVmImage(
+	options: WritePreparedManagedVmImageOptions,
 ): Promise<void> {
 	if (!(await hasManagedVmImageAssets(options.imagePath))) {
 		return;
 	}
 	await fs.mkdir(options.cacheDir, { recursive: true });
-	const record: PreparedGondolinImageRecord = {
+	const record: PreparedManagedVmImageRecord = {
 		buildConfigPath: path.resolve(options.buildConfigPath),
 		fingerprint: options.fingerprint,
 		...(options.fingerprintInput === undefined

@@ -35,7 +35,7 @@ export interface ManagedVmBackendImageBuildTooling {
 }
 
 /**
- * Gondolin-specific build metadata projected as backend-neutral primitive values.
+ * Backend-specific build metadata projected as backend-neutral primitive values.
  *
  * This module is the sole build/tooling composition boundary for the selected
  * managed-VM backend. Runtime provider construction belongs to the separate

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { command, flag, subcommands } from 'cmd-ts';
 
-import { readPreparedGondolinImage } from '../../build/prepared-gondolin-image-cache.js';
+import { readPreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerOfflineCleanup } from '../../operations/controller-offline-cleanup.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
@@ -78,7 +78,7 @@ export async function isGatewayImageCached(
 		'gateway-images',
 		zone.gateway.imageProfile,
 	);
-	const preparedGatewayImage = await readPreparedGondolinImage({
+	const preparedGatewayImage = await readPreparedManagedVmImage({
 		buildConfigPath: gatewayImageProfile.buildConfig,
 		cacheDir: gatewayProfileCacheDirectory,
 	});
