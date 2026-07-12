@@ -52,7 +52,7 @@ export async function captureManagedVmTermination(
 				target: { hostPid, processIdentity, vmId: managedVm.id },
 				vm: {
 					close: async () => await managedVm.close(),
-					getHostPid: () => managedVm.getHostProcessId(),
+					getHostProcessId: () => managedVm.getHostProcessId(),
 					id: managedVm.id,
 				},
 			});

@@ -20,7 +20,7 @@ export type ManagedVmTerminationOutcome =
 export interface LiveManagedVmTerminationHandle {
 	readonly id: string;
 	close(): Promise<void>;
-	getHostPid(): number | null;
+	getHostProcessId(): number | null;
 }
 
 export class ManagedVmTerminationUnprovenError extends Error {
@@ -86,7 +86,7 @@ function assertLiveVmMatchesTarget(options: {
 			`Refusing managed VM termination because live VM id '${options.vm.id}' does not match recorded VM id '${options.target.vmId}'.`,
 		);
 	}
-	const liveHostPid = options.vm.getHostPid();
+	const liveHostPid = options.vm.getHostProcessId();
 	if (liveHostPid !== null && liveHostPid !== options.target.hostPid) {
 		throw new Error(
 			`Refusing managed VM termination because live VM '${options.vm.id}' reports pid ${String(liveHostPid)}, not recorded pid ${String(options.target.hostPid)}.`,
@@ -102,7 +102,7 @@ async function waitForGondolinRunnerDetach(options: {
 	readonly vm: LiveManagedVmTerminationHandle;
 }): Promise<void> {
 	for (let attempt = 0; attempt < options.attempts; attempt += 1) {
-		const liveHostPid = options.vm.getHostPid();
+		const liveHostPid = options.vm.getHostProcessId();
 		if (liveHostPid === null) {
 			return;
 		}

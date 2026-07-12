@@ -234,7 +234,7 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 			exec: (): never => {
 				throw new Error('not used');
 			},
-			getHostPid: (): number => 42,
+			getHostProcessId: (): number => 42,
 			id: 'gateway-vm-1',
 		},
 		vmOwnership: createGatewayVmOwnershipStub('gateway-vm-1'),

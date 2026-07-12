@@ -1,4 +1,5 @@
 import { appendEvent, type TaskEvent } from '@agent-vm/agent-vm-worker';
+import type { ManagedVmFactory, ManagedVmImageCapability } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
@@ -67,6 +68,8 @@ export interface CreateWorkerZoneRuntimeOptions {
 		workerIngress: { readonly host: string; readonly port: number },
 	) => void | Promise<void>;
 	readonly onWorkerTaskPrepared?: (task: ActiveWorkerTask) => void | Promise<void>;
+	readonly managedVmFactory: ManagedVmFactory;
+	readonly managedVmImages: ManagedVmImageCapability;
 	readonly prepareWorkerTask?: typeof prepareWorkerTaskDefault;
 	readonly requestHeartbeatRegistry: Pick<RequestHeartbeatRegistry, 'acquire' | 'release'>;
 	readonly runControllerDestroy?: typeof runControllerDestroyDefault;
@@ -287,6 +290,8 @@ export function createWorkerZoneRuntime(
 					},
 					secretResolver: options.secretResolver,
 					systemConfig: options.systemConfig,
+					managedVmFactory: options.managedVmFactory,
+					managedVmImages: options.managedVmImages,
 				});
 			} catch (error) {
 				if (

@@ -1,4 +1,4 @@
-import type { VfsMountSpec } from '@agent-vm/gondolin-adapter';
+import type { ManagedVmMount } from '@agent-vm/managed-vm';
 
 import type {
 	ExternalResources,
@@ -15,7 +15,7 @@ export interface RepoResourceFinalization {
 export interface ResourceOverlay {
 	readonly environment: Record<string, string>;
 	readonly tcpHosts: Record<string, string>;
-	readonly vfsMounts: Record<string, VfsMountSpec>;
+	readonly vfsMounts: Record<string, ManagedVmMount>;
 }
 
 export interface CompileResourceOverlayOptions {
@@ -62,7 +62,7 @@ function assignTcpHost(tcpHosts: Record<string, string>, key: string, target: st
 export function compileResourceOverlay(options: CompileResourceOverlayOptions): ResourceOverlay {
 	const tcpHosts: Record<string, string> = {};
 	const environment: Record<string, string> = {};
-	const vfsMounts: Record<string, VfsMountSpec> = {};
+	const vfsMounts: Record<string, ManagedVmMount> = {};
 
 	for (const resource of Object.values(options.externalResources)) {
 		assignTcpHost(tcpHosts, toTcpHostKey(resource), toTcpHostTarget(resource));
@@ -71,8 +71,9 @@ export function compileResourceOverlay(options: CompileResourceOverlayOptions): 
 
 	for (const finalization of options.repoFinalizations) {
 		vfsMounts[`/agent-vm/resources/${finalization.repoId}`] = {
+			access: 'read-only',
 			hostPath: finalization.outputDir,
-			kind: 'realfs-readonly',
+			kind: 'host-directory',
 		};
 		for (const resource of Object.values(finalization.final.resources)) {
 			assignTcpHost(tcpHosts, toTcpHostKey(resource), toTcpHostTarget(resource));

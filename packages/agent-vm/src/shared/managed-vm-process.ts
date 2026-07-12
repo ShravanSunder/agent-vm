@@ -203,19 +203,9 @@ export async function verifyRecordedManagedVmHostProcess(options: {
 		}
 		return { proceed: true };
 	}
-	// No recorded identity (legacy record) → fall back to the looser command-
-	// only check at the SIGTERM point. Subsequent signals trust the first
-	// check. This is the pre-identity behavior.
-	const command = await options.readProcessCommand(options.pid);
-	if (command === null) {
-		return { proceed: false };
-	}
-	if (!isManagedVmProcess(command)) {
-		throw new Error(
-			`${options.contextLabel} points at unexpected live process ${options.pid}: ${command}.`,
-		);
-	}
-	return { proceed: true };
+	throw new Error(
+		`${options.contextLabel} refusing ${refusalAction} pid ${options.pid}: recorded process identity and a live identity reader are required before a destructive signal.`,
+	);
 }
 
 async function verifyIdentityBeforeSignal(options: {

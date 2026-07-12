@@ -13,6 +13,11 @@ import {
 	type WorkerConfig,
 	type WorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
+import type {
+	ManagedVmFactory,
+	ManagedVmImageCapability,
+	ManagedVmMount,
+} from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { execa } from 'execa';
 import { z } from 'zod';
@@ -32,10 +37,7 @@ import {
 	loadGatewayRuntimeRecord,
 } from '../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
-import type {
-	GatewayManagedVmFactoryOptions,
-	GatewayZone,
-} from '../gateway/gateway-zone-support.js';
+import type { GatewayZone } from '../gateway/gateway-zone-support.js';
 import { loadRepoResourceDescriptionContract } from '../resources/repo-resource-contract-loader.js';
 import {
 	startRepoResourceProviders,
@@ -414,7 +416,7 @@ export interface PreStartResult {
 	readonly startedResourceProviders: readonly StartedRepoResourceProvider[];
 	readonly environment: Record<string, string>;
 	readonly tcpHosts: Record<string, string>;
-	readonly vfsMounts: GatewayManagedVmFactoryOptions['vfsMounts'];
+	readonly vfsMounts: Readonly<Record<string, ManagedVmMount>>;
 	readonly repos: readonly {
 		readonly repoId: string;
 		readonly repoUrl: string;
@@ -769,12 +771,14 @@ export async function preStartGateway(
 			tcpHosts: overlay.tcpHosts,
 			vfsMounts: {
 				'/gitdirs': {
+					access: 'read-write',
 					hostPath: gitdirsRoot,
-					kind: 'realfs',
+					kind: 'host-directory',
 				},
 				'/agent-vm': {
+					access: 'read-only',
 					hostPath: agentVmDir,
-					kind: 'realfs-readonly',
+					kind: 'host-directory',
 				},
 			},
 			repos: clonedRepos,
@@ -913,6 +917,8 @@ export interface ExecuteWorkerTaskOptions {
 	};
 	readonly connectWorkerControlSession?: typeof connectWorkerControlSessionDefault;
 	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
+	readonly managedVmFactory: ManagedVmFactory;
+	readonly managedVmImages: ManagedVmImageCapability;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
 	readonly timeoutMs?: number;
@@ -1099,9 +1105,13 @@ export async function executeWorkerTask(
 				zoneId: prepared.zoneId,
 				zoneOverride: prepared.taskZoneConfig,
 			},
-			options.managedVmKillDependencies === undefined
-				? {}
-				: { managedVmKillDependencies: options.managedVmKillDependencies },
+			{
+				managedVmFactory: options.managedVmFactory,
+				managedVmImages: options.managedVmImages,
+				...(options.managedVmKillDependencies === undefined
+					? {}
+					: { managedVmKillDependencies: options.managedVmKillDependencies }),
+			},
 		);
 		await options.onWorkerTaskIngress?.(prepared.zoneId, prepared.taskId, gateway.ingress);
 
@@ -1245,7 +1255,7 @@ export async function executeWorkerTask(
 				const runtimeRecord = await loadGatewayRuntimeRecord(
 					prepared.taskZoneConfig.gateway.stateDir,
 				);
-				if (runtimeRecord === null && gateway.vm.getHostPid() !== null) {
+				if (runtimeRecord === null && gateway.vm.getHostProcessId() !== null) {
 					throw new Error(
 						`Worker VM '${gateway.vm.id}' has a live runner but no runtime record; refusing unverified cleanup.`,
 					);

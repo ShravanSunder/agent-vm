@@ -1367,7 +1367,7 @@ async function startGatewayZoneImplementation(
 			target: startupProcessTarget,
 			vm: {
 				close: async () => await managedVm.close(),
-				getHostPid: () => managedVm.getHostProcessId(),
+				getHostProcessId: () => managedVm.getHostProcessId(),
 				id: managedVm.id,
 			},
 		});

@@ -1,7 +1,9 @@
 import type {
-	configureHostNetworkDefaults,
-	HostNetworkDefaultsResult,
-} from '@agent-vm/gondolin-adapter';
+	ManagedVm,
+	ManagedVmFactory,
+	ManagedVmImageCapability,
+	ManagedVmOwnedDirectoryCapability,
+} from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -37,12 +39,22 @@ export interface ControllerRuntime {
 	close(): Promise<void>;
 }
 
+export interface ManagedVmHostNetworkDefaults {
+	readonly autoSelectFamily: false | 'unavailable';
+	readonly dnsResultOrder: 'ipv4first' | 'unavailable';
+}
+
+export type ConfigureManagedVmHostNetworkDefaults = () => ManagedVmHostNetworkDefaults;
+
 export interface ControllerRuntimeDependencies {
 	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
 	readonly clearTimeoutImpl?: (timer: NodeJS.Timeout) => void;
 	readonly appendDurableHealthEvent?: typeof appendDurableHealthEvent;
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadiness;
-	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
+	readonly configureManagedVmHostNetworkDefaults: ConfigureManagedVmHostNetworkDefaults;
+	readonly managedVmFactory: ManagedVmFactory;
+	readonly managedVmImages: ManagedVmImageCapability;
+	readonly managedVmOwnedDirectories: ManagedVmOwnedDirectoryCapability;
 	readonly controllerEpoch?: string;
 	readonly acquireControllerOwnershipLock?: typeof acquireControllerOwnershipLock;
 	readonly resolveControllerTelemetryIdentity?: typeof resolveControllerTelemetryIdentity;
@@ -60,7 +72,7 @@ export interface ControllerRuntimeDependencies {
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 		readonly secretResolver: SecretResolver;
-	}) => Promise<import('@agent-vm/gondolin-adapter').ManagedVm | ToolVmProvisioningHandle>;
+	}) => Promise<ManagedVm | ToolVmProvisioningHandle>;
 	readonly createSecretResolver?: (options: {
 		readonly serviceAccountToken: string;
 	}) => Promise<SecretResolver>;
@@ -101,8 +113,6 @@ export interface ControllerRuntimeDependencies {
 	}>;
 	readonly zoneGitOperationLocks?: ZoneGitOperationLocks;
 }
-
-export type { HostNetworkDefaultsResult };
 
 export interface StartControllerRuntimeOptions {
 	readonly systemConfig: LoadedSystemConfig;

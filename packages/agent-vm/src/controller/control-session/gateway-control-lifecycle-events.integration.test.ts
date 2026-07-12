@@ -23,7 +23,6 @@ import {
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
@@ -192,14 +191,12 @@ function createManagedVmStub(): Parameters<typeof createLeaseManager>[0]['create
 				user: 'sandbox',
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
-			fs: createManagedVmFsStub(),
-			getHostPid: () => {
+			getHostProcessId: () => {
 				hostPidReadCount += 1;
 				return hostPidReadCount === 1 ? 12345 : null;
 			},
-			getVmInstance: () => vm,
 			id: 'tool-vm-1',
-			setIngressRoutes: vi.fn(),
+			configureIngressRoutes: vi.fn(),
 			start: vi.fn(async () => {}),
 		};
 		return vm;

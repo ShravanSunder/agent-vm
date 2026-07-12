@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import type { GatewayHealthCheck } from '@agent-vm/gateway-lifecycle';
-import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
+import type {
+	ManagedVmFactory,
+	ManagedVmImageBuildResult,
+	ManagedVmImageCapability,
+} from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
@@ -91,6 +95,8 @@ export interface CreateOpenClawZoneRuntimeOptions {
 		record: GatewayLifecycleOperationRecord,
 	) => Promise<void>;
 	readonly isProcessAlive?: (pid: number) => boolean;
+	readonly managedVmFactory?: ManagedVmFactory | undefined;
+	readonly managedVmImages?: ManagedVmImageCapability | undefined;
 	readonly now: () => number;
 	readonly openClawProcessReliabilityFaultTargetRegistry?:
 		| OpenClawProcessReliabilityFaultTargetRegistry
@@ -131,7 +137,7 @@ interface GatewayZoneStartOptions {
 	readonly onOpenClawProcessReliabilityFaultTarget?:
 		| ((target: OpenClawProcessReliabilityFaultTargetCapture) => void)
 		| undefined;
-	readonly prebuiltImage?: BuildImageResult | undefined;
+	readonly prebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly runtimeEnvironment?: StartGatewayZoneRequestOptions['runtimeEnvironment'];
 	readonly runtimePluginConfigs?: StartGatewayZoneRequestOptions['runtimePluginConfigs'];
 	readonly secretResolver?: SecretResolver | undefined;
@@ -255,7 +261,7 @@ function gatewayIdentityFor(
 	if (!runtimeGateway) {
 		return undefined;
 	}
-	const hostPid = runtimeGateway.vm.getHostPid();
+	const hostPid = runtimeGateway.vm.getHostProcessId();
 	return {
 		...(typeof hostPid === 'number' && hostPid > 0 ? { hostPid } : {}),
 		vmId: runtimeGateway.vm.id,
@@ -286,6 +292,18 @@ export function createOpenClawZoneRuntime(
 	const isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
 	const setTimeoutImpl = options.setTimeoutImpl ?? setTimeout;
 	const setIntervalImpl = options.setIntervalImpl ?? setInterval;
+	const requireGatewayManagerDependencies = (): {
+		readonly managedVmFactory: ManagedVmFactory;
+		readonly managedVmImages: ManagedVmImageCapability;
+	} => {
+		if (options.managedVmFactory === undefined || options.managedVmImages === undefined) {
+			throw new Error('OpenClaw zone runtime requires injected managed VM capabilities.');
+		}
+		return {
+			managedVmFactory: options.managedVmFactory,
+			managedVmImages: options.managedVmImages,
+		};
+	};
 	const appendGatewayLifecycleOperationRecord = options.appendGatewayLifecycleOperationRecord;
 	let gateway: GatewayZoneRuntimeHandle | undefined;
 	let bootedAt: string | undefined;
@@ -446,38 +464,42 @@ export function createOpenClawZoneRuntime(
 	): Promise<GatewayZoneStartResult> =>
 		options.restartGatewayZone
 			? await options.restartGatewayZone(options.zone.id, startOptions)
-			: await startGatewayZone({
-					...(startOptions.observabilityStartupCheck
-						? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
-						: {}),
-					...(startOptions.prebuiltImage ? { prebuiltImage: startOptions.prebuiltImage } : {}),
-					...(startOptions.onPendingVmCreation
-						? { onPendingVmCreation: startOptions.onPendingVmCreation }
-						: {}),
-					...(startOptions.onControlSessionAttemptOutcome
-						? {
-								onControlSessionAttemptOutcome: startOptions.onControlSessionAttemptOutcome,
-							}
-						: {}),
-					...(startOptions.onControlSessionReconnectExhausted
-						? {
-								onControlSessionReconnectExhausted: startOptions.onControlSessionReconnectExhausted,
-							}
-						: {}),
-					...(startOptions.onControlSessionHeartbeat
-						? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
-						: {}),
-					...(startOptions.runtimeEnvironment
-						? { runtimeEnvironment: startOptions.runtimeEnvironment }
-						: {}),
-					...(startOptions.runtimePluginConfigs
-						? { runtimePluginConfigs: startOptions.runtimePluginConfigs }
-						: {}),
-					createVmOwnership: options.createVmOwnership,
-					secretResolver: startOptions.secretResolver ?? options.secretResolver,
-					systemConfig: options.systemConfig,
-					zoneId: options.zone.id,
-				});
+			: await startGatewayZone(
+					{
+						...(startOptions.observabilityStartupCheck
+							? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
+							: {}),
+						...(startOptions.prebuiltImage ? { prebuiltImage: startOptions.prebuiltImage } : {}),
+						...(startOptions.onPendingVmCreation
+							? { onPendingVmCreation: startOptions.onPendingVmCreation }
+							: {}),
+						...(startOptions.onControlSessionAttemptOutcome
+							? {
+									onControlSessionAttemptOutcome: startOptions.onControlSessionAttemptOutcome,
+								}
+							: {}),
+						...(startOptions.onControlSessionReconnectExhausted
+							? {
+									onControlSessionReconnectExhausted:
+										startOptions.onControlSessionReconnectExhausted,
+								}
+							: {}),
+						...(startOptions.onControlSessionHeartbeat
+							? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
+							: {}),
+						...(startOptions.runtimeEnvironment
+							? { runtimeEnvironment: startOptions.runtimeEnvironment }
+							: {}),
+						...(startOptions.runtimePluginConfigs
+							? { runtimePluginConfigs: startOptions.runtimePluginConfigs }
+							: {}),
+						createVmOwnership: options.createVmOwnership,
+						secretResolver: startOptions.secretResolver ?? options.secretResolver,
+						systemConfig: options.systemConfig,
+						zoneId: options.zone.id,
+					},
+					requireGatewayManagerDependencies(),
+				);
 
 	const requireGateway = (): GatewayZoneRuntimeHandle => {
 		const currentState = getLifecycleState();
@@ -684,7 +706,7 @@ export function createOpenClawZoneRuntime(
 
 	const getLifecycleState = (): GatewayZoneLifecycleState => {
 		if (lifecycleState.kind === 'running' || lifecycleState.kind === 'running-degraded') {
-			const hostPid = lifecycleState.gateway.vm.getHostPid();
+			const hostPid = lifecycleState.gateway.vm.getHostProcessId();
 			if (hostPid === undefined || hostPid === null) {
 				return markGatewayHostPidMissing(
 					`Gateway VM host pid is unavailable for zone '${options.zone.id}'.`,
@@ -1150,9 +1172,7 @@ export function createOpenClawZoneRuntime(
 			return startOptions;
 		}
 		try {
-			const preflightGatewayZoneStart =
-				options.preflightGatewayZoneStart ?? preflightGatewayZoneStartDefault;
-			const preflightResult = await preflightGatewayZoneStart({
+			const preflightOptions = {
 				...(startOptions.runtimeEnvironment
 					? { runtimeEnvironment: startOptions.runtimeEnvironment }
 					: {}),
@@ -1162,7 +1182,17 @@ export function createOpenClawZoneRuntime(
 				secretResolver: startOptions.secretResolver ?? options.secretResolver,
 				systemConfig: options.systemConfig,
 				zoneId: options.zone.id,
-			});
+			};
+			const preflightResult =
+				options.preflightGatewayZoneStart === undefined
+					? await preflightGatewayZoneStartDefault(
+							preflightOptions,
+							requireGatewayManagerDependencies(),
+						)
+					: await options.preflightGatewayZoneStart(
+							preflightOptions,
+							requireGatewayManagerDependencies(),
+						);
 			return {
 				...startOptions,
 				...(preflightResult.image ? { prebuiltImage: preflightResult.image } : {}),
@@ -1591,7 +1621,7 @@ export function createOpenClawZoneRuntime(
 		getSnapshot: () => {
 			const currentLifecycleState = getLifecycleState();
 			if (currentLifecycleState.kind === 'running') {
-				const hostPid = currentLifecycleState.gateway.vm.getHostPid();
+				const hostPid = currentLifecycleState.gateway.vm.getHostProcessId();
 				if (hostPid === undefined || hostPid === null) {
 					const missingHostPidState = markGatewayHostPidMissing(
 						`Gateway VM host pid is unavailable for zone '${options.zone.id}'.`,

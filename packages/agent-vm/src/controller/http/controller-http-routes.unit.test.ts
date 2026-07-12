@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { HealthEventStore } from '../health/health-event-store.js';
@@ -91,11 +90,9 @@ function createLeaseStub(
 				user: 'sandbox',
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
-			fs: createManagedVmFsStub(),
 			id: `tool-vm-${leaseId}`,
-			setIngressRoutes: vi.fn(),
-			getHostPid: () => null,
-			getVmInstance: vi.fn(),
+			configureIngressRoutes: vi.fn(),
+			getHostProcessId: () => null,
 			start: async () => {},
 		},
 		hostWorkMountDir: '/host/sandbox-work',

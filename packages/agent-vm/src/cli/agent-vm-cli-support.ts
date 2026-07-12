@@ -8,6 +8,7 @@ import {
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
 import { resolveManagedVmMinimumZigVersion } from '../build/gondolin-managed-vm-build-tooling.js';
+import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import {
 	loadSystemConfig,
 	type LoadedSystemConfig,
@@ -115,7 +116,13 @@ export interface CliDependencies {
 			readonly systemConfig: LoadedSystemConfig;
 			readonly zoneId: string;
 		},
-		runtimeDependencies?: ControllerRuntimeDependencies,
+		runtimeDependencies?: Omit<
+			ControllerRuntimeDependencies,
+			| 'configureManagedVmHostNetworkDefaults'
+			| 'managedVmFactory'
+			| 'managedVmImages'
+			| 'managedVmOwnedDirectories'
+		>,
 	) => Promise<ControllerRuntime>;
 	readonly startGatewayZone: typeof startGatewayZone;
 }
@@ -149,8 +156,16 @@ export const defaultCliDependencies: CliDependencies = {
 	initRepoResources,
 	updateRepoResources,
 	validateRepoResources,
-	startControllerRuntime: async (runtimeOptions, runtimeDependencies) =>
-		await startControllerRuntime(runtimeOptions, runtimeDependencies ?? {}),
+	startControllerRuntime: async (runtimeOptions, runtimeDependencies) => {
+		const managedVmRuntime = createGondolinManagedVmRuntimeComposition();
+		return await startControllerRuntime(runtimeOptions, {
+			...runtimeDependencies,
+			configureManagedVmHostNetworkDefaults: managedVmRuntime.configureManagedVmHostNetworkDefaults,
+			managedVmFactory: managedVmRuntime.managedVmFactory,
+			managedVmImages: managedVmRuntime.managedVmImages,
+			managedVmOwnedDirectories: managedVmRuntime.managedVmOwnedDirectories,
+		});
+	},
 	startGatewayZone,
 };
 

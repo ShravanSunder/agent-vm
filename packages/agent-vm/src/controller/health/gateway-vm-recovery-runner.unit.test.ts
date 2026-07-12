@@ -639,7 +639,7 @@ function createGatewayHandle(vmId: string, hostPid: number): GatewayZoneRuntimeH
 				user: 'root',
 			}),
 			exec: () => createManagedExecProcessStub({ stdout: '' }),
-			getHostPid: () => hostPid,
+			getHostProcessId: () => hostPid,
 			id: vmId,
 		},
 		vmOwnership: createGatewayVmOwnershipStub(vmId),

@@ -16,8 +16,10 @@ const { configureHostNetworkDefaults } = vi.hoisted(() => ({
 }));
 
 vi.mock('@agent-vm/gondolin-vm-adapter', () => ({
+	buildImageAssetFileNames: ['disk.raw'],
 	configureHostNetworkDefaults,
 	createGondolinManagedVmProvider,
+	hasBuiltImageAssets: vi.fn(async () => false),
 }));
 
 import { createGondolinManagedVmRuntimeComposition } from './gondolin-managed-vm-provider.js';
@@ -27,7 +29,7 @@ describe('createGondolinManagedVmRuntimeComposition', () => {
 		createGondolinManagedVmProvider.mockReset();
 	});
 
-	it('constructs one provider and exposes only its neutral runtime projections', () => {
+	it('constructs one provider and exposes only its neutral runtime projections', async () => {
 		// Arrange
 		const factory = { createManagedVm: vi.fn() } satisfies ManagedVmFactory;
 		const images = { prepareImage: vi.fn() } satisfies ManagedVmImageCapability;
@@ -49,9 +51,15 @@ describe('createGondolinManagedVmRuntimeComposition', () => {
 		expect(composition).toEqual({
 			configureManagedVmHostNetworkDefaults: configureHostNetworkDefaults,
 			managedVmFactory: factory,
-			managedVmImages: images,
+			managedVmImages: expect.objectContaining({ prepareImage: expect.any(Function) }),
 			managedVmOwnedDirectories: ownedDirectories,
 		});
+		expect(composition.managedVmImages).not.toBe(images);
+		await composition.managedVmImages.prepareImage({
+			cacheDirectory: '/tmp/missing-managed-vm-image-cache',
+			recipePath: '/tmp/gateway-build-config.json',
+		});
+		expect(images.prepareImage).toHaveBeenCalledOnce();
 		expect(Object.keys(composition)).toEqual([
 			'configureManagedVmHostNetworkDefaults',
 			'managedVmFactory',

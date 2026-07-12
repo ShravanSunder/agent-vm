@@ -1,6 +1,6 @@
 import type { TaskState } from '@agent-vm/agent-vm-worker';
 import type { GatewayProcessSpec } from '@agent-vm/gateway-lifecycle';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
@@ -37,7 +37,7 @@ export interface GatewayZoneRuntimeHandle {
 	readonly processEpoch?: string | undefined;
 	readonly processSpec: GatewayProcessSpec;
 	readonly terminateVm: GatewayZoneStartResult['terminateVm'];
-	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'getHostPid' | 'id'>;
+	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'getHostProcessId' | 'id'>;
 	readonly vmOwnership: GatewayZoneStartResult['vmOwnership'];
 }
 

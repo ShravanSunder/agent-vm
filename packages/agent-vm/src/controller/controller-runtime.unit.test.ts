@@ -5,7 +5,7 @@ import path from 'node:path';
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
-import { type ManagedVm, type ManagedVmInstance } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
@@ -16,7 +16,6 @@ import type { CheckObservabilityStackReadinessOptions } from '../observability/o
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import type { GatewayControlTrustedCallerContext } from './control-session/gateway-control-caller-context.js';
 import type { GatewayControlPreparedLeaseSemanticMutation } from './control-session/gateway-control-domain-handler.js';
@@ -52,28 +51,6 @@ const controllerRuntimeTestRoot = path.join(
 	tmpdir(),
 	`agent-vm-controller-runtime-test-${process.pid}`,
 );
-
-function createManagedVmInstanceStub(vmId: string, hostPid: number | null): ManagedVmInstance {
-	return {
-		close: async () => {},
-		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
-		enableSsh: async () => ({
-			close: async () => {},
-			command: 'ssh ...',
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 19_000,
-			user: 'sandbox',
-		}),
-		exec: () => createManagedExecProcessStub(),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => hostPid,
-		id: vmId,
-		setIngressRoutes: () => {},
-		start: async () => {},
-	};
-}
 
 async function executePreparedGatewayLeaseMutation(options: {
 	readonly gateway: GatewayEpochIdentity;
@@ -120,17 +97,15 @@ function createManagedVmStub(
 			user: 'sandbox',
 		}),
 		exec: () => createManagedExecProcessStub(),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => {
+		getHostProcessId: () => {
 			if (options.detachAfterFirstPidRead === true && hasReportedHostPid) {
 				return null;
 			}
 			hasReportedHostPid = true;
 			return hostPid;
 		},
-		getVmInstance: () => createManagedVmInstanceStub(vmId, hostPid),
 		id: vmId,
-		setIngressRoutes: () => {},
+		configureIngressRoutes: () => {},
 		start: async () => {},
 	};
 }
@@ -208,7 +183,7 @@ const defaultGatewayServiceAutoRestart = {
 const preflightedGatewayImage = {
 	built: false,
 	fingerprint: 'preflighted-fingerprint',
-	imagePath: '/tmp/preflighted-gateway-image',
+	imageReference: '/tmp/preflighted-gateway-image',
 } as const;
 
 const preflightGatewayZoneStart: NonNullable<
@@ -235,10 +210,47 @@ const acquireControllerOwnershipLockForUnitTest: NonNullable<
 
 function startControllerRuntime(
 	options: Parameters<typeof startControllerRuntimeProduction>[0],
-	dependencies: ControllerRuntimeDependencies,
+	dependencies: Omit<
+		ControllerRuntimeDependencies,
+		| 'configureManagedVmHostNetworkDefaults'
+		| 'managedVmFactory'
+		| 'managedVmImages'
+		| 'managedVmOwnedDirectories'
+	> &
+		Partial<
+			Pick<
+				ControllerRuntimeDependencies,
+				| 'configureManagedVmHostNetworkDefaults'
+				| 'managedVmFactory'
+				| 'managedVmImages'
+				| 'managedVmOwnedDirectories'
+			>
+		>,
 ): ReturnType<typeof startControllerRuntimeProduction> {
 	return startControllerRuntimeProduction(options, {
 		acquireControllerOwnershipLock: acquireControllerOwnershipLockForUnitTest,
+		configureManagedVmHostNetworkDefaults: () => ({
+			autoSelectFamily: false,
+			dnsResultOrder: 'ipv4first',
+		}),
+		managedVmFactory: {
+			createManagedVm: async () => createManagedVmStub('controller-test-vm', 48_282),
+		},
+		managedVmImages: {
+			prepareImage: async () => preflightedGatewayImage,
+		},
+		managedVmOwnedDirectories: {
+			openHostDirectory: (hostPath) => ({
+				close: () => {},
+				consume: () => ({
+					close: () => {},
+					identity: { canonicalPath: hostPath, device: 1, inode: 1 },
+					state: 'adapter-owned',
+				}),
+				identity: { canonicalPath: hostPath, device: 1, inode: 1 },
+				state: 'acquired',
+			}),
+		},
 		...dependencies,
 	});
 }
@@ -898,7 +910,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -929,11 +941,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_284,
-					getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, 48_284),
+					getHostProcessId: () => 48_284,
 					id: gatewayVmId,
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: async () => {},
@@ -972,11 +982,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 12_345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-1', 12_345),
+					getHostProcessId: () => 12_345,
 					id: 'tool-vm-1',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				})),
 				createSecretResolver,
@@ -1070,7 +1078,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -1123,7 +1131,7 @@ describe('startControllerRuntime', () => {
 				detachAfterFirstPidRead: true,
 			}),
 		);
-		const configureHostNetworkDefaults = vi.fn(() => {
+		const configureManagedVmHostNetworkDefaults = vi.fn(() => {
 			startupEvents.push('host-network-defaults');
 			return {
 				autoSelectFamily: false,
@@ -1147,7 +1155,7 @@ describe('startControllerRuntime', () => {
 					});
 				},
 				createManagedToolVm,
-				configureHostNetworkDefaults,
+				configureManagedVmHostNetworkDefaults,
 				createSecretResolver: async () => {
 					startupEvents.push('secrets');
 					return {
@@ -1185,6 +1193,10 @@ describe('startControllerRuntime', () => {
 				}),
 				zoneId: 'shravan',
 			}),
+			expect.objectContaining({
+				managedVmFactory: expect.any(Object),
+				managedVmImages: expect.any(Object),
+			}),
 		);
 		expect(taskTitles).toEqual([
 			'Resolving 1Password secrets',
@@ -1196,7 +1208,7 @@ describe('startControllerRuntime', () => {
 				port: 18800,
 			}),
 		);
-		expect(configureHostNetworkDefaults).toHaveBeenCalledOnce();
+		expect(configureManagedVmHostNetworkDefaults).toHaveBeenCalledOnce();
 		expect(acquireControllerOwnershipLock).toHaveBeenCalledWith({
 			runtimeDirectory: absoluteLeaseSystemConfig.runtimeDir,
 		});
@@ -1490,7 +1502,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -1514,12 +1526,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: vi.fn(() => 48_282),
+					getHostProcessId: vi.fn(() => 48_282),
 					id: 'gateway-vm-1',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-1', 48_282),
 				},
 				terminateVm: closeGatewayVm,
 				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
@@ -1573,7 +1583,7 @@ describe('startControllerRuntime', () => {
 			image: {
 				built: true,
 				fingerprint: 'gateway-image',
-				imagePath: '/tmp/gateway-image',
+				imageReference: '/tmp/gateway-image',
 			},
 			ingress: {
 				host: '127.0.0.1',
@@ -1597,12 +1607,10 @@ describe('startControllerRuntime', () => {
 					user: 'sandbox',
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-				fs: createManagedVmFsStub(),
-				getHostPid: vi.fn(() => 48_282),
+				getHostProcessId: vi.fn(() => 48_282),
 				id: 'gateway-vm-1',
-				setIngressRoutes: vi.fn(),
+				configureIngressRoutes: vi.fn(),
 				start: async () => {},
-				getVmInstance: () => createManagedVmInstanceStub('gateway-vm-1', 48_282),
 			},
 			terminateVm: async () => {},
 			vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
@@ -1722,7 +1730,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -1748,11 +1756,9 @@ describe('startControllerRuntime', () => {
 					exec: vi.fn(() =>
 						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '200' }),
 					),
-					fs: createManagedVmFsStub(),
-					getHostPid: vi.fn(() => 48_282),
-					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-telemetry', 48_282),
+					getHostProcessId: vi.fn(() => 48_282),
 					id: 'gateway-vm-telemetry',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: async () => {},
@@ -2011,7 +2017,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -2035,11 +2041,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_282,
-					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-1', 48_282),
+					getHostProcessId: () => 48_282,
 					id: 'gateway-vm-1',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: async () => {},
@@ -2076,11 +2080,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 12_345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-1', 12_345),
+					getHostProcessId: () => 12_345,
 					id: 'tool-vm-1',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
@@ -2244,7 +2246,7 @@ describe('startControllerRuntime', () => {
 		const startGatewayZone = vi.fn(async (startOptions) => {
 			capturedHealthEventStore = startOptions.healthEventStore;
 			return {
-				image: { built: true, fingerprint: 'gateway-image', imagePath: '/tmp/gateway-image' },
+				image: { built: true, fingerprint: 'gateway-image', imageReference: '/tmp/gateway-image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: openClawProcessSpec,
 				vm: {
@@ -2264,11 +2266,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_282,
-					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-1', 48_282),
+					getHostProcessId: () => 48_282,
 					id: 'gateway-vm-1',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: async () => {},
@@ -2308,11 +2308,9 @@ describe('startControllerRuntime', () => {
 						exec: vi.fn(() =>
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
-						fs: createManagedVmFsStub(),
-						getHostPid: () => 12_345,
-						getVmInstance: () => createManagedVmInstanceStub('tool-vm-1', 12_345),
+						getHostProcessId: () => 12_345,
 						id: 'tool-vm-1',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					})),
 					createSecretResolver: async () => ({
@@ -2411,7 +2409,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -2445,11 +2443,9 @@ describe('startControllerRuntime', () => {
 						healthProbeCommands.push(command);
 						return createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '502' });
 					}),
-					fs: createManagedVmFsStub(),
-					getHostPid: vi.fn(() => gatewayHostPid),
-					getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, gatewayHostPid),
+					getHostProcessId: vi.fn(() => gatewayHostPid),
 					id: gatewayVmId,
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: gatewayStartCount === 1 ? firstGatewayClose : async (): Promise<void> => {},
@@ -2480,11 +2476,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-auto-recovery', 12345),
+					getHostProcessId: () => 12345,
 					id: 'tool-vm-auto-recovery',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
@@ -2600,7 +2594,7 @@ describe('startControllerRuntime', () => {
 			image: {
 				built: true,
 				fingerprint: 'gateway-image',
-				imagePath: '/tmp/gateway-image',
+				imageReference: '/tmp/gateway-image',
 			},
 			ingress: {
 				host: '127.0.0.1',
@@ -2635,12 +2629,9 @@ describe('startControllerRuntime', () => {
 						stdout: command.includes('/health') ? '200' : '503',
 					});
 				}),
-				fs: createManagedVmFsStub(),
-				getHostPid: vi.fn(() => 48_000),
-				getVmInstance: () =>
-					createManagedVmInstanceStub('gateway-vm-readiness-red-service-green', 48_000),
+				getHostProcessId: vi.fn(() => 48_000),
 				id: 'gateway-vm-readiness-red-service-green',
-				setIngressRoutes: vi.fn(),
+				configureIngressRoutes: vi.fn(),
 				start: async () => {},
 			},
 			terminateVm: closeGatewayVm,
@@ -2670,12 +2661,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 12345,
-					getVmInstance: () =>
-						createManagedVmInstanceStub('tool-vm-readiness-red-service-green', 12345),
+					getHostProcessId: () => 12345,
 					id: 'tool-vm-readiness-red-service-green',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
@@ -2765,7 +2753,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -2791,11 +2779,9 @@ describe('startControllerRuntime', () => {
 					exec: vi.fn(() =>
 						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '502' }),
 					),
-					fs: createManagedVmFsStub(),
-					getHostPid: vi.fn(() => gatewayHostPid),
-					getVmInstance: () => createManagedVmInstanceStub(gatewayVmId, gatewayHostPid),
+					getHostProcessId: vi.fn(() => gatewayHostPid),
 					id: gatewayVmId,
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: async () => {},
@@ -2826,11 +2812,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 12_345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-auto-cold-start', 12_345),
+					getHostProcessId: () => 12_345,
 					id: 'tool-vm-auto-cold-start',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
@@ -2875,7 +2859,7 @@ describe('startControllerRuntime', () => {
 				runtimePluginConfigs: {},
 				zoneId: 'shravan',
 			}),
-			undefined,
+			expect.objectContaining({ managedVmImages: expect.any(Object) }),
 		);
 		expect(startGatewayZone).toHaveBeenCalledTimes(2);
 		if (!startHttpServerArgs) {
@@ -2947,7 +2931,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -2973,11 +2957,9 @@ describe('startControllerRuntime', () => {
 					exec: vi.fn(() =>
 						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '200' }),
 					),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 48_002,
-					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-secret-refresh', 48_002),
+					getHostProcessId: () => 48_002,
 					id: 'gateway-vm-secret-refresh',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				terminateVm: async () => {},
@@ -3007,11 +2989,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 12_345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-secret-refresh', 12_345),
+					getHostProcessId: () => 12_345,
 					id: 'tool-vm-secret-refresh',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				})),
 				createSecretResolver,
@@ -3115,7 +3095,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -3141,11 +3121,9 @@ describe('startControllerRuntime', () => {
 					exec: vi.fn(() =>
 						createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '502' }),
 					),
-					fs: createManagedVmFsStub(),
-					getHostPid: vi.fn(() => gatewayHostPid),
-					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-same', gatewayHostPid),
+					getHostProcessId: vi.fn(() => gatewayHostPid),
 					id: 'gateway-vm-same',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
 				controlSessionRecoverySourceKey: {
@@ -3183,11 +3161,9 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-auto-recovery', 12345),
+					getHostProcessId: () => 12345,
 					id: 'tool-vm-auto-recovery',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				})),
 				createSecretResolver: async () => ({
@@ -3293,12 +3269,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'tool-vm-boot-fail',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-boot-fail', 12345),
+					getHostProcessId: () => 12345,
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -3386,12 +3360,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'tool-vm-worker-stop',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-worker-stop', 12345),
+					getHostProcessId: () => 12345,
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -3406,7 +3378,7 @@ describe('startControllerRuntime', () => {
 					image: {
 						built: true,
 						fingerprint: 'gateway-image',
-						imagePath: '/tmp/gateway-image',
+						imageReference: '/tmp/gateway-image',
 					},
 					ingress: {
 						host: '127.0.0.1',
@@ -3432,12 +3404,10 @@ describe('startControllerRuntime', () => {
 						exec: vi.fn(() =>
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
-						fs: createManagedVmFsStub(),
 						id: 'gateway-vm-worker',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
-						getHostPid: () => 12345,
-						getVmInstance: () => createManagedVmInstanceStub('gateway-vm-worker', 12345),
+						getHostProcessId: () => 12345,
 					},
 					terminateVm: async () => {},
 					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-worker'),
@@ -3530,12 +3500,10 @@ describe('startControllerRuntime', () => {
 						exec: vi.fn(() =>
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
-						fs: createManagedVmFsStub(),
 						id: 'tool-vm-worker-task',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
-						getHostPid: () => 12345,
-						getVmInstance: () => createManagedVmInstanceStub('tool-vm-worker-task', 12345),
+						getHostProcessId: () => 12345,
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => 'controller-token',
@@ -3858,12 +3826,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'tool-vm-worker-capacity',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-worker-capacity', 12345),
+					getHostProcessId: () => 12345,
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -3948,7 +3914,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -3972,12 +3938,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'gateway-vm-cleanup-test',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('gateway-vm-cleanup-test', 12345),
+					getHostProcessId: () => 12345,
 				},
 				terminateVm: closeGatewayVm,
 				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-cleanup-test'),
@@ -4008,12 +3972,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'tool-vm-cleanup-test',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-cleanup-test', 12345),
+					getHostProcessId: () => 12345,
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -4111,7 +4073,7 @@ describe('startControllerRuntime', () => {
 					image: {
 						built: true,
 						fingerprint: 'gateway-image',
-						imagePath: '/tmp/gateway-image',
+						imageReference: '/tmp/gateway-image',
 					},
 					ingress: {
 						host: '127.0.0.1',
@@ -4137,12 +4099,10 @@ describe('startControllerRuntime', () => {
 						exec: vi.fn(() =>
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
-						fs: createManagedVmFsStub(),
 						id: 'gateway-vm-owner-unsafe',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
-						getHostPid: () => 12345,
-						getVmInstance: () => createManagedVmInstanceStub('gateway-vm-owner-unsafe', 12345),
+						getHostProcessId: () => 12345,
 					},
 					terminateVm: async () => {},
 					vmOwnership: gatewayVmOwnership,
@@ -4226,7 +4186,7 @@ describe('startControllerRuntime', () => {
 					image: {
 						built: true,
 						fingerprint: 'gateway-image',
-						imagePath: '/tmp/gateway-image',
+						imageReference: '/tmp/gateway-image',
 					},
 					ingress: {
 						host: '127.0.0.1',
@@ -4252,12 +4212,10 @@ describe('startControllerRuntime', () => {
 						exec: vi.fn(() =>
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
-						fs: createManagedVmFsStub(),
 						id: 'gateway-vm-cleanup-failure',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
-						getHostPid: () => 12345,
-						getVmInstance: () => createManagedVmInstanceStub('gateway-vm-cleanup-failure', 12345),
+						getHostProcessId: () => 12345,
 					},
 					terminateVm: async () => {},
 					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-cleanup-failure'),
@@ -4313,12 +4271,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'tool-vm-clean',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-clean', 12345),
+					getHostProcessId: () => 12345,
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -4336,7 +4292,7 @@ describe('startControllerRuntime', () => {
 					image: {
 						built: true,
 						fingerprint: 'gateway-image',
-						imagePath: '/tmp/gateway-image',
+						imageReference: '/tmp/gateway-image',
 					},
 					ingress: {
 						host: '127.0.0.1',
@@ -4362,12 +4318,10 @@ describe('startControllerRuntime', () => {
 						exec: vi.fn(() =>
 							createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 						),
-						fs: createManagedVmFsStub(),
 						id: 'gateway-vm-clean',
-						setIngressRoutes: vi.fn(),
+						configureIngressRoutes: vi.fn(),
 						start: async () => {},
-						getHostPid: () => 12345,
-						getVmInstance: () => createManagedVmInstanceStub('gateway-vm-clean', 12345),
+						getHostProcessId: () => 12345,
 					},
 					terminateVm: closeGatewayVm,
 					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-clean'),
@@ -4410,7 +4364,7 @@ describe('startControllerRuntime', () => {
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
-					imagePath: '/tmp/gateway-image',
+					imageReference: '/tmp/gateway-image',
 				},
 				ingress: {
 					host: '127.0.0.1',
@@ -4434,13 +4388,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'gateway-vm-close-after-failed-restart',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () =>
-						createManagedVmInstanceStub('gateway-vm-close-after-failed-restart', 12345),
+					getHostProcessId: () => 12345,
 				},
 				terminateVm: closeGatewayVm,
 				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-close-after-failed-restart'),
@@ -4479,13 +4430,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'tool-vm-close-after-failed-restart',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () =>
-						createManagedVmInstanceStub('tool-vm-close-after-failed-restart', 12345),
+					getHostProcessId: () => 12345,
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -4568,12 +4516,10 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' })),
-					fs: createManagedVmFsStub(),
 					id: 'tool-vm-close-flush',
-					setIngressRoutes: vi.fn(),
+					configureIngressRoutes: vi.fn(),
 					start: async () => {},
-					getHostPid: () => 12345,
-					getVmInstance: () => createManagedVmInstanceStub('tool-vm-close-flush', 12345),
+					getHostProcessId: () => 12345,
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -4590,7 +4536,7 @@ describe('startControllerRuntime', () => {
 						image: {
 							built: true,
 							fingerprint: 'gateway-image',
-							imagePath: '/tmp/gateway-image',
+							imageReference: '/tmp/gateway-image',
 						},
 						ingress: {
 							host: '127.0.0.1',
@@ -4616,12 +4562,10 @@ describe('startControllerRuntime', () => {
 							exec: vi.fn(() =>
 								createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '' }),
 							),
-							fs: createManagedVmFsStub(),
 							id: 'gateway-vm-close-flush',
-							setIngressRoutes: vi.fn(),
+							configureIngressRoutes: vi.fn(),
 							start: async () => {},
-							getHostPid: () => 12345,
-							getVmInstance: () => createManagedVmInstanceStub('gateway-vm-close-flush', 12345),
+							getHostProcessId: () => 12345,
 						},
 						terminateVm: async () => {},
 						vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-close-flush'),

@@ -4,9 +4,13 @@ import {
 } from '@agent-vm/gondolin-vm-adapter';
 import type {
 	ManagedVmFactory,
+	ManagedVmImageBuildRequest,
+	ManagedVmImageBuildResult,
 	ManagedVmImageCapability,
 	ManagedVmOwnedDirectoryCapability,
 } from '@agent-vm/managed-vm';
+
+import { readPreparedGondolinImage } from '../build/prepared-gondolin-image-cache.js';
 
 export interface ManagedVmHostNetworkDefaults {
 	readonly autoSelectFamily: false | 'unavailable';
@@ -23,13 +27,36 @@ export interface ManagedVmRuntimeComposition {
 	readonly managedVmOwnedDirectories: ManagedVmOwnedDirectoryCapability;
 }
 
+function createAuthoritativeManagedVmImageCapability(
+	providerImages: ManagedVmImageCapability,
+): ManagedVmImageCapability {
+	return {
+		async prepareImage(request: ManagedVmImageBuildRequest): Promise<ManagedVmImageBuildResult> {
+			if (request.forceRebuild !== true) {
+				const preparedImage = await readPreparedGondolinImage({
+					buildConfigPath: request.recipePath,
+					cacheDir: request.cacheDirectory,
+				});
+				if (preparedImage !== undefined) {
+					return {
+						built: preparedImage.built,
+						fingerprint: preparedImage.fingerprint,
+						imageReference: preparedImage.imagePath,
+					};
+				}
+			}
+			return await providerImages.prepareImage(request);
+		},
+	};
+}
+
 /** Select Gondolin once while keeping its aggregate provider inside composition. */
 export function createGondolinManagedVmRuntimeComposition(): ManagedVmRuntimeComposition {
 	const provider = createGondolinManagedVmProvider();
 	return {
 		configureManagedVmHostNetworkDefaults: configureHostNetworkDefaults,
 		managedVmFactory: provider.factory,
-		managedVmImages: provider.images,
+		managedVmImages: createAuthoritativeManagedVmImageCapability(provider.images),
 		managedVmOwnedDirectories: provider.ownedDirectories,
 	};
 }

@@ -485,7 +485,7 @@ export async function createToolVm(
 					target: processTarget,
 					vm: {
 						close: async () => await vm.close(),
-						getHostPid: () => vm.getHostProcessId(),
+						getHostProcessId: () => vm.getHostProcessId(),
 						id: vm.id,
 					},
 				});

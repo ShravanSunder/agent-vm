@@ -598,7 +598,7 @@ export function createLeaseManager(options: {
 					target: cleanupContext.processTarget,
 					vm: {
 						close: async () => await cleanupContext.vm?.close(),
-						getHostPid: () => cleanupContext.vm?.getHostProcessId() ?? null,
+						getHostProcessId: () => cleanupContext.vm?.getHostProcessId() ?? null,
 						id: cleanupContext.vm.id,
 					},
 				});
