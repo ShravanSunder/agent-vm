@@ -21,7 +21,6 @@ import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 
 type HonoServer = ReturnType<typeof serve>;
@@ -120,11 +119,9 @@ describe('live integration: API client → controller over real HTTP', () => {
 					user: 'sandbox',
 				})),
 				exec: vi.fn(() => createManagedExecProcessStub()),
-				fs: createManagedVmFsStub(),
 				id: 'tool-vm-smoke',
-				setIngressRoutes: vi.fn(),
-				getHostPid: () => null,
-				getVmInstance: vi.fn(),
+				configureIngressRoutes: vi.fn(),
+				getHostProcessId: () => null,
 				start: async () => {},
 			},
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',

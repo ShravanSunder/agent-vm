@@ -3,11 +3,11 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { buildImageAssetFileNames } from '@agent-vm/gondolin-adapter';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
+import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 
 const repoRoot = process.cwd();
 const agentVmCliPath = path.join(
@@ -111,7 +111,7 @@ async function seedBuiltImageCache(options: {
 	const imageDirectory = path.join(options.cacheDirectory, fingerprint);
 	await fs.mkdir(imageDirectory, { recursive: true });
 	await Promise.all(
-		buildImageAssetFileNames.map(async (fileName) => {
+		managedVmImageAssetFileNames.map(async (fileName) => {
 			await fs.writeFile(path.join(imageDirectory, fileName), `${fileName}\n`, 'utf8');
 		}),
 	);

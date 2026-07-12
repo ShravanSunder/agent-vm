@@ -3,9 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import {
@@ -21,6 +22,9 @@ import {
 } from '../gateway/gateway-runtime-record.js';
 import { runControllerOfflineCleanup } from '../operations/controller-offline-cleanup.js';
 import { isProcessAlive } from '../shared/managed-vm-process.js';
+
+const managedVmRuntimeComposition = createGondolinManagedVmRuntimeComposition();
+const { managedVmFactory } = managedVmRuntimeComposition;
 import {
 	captureManagedVmTermination,
 	type CapturedManagedVmTermination,
@@ -127,15 +131,16 @@ async function createTestDeployment(): Promise<TestDeployment> {
 }
 
 async function createStartedRealVm(sessionLabel: string): Promise<ManagedVm> {
-	const managedVm = await createManagedVm({
+	const managedVm = await managedVmFactory.createManagedVm({
 		allowedHosts: [],
-		cpus: 1,
-		imagePath: '',
-		memory: '512M',
+		environment: {},
+		imageReference: 'alpine-base:latest',
+		mediatedSecrets: [],
+		mounts: {},
+		resources: { cpuCount: 1, memory: '512M' },
 		rootfsMode: 'memory',
-		secrets: {},
 		sessionLabel,
-		vfsMounts: {},
+		tcpHosts: [],
 	});
 	await managedVm.start();
 	managedVmTerminationsForHarnessCleanup.push(await captureManagedVmTermination(managedVm));
@@ -286,9 +291,9 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 			assertVmMarker(secondToolVm, 'second-tool-live'),
 			assertVmMarker(unrelatedVm, 'unrelated-live-before'),
 		]);
-		const gatewayPid = gatewayVm.getHostPid();
-		const firstToolPid = firstToolVm.getHostPid();
-		const secondToolPid = secondToolVm.getHostPid();
+		const gatewayPid = gatewayVm.getHostProcessId();
+		const firstToolPid = firstToolVm.getHostProcessId();
+		const secondToolPid = secondToolVm.getHostProcessId();
 		if (gatewayPid === null || firstToolPid === null || secondToolPid === null) {
 			throw new Error('Expected the recorded old Gateway and Tool VM host processes to be live.');
 		}
@@ -310,6 +315,7 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 			runtime = await startControllerRuntime(
 				{ systemConfig: deployment.systemConfig, zoneIds: [zoneId] },
 				{
+					...managedVmRuntimeComposition,
 					controllerEpoch: 'controller-epoch-after-restart',
 					createSecretResolver: async () => ({
 						resolve: async () => '',
@@ -319,7 +325,7 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 						image: {
 							built: false,
 							fingerprint: 'controller-restart-successor',
-							imagePath: '',
+							imageReference: 'alpine-base:latest',
 						},
 						secretResolver: startOptions.secretResolver,
 					}),
@@ -343,15 +349,16 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 							sessionLabel: 'gateway-after-controller-restart',
 							zoneId,
 						});
-						successorGatewayVm = await createManagedVm({
+						successorGatewayVm = await managedVmFactory.createManagedVm({
 							allowedHosts: [],
-							cpus: 1,
-							imagePath: '',
-							memory: '512M',
+							environment: {},
+							imageReference: 'alpine-base:latest',
+							mediatedSecrets: [],
+							mounts: {},
+							resources: { cpuCount: 1, memory: '512M' },
 							rootfsMode: 'memory',
-							secrets: {},
 							sessionLabel: 'gateway-after-controller-restart',
-							vfsMounts: {},
+							tcpHosts: [],
 						});
 						vmOwnership.attachGatewayVm(successorGatewayVm.id);
 						await successorGatewayVm.start();
@@ -370,7 +377,7 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 							image: {
 								built: false,
 								fingerprint: 'controller-restart-successor',
-								imagePath: '',
+								imageReference: 'alpine-base:latest',
 							},
 							ingress: { host: '127.0.0.1', port: 28_891 },
 							processSpec: {
@@ -442,8 +449,8 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 			},
 		});
 		await persistGatewayRuntime({ deployment, gatewayIdentity, gatewayVm });
-		const gatewayPid = gatewayVm.getHostPid();
-		const toolPid = toolVm.getHostPid();
+		const gatewayPid = gatewayVm.getHostProcessId();
+		const toolPid = toolVm.getHostProcessId();
 		if (gatewayPid === null || toolPid === null) {
 			throw new Error('Expected live Gateway and Tool VM host processes.');
 		}

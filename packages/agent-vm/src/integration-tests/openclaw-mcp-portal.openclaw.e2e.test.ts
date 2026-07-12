@@ -13,7 +13,6 @@ import {
 	createGatewayApiClient,
 	type GatewayApiClient,
 } from '../gateway-api-client/gateway-api-client.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinE2e,
 	currentE2eArchitecture,
@@ -21,6 +20,7 @@ import {
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZone as startGatewayZone,
 	type OpenClawE2eProject,
 	type E2eHarnessRuntime,
 	useLocalOpenClawGatewayImagePackages,
@@ -282,7 +282,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			},
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{
 						port: result.processSpec.guestListenPort,
 						prefix: '/',
@@ -296,8 +296,9 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			},
 			vfsMountsOverride: {
 				'/work/repo': {
+					access: 'read-only',
 					hostPath: repoRoot,
-					kind: 'realfs-readonly',
+					kind: 'host-directory',
 				},
 			},
 		});

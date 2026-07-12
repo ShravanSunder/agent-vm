@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
@@ -24,7 +24,6 @@ import type {
 	ReliabilityFaultApplyRequest,
 	ReliabilityFaultReceipt,
 } from '../controller/reliability/testing/reliability-test-fault-contracts.js';
-import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	hashControlLeaseReliabilityArtifact,
 	writeControlLeaseReliabilityEvidence,
@@ -36,6 +35,7 @@ import {
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZoneForController as startGatewayZone,
 	type E2eHarnessRuntime,
 	type OpenClawE2eProject,
 	useLocalOpenClawGatewayImagePackages,
@@ -419,7 +419,7 @@ describeOpenClawProcessRecoveryE2e('e2e: same-G OpenClaw process recovery', () =
 				const result = await startGatewayZone(startOptions);
 				gatewayManagedVm = result.vm;
 				instrumentGatewayStockClose(result.vm);
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{ port: result.processSpec.guestListenPort, prefix: '/', stripPrefix: true },
 				]);
 				return result;

@@ -4,10 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
 	terminateLiveManagedVm,
@@ -33,7 +34,7 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 async function captureStartedVmProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
-	const hostPid = managedVm.getHostPid();
+	const hostPid = managedVm.getHostProcessId();
 	if (hostPid === null) {
 		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
 	}
@@ -202,13 +203,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 				tcpSlot: 0,
 				zoneId: 'shravan',
 			},
-			{
-				buildGondolinImage: async () => ({
-					built: true,
-					fingerprint: 'default-gondolin-image',
-					imagePath: '',
-				}),
-			},
+			createGondolinManagedVmRuntimeComposition(),
 		);
 		const terminationTarget = await captureStartedVmProcess(toolVm);
 		let sshAccess: Awaited<ReturnType<ManagedVm['enableSsh']>> | undefined;

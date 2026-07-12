@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
+import type {
+	ManagedVm,
+	ManagedVmFactory,
+	ManagedVmImageCapability,
+	ManagedVmOwnedDirectoryCapability,
+} from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -17,7 +22,6 @@ import {
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 
 function createSystemConfig(
@@ -151,37 +155,14 @@ async function createGatewayVmMock(
 
 		return createManagedExecProcessStub();
 	};
-	const fsStub = createManagedVmFsStub();
-	const getHostPid = (): number | null => hostPid;
-	const setIngressRoutes = setIngressRoutesStub;
-	const vmInstance: ManagedVmInstance = {
-		close,
-		enableIngress,
-		enableSsh: async () => ({
-			close: async () => {},
-			command: 'ssh -i /tmp/gateway-key root@127.0.0.1 -p 19000',
-			host: '127.0.0.1',
-			identityFile: '/tmp/gateway-key',
-			port: 19_000,
-			user: 'root',
-		}),
-		exec,
-		fs: fsStub,
-		getHostPid,
-		id: vmId,
-		setIngressRoutes,
-		start,
-	};
 	const gatewayVm: ManagedVm = {
 		close,
+		configureIngressRoutes: setIngressRoutesStub,
 		enableIngress,
 		enableSsh,
 		exec,
-		fs: fsStub,
-		getHostPid,
-		getVmInstance: () => vmInstance,
+		getHostProcessId: () => hostPid,
 		id: vmId,
-		setIngressRoutes,
 		start,
 	};
 	vmOwnership.attachGatewayVm(vmId);
@@ -205,37 +186,14 @@ function createToolVmMock(identityFile: string): ManagedVm {
 		user: 'sandbox',
 	});
 	const exec: ManagedVm['exec'] = () => createManagedExecProcessStub();
-	const fsStub = createManagedVmFsStub();
-	const getHostPid = (): number | null => hostPid;
-	const setIngressRoutes = setIngressRoutesStub;
-	const vmInstance: ManagedVmInstance = {
-		close,
-		enableIngress,
-		enableSsh: async () => ({
-			close: async () => {},
-			command: 'ssh -i /tmp/tool-key sandbox@127.0.0.1 -p 19000',
-			host: '127.0.0.1',
-			identityFile,
-			port: 19_000,
-			user: 'sandbox',
-		}),
-		exec,
-		fs: fsStub,
-		getHostPid,
-		id: 'tool-vm-live-restart',
-		setIngressRoutes,
-		start,
-	};
 	const toolVm: ManagedVm = {
 		close,
+		configureIngressRoutes: setIngressRoutesStub,
 		enableIngress,
 		enableSsh,
 		exec,
-		fs: fsStub,
-		getHostPid,
-		getVmInstance: () => vmInstance,
+		getHostProcessId: () => hostPid,
 		id: 'tool-vm-live-restart',
-		setIngressRoutes,
 		start,
 	};
 	return toolVm;
@@ -302,9 +260,30 @@ describe('live integration: controller restart persistence', () => {
 					zoneIds: ['shravan'],
 				},
 				{
+					configureManagedVmHostNetworkDefaults: () => ({
+						autoSelectFamily: false,
+						dnsResultOrder: 'ipv4first',
+					}),
 					createManagedToolVm: vi.fn(async () =>
 						createToolVmMock(path.join(tempDirectory, 'tool-vm-identity')),
 					),
+					managedVmFactory: {
+						createManagedVm: async () => {
+							throw new Error('Restart persistence test injects its gateway and Tool VM doubles.');
+						},
+					} satisfies ManagedVmFactory,
+					managedVmImages: {
+						prepareImage: async () => ({
+							built: false,
+							fingerprint: 'restart-persistence-test-image',
+							imageReference: '/tmp/restart-persistence-test-image',
+						}),
+					} satisfies ManagedVmImageCapability,
+					managedVmOwnedDirectories: {
+						openHostDirectory: () => {
+							throw new Error('Restart persistence test injects its Tool VM double.');
+						},
+					} satisfies ManagedVmOwnedDirectoryCapability,
 					createSecretResolver: async () => ({
 						resolve: async () => '',
 						resolveAll: async () => ({}),
@@ -374,7 +353,7 @@ describe('live integration: controller restart persistence', () => {
 								lstart: 'Fri May 22 10:00:00 2026',
 							},
 							projectNamespace: systemConfig.host.projectNamespace,
-							qemuPid: gatewayVm.getHostPid() ?? 28_000,
+							qemuPid: gatewayVm.getHostProcessId() ?? 28_000,
 							schemaVersion: 2,
 							sessionLabel: `${systemConfig.host.projectNamespace}:${zone.id}:gateway`,
 							vmId: gatewayVm.id,
@@ -385,7 +364,7 @@ describe('live integration: controller restart persistence', () => {
 							image: {
 								built: true,
 								fingerprint: 'gateway-image',
-								imagePath: '/tmp/gateway-image',
+								imageReference: '/tmp/gateway-image',
 							},
 							ingress: {
 								host: '127.0.0.1',

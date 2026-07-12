@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createManagedVm, type ManagedVm, type SshAccess } from '@agent-vm/gondolin-adapter';
+import { createGondolinManagedVmProvider } from '@agent-vm/gondolin-vm-adapter';
+import type { ManagedVm, ManagedVmSshAccess } from '@agent-vm/managed-vm';
 /**
  * Live e2e test — boots real Gondolin VMs.
  *
@@ -12,6 +13,8 @@ import { createManagedVm, type ManagedVm, type SshAccess } from '@agent-vm/gondo
  * NOT part of the standard test suite (too slow, needs QEMU).
  */
 import { afterAll, describe, expect, it } from 'vitest';
+
+const managedVmFactory = createGondolinManagedVmProvider().factory;
 
 import {
 	terminateLiveManagedVm,
@@ -34,7 +37,7 @@ const ingressRetryIntervalMs = 100;
 
 async function startVmAndCaptureProcessTarget(vm: ManagedVm): Promise<ManagedVmProcessTarget> {
 	await vm.start();
-	const hostPid = vm.getHostPid();
+	const hostPid = vm.getHostProcessId();
 	if (hostPid === null) {
 		throw new Error(`Started Gondolin VM '${vm.id}' did not expose a host PID.`);
 	}
@@ -48,7 +51,7 @@ async function startVmAndCaptureProcessTarget(vm: ManagedVm): Promise<ManagedVmP
 async function terminateStartedVm(options: {
 	readonly context: string;
 	readonly processTarget: ManagedVmProcessTarget;
-	readonly sshAccess?: SshAccess;
+	readonly sshAccess?: ManagedVmSshAccess;
 	readonly vm: ManagedVm;
 }): Promise<void> {
 	await options.sshAccess?.close();
@@ -91,7 +94,7 @@ async function fetchIngressUntilReady(url: string): Promise<{
 describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 	let vm: ManagedVm | null = null;
 	let vmProcessTarget: ManagedVmProcessTarget | null = null;
-	let vmSshAccess: SshAccess | null = null;
+	let vmSshAccess: ManagedVmSshAccess | null = null;
 
 	afterAll(async () => {
 		if (vm !== null && vmProcessTarget !== null) {
@@ -108,14 +111,16 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 	});
 
 	it('should boot a basic VM and exec a command', async () => {
-		vm = await createManagedVm({
-			imagePath: '', // use default Gondolin image (alpine-base:latest, auto-downloads)
-			memory: '512M',
-			cpus: 1,
-			rootfsMode: 'cow',
+		vm = await managedVmFactory.createManagedVm({
 			allowedHosts: ['httpbin.org'],
-			secrets: {},
-			vfsMounts: {},
+			environment: {},
+			imageReference: 'alpine-base:latest',
+			mediatedSecrets: [],
+			mounts: {},
+			resources: { cpuCount: 1, memory: '512M' },
+			rootfsMode: 'cow',
+			sessionLabel: 'gondolin-basic-exec',
+			tcpHosts: [],
 		});
 		vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
@@ -142,19 +147,22 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 		vm = null;
 		vmProcessTarget = null;
 
-		vm = await createManagedVm({
-			imagePath: '',
-			memory: '512M',
-			cpus: 1,
-			rootfsMode: 'cow',
+		vm = await managedVmFactory.createManagedVm({
 			allowedHosts: [],
-			secrets: {},
-			vfsMounts: {
+			environment: {},
+			imageReference: 'alpine-base:latest',
+			mediatedSecrets: [],
+			mounts: {
 				'/test-mount': {
-					kind: 'realfs-readonly',
+					access: 'read-only',
 					hostPath: tmpDir,
+					kind: 'host-directory',
 				},
 			},
+			resources: { cpuCount: 1, memory: '512M' },
+			rootfsMode: 'cow',
+			sessionLabel: 'gondolin-read-only-mount',
+			tcpHosts: [],
 		});
 		vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
@@ -179,19 +187,22 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 
 		const hostWorkMountDir = await mkdtemp(path.join(os.tmpdir(), 'gondolin-live-work-'));
 		try {
-			vm = await createManagedVm({
-				imagePath: '',
-				memory: '512M',
-				cpus: 1,
-				rootfsMode: 'memory',
+			vm = await managedVmFactory.createManagedVm({
 				allowedHosts: [],
-				secrets: {},
-				vfsMounts: {
+				environment: {},
+				imageReference: 'alpine-base:latest',
+				mediatedSecrets: [],
+				mounts: {
 					'/workspace': {
-						kind: 'realfs',
+						access: 'read-write',
 						hostPath: hostWorkMountDir,
+						kind: 'host-directory',
 					},
 				},
+				resources: { cpuCount: 1, memory: '512M' },
+				rootfsMode: 'memory',
+				sessionLabel: 'gondolin-realfs-writer',
+				tcpHosts: [],
 			});
 			vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
@@ -210,19 +221,22 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 			});
 			vm = null;
 			vmProcessTarget = null;
-			vm = await createManagedVm({
-				imagePath: '',
-				memory: '512M',
-				cpus: 1,
-				rootfsMode: 'memory',
+			vm = await managedVmFactory.createManagedVm({
 				allowedHosts: [],
-				secrets: {},
-				vfsMounts: {
+				environment: {},
+				imageReference: 'alpine-base:latest',
+				mediatedSecrets: [],
+				mounts: {
 					'/workspace': {
-						kind: 'realfs',
+						access: 'read-write',
 						hostPath: hostWorkMountDir,
+						kind: 'host-directory',
 					},
 				},
+				resources: { cpuCount: 1, memory: '512M' },
+				rootfsMode: 'memory',
+				sessionLabel: 'gondolin-realfs-reader',
+				tcpHosts: [],
 			});
 			vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
@@ -255,14 +269,16 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 			vmProcessTarget = null;
 		}
 
-		vm = await createManagedVm({
-			imagePath: '',
-			memory: '512M',
-			cpus: 1,
-			rootfsMode: 'cow',
+		vm = await managedVmFactory.createManagedVm({
 			allowedHosts: [],
-			secrets: {},
-			vfsMounts: {},
+			environment: {},
+			imageReference: 'alpine-base:latest',
+			mediatedSecrets: [],
+			mounts: {},
+			resources: { cpuCount: 1, memory: '512M' },
+			rootfsMode: 'cow',
+			sessionLabel: 'gondolin-ingress',
+			tcpHosts: [],
 		});
 		vmProcessTarget = await startVmAndCaptureProcessTarget(vm);
 
@@ -286,7 +302,7 @@ describeLiveVmIntegration('live e2e: real Gondolin VM', () => {
 		}
 		expect(guestResponse.stdout.trim()).toBe('ingress_works');
 
-		vm.setIngressRoutes([{ prefix: '/', port: 18080, stripPrefix: true }]);
+		vm.configureIngressRoutes([{ prefix: '/', port: 18080, stripPrefix: true }]);
 		const ingress = await vm.enableIngress({ listenPort: 0 });
 
 		const { body, response } = await fetchIngressUntilReady(

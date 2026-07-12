@@ -7,7 +7,6 @@ import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-l
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { readDurableHealthEvents } from '../controller/health/durable-health-event-log.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	canRunGondolinE2e,
 	currentE2eArchitecture,
@@ -16,6 +15,7 @@ import {
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZone as startGatewayZone,
 	type E2eHarnessRuntime,
 	type OpenClawE2eProject,
 	useLocalOpenClawPluginGatewayImage,
@@ -278,7 +278,7 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
 				gatewayVmIds.push(result.vm.id);
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{
 						port: result.processSpec.guestListenPort,
 						prefix: '/',

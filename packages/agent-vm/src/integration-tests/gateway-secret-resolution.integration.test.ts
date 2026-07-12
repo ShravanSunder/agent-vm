@@ -3,7 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { GatewayLifecycle } from '@agent-vm/gateway-lifecycle';
-import type { BuildConfig, ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
+import type {
+	ManagedVm,
+	ManagedVmCreateRequest,
+	ManagedVmFactory,
+	ManagedVmImageCapability,
+} from '@agent-vm/managed-vm';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -15,54 +20,13 @@ import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 
-type FakeManagedVmInstance = ManagedVmInstance & {
-	readonly server: {
-		readonly controller: {
-			readonly child: {
-				readonly pid: number;
-			};
-		};
-	};
-};
-
-function createFakeManagedVmInstance(): FakeManagedVmInstance {
-	return {
-		close: async () => {},
-		exec: () => createManagedExecProcessStub(),
-		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
-		enableSsh: async () => ({
-			close: async () => {},
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-			command: 'ssh fake',
-			host: '127.0.0.1',
-			identityFile: '/tmp/fake-key',
-			port: 2222,
-			privateKeyPath: '/tmp/fake-key',
-			user: 'root',
-		}),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => 12_345,
-		id: 'gateway-secret-resolution-smoke-vm',
-		server: {
-			controller: {
-				child: {
-					pid: 12_345,
-				},
-			},
-		},
-		setIngressRoutes: () => {},
-		start: async () => {},
-	};
-}
-
 function createFakeManagedVm(): ManagedVm {
-	const fakeVmInstance = createFakeManagedVmInstance();
 	return {
 		id: 'gateway-secret-resolution-smoke-vm',
 		close: async () => {},
+		configureIngressRoutes: () => {},
 		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
 			close: async () => {},
@@ -75,10 +39,7 @@ function createFakeManagedVm(): ManagedVm {
 			user: 'root',
 		}),
 		exec: () => createManagedExecProcessStub(),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => 12_345,
-		getVmInstance: () => fakeVmInstance,
-		setIngressRoutes: () => {},
+		getHostProcessId: () => 12_345,
 		start: async () => {},
 	};
 }
@@ -218,10 +179,18 @@ describe('smoke: gateway startup secret resolution', () => {
 				guestListenPort: 18789,
 				logPath: '/tmp/gateway.log',
 			}),
-			buildVmRequirements: () => ({
+			buildVmRequirements: ({ resolvedSecrets }) => ({
 				allowedHosts: [],
-				environment: {},
-				mediatedSecrets: {},
+				environment: {
+					ENV_ONLY_TOKEN: resolvedSecrets.ENV_ONLY_TOKEN ?? '',
+					OPENCLAW_GATEWAY_TOKEN: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN ?? '',
+				},
+				mediatedSecrets: {
+					PERPLEXITY_API_KEY: {
+						hosts: ['api.perplexity.ai'],
+						value: resolvedSecrets.PERPLEXITY_API_KEY ?? '',
+					},
+				},
 				rootfsMode: 'memory',
 				sessionLabel: 'secret-smoke',
 				tcpHosts: {},
@@ -229,6 +198,20 @@ describe('smoke: gateway startup secret resolution', () => {
 			}),
 			prepareHostState: async () => {},
 		};
+		let capturedCreateRequest: ManagedVmCreateRequest | undefined;
+		const managedVmFactory = {
+			createManagedVm: async (request: ManagedVmCreateRequest) => {
+				capturedCreateRequest = request;
+				return createFakeManagedVm();
+			},
+		} satisfies ManagedVmFactory;
+		const managedVmImages = {
+			prepareImage: async () => ({
+				built: false,
+				fingerprint: 'gateway-secret-resolution-smoke',
+				imageReference: path.join(tempRoot, 'image'),
+			}),
+		} satisfies ManagedVmImageCapability;
 
 		try {
 			await startGatewayZone(
@@ -240,17 +223,8 @@ describe('smoke: gateway startup secret resolution', () => {
 					zoneId: 'secret-smoke',
 				},
 				{
-					buildImage: async () => ({
-						built: false,
-						fingerprint: 'gateway-secret-resolution-smoke',
-						imagePath: path.join(tempRoot, 'image'),
-					}),
-					createManagedVm: async () => createFakeManagedVm(),
-					loadBuildConfig: async () =>
-						({
-							arch: 'aarch64',
-							distro: 'alpine',
-						}) satisfies BuildConfig,
+					managedVmFactory,
+					managedVmImages,
 					loadGatewayLifecycle: () => lifecycle,
 					readProcessIdentity: async () => ({
 						command: 'qemu-system-aarch64 -m 2G',
@@ -280,6 +254,20 @@ describe('smoke: gateway startup secret resolution', () => {
 				ref: 'op://agent-vm/secret-smoke-perplexity/credential',
 			},
 		});
+		expect(capturedCreateRequest).toBeDefined();
+		expect(capturedCreateRequest?.environment).toMatchObject({
+			ENV_ONLY_TOKEN: 'env-only-token',
+			OPENCLAW_GATEWAY_TOKEN: 'resolved:OPENCLAW_GATEWAY_TOKEN',
+		});
+		expect(capturedCreateRequest?.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
+		expect(capturedCreateRequest?.mediatedSecrets).toEqual([
+			{
+				allowedHosts: ['api.perplexity.ai'],
+				environmentVariable: 'PERPLEXITY_API_KEY',
+				value: 'resolved:PERPLEXITY_API_KEY',
+			},
+		]);
+		expect(capturedCreateRequest?.imageReference).not.toContain('resolved:');
 
 		await expect(
 			resolveZoneSecrets({

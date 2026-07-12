@@ -2,10 +2,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { buildImageAssetFileNames, type ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
+import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	readPreparedGondolinImage,
 	writePreparedGondolinImage,
@@ -17,7 +18,6 @@ import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
-	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	collectE2eDockerImageTags,
@@ -280,7 +280,7 @@ describe('startE2eControllerRuntime', () => {
 					},
 				});
 				return {
-					image: { built: false, fingerprint: 'test', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18789 },
 					processEpoch: 'process-epoch-smoke',
 					processSpec: {
@@ -345,7 +345,7 @@ describe('startE2eControllerRuntime', () => {
 			startGatewayZone: async (options) => {
 				capturedGatewayStarts.push(options);
 				return {
-					image: { built: false, fingerprint: 'test', imagePath: '/tmp/image' },
+					image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18789 },
 					processSpec: {
 						bootstrapCommand: '',
@@ -373,7 +373,8 @@ describe('startE2eControllerRuntime', () => {
 			vfsMountsOverride: {
 				'/work/repo': {
 					hostPath: process.cwd(),
-					kind: 'realfs-readonly',
+					access: 'read-only',
+					kind: 'host-directory',
 				},
 			},
 		});
@@ -385,7 +386,8 @@ describe('startE2eControllerRuntime', () => {
 			expect(capturedGatewayStarts[0]?.vfsMountsOverride).toEqual({
 				'/work/repo': {
 					hostPath: process.cwd(),
-					kind: 'realfs-readonly',
+					access: 'read-only',
+					kind: 'host-directory',
 				},
 			});
 		} finally {
@@ -408,7 +410,7 @@ describe('startE2eControllerRuntime', () => {
 				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
 			startGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'test', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18789 },
 				processSpec: {
 					bootstrapCommand: '',
@@ -451,7 +453,7 @@ describe('startE2eControllerRuntime', () => {
 				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
 			startGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'test', imagePath: '/tmp/image' },
+				image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
 				ingress: { host: '127.0.0.1', port: 18789 },
 				processSpec: {
 					bootstrapCommand: '',
@@ -550,8 +552,9 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
-		await createFakeGondolinAdapterPackage(repoRoot);
-		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeGondolinVmAdapterPackage(repoRoot);
+		await createFakeGatewayLifecyclePackage(repoRoot);
+		await createFakeManagedVmPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
 		await createFakeGatewayControlContractsPackage(repoRoot);
@@ -584,10 +587,13 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-secret-management-0.0.0-smoke.tgz /tmp/agent-vm-secret-management-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
-			'COPY agent-vm-gondolin-adapter-0.0.0-smoke.tgz /tmp/agent-vm-gondolin-adapter-0.0.0-smoke.tgz',
+			'COPY agent-vm-gondolin-vm-adapter-0.0.0-smoke.tgz /tmp/agent-vm-gondolin-vm-adapter-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-interface-0.0.0-smoke.tgz /tmp/agent-vm-gateway-interface-0.0.0-smoke.tgz',
+			'COPY agent-vm-gateway-lifecycle-0.0.0-smoke.tgz /tmp/agent-vm-gateway-lifecycle-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY agent-vm-managed-vm-0.0.0-smoke.tgz /tmp/agent-vm-managed-vm-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
 			'COPY agent-vm-control-protocol-contracts-0.0.0-smoke.tgz /tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz',
@@ -696,8 +702,9 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
-		await createFakeGondolinAdapterPackage(repoRoot);
-		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeGondolinVmAdapterPackage(repoRoot);
+		await createFakeGatewayLifecyclePackage(repoRoot);
+		await createFakeManagedVmPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
 		await createFakeGatewayControlContractsPackage(repoRoot);
@@ -727,7 +734,7 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-control-protocol-contracts-0.0.0-smoke.tgz /tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-interface-0.0.0-smoke.tgz /tmp/agent-vm-gateway-interface-0.0.0-smoke.tgz',
+			'COPY agent-vm-gateway-lifecycle-0.0.0-smoke.tgz /tmp/agent-vm-gateway-lifecycle-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
 			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
@@ -773,8 +780,9 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
-		await createFakeGondolinAdapterPackage(repoRoot);
-		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeGondolinVmAdapterPackage(repoRoot);
+		await createFakeGatewayLifecyclePackage(repoRoot);
+		await createFakeManagedVmPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
 		await createFakeGatewayControlContractsPackage(repoRoot);
@@ -948,7 +956,7 @@ describe('findReusableGatewayImageDirectory', () => {
 		await fs.mkdir(path.dirname(gatewayBuildConfigPath), { recursive: true });
 		await fs.writeFile(
 			gatewayBuildConfigPath,
-			`${JSON.stringify({ rootfs: { kind: 'empty' } })}\n`,
+			`${JSON.stringify({ arch: 'x86_64', distro: 'alpine' })}\n`,
 			'utf8',
 		);
 		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
@@ -960,7 +968,7 @@ describe('findReusableGatewayImageDirectory', () => {
 		);
 		await fs.mkdir(reusableImageDirectory, { recursive: true });
 		await Promise.all(
-			buildImageAssetFileNames.map(async (fileName) => {
+			managedVmImageAssetFileNames.map(async (fileName) => {
 				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
 			}),
 		);
@@ -1018,7 +1026,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 		);
 		await fs.mkdir(reusableImageDirectory, { recursive: true });
 		await Promise.all(
-			buildImageAssetFileNames.map(async (fileName) => {
+			managedVmImageAssetFileNames.map(async (fileName) => {
 				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
 			}),
 		);
@@ -1100,7 +1108,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 								const imagePath = path.join(cacheDir, fingerprint);
 								await fs.mkdir(imagePath, { recursive: true });
 								await Promise.all(
-									buildImageAssetFileNames.map(
+									managedVmImageAssetFileNames.map(
 										async (fileName) =>
 											await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
 									),
@@ -1187,7 +1195,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 									const imagePath = path.join(cacheDir, fingerprint);
 									await fs.mkdir(imagePath, { recursive: true });
 									await Promise.all(
-										buildImageAssetFileNames.map(
+										managedVmImageAssetFileNames.map(
 											async (fileName) =>
 												await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
 										),
@@ -1280,11 +1288,8 @@ function createManagedVmStub(): ManagedVm {
 			user: 'root',
 		}),
 		exec: () => createManagedExecProcessStub(),
-		fs: createManagedVmFsStub(),
-		getHostPid: () => null,
-		/* oxlint-disable-next-line typescript/no-unsafe-type-assertion, typescript-eslint/no-unsafe-type-assertion -- the smoke double exposes only the ManagedVmInstance surface exercised by this host test. */
-		getVmInstance: () => managedVm as unknown as ReturnType<ManagedVm['getVmInstance']>,
-		setIngressRoutes: () => undefined,
+		configureIngressRoutes: () => undefined,
+		getHostProcessId: () => null,
 		start: async () => {},
 	};
 	return managedVm;
@@ -1513,15 +1518,15 @@ async function createFakeSecretsPackage(repoRoot: string): Promise<void> {
 	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
 }
 
-async function createFakeGondolinAdapterPackage(repoRoot: string): Promise<void> {
-	const packageDir = path.join(repoRoot, 'packages', 'gondolin-adapter');
+async function createFakeGondolinVmAdapterPackage(repoRoot: string): Promise<void> {
+	const packageDir = path.join(repoRoot, 'packages', 'gondolin-vm-adapter');
 	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
 	await fs.writeFile(
 		path.join(packageDir, 'package.json'),
 		`${JSON.stringify(
 			{
 				dependencies: { '@agent-vm/secret-management': '0.0.0-smoke' },
-				name: '@agent-vm/gondolin-adapter',
+				name: '@agent-vm/gondolin-vm-adapter',
 				version: '0.0.0-smoke',
 				files: ['dist'],
 			},
@@ -1533,18 +1538,18 @@ async function createFakeGondolinAdapterPackage(repoRoot: string): Promise<void>
 	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
 }
 
-async function createFakeGatewayInterfacePackage(repoRoot: string): Promise<void> {
-	const packageDir = path.join(repoRoot, 'packages', 'gateway-interface');
+async function createFakeGatewayLifecyclePackage(repoRoot: string): Promise<void> {
+	const packageDir = path.join(repoRoot, 'packages', 'gateway-lifecycle');
 	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
 	await fs.writeFile(
 		path.join(packageDir, 'package.json'),
 		`${JSON.stringify(
 			{
 				dependencies: {
-					'@agent-vm/gondolin-adapter': '0.0.0-smoke',
+					'@agent-vm/managed-vm': '0.0.0-smoke',
 					'@agent-vm/secret-management': '0.0.0-smoke',
 				},
-				name: '@agent-vm/gateway-interface',
+				name: '@agent-vm/gateway-lifecycle',
 				version: '0.0.0-smoke',
 				files: ['dist'],
 			},
@@ -1554,6 +1559,10 @@ async function createFakeGatewayInterfacePackage(repoRoot: string): Promise<void
 		'utf8',
 	);
 	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+}
+
+async function createFakeManagedVmPackage(repoRoot: string): Promise<void> {
+	await createFakeSimplePackage(repoRoot, 'managed-vm');
 }
 
 async function createFakeControlProtocolContractsPackage(repoRoot: string): Promise<void> {

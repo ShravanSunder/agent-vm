@@ -7,10 +7,13 @@ import path from 'node:path';
 import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
-import { hasBuiltImageAssets, resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
+import {
+	hasManagedVmImageAssets,
+	resolveManagedVmMinimumZigVersion,
+} from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	generateManagedDockerfile,
 	resolveManagedImageRelease,
@@ -23,6 +26,7 @@ import {
 import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { runBuildCommand } from '../cli/build-command.js';
 import { scaffoldAgentVmProject, type ImageArchitecture } from '../cli/init-command.js';
+import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import type {
@@ -31,8 +35,25 @@ import type {
 	StartControllerRuntimeOptions,
 } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
-import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import {
+	startGatewayZone as startGatewayZoneDefault,
+	startGatewayZoneForController as startGatewayZoneForControllerDefault,
+} from '../gateway/gateway-zone-orchestrator.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+
+const managedVmRuntimeComposition = createGondolinManagedVmRuntimeComposition();
+
+export async function startE2eGatewayZone(
+	options: StartGatewayZoneOptions,
+): Promise<Awaited<ReturnType<typeof startGatewayZoneDefault>>> {
+	return await startGatewayZoneDefault(options, managedVmRuntimeComposition);
+}
+
+export async function startE2eGatewayZoneForController(
+	options: Parameters<typeof startGatewayZoneForControllerDefault>[0],
+): Promise<Awaited<ReturnType<typeof startGatewayZoneForControllerDefault>>> {
+	return await startGatewayZoneForControllerDefault(options, managedVmRuntimeComposition);
+}
 
 interface OpenClawE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
 	readonly gateway: Extract<
@@ -254,7 +275,7 @@ export async function canRunGondolinE2e(options: GondolinE2ePrerequisiteOptions)
 		return false;
 	}
 	const requiredZigVersion = await (
-		options.resolveRequiredZigVersion ?? resolveGondolinMinimumZigVersion
+		options.resolveRequiredZigVersion ?? resolveManagedVmMinimumZigVersion
 	)();
 	const installedZigVersion = await (options.resolveZigVersion ?? resolveHostZigVersion)();
 	return (
@@ -567,7 +588,7 @@ async function materializePreparedE2eImagesFromManifest(
 	const targetReadiness = await Promise.all(
 		targets.map(async (target) => {
 			const entry = entriesByKey.get(e2eImageTargetKey(target));
-			return entry !== undefined && (await hasBuiltImageAssets(entry.imagePath));
+			return entry !== undefined && (await hasManagedVmImageAssets(entry.imagePath));
 		}),
 	);
 	if (targetReadiness.some((isReady) => !isReady)) {
@@ -669,7 +690,7 @@ export async function findReusableGatewayImageDirectory(
 		];
 		for (const candidateImageDir of candidateImageDirectories) {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- intentionally searches cache candidates
-			if (await hasBuiltImageAssets(candidateImageDir)) {
+			if (await hasManagedVmImageAssets(candidateImageDir)) {
 				return candidateImageDir;
 			}
 		}
@@ -1321,12 +1342,16 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		packageName: 'secret-management',
 		repoRoot: options.repoRoot,
 	});
-	const localGondolinAdapterTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gondolin-adapter',
+	const localGondolinVmAdapterTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gondolin-vm-adapter',
 		repoRoot: options.repoRoot,
 	});
-	const localGatewayInterfaceTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-interface',
+	const localGatewayLifecycleTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gateway-lifecycle',
+		repoRoot: options.repoRoot,
+	});
+	const localManagedVmTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'managed-vm',
 		repoRoot: options.repoRoot,
 	});
 	const localControlProtocolContractsTarballPath = await packLocalAgentVmPackageTarball({
@@ -1368,12 +1393,16 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 				sourcePath: localSecretManagementTarballPath,
 			}),
 			createLocalDockerPackageTarball({
-				packageName: 'gondolin-adapter',
-				sourcePath: localGondolinAdapterTarballPath,
+				packageName: 'gondolin-vm-adapter',
+				sourcePath: localGondolinVmAdapterTarballPath,
 			}),
 			createLocalDockerPackageTarball({
-				packageName: 'gateway-interface',
-				sourcePath: localGatewayInterfaceTarballPath,
+				packageName: 'gateway-lifecycle',
+				sourcePath: localGatewayLifecycleTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'managed-vm',
+				sourcePath: localManagedVmTarballPath,
 			}),
 			createLocalDockerPackageTarball({
 				packageName: 'control-protocol-contracts',
@@ -1455,8 +1484,9 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
-			localGondolinAdapterTarballPath,
-			localGatewayInterfaceTarballPath,
+			localGondolinVmAdapterTarballPath,
+			localGatewayLifecycleTarballPath,
+			localManagedVmTarballPath,
 			localControlProtocolContractsTarballPath,
 			localControllerExecutionContractsTarballPath,
 			localGatewayControlContractsTarballPath,
@@ -1496,12 +1526,16 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		packageName: 'secret-management',
 		repoRoot: options.repoRoot,
 	});
-	const localGondolinAdapterTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gondolin-adapter',
+	const localGondolinVmAdapterTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gondolin-vm-adapter',
 		repoRoot: options.repoRoot,
 	});
-	const localGatewayInterfaceTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-interface',
+	const localGatewayLifecycleTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gateway-lifecycle',
+		repoRoot: options.repoRoot,
+	});
+	const localManagedVmTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'managed-vm',
 		repoRoot: options.repoRoot,
 	});
 	const localControlProtocolContractsTarballPath = await packLocalAgentVmPackageTarball({
@@ -1543,12 +1577,16 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 				sourcePath: localSecretManagementTarballPath,
 			}),
 			createLocalDockerPackageTarball({
-				packageName: 'gondolin-adapter',
-				sourcePath: localGondolinAdapterTarballPath,
+				packageName: 'gondolin-vm-adapter',
+				sourcePath: localGondolinVmAdapterTarballPath,
 			}),
 			createLocalDockerPackageTarball({
-				packageName: 'gateway-interface',
-				sourcePath: localGatewayInterfaceTarballPath,
+				packageName: 'gateway-lifecycle',
+				sourcePath: localGatewayLifecycleTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'managed-vm',
+				sourcePath: localManagedVmTarballPath,
 			}),
 			createLocalDockerPackageTarball({
 				packageName: 'control-protocol-contracts',
@@ -1622,8 +1660,9 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
-			localGondolinAdapterTarballPath,
-			localGatewayInterfaceTarballPath,
+			localGondolinVmAdapterTarballPath,
+			localGatewayLifecycleTarballPath,
+			localManagedVmTarballPath,
 			localControlProtocolContractsTarballPath,
 			localControllerExecutionContractsTarballPath,
 			localGatewayControlContractsTarballPath,
@@ -1684,8 +1723,9 @@ export async function prepareLocalWorkerPackageSetForGatewayImage(
 	const packageNames = [
 		'agent-vm-worker',
 		'control-protocol-contracts',
-		'gateway-interface',
-		'gondolin-adapter',
+		'gateway-lifecycle',
+		'gondolin-vm-adapter',
+		'managed-vm',
 		'secret-management',
 		'worker-control-contracts',
 	] as const;
@@ -1821,6 +1861,7 @@ export async function startE2eControllerRuntime(
 	const tempRoot = path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath));
 	try {
 		const runtime = await startControllerRuntime(options.startOptions, {
+			...managedVmRuntimeComposition,
 			...(options.createOpenClawProcessReliabilityFaultTargetRegistry === undefined
 				? {}
 				: {
@@ -1839,8 +1880,8 @@ export async function startE2eControllerRuntime(
 			options.vfsMountsOverride === undefined
 				? {}
 				: {
-						startGatewayZone: async (startGatewayOptions: StartGatewayZoneOptions) =>
-							await (options.startGatewayZone ?? startGatewayZone)({
+						startGatewayZone: async (startGatewayOptions: StartGatewayZoneOptions) => {
+							const mergedOptions = {
 								...startGatewayOptions,
 								tcpHostsOverride: {
 									...startGatewayOptions.tcpHostsOverride,
@@ -1850,7 +1891,11 @@ export async function startE2eControllerRuntime(
 									...startGatewayOptions.vfsMountsOverride,
 									...options.vfsMountsOverride,
 								},
-							}),
+							};
+							return options.startGatewayZone === undefined
+								? await startE2eGatewayZoneForController(mergedOptions)
+								: await options.startGatewayZone(mergedOptions, managedVmRuntimeComposition);
+						},
 					}),
 		});
 		if (options.startHttpServer === undefined) {

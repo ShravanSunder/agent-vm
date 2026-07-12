@@ -4,5 +4,5 @@
 		"noEmit": true
 	},
 	"include": ["packages/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "vitest.setup.ts"],
-	"exclude": ["packages/**/dist/**", "node_modules"]
+	"exclude": ["packages/**/contract-fixtures/**", "packages/**/dist/**", "node_modules"]
 }

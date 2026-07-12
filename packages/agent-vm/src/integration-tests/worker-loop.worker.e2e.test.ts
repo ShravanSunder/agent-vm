@@ -8,6 +8,7 @@ import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod/v4';
 
+import { createGondolinManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import type { WorkerControlRpcOperations } from '../controller/control-session/worker-control-domain-handler.js';
 import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';
 import {
@@ -34,6 +35,7 @@ const workerE2eFinalStateSchema = z
 		status: z.string().optional(),
 	})
 	.passthrough();
+const managedVmRuntimeComposition = createGondolinManagedVmRuntimeComposition();
 
 async function createSampleRepo(baseDir: string): Promise<string> {
 	const repoDir = path.join(baseDir, 'sample-repo');
@@ -252,6 +254,8 @@ describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 			});
 			const result = await executeWorkerTask(prepared, {
 				controllerEpoch: 'worker-smoke-e2e-controller-epoch',
+				managedVmFactory: managedVmRuntimeComposition.managedVmFactory,
+				managedVmImages: managedVmRuntimeComposition.managedVmImages,
 				secretResolver,
 				systemConfig: project.systemConfig,
 			});
@@ -404,6 +408,8 @@ describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 			};
 			const result = await executeWorkerTask(prepared, {
 				controllerEpoch: 'worker-git-rpc-e2e-controller-epoch',
+				managedVmFactory: managedVmRuntimeComposition.managedVmFactory,
+				managedVmImages: managedVmRuntimeComposition.managedVmImages,
 				controlSession: {
 					controllerEpoch: 'worker-git-rpc-e2e-controller-epoch',
 					operations,

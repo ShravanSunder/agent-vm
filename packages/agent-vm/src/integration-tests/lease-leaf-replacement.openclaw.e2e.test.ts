@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { GatewayControlLeaseSnapshot } from '@agent-vm/gateway-control-contracts';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
@@ -20,7 +20,6 @@ import {
 	loadAllToolVmRuntimeRecords,
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
-import { startGatewayZoneForController as startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { isProcessAlive } from '../shared/managed-vm-process.js';
 import {
 	expectedControlLeaseReliabilityEvidenceWriteKind,
@@ -34,6 +33,7 @@ import {
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZoneForController as startGatewayZone,
 	type E2eHarnessRuntime,
 	type OpenClawE2eProject,
 	useLocalOpenClawGatewayImagePackages,
@@ -386,7 +386,7 @@ describeLeaseLeafReplacementE2e('e2e: one Tool VM leaf replacement', () => {
 						leaseSnapshots,
 					),
 				});
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{ port: result.processSpec.guestListenPort, prefix: '/', stripPrefix: true },
 				]);
 				gatewayVm = result.vm;

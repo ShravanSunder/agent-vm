@@ -3,14 +3,13 @@ import fs, { watch } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-lifecycle';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
 	controllerHealthEventLogPath,
 	readDurableHealthEvents,
 } from '../controller/health/durable-health-event-log.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type {
 	OpenClawGatewayProcessEpochBinding,
 	OpenClawGatewayProcessEpochOwner,
@@ -23,6 +22,7 @@ import {
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	startE2eControllerRuntime,
+	startE2eGatewayZone as startGatewayZone,
 	type OpenClawE2eProject,
 	type E2eHarnessRuntime,
 	useLocalOpenClawPluginGatewayImage,
@@ -236,7 +236,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control se
 				gatewayStarts.push(result.vm);
 				gatewayVm = result.vm;
 				gatewayProcessEpochOwner = result.openClawProcessEpochOwner;
-				result.vm.setIngressRoutes([
+				result.vm.configureIngressRoutes([
 					{
 						port: result.processSpec.guestListenPort,
 						prefix: '/',

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
-import { createManagedVm, type ManagedVm, type SshAccess } from '@agent-vm/gondolin-adapter';
+import { createGondolinManagedVmProvider } from '@agent-vm/gondolin-vm-adapter';
+import type { ManagedVm, ManagedVmSshAccess } from '@agent-vm/managed-vm';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
@@ -16,6 +17,8 @@ import {
 } from '../shared/managed-vm-process.js';
 import { currentE2eArchitecture } from './e2e-harness.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
+
+const managedVmFactory = createGondolinManagedVmProvider().factory;
 
 /**
  * Live cross-VM SSH test — validates the gateway VM to Tool VM data path.
@@ -37,7 +40,7 @@ const expectedGuestArchitecture = currentE2eArchitecture();
 
 async function startVmAndCaptureProcessTarget(vm: ManagedVm): Promise<ManagedVmProcessTarget> {
 	await vm.start();
-	const hostPid = vm.getHostPid();
+	const hostPid = vm.getHostProcessId();
 	if (hostPid === null) {
 		throw new Error(`Started Gondolin VM '${vm.id}' did not expose a host PID.`);
 	}
@@ -51,7 +54,7 @@ async function startVmAndCaptureProcessTarget(vm: ManagedVm): Promise<ManagedVmP
 async function terminateStartedVm(options: {
 	readonly context: string;
 	readonly processTarget: ManagedVmProcessTarget;
-	readonly sshAccess?: SshAccess;
+	readonly sshAccess?: ManagedVmSshAccess;
 	readonly vm: ManagedVm;
 }): Promise<void> {
 	await options.sshAccess?.close();
@@ -68,7 +71,7 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 	let gatewayVm: ManagedVm | null = null;
 	let toolVmProcessTarget: ManagedVmProcessTarget | null = null;
 	let gatewayVmProcessTarget: ManagedVmProcessTarget | null = null;
-	let toolSshAccess: SshAccess | null = null;
+	let toolSshAccess: ManagedVmSshAccess | null = null;
 
 	afterAll(async () => {
 		const cleanupResults = await Promise.allSettled([
@@ -113,14 +116,16 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		// Step 1: Create tool VM and enable SSH on a specific port
 		const toolSshPort = 19100;
 		log('creating tool VM...');
-		toolVm = await createManagedVm({
-			imagePath: '',
-			memory: '512M',
-			cpus: 1,
-			rootfsMode: 'cow',
+		toolVm = await managedVmFactory.createManagedVm({
 			allowedHosts: [],
-			secrets: {},
-			vfsMounts: {},
+			environment: {},
+			imageReference: 'alpine-base:latest',
+			mediatedSecrets: [],
+			mounts: {},
+			resources: { cpuCount: 1, memory: '512M' },
+			rootfsMode: 'cow',
+			sessionLabel: 'cross-vm-ssh-tool-primary',
+			tcpHosts: [],
 		});
 		toolVmProcessTarget = await startVmAndCaptureProcessTarget(toolVm);
 		log('tool VM created');
@@ -139,17 +144,16 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		// Step 2: Create gateway VM with tcp.hosts pointing to tool VM
 		log('creating gateway VM with tcp.hosts...');
 
-		gatewayVm = await createManagedVm({
-			imagePath: '',
-			memory: '512M',
-			cpus: 1,
-			rootfsMode: 'cow',
+		gatewayVm = await managedVmFactory.createManagedVm({
 			allowedHosts: [],
-			secrets: {},
-			vfsMounts: {},
-			tcpHosts: {
-				[`tool-0.vm.host:22`]: `127.0.0.1:${toolSshPort}`,
-			},
+			environment: {},
+			imageReference: 'alpine-base:latest',
+			mediatedSecrets: [],
+			mounts: {},
+			resources: { cpuCount: 1, memory: '512M' },
+			rootfsMode: 'cow',
+			sessionLabel: 'cross-vm-ssh-gateway',
+			tcpHosts: [{ guestHost: 'tool-0.vm.host:22', target: `127.0.0.1:${toolSshPort}` }],
 		});
 		gatewayVmProcessTarget = await startVmAndCaptureProcessTarget(gatewayVm);
 		log('gateway VM created');
@@ -205,14 +209,16 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		toolVm = null;
 		toolVmProcessTarget = null;
 		toolSshAccess = null;
-		toolVm = await createManagedVm({
-			imagePath: '',
-			memory: '512M',
-			cpus: 1,
-			rootfsMode: 'cow',
+		toolVm = await managedVmFactory.createManagedVm({
 			allowedHosts: [],
-			secrets: {},
-			vfsMounts: {},
+			environment: {},
+			imageReference: 'alpine-base:latest',
+			mediatedSecrets: [],
+			mounts: {},
+			resources: { cpuCount: 1, memory: '512M' },
+			rootfsMode: 'cow',
+			sessionLabel: 'cross-vm-ssh-tool-replacement',
+			tcpHosts: [],
 		});
 		toolVmProcessTarget = await startVmAndCaptureProcessTarget(toolVm);
 		toolSshAccess = await toolVm.enableSsh({
