@@ -9,6 +9,7 @@ import type {
 	GatewayControlHello,
 	GatewayControlHelloResponse,
 } from '@agent-vm/gateway-control-contracts';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGatewayControlProcessAdmissionCoordinator } from './gateway-control-process-admission-coordinator.js';
@@ -293,6 +294,24 @@ function leaseRenewMessage(leaseId: string): unknown {
 		payload: {
 			callerContext: { callerContextId: '77777777-7777-4777-8777-777777777777' },
 			leaseId,
+		},
+	};
+}
+
+function toolPortalControllerHostActionMessage(): unknown {
+	return {
+		kind: 'command',
+		operation: 'tool_portal_controller_host_action',
+		payload: {
+			actionId: 'zone_git_push',
+			callerContext: { callerContextId: '77777777-7777-4777-8777-777777777777' },
+			correlation: {
+				capability: {
+					name: 'zone_git_push',
+					namespace: 'controller_host_action',
+				},
+			},
+			expectedHead: 'abc123',
 		},
 	};
 }
@@ -1349,7 +1368,10 @@ describe('Gateway disposable control session client', () => {
 				lease_get: 'acked_idempotent',
 			},
 			refreshExtraHeaders: async () => ({}),
-			resolveInboundStablePrincipal: () => 'a'.repeat(64),
+			resolveInboundStablePrincipal: () => ({
+				stablePrincipal: 'a'.repeat(64),
+				status: 'accepted',
+			}),
 		});
 		await client.ready;
 		const pingMessageId = '55555555-5555-4555-8555-555555555555';
@@ -1412,7 +1434,7 @@ describe('Gateway disposable control session client', () => {
 		heldHandler.resolve(undefined);
 	});
 
-	it('acks a fail-closed authority refusal and accepts the next contiguous frame', async () => {
+	it('represents an unavailable resolver as a fail-closed refusal and accepts the next frame', async () => {
 		const connectionId = '11111111-1111-4111-8111-111111111111';
 		const sessionId = '22222222-2222-4222-8222-222222222222';
 		const fake = createFakeSocket({ connectionId, sessionId });
@@ -1470,6 +1492,135 @@ describe('Gateway disposable control session client', () => {
 		await flushImmediate();
 		expect(fake.control.clientDisconnectCount).toBe(0);
 		expect(fake.control.acknowledgedEnvelopes[0]?.sequence).toBe(1);
+		expect(fake.control.acknowledgedPayloads).toContainEqual({
+			kind: 'command_result',
+			operation: 'lease_get',
+			payload: {
+				error: {
+					errorClass: 'gateway_control_admission_refused',
+					retryable: true,
+					safeMessage: 'Gateway control command was refused before execution.',
+				},
+				responseToMessageId: '55555555-5555-4555-8555-555555555555',
+				result: 'failed',
+			},
+		});
+		client.close();
+	});
+
+	it('keeps a rejected Tool Portal principal distinct while preserving generic admission refusal', async () => {
+		const connectionId = '11111111-1111-4111-8111-111111111111';
+		const sessionId = '22222222-2222-4222-8222-222222222222';
+		const fake = createFakeSocket({ connectionId, sessionId });
+		let dispatchCount = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => fake.socket,
+			dispatcher: {
+				dispatch: async () => {
+					dispatchCount += 1;
+					return undefined;
+				},
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => 1,
+			policyByOperation: { tool_portal_controller_host_action: 'single_use_critical' },
+			refreshExtraHeaders: async () => ({}),
+			resolveInboundStablePrincipal: () => ({
+				operation: 'tool_portal_controller_host_action',
+				reason: 'caller_context_stale',
+				status: 'principal_rejected',
+			}),
+		});
+		await client.ready;
+
+		expect(
+			await fake.control.receive(
+				inboundEnvelope({
+					connectionId,
+					kind: 'command',
+					messageId: '55555555-5555-4555-8555-555555555555',
+					operation: 'tool_portal_controller_host_action',
+					sequence: 1,
+					sessionId,
+				}),
+				toolPortalControllerHostActionMessage(),
+			),
+		).toEqual({ received: true });
+		await flushImmediate();
+
+		expect(dispatchCount).toBe(0);
+		expect(fake.control.acknowledgedPayloads).toContainEqual(
+			expect.objectContaining({
+				kind: 'command_result',
+				operation: 'tool_portal_controller_host_action',
+				payload: expect.objectContaining({ result: 'failed' }),
+			}),
+		);
+		expect(fake.control.clientDisconnectCount).toBe(0);
+		client.close();
+	});
+
+	it('fences a resolver result whose typed operation does not match the inbound command', async () => {
+		const connectionId = '11111111-1111-4111-8111-111111111111';
+		const sessionId = '22222222-2222-4222-8222-222222222222';
+		const fake = createFakeSocket({ connectionId, sessionId });
+		const client = createGatewayDisposableControlSessionClient({
+			createSocket: () => fake.socket,
+			dispatcher: {
+				dispatch: async () => undefined,
+				register: () => undefined,
+				validate: () => undefined,
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			initialExtraHeaders: {},
+			nextAttachmentGeneration: () => 1,
+			policyByOperation: { lease_get: 'acked_idempotent' },
+			refreshExtraHeaders: async () => ({}),
+			resolveInboundStablePrincipal: () => ({
+				operation: 'tool_portal_controller_host_action',
+				reason: 'caller_context_stale',
+				status: 'principal_rejected',
+			}),
+		});
+		await client.ready;
+
+		expect(
+			await fake.control.receive(
+				inboundEnvelope({
+					connectionId,
+					kind: 'command',
+					messageId: '55555555-5555-4555-8555-555555555555',
+					operation: 'lease_get',
+					sequence: 1,
+					sessionId,
+				}),
+				leaseGetMessage('lease-mismatched-resolution'),
+			),
+		).toEqual({
+			errorClass: 'gateway_control_message_processing_failed',
+			received: false,
+			safeMessage: 'gateway control message was rejected',
+		});
+
+		expect(fake.control.clientDisconnectCount).toBe(1);
+		expect(fake.control.acknowledgedPayloads).toHaveLength(0);
 		client.close();
 	});
 
@@ -1497,7 +1648,10 @@ describe('Gateway disposable control session client', () => {
 			nextAttachmentGeneration: () => 1,
 			policyByOperation: { lease_renew: 'single_use_critical' },
 			refreshExtraHeaders: async () => ({}),
-			resolveInboundStablePrincipal: () => 'a'.repeat(64),
+			resolveInboundStablePrincipal: () => ({
+				stablePrincipal: 'a'.repeat(64),
+				status: 'accepted',
+			}),
 			scheduleImmediate: (callback) => immediateCallbacks.push(callback),
 		});
 		await client.ready;
@@ -1558,6 +1712,7 @@ describe('Gateway disposable control session client', () => {
 		const sessionId = '22222222-2222-4222-8222-222222222222';
 		const fake = createFakeSocket({ connectionId, sessionId });
 		let dispatchCount = 0;
+		const recordedHealthEvents: AgentVmHealthEvent[] = [];
 		const client = createGatewayDisposableControlSessionClient({
 			createSocket: () => fake.socket,
 			dispatcher: {
@@ -1578,9 +1733,18 @@ describe('Gateway disposable control session client', () => {
 			},
 			initialExtraHeaders: {},
 			nextAttachmentGeneration: () => 1,
+			now: () => 1_000,
 			policyByOperation: { lease_renew: 'single_use_critical' },
+			recordHealthEvent: (event) => {
+				recordedHealthEvents.push(event);
+				throw new Error('diagnostic sink unavailable');
+			},
 			refreshExtraHeaders: async () => ({}),
-			resolveInboundStablePrincipal: () => ({ leaseRejectionReason, status: 'rejected' }),
+			resolveInboundStablePrincipal: () => ({
+				leaseRejectionReason,
+				operation: 'lease_renew',
+				status: 'lease_rejected',
+			}),
 		});
 		await client.ready;
 		const messageId = '55555555-5555-4555-8555-555555555555';
@@ -1604,6 +1768,16 @@ describe('Gateway disposable control session client', () => {
 		await flushImmediate();
 
 		expect(dispatchCount).toBe(0);
+		expect(recordedHealthEvents).toEqual([
+			{
+				kind: 'caller-context-rejection',
+				observedAtMs: 1_000,
+				operation: 'lease_renew',
+				reason: leaseRejectionReason,
+				result: 'failed',
+				zoneId: 'zone-a',
+			},
+		]);
 		expect(fake.control.acknowledgedPayloads).toContainEqual({
 			kind: 'command_result',
 			operation: 'lease_renew',

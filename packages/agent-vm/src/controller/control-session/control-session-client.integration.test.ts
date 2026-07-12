@@ -732,7 +732,10 @@ describe('control session client', () => {
 			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: hostA.port }),
 			material: materialA,
 			processAdmissionCoordinator: coordinator,
-			resolveInboundStablePrincipal: () => 'a'.repeat(64),
+			resolveInboundStablePrincipal: () => ({
+				stablePrincipal: 'a'.repeat(64),
+				status: 'accepted',
+			}),
 		});
 		const clientB = await connectGatewayControlSession({
 			dispatcher: dispatcherB,

@@ -96,6 +96,7 @@ export interface ConnectGatewayControlSessionOptions {
 	readonly onAttachmentGap?: GatewayDisposableControlSessionClientOptions['onAttachmentGap'];
 	readonly onReconnectExhausted?: GatewayDisposableControlSessionClientOptions['onReconnectExhausted'];
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
+	readonly recordHealthEvent?: GatewayDisposableControlSessionClientOptions['recordHealthEvent'];
 	readonly resolveInboundStablePrincipal?: GatewayDisposableControlSessionClientOptions['resolveInboundStablePrincipal'];
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
 	readonly signal?: AbortSignal;
@@ -497,6 +498,9 @@ export async function connectGatewayControlSession(
 		...(options.processAdmissionCoordinator === undefined
 			? {}
 			: { processAdmissionCoordinator: options.processAdmissionCoordinator }),
+		...(options.recordHealthEvent === undefined
+			? {}
+			: { recordHealthEvent: options.recordHealthEvent }),
 		...(options.resolveInboundStablePrincipal === undefined
 			? {}
 			: { resolveInboundStablePrincipal: options.resolveInboundStablePrincipal }),

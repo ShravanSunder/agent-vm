@@ -10,6 +10,7 @@ export const agentVmHealthEventKinds = [
 	'controller-request',
 	'lease-renew',
 	'lease-heartbeat',
+	'caller-context-rejection',
 	'tool-vm-ssh',
 	'gateway-plugin-health',
 	'agent-channel-provider-health',
@@ -175,6 +176,24 @@ export type GatewayControlSessionHealthOperation =
 	(typeof gatewayControlSessionHealthOperations)[number];
 
 export type AgentVmHealthEvent =
+	| (AgentVmHealthEventBase & {
+			readonly kind: 'caller-context-rejection';
+			readonly operation:
+				| 'lease_create'
+				| 'lease_get'
+				| 'lease_peek'
+				| 'lease_reacquire'
+				| 'lease_release'
+				| 'lease_renew'
+				| 'lease_use_end'
+				| 'lease_use_heartbeat'
+				| 'lease_use_start';
+			readonly reason:
+				| 'caller_context_absent'
+				| 'caller_context_session_mismatch'
+				| 'caller_context_stale';
+			readonly result: 'failed';
+	  })
 	| (AgentVmHealthEventBase & {
 			readonly kind: 'gateway-service-health';
 			readonly path: string;
@@ -544,6 +563,32 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 		return false;
 	}
 	switch (value.kind) {
+		case 'caller-context-rejection':
+			return (
+				isOneOf(
+					[
+						'lease_create',
+						'lease_get',
+						'lease_peek',
+						'lease_reacquire',
+						'lease_release',
+						'lease_renew',
+						'lease_use_end',
+						'lease_use_heartbeat',
+						'lease_use_start',
+					] as const,
+					value.operation,
+				) &&
+				isOneOf(
+					[
+						'caller_context_absent',
+						'caller_context_session_mismatch',
+						'caller_context_stale',
+					] as const,
+					value.reason,
+				) &&
+				value.result === 'failed'
+			);
 		case 'gateway-service-health':
 			return (
 				typeof value.path === 'string' &&
@@ -720,6 +765,8 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 
 export function healthEventBucketKey(event: AgentVmHealthEvent): string {
 	switch (event.kind) {
+		case 'caller-context-rejection':
+			return `${event.zoneId}:${event.kind}:${event.operation}:${event.reason}`;
 		case 'gateway-control-session':
 			return `${event.zoneId}:${event.kind}`;
 		case 'gateway-service-health':
@@ -747,7 +794,16 @@ export function healthEventBucketKey(event: AgentVmHealthEvent): string {
 	return assertNeverHealthEvent(event);
 }
 
-function failedIssueKindForEvent(event: AgentVmHealthEvent): ZoneHealthIssueKind {
+type HealthIssueBearingEvent = Exclude<
+	AgentVmHealthEvent,
+	{ readonly kind: 'caller-context-rejection' }
+>;
+
+function isHealthIssueBearingEvent(event: AgentVmHealthEvent): event is HealthIssueBearingEvent {
+	return event.kind !== 'caller-context-rejection';
+}
+
+function failedIssueKindForEvent(event: HealthIssueBearingEvent): ZoneHealthIssueKind {
 	switch (event.kind) {
 		case 'gateway-service-health':
 			return 'gateway-service-unhealthy';
@@ -785,6 +841,9 @@ function issueForEvent(
 	event: AgentVmHealthEvent,
 	options: DeriveZoneHealthSnapshotOptions,
 ): ZoneHealthIssue | undefined {
+	if (!isHealthIssueBearingEvent(event)) {
+		return undefined;
+	}
 	if (
 		options.nowMs - event.observedAtMs > options.staleAfterMs &&
 		!isNonStalingSuccessfulEvent(event)
@@ -874,7 +933,7 @@ export function deriveZoneHealthSnapshot(
 ): ZoneHealthSnapshot {
 	const latestByKey = new Map<string, AgentVmHealthEvent>();
 	for (const event of events) {
-		if (event.zoneId !== options.zoneId) {
+		if (event.zoneId !== options.zoneId || event.kind === 'caller-context-rejection') {
 			continue;
 		}
 		const key = healthEventBucketKey(event);

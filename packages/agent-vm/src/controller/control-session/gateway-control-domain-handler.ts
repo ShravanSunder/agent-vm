@@ -224,6 +224,45 @@ function callerContextSessionFromEnvelope(
 	};
 }
 
+type CallerContextRejectionHealthEvent = Extract<
+	AgentVmHealthEvent,
+	{ readonly kind: 'caller-context-rejection' }
+>;
+
+export type GatewayControlInboundPrincipalResolution =
+	| {
+			readonly stablePrincipal: string;
+			readonly status: 'accepted';
+	  }
+	| {
+			readonly leaseRejectionReason: CallerContextRejectionHealthEvent['reason'];
+			readonly operation: CallerContextRejectionHealthEvent['operation'];
+			readonly status: 'lease_rejected';
+	  }
+	| {
+			readonly operation: 'tool_portal_controller_host_action';
+			readonly reason:
+				| 'caller_context_absent'
+				| 'caller_context_session_mismatch'
+				| 'caller_context_stale';
+			readonly status: 'principal_rejected';
+	  }
+	| { readonly status: 'not_required' };
+
+function leaseCallerContextRejection(options: {
+	readonly operation: CallerContextRejectionHealthEvent['operation'];
+	readonly reason:
+		| 'caller_context_absent'
+		| 'caller_context_session_mismatch'
+		| 'caller_context_stale';
+}): GatewayControlInboundPrincipalResolution {
+	return {
+		leaseRejectionReason: options.reason,
+		operation: options.operation,
+		status: 'lease_rejected',
+	};
+}
+
 export function resolveGatewayControlInboundStablePrincipal(options: {
 	readonly callerContexts: GatewayControlCallerContextRegistry;
 	readonly envelope: ControlEnvelope;
@@ -231,23 +270,20 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 	readonly validateCallerContextRegistration?: (
 		payload: GatewayControlCallerContextRegisterPayload,
 	) => void;
-}):
-	| string
-	| {
-			readonly leaseRejectionReason: GatewayControlLeaseRejectionReason;
-			readonly status: 'rejected';
-	  }
-	| undefined {
+}): GatewayControlInboundPrincipalResolution {
 	if (options.message.kind !== 'command') {
-		return undefined;
+		return { status: 'not_required' };
 	}
 	const session = callerContextSessionFromEnvelope(options.envelope);
 	if (options.message.operation === 'caller_context_register') {
 		options.validateCallerContextRegistration?.(options.message.payload);
-		return options.callerContexts.validateRegistrationForSession({
-			payload: options.message.payload,
-			session,
-		}).stablePrincipal;
+		return {
+			stablePrincipal: options.callerContexts.validateRegistrationForSession({
+				payload: options.message.payload,
+				session,
+			}).stablePrincipal,
+			status: 'accepted',
+		};
 	}
 	let callerContextId: string | undefined;
 	switch (options.message.operation) {
@@ -268,25 +304,68 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 		case 'control_ping':
 		case 'operation_cancel':
 		case 'recovery_command':
-			return undefined;
+			return { status: 'not_required' };
 	}
 	if (callerContextId === undefined) {
-		return undefined;
+		if (options.message.operation === 'lease_get' || options.message.operation === 'lease_peek') {
+			return leaseCallerContextRejection({
+				operation: options.message.operation,
+				reason: 'caller_context_absent',
+			});
+		}
+		return {
+			operation: 'tool_portal_controller_host_action',
+			reason: 'caller_context_absent',
+			status: 'principal_rejected',
+		};
 	}
 	const resolution = options.callerContexts.resolveForSession({ callerContextId, session });
 	if (resolution.status === 'ok') {
-		return resolution.callerContext.stablePrincipal;
+		return {
+			stablePrincipal: resolution.callerContext.stablePrincipal,
+			status: 'accepted',
+		};
 	}
-	if (!options.message.operation.startsWith('lease_')) {
-		return undefined;
+	const operation = options.message.operation;
+	switch (operation) {
+		case 'lease_create':
+		case 'lease_get':
+		case 'lease_peek':
+		case 'lease_reacquire':
+		case 'lease_release':
+		case 'lease_renew':
+		case 'lease_use_end':
+		case 'lease_use_heartbeat':
+		case 'lease_use_start':
+			break;
+		case 'tool_portal_controller_host_action':
+			return {
+				operation,
+				reason:
+					resolution.status === 'absent'
+						? 'caller_context_absent'
+						: resolution.status === 'session_mismatch'
+							? 'caller_context_session_mismatch'
+							: 'caller_context_stale',
+				status: 'principal_rejected',
+			};
 	}
 	switch (resolution.status) {
 		case 'absent':
-			return { leaseRejectionReason: 'caller_context_absent', status: 'rejected' };
+			return leaseCallerContextRejection({
+				operation,
+				reason: 'caller_context_absent',
+			});
 		case 'session_mismatch':
-			return { leaseRejectionReason: 'caller_context_session_mismatch', status: 'rejected' };
+			return leaseCallerContextRejection({
+				operation,
+				reason: 'caller_context_session_mismatch',
+			});
 		case 'stale':
-			return { leaseRejectionReason: 'caller_context_stale', status: 'rejected' };
+			return leaseCallerContextRejection({
+				operation,
+				reason: 'caller_context_stale',
+			});
 	}
 	return assertUnreachableCallerContextResolution(resolution);
 }

@@ -346,6 +346,7 @@ function shouldEmitHealthEventSpan(event: AgentVmHealthEvent): boolean {
 		case 'tool-vm-ssh':
 			return true;
 		case 'agent-channel-provider-health':
+		case 'caller-context-rejection':
 		case 'gateway-plugin-health':
 		case 'gateway-service-health':
 			return false;

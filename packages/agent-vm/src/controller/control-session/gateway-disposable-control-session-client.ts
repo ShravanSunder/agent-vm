@@ -30,6 +30,7 @@ import {
 	type GatewayControlLeaseRejectionReason,
 	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { io, type Socket } from 'socket.io-client';
 
 import {
@@ -42,6 +43,7 @@ import {
 	type ControlSessionClient,
 } from './control-session-client.js';
 import type { ControlSessionDispatcher } from './control-session-dispatcher.js';
+import type { GatewayControlInboundPrincipalResolution } from './gateway-control-domain-handler.js';
 import type {
 	GatewayControlProcessAdmissionCoordinator,
 	GatewayControlProcessSessionRegistration,
@@ -101,6 +103,9 @@ export interface GatewayDisposableControlSessionClientOptions {
 	readonly policyByOperation: Readonly<Record<string, ControlDeliveryPolicy>>;
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly reconnectJitterRandom?: () => number;
+	readonly recordHealthEvent?: (
+		event: Extract<AgentVmHealthEvent, { readonly kind: 'caller-context-rejection' }>,
+	) => void;
 	readonly scheduleReconnectTimer?: (
 		callback: () => void,
 		delayMs: number,
@@ -108,13 +113,7 @@ export interface GatewayDisposableControlSessionClientOptions {
 	readonly resolveInboundStablePrincipal?: (context: {
 		readonly envelope: ControlEnvelope;
 		readonly message: GatewayControlRpcMessage;
-	}) =>
-		| string
-		| {
-				readonly leaseRejectionReason: GatewayControlLeaseRejectionReason;
-				readonly status: 'rejected';
-		  }
-		| undefined;
+	}) => GatewayControlInboundPrincipalResolution;
 	readonly refreshExtraHeaders: () => Promise<Readonly<Record<string, string>>>;
 	readonly scheduleImmediate?: (callback: () => void) => void;
 }
@@ -129,6 +128,30 @@ export type GatewayControlAttemptOutcome =
 			readonly kind: 'hello_response';
 			readonly outcome: GatewayControlHelloResponse['outcome'];
 	  };
+
+type GatewayControlInboundPrincipalResolutionAtClient =
+	| GatewayControlInboundPrincipalResolution
+	| { readonly status: 'resolver_unavailable' };
+
+function assertNeverInboundPrincipalResolution(resolution: never): never {
+	throw new Error(`Unhandled inbound principal resolution: ${JSON.stringify(resolution)}`);
+}
+
+function assertInboundPrincipalResolutionMatchesMessage(options: {
+	readonly message: GatewayControlRpcMessage;
+	readonly resolution: GatewayControlInboundPrincipalResolutionAtClient;
+}): void {
+	if (
+		(options.resolution.status === 'lease_rejected' ||
+			options.resolution.status === 'principal_rejected') &&
+		(options.message.kind !== 'command' ||
+			options.message.operation !== options.resolution.operation)
+	) {
+		throw new Error(
+			`Inbound principal resolution operation '${options.resolution.operation}' does not match message operation '${options.message.operation}'.`,
+		);
+	}
+}
 
 export interface GatewayControlReconnectTimer {
 	cancel(): void;
@@ -810,16 +833,29 @@ export function createGatewayDisposableControlSessionClient(
 						pendingResult !== undefined &&
 						pendingResult.attempt === attempt &&
 						pendingResult.expectedOperation === message.operation;
-					const inboundPrincipalResolution = options.resolveInboundStablePrincipal?.({
-						envelope,
+					const inboundPrincipalResolution: GatewayControlInboundPrincipalResolutionAtClient =
+						options.resolveInboundStablePrincipal?.({ envelope, message }) ?? {
+							status: 'resolver_unavailable',
+						};
+					assertInboundPrincipalResolutionMatchesMessage({
 						message,
+						resolution: inboundPrincipalResolution,
 					});
-					if (
-						typeof inboundPrincipalResolution === 'object' &&
-						inboundPrincipalResolution.status === 'rejected'
-					) {
+					if (inboundPrincipalResolution.status === 'lease_rejected') {
 						attempt.lastSeenPeerSequence = sequenceDecision.nextLastSeenSequence;
 						acknowledge(buildControlMessageReceipt());
+						try {
+							options.recordHealthEvent?.({
+								kind: 'caller-context-rejection',
+								observedAtMs: now(),
+								operation: inboundPrincipalResolution.operation,
+								reason: inboundPrincipalResolution.leaseRejectionReason,
+								result: 'failed',
+								zoneId: options.identity.zoneId,
+							});
+						} catch {
+							// Diagnostic evidence is non-authoritative and cannot impair the control response.
+						}
 						if (message.kind === 'command') {
 							void sendGatewayCommandResponse({
 								attempt,
@@ -840,8 +876,19 @@ export function createGatewayDisposableControlSessionClient(
 						}
 						return;
 					}
-					const stablePrincipal =
-						typeof inboundPrincipalResolution === 'string' ? inboundPrincipalResolution : undefined;
+					let stablePrincipal: string | undefined;
+					switch (inboundPrincipalResolution.status) {
+						case 'accepted':
+							stablePrincipal = inboundPrincipalResolution.stablePrincipal;
+							break;
+						case 'not_required':
+						case 'principal_rejected':
+						case 'resolver_unavailable':
+							stablePrincipal = undefined;
+							break;
+						default:
+							return assertNeverInboundPrincipalResolution(inboundPrincipalResolution);
+					}
 					const classification = classifyGatewayControlAdmission({
 						direction: 'gateway_to_controller',
 						matchedPendingResult,

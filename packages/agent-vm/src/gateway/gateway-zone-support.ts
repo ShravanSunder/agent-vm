@@ -139,6 +139,7 @@ export type GatewayControlSessionConnector = (options: {
 	readonly onAttachmentGap?: (transition: GatewayControlAttachmentGapTransition) => void;
 	readonly onReconnectExhausted?: (transition: GatewayControlReconnectExhaustedTransition) => void;
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
+	readonly recordHealthEvent?: ConnectGatewayControlSessionOptions['recordHealthEvent'];
 	readonly resolveInboundStablePrincipal?: ConnectGatewayControlSessionOptions['resolveInboundStablePrincipal'];
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
 	readonly signal?: AbortSignal;

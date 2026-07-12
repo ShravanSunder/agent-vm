@@ -86,6 +86,39 @@ describe('HealthEventStore', () => {
 		]);
 	});
 
+	it('keeps caller-context diagnostics out of authoritative latest-bucket capacity', () => {
+		const store = new HealthEventStore({
+			eventHistoryLimit: 20,
+			latestBucketLimit: 1,
+			staleAfterMs: 30_000,
+		});
+		const failedControlEvent = gatewayControlSessionEvent({
+			observedAtMs: 1_000,
+			result: 'failed',
+		});
+		store.record(failedControlEvent);
+
+		for (const [index, reason] of (
+			['caller_context_absent', 'caller_context_session_mismatch', 'caller_context_stale'] as const
+		).entries()) {
+			store.record({
+				kind: 'caller-context-rejection',
+				observedAtMs: 2_000 + index,
+				operation: 'lease_renew',
+				reason,
+				result: 'failed',
+				zoneId: 'beta',
+			});
+		}
+
+		expect(store.listHistory()).toHaveLength(4);
+		expect(store.listLatestEventsForZone('beta')).toEqual([failedControlEvent]);
+		expect(store.deriveSnapshot({ nowMs: 3_000, zoneId: 'beta' })).toMatchObject({
+			kind: 'failed',
+			zoneId: 'beta',
+		});
+	});
+
 	it('persists events to a durable log without making disk writes part of in-memory recording', async () => {
 		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
 		const store = new HealthEventStore({
@@ -236,6 +269,81 @@ describe('HealthEventStore', () => {
 		expect(store.deriveSnapshot({ nowMs: 6_004, zoneId: 'beta' })).toMatchObject({
 			kind: 'failed',
 		});
+	});
+
+	it('preferentially sheds caller-context diagnostics before failed authority evidence', async () => {
+		vi.useFakeTimers();
+		try {
+			const neverResolve = new Promise<void>(() => {});
+			const record = vi
+				.fn<(event: AgentVmHealthEvent) => Promise<void>>()
+				.mockImplementationOnce(async () => await neverResolve)
+				.mockResolvedValue(undefined);
+			const store = new HealthEventStore({
+				eventHistoryLimit: 20,
+				evidenceQueueLimits: {
+					flushTimeoutMs: 25,
+					maxOutstandingOperations: 2,
+					maxPendingBytes: 64_000,
+					maxPendingRecords: 2,
+					operationTimeoutMs: 50,
+				},
+				healthEventSinks: [{ record }],
+				staleAfterMs: 30_000,
+			});
+			const heldHeartbeat = gatewayControlSessionEvent({ observedAtMs: 6_050 });
+			const failedAuthorityEvent = gatewayControlSessionEvent({
+				observedAtMs: 6_051,
+				operation: 'control-session-disconnect',
+				result: 'failed',
+			});
+			const diagnosticEvents = (
+				[
+					'caller_context_absent',
+					'caller_context_session_mismatch',
+					'caller_context_stale',
+				] as const
+			).map(
+				(reason, index) =>
+					({
+						kind: 'caller-context-rejection',
+						observedAtMs: 6_052 + index,
+						operation: index % 2 === 0 ? 'lease_renew' : 'lease_release',
+						reason,
+						result: 'failed',
+						zoneId: 'beta',
+					}) satisfies AgentVmHealthEvent,
+			);
+
+			store.record(heldHeartbeat);
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(record).toHaveBeenCalledWith(heldHeartbeat);
+
+			store.record(failedAuthorityEvent);
+			for (const diagnosticEvent of diagnosticEvents) {
+				store.record(diagnosticEvent);
+			}
+
+			expect(store.getEvidenceQueueDiagnostics().healthEventSinks).toMatchObject({
+				maxPendingRecords: 2,
+				pendingRecords: 2,
+			});
+
+			await vi.advanceTimersByTimeAsync(50);
+			await Promise.resolve();
+			await Promise.resolve();
+
+			expect(record).toHaveBeenCalledWith(failedAuthorityEvent);
+			expect(
+				record.mock.calls.filter(([event]) => event.kind === 'caller-context-rejection'),
+			).toHaveLength(1);
+			expect(
+				store.getEvidenceQueueDiagnostics().healthEventSinks.pendingRecords,
+			).toBeLessThanOrEqual(2);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('sheds evidence that exceeds the fixed byte capacity without blocking health mutation', () => {

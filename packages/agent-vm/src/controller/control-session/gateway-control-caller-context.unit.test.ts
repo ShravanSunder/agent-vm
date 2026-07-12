@@ -127,8 +127,28 @@ describe('gateway control caller context registry', () => {
 				envelope: createInboundEnvelope('caller_context_register', 1),
 				message,
 			}),
-		).toBe(deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' }));
+		).toEqual({
+			stablePrincipal: deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' }),
+			status: 'accepted',
+		});
 		expect(callerContexts.resolve('unregistered')).toBeUndefined();
+	});
+
+	it('represents principal-free control commands with an explicit not-required state', () => {
+		const callerContexts = createRegistry();
+		const message = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'control_ping',
+			payload: {},
+		});
+
+		expect(
+			resolveGatewayControlInboundStablePrincipal({
+				callerContexts,
+				envelope: createInboundEnvelope('control_ping', 1),
+				message,
+			}),
+		).toEqual({ status: 'not_required' });
 	});
 
 	it('resolves a registered callerContextId to the same principal and grants none to invalid material', () => {
@@ -172,14 +192,18 @@ describe('gateway control caller context registry', () => {
 				envelope: createInboundEnvelope('lease_get', 2),
 				message: leaseGetMessage,
 			}),
-		).toBe(registered.stablePrincipal);
+		).toEqual({ stablePrincipal: registered.stablePrincipal, status: 'accepted' });
 		expect(
 			resolveGatewayControlInboundStablePrincipal({
 				callerContexts,
 				envelope: createInboundEnvelope('lease_get', 3),
 				message: unregisteredLeaseGetMessage,
 			}),
-		).toEqual({ leaseRejectionReason: 'caller_context_absent', status: 'rejected' });
+		).toEqual({
+			leaseRejectionReason: 'caller_context_absent',
+			operation: 'lease_get',
+			status: 'lease_rejected',
+		});
 		expect(() =>
 			resolveGatewayControlInboundStablePrincipal({
 				callerContexts,
@@ -383,7 +407,11 @@ describe('gateway control caller context registry', () => {
 				envelope: createInboundEnvelope('lease_renew', 2),
 				message: expiredLeaseRenew,
 			}),
-		).toEqual({ leaseRejectionReason: 'caller_context_stale', status: 'rejected' });
+		).toEqual({
+			leaseRejectionReason: 'caller_context_stale',
+			operation: 'lease_renew',
+			status: 'lease_rejected',
+		});
 	});
 
 	it('issues an opaque context id and stores only a sessionKey digest', () => {

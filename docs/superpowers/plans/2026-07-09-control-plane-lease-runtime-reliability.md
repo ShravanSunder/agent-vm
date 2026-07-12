@@ -260,6 +260,26 @@ No dependency patch or secret reference may enter beta artifacts.
 Finish by verifying PR checks with blocking 20-second watches, review threads,
 mergeability, and exact head. Leave the PR unmerged.
 
+## Post-proof checkpoint: conditional gateway package split
+
+Only after the reliability implementation is proven locally and by the
+sustained Terra beta soak, audit the final dependency graph for Option B:
+
+```text
+gateway-contracts       pure lifecycle/spec vocabulary
+gondolin-gateway-types  Gondolin-specific ManagedVm integration
+```
+
+Execute this split only if Gondolin-specific types leak into protocol, lease,
+health, or portal surfaces, or another VM backend is concretely expected. Do
+not split merely for package purity. If neither condition is present, record
+the checkpoint as deferred/not applicable instead of forcing the split.
+
+When triggered, treat it as a separate late mechanical task: preserve runtime
+behavior, cut imports over completely, and prove package builds, typechecks,
+and import-boundary checks. It must not block or invalidate the reliability
+fix, exact-commit canonical proof, sustained beta soak, or PR readiness.
+
 ## Requirements/proof matrix
 
 R1 stock Gondolin and controller authority
@@ -327,6 +347,7 @@ S0 remove patch/private API
                                 -> fixes/reruns
                                      -> Terra beta
                                           -> PR readiness
+                                               -> conditional package-boundary audit
 ```
 
 S2 test work and S3 patch-independent recovery cleanup may run in parallel only
@@ -344,6 +365,8 @@ candidate work; the parent reviews diffs and reruns proof.
   correction; it does not authorize patching Gondolin.
 - Beta begins only after local stock-Gondolin proof and implementation review.
 - Any behavior change after Terra invalidates Terra evidence.
+- The conditional package split is post-proof and behavior-preserving; it does
+  not reopen reliability design or require a split when its trigger is absent.
 - Merge and release remain outside this goal.
 
 ## Plan completion receipt

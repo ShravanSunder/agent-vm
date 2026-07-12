@@ -8,6 +8,7 @@ import {
 	type GatewayControlCallerContextProof,
 } from '@agent-vm/gateway-control-contracts';
 import type {
+	AgentVmHealthEvent,
 	GatewayHealthCheck,
 	GatewayLifecycle,
 	GatewayProcessSpec,
@@ -1631,6 +1632,15 @@ async function startGatewayZoneImplementation(
 					});
 				},
 				...(connectOptions.signal === undefined ? {} : { signal: connectOptions.signal }),
+				...(options.healthEventStore === undefined
+					? {}
+					: {
+							recordHealthEvent: (
+								event: Extract<AgentVmHealthEvent, { readonly kind: 'caller-context-rejection' }>,
+							): void => {
+								options.healthEventStore?.record(event);
+							},
+						}),
 				resolveInboundStablePrincipal: ({ envelope, message }) =>
 					resolveGatewayControlInboundStablePrincipal({
 						callerContexts,

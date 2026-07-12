@@ -4,6 +4,28 @@ import { describe, expect, it } from 'vitest';
 import { mapHealthEventToTelemetry } from './health-event-telemetry.js';
 
 describe('mapHealthEventToTelemetry', () => {
+	it('exports bounded caller-context rejection attributes without identifiers', () => {
+		const event = {
+			kind: 'caller-context-rejection',
+			observedAtMs: 1_781_445_000_000,
+			operation: 'lease_renew',
+			reason: 'caller_context_stale',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		const telemetry = mapHealthEventToTelemetry(event);
+
+		expect(telemetry.log.attributes).toMatchObject({
+			'agent_vm.caller_context.operation': 'lease_renew',
+			'agent_vm.caller_context.rejection_reason': 'caller_context_stale',
+			'agent_vm.health.kind': 'caller-context-rejection',
+			'agent_vm.health.result': 'failed',
+			'agent_vm.zone.id': 'beta',
+		});
+		expect(JSON.stringify(telemetry)).not.toMatch(/leaseId|callerContextId|sessionId/u);
+	});
+
 	it('maps lease heartbeat events without exporting raw lease identifiers', () => {
 		const event = {
 			agentId: 'beta-agent-secret-canary',

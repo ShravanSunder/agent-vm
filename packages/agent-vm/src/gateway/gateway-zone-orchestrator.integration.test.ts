@@ -37,6 +37,7 @@ import {
 	createGatewayControlSessionMaterial,
 	resolveGatewayControlSessionMaterialPath,
 } from '../controller/control-session/index.js';
+import { HealthEventStore } from '../controller/health/health-event-store.js';
 import {
 	openClawProcessSupervisorReceiptSchema,
 	type OpenClawProcessSupervisorGateway,
@@ -4344,6 +4345,10 @@ describe('startGatewayZone', () => {
 		);
 		const gatewayControlProcessAdmissionCoordinator =
 			createGatewayControlProcessAdmissionCoordinator();
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 16,
+			staleAfterMs: 30_000,
+		});
 		const onControlSessionAttachmentGap = vi.fn();
 		const onControlSessionHeartbeat = vi.fn();
 		const onControlSessionReconnectExhausted = vi.fn();
@@ -4361,6 +4366,7 @@ describe('startGatewayZone', () => {
 				},
 				gatewayControlLeaseRpc,
 				gatewayControlProcessAdmissionCoordinator,
+				healthEventStore,
 				onControlSessionAttachmentGap,
 				onControlSessionHeartbeat,
 				onControlSessionReconnectExhausted,
@@ -4407,6 +4413,7 @@ describe('startGatewayZone', () => {
 			onAttemptOutcome: expect.any(Function),
 			onReconnectExhausted: expect.any(Function),
 			processAdmissionCoordinator: gatewayControlProcessAdmissionCoordinator,
+			recordHealthEvent: expect.any(Function),
 			resolveInboundStablePrincipal: expect.any(Function),
 			sessionFenceRegistry: expect.objectContaining({
 				acceptSession: expect.any(Function),
@@ -4418,6 +4425,22 @@ describe('startGatewayZone', () => {
 		if (connectedOptions === undefined || connectedDispatcher === undefined) {
 			throw new Error('Expected gateway control dispatcher.');
 		}
+		connectedOptions.recordHealthEvent?.({
+			kind: 'caller-context-rejection',
+			observedAtMs: 1_234,
+			operation: 'lease_renew',
+			reason: 'caller_context_stale',
+			result: 'failed',
+			zoneId: 'shravan',
+		});
+		expect(healthEventStore.listHistory()).toContainEqual({
+			kind: 'caller-context-rejection',
+			observedAtMs: 1_234,
+			operation: 'lease_renew',
+			reason: 'caller_context_stale',
+			result: 'failed',
+			zoneId: 'shravan',
+		});
 		const gatewayIdentity = result.vmOwnership.gatewayIdentity;
 		if (gatewayIdentity === undefined) {
 			throw new Error('Expected exact Gateway identity.');

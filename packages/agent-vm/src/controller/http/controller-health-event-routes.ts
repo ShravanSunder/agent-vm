@@ -97,6 +97,7 @@ function redactHealthEventForPublicSnapshot(event: AgentVmHealthEvent): PublicAg
 			};
 		}
 		case 'agent-channel-provider-health':
+		case 'caller-context-rejection':
 		case 'controller-request':
 		case 'gateway-control-session':
 		case 'gateway-plugin-health':

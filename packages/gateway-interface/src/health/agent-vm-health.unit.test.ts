@@ -10,6 +10,32 @@ import {
 } from './agent-vm-health.js';
 
 describe('agent-vm health events', () => {
+	it('accepts bounded caller-context rejection diagnostics without affecting readiness', () => {
+		const event = {
+			kind: 'caller-context-rejection',
+			observedAtMs: 1_000,
+			operation: 'lease_renew',
+			reason: 'caller_context_stale',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		expect(isAgentVmHealthEvent(event)).toBe(true);
+		expect(isAgentVmHealthEvent({ ...event, operation: 'control_ping' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, reason: 'raw-error' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, result: 'ok' })).toBe(false);
+		expect(healthEventBucketKey(event)).toBe(
+			'beta:caller-context-rejection:lease_renew:caller_context_stale',
+		);
+		expect(
+			deriveZoneHealthSnapshot([event], {
+				nowMs: 100_000,
+				staleAfterMs: 30_000,
+				zoneId: 'beta',
+			}),
+		).toEqual({ kind: 'unknown', reason: 'no-events', zoneId: 'beta' });
+	});
+
 	it('accepts zone-scoped gateway control-session events with control-session identity', () => {
 		const event = {
 			domain: 'gateway_control',

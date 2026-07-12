@@ -102,6 +102,10 @@ function addKindSpecificAttributes(
 	event: AgentVmHealthEvent,
 ): void {
 	switch (event.kind) {
+		case 'caller-context-rejection':
+			attributes['agent_vm.caller_context.operation'] = event.operation;
+			attributes['agent_vm.caller_context.rejection_reason'] = event.reason;
+			return;
 		case 'agent-channel-provider-health':
 			attributes['agent_vm.agent_channel.health'] = event.health;
 			attributes['agent_vm.agent_channel.provider_id_hash'] = stableTelemetryHash(

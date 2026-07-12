@@ -108,12 +108,14 @@ export class HealthEventStore {
 			this.#history.shift();
 		}
 
-		const key = healthEventBucketKey(event);
-		const previous = this.#latestByBucket.get(key);
-		if (!previous || previous.observedAtMs <= event.observedAtMs) {
-			this.#latestByBucket.set(key, event);
+		if (event.kind !== 'caller-context-rejection') {
+			const key = healthEventBucketKey(event);
+			const previous = this.#latestByBucket.get(key);
+			if (!previous || previous.observedAtMs <= event.observedAtMs) {
+				this.#latestByBucket.set(key, event);
+			}
+			this.#evictOldestLatestBuckets();
 		}
-		this.#evictOldestLatestBuckets();
 		this.#queueDurableWrite(event);
 		this.#queueHealthEventSinks(event);
 	}
@@ -258,10 +260,22 @@ class BoundedHealthEventEvidenceQueue {
 			this.#pending.length >= this.#limits.maxPendingRecords ||
 			this.#pendingBytes + byteSize > this.#limits.maxPendingBytes
 		) {
+			const callerContextDiagnosticIndex = this.#pending.findIndex(
+				(pending) => pending.event.kind === 'caller-context-rejection',
+			);
+			if (event.kind === 'caller-context-rejection' && callerContextDiagnosticIndex < 0) {
+				this.#recordDrop(byteSize);
+				return;
+			}
 			const routineEvidenceIndex = this.#pending.findIndex(
 				(pending) => pending.coalescingKey !== undefined,
 			);
-			const evictionIndex = routineEvidenceIndex >= 0 ? routineEvidenceIndex : 0;
+			const evictionIndex =
+				callerContextDiagnosticIndex >= 0
+					? callerContextDiagnosticIndex
+					: routineEvidenceIndex >= 0
+						? routineEvidenceIndex
+						: 0;
 			const [evicted] = this.#pending.splice(evictionIndex, 1);
 			if (evicted === undefined) {
 				this.#recordDrop(byteSize);
@@ -478,6 +492,9 @@ class BoundedHealthEventEvidenceQueue {
 }
 
 function evidenceCoalescingKey(event: AgentVmHealthEvent): string | undefined {
+	if (event.kind === 'caller-context-rejection') {
+		return healthEventBucketKey(event);
+	}
 	if (event.result !== 'ok') {
 		return undefined;
 	}
