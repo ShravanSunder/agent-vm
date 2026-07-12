@@ -57,7 +57,30 @@ export interface ControllerTelemetryDriver {
 	readonly emitMetric: (record: ControllerTelemetryMetricRecord) => void;
 	readonly emitSpan: (record: ControllerTelemetrySpanRecord) => void;
 	readonly forceFlush: () => Promise<void>;
+	readonly getDiagnostics?: (() => ControllerTelemetryDriverDiagnostics) | undefined;
 	readonly shutdown: () => Promise<void>;
+}
+
+export interface ControllerTelemetryDriverDiagnostics {
+	readonly admittedRecords: number;
+	readonly derivedMaxAdmittedPayloadBytesPerSignal: number;
+	readonly droppedOversizedRecords: number;
+	readonly maxQueuedRecordsPerSignal: number;
+	readonly maxRecordBytes: number;
+	readonly providerOperationFailures: number;
+	readonly signals: Readonly<
+		Record<ControllerTelemetrySignalKind, ControllerTelemetrySignalAdmissionDiagnostics>
+	>;
+}
+
+export type ControllerTelemetrySignalKind = 'logs' | 'metrics' | 'traces';
+
+export interface ControllerTelemetrySignalAdmissionDiagnostics {
+	readonly currentPayloadBytes: number;
+	readonly currentRecords: number;
+	readonly highWaterPayloadBytes: number;
+	readonly highWaterRecords: number;
+	readonly saturationDroppedRecords: number;
 }
 
 export interface ControllerLifecycleTelemetryEvent {
@@ -70,14 +93,25 @@ export interface ControllerTelemetry {
 		readonly record: (event: AgentVmHealthEvent) => void;
 	};
 	readonly forceFlush: () => Promise<void>;
+	readonly getDiagnostics?: (() => ControllerTelemetryDiagnostics) | undefined;
 	readonly recordControllerLifecycleEvent: (event: ControllerLifecycleTelemetryEvent) => void;
 	readonly shutdown: () => Promise<void>;
 }
+
+export interface ControllerTelemetryDiagnostics {
+	readonly driver?: ControllerTelemetryDriverDiagnostics | undefined;
+	readonly emissionFailures: number;
+	readonly operationFailures: number;
+	readonly operationTimeouts: number;
+}
+
+export const defaultControllerTelemetryDriverOperationTimeoutMs = 2_000;
 
 export interface StartControllerTelemetryOptions {
 	readonly createDriver?:
 		| ((options: ControllerTelemetryDriverOptions) => ControllerTelemetryDriver)
 		| undefined;
+	readonly driverOperationTimeoutMs?: number | undefined;
 	readonly identity: ControllerTelemetryIdentity;
 	readonly observabilityConfig: ObservabilityRuntimeConfig;
 	readonly projectNamespace: string;
@@ -101,6 +135,21 @@ export function startControllerTelemetry(
 		}),
 	});
 	const proofAttributes = createProofAttributes(options.proof);
+	const driverOperationTimeoutMs = resolveDriverOperationTimeoutMs(
+		options.driverOperationTimeoutMs,
+	);
+	let emissionFailures = 0;
+	let operationFailures = 0;
+	let operationTimeouts = 0;
+	let activeForceFlush: Promise<void> | undefined;
+	let activeShutdown: Promise<void> | undefined;
+	const emitWithoutAffectingProductMutation = (emit: () => void): void => {
+		try {
+			emit();
+		} catch {
+			emissionFailures += 1;
+		}
+	};
 
 	const emitLog = (record: {
 		readonly attributes: TelemetryAttributes;
@@ -108,15 +157,17 @@ export function startControllerTelemetry(
 		readonly logName: string;
 		readonly observedAtMs: number;
 	}): void => {
-		driver.emitLog({
-			attributes: {
-				...record.attributes,
-				'agent_vm.log.name': record.logName,
-				...proofAttributes,
-			},
-			body: record.body,
-			name: record.logName,
-			observedAtMs: record.observedAtMs,
+		emitWithoutAffectingProductMutation(() => {
+			driver.emitLog({
+				attributes: {
+					...record.attributes,
+					'agent_vm.log.name': record.logName,
+					...proofAttributes,
+				},
+				body: record.body,
+				name: record.logName,
+				observedAtMs: record.observedAtMs,
+			});
 		});
 	};
 
@@ -137,17 +188,75 @@ export function startControllerTelemetry(
 			logName: record.logName,
 			observedAtMs: record.observedAtMs,
 		});
-		driver.emitSpan({
-			attributes,
-			name: record.spanName,
-			observedAtMs: record.observedAtMs,
+		emitWithoutAffectingProductMutation(() => {
+			driver.emitSpan({
+				attributes,
+				name: record.spanName,
+				observedAtMs: record.observedAtMs,
+			});
 		});
+	};
+
+	const getOrStartDriverOperation = (operationKind: 'forceFlush' | 'shutdown'): Promise<void> => {
+		const activeOperation = operationKind === 'forceFlush' ? activeForceFlush : activeShutdown;
+		if (activeOperation !== undefined) {
+			return activeOperation;
+		}
+		const driverOperation = Promise.resolve()
+			.then(operationKind === 'forceFlush' ? driver.forceFlush : driver.shutdown)
+			.catch(() => {
+				operationFailures += 1;
+			});
+		if (operationKind === 'forceFlush') {
+			activeForceFlush = driverOperation;
+		} else {
+			activeShutdown = driverOperation;
+		}
+		void driverOperation.finally(() => {
+			if (operationKind === 'forceFlush' && activeForceFlush === driverOperation) {
+				activeForceFlush = undefined;
+			}
+			if (operationKind === 'shutdown' && activeShutdown === driverOperation) {
+				activeShutdown = undefined;
+			}
+		});
+		return driverOperation;
+	};
+
+	const settleDriverOperationWithinDeadline = async (
+		operationKind: 'forceFlush' | 'shutdown',
+	): Promise<void> => {
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+		const driverOperation = getOrStartDriverOperation(operationKind);
+		const deadline = new Promise<'timeout'>((resolve) => {
+			timeout = setTimeout(() => resolve('timeout'), driverOperationTimeoutMs);
+			timeout.unref?.();
+		});
+		try {
+			const outcome = await Promise.race([
+				driverOperation.then(() => 'settled' as const),
+				deadline,
+			]);
+			if (outcome === 'timeout') {
+				operationTimeouts += 1;
+			}
+		} finally {
+			if (timeout !== undefined) {
+				clearTimeout(timeout);
+			}
+		}
 	};
 
 	return {
 		forceFlush: async () => {
-			await driver.forceFlush();
+			await settleDriverOperationWithinDeadline('forceFlush');
 		},
+		getDiagnostics: () => ({
+			...(driver.getDiagnostics === undefined ? {} : { driver: driver.getDiagnostics() }),
+			emissionFailures,
+			operationFailures,
+			operationTimeouts,
+		}),
 		healthEventSink: {
 			record: (event) => {
 				const telemetry = mapHealthEventToTelemetry(event);
@@ -158,17 +267,21 @@ export function startControllerTelemetry(
 					observedAtMs: event.observedAtMs,
 				});
 				if (shouldEmitHealthEventSpan(event)) {
-					driver.emitSpan({
-						attributes: {
-							...telemetry.log.attributes,
-							...proofAttributes,
-						},
-						name: `agent_vm.health.${event.kind}`,
-						observedAtMs: event.observedAtMs,
+					emitWithoutAffectingProductMutation(() => {
+						driver.emitSpan({
+							attributes: {
+								...telemetry.log.attributes,
+								...proofAttributes,
+							},
+							name: `agent_vm.health.${event.kind}`,
+							observedAtMs: event.observedAtMs,
+						});
 					});
 				}
 				for (const metricSample of telemetry.metricSamples) {
-					driver.emitMetric(metricSample);
+					emitWithoutAffectingProductMutation(() => {
+						driver.emitMetric(metricSample);
+					});
 				}
 			},
 		},
@@ -184,9 +297,19 @@ export function startControllerTelemetry(
 			});
 		},
 		shutdown: async () => {
-			await driver.shutdown();
+			await settleDriverOperationWithinDeadline('shutdown');
 		},
 	};
+}
+
+function resolveDriverOperationTimeoutMs(configuredTimeoutMs: number | undefined): number {
+	const timeoutMs = configuredTimeoutMs ?? defaultControllerTelemetryDriverOperationTimeoutMs;
+	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+		throw new Error(
+			'Controller telemetry driver operation timeout must be a positive safe integer.',
+		);
+	}
+	return timeoutMs;
 }
 
 export function createControllerTelemetryResourceAttributes(options: {
@@ -215,7 +338,7 @@ function formatCollectorHttpEndpoint(config: EnabledObservabilityRuntimeConfig):
 function shouldEmitHealthEventSpan(event: AgentVmHealthEvent): boolean {
 	switch (event.kind) {
 		case 'controller-request':
-		case 'gateway-control-link':
+		case 'gateway-control-session':
 		case 'gateway-recovery':
 		case 'gateway-recovery-suspended':
 		case 'lease-heartbeat':
@@ -223,6 +346,7 @@ function shouldEmitHealthEventSpan(event: AgentVmHealthEvent): boolean {
 		case 'tool-vm-ssh':
 			return true;
 		case 'agent-channel-provider-health':
+		case 'caller-context-rejection':
 		case 'gateway-plugin-health':
 		case 'gateway-service-health':
 			return false;

@@ -19,6 +19,10 @@ import {
 import { buildSafeGitEnvironment } from '../work-phase/controller-tools/controller-tool-support.js';
 import { createGitPullDefaultTool } from '../work-phase/controller-tools/git-pull-default-tool.js';
 import { createGitPushTool } from '../work-phase/controller-tools/git-push-tool.js';
+import {
+	createUnavailableWorkerControlControllerToolsClient,
+	createWorkerControlControllerToolsClient,
+} from '../work-phase/controller-tools/worker-control-rpc-client.js';
 import { buildValidationTool } from '../work-phase/validation-tool.js';
 import { runWorkCycle } from '../work-phase/work-cycle.js';
 import { runWrapup } from '../wrapup-phase/wrapup-runner.js';
@@ -169,8 +173,10 @@ export async function runTask(
 
 		const config = deps.config;
 		const taskConfig = initialState.config;
-		const controllerBaseUrl = process.env.CONTROLLER_BASE_URL ?? 'http://controller.vm.host:18800';
-		const zoneId = process.env.AGENT_VM_ZONE_ID ?? 'unknown-zone';
+		const workerControlClient =
+			deps.workerControlService === undefined
+				? createUnavailableWorkerControlControllerToolsClient()
+				: createWorkerControlControllerToolsClient(deps.workerControlService);
 		await bootstrapRepoWorktrees({
 			branchPrefix: config.branchPrefix,
 			repoRootPath: join(workDir, 'repos'),
@@ -268,16 +274,14 @@ export async function runTask(
 		});
 		const controllerTools = [
 			createGitPushTool({
-				controllerBaseUrl,
-				zoneId,
 				taskId,
 				repos: taskConfig.repos,
+				workerControlClient,
 			}),
 			createGitPullDefaultTool({
-				controllerBaseUrl,
-				zoneId,
 				taskId,
 				repos: taskConfig.repos,
+				workerControlClient,
 			}),
 		];
 		const workAgentSystem = await buildRoleSystemPrompt({

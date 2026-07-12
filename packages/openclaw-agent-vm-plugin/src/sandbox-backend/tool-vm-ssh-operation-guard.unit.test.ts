@@ -48,6 +48,44 @@ describe('runToolVmSshOperationWithGuard', () => {
 		});
 	});
 
+	it('publishes allowlisted correlation on Tool VM SSH health events', async () => {
+		const publishHealthEvent = vi.fn(async () => {});
+
+		await expect(
+			runToolVmSshOperationWithGuard({
+				healthEvent: {
+					agentId: 'beta',
+					correlation: {
+						requestId: 'request-main',
+						runId: 'run-main',
+						sessionKeyDigest: 'a'.repeat(64),
+						toolCallId: 'tool-call-main',
+						traceId: '0123456789abcdef0123456789abcdef',
+					},
+					leaseId: 'lease-1',
+					operation: 'command',
+					publish: publishHealthEvent,
+					zoneId: 'sunfam',
+				},
+				now: () => 1_000,
+				operation: async () => 'ok',
+				operationName: 'runShellCommand',
+				report: vi.fn(),
+				timeoutMs: 30_000,
+			}),
+		).resolves.toBe('ok');
+
+		expect(publishHealthEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				requestId: 'request-main',
+				runId: 'run-main',
+				sessionKeyDigest: 'a'.repeat(64),
+				toolCallId: 'tool-call-main',
+				traceId: '0123456789abcdef0123456789abcdef',
+			}),
+		);
+	});
+
 	it('does not wait for successful health publishing before returning operation result', async () => {
 		const publishHealthEvent = vi.fn(async () => new Promise<void>(() => {}));
 

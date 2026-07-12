@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,6 +9,33 @@ import {
 } from './manual-templates.js';
 
 describe('manual templates', () => {
+	it('keeps active OpenClaw docs free of stale single-agent cutover wording', async () => {
+		const activeDocPaths = [
+			'docs/architecture/openclaw-gateway.md',
+			'docs/getting-started/openclaw-guide.md',
+			'docs/reference/configuration/system-json.md',
+			'docs/subsystems/controller.md',
+		] as const;
+		const stalePhrases = [
+			'exactly one trusted agent',
+			'controller-signed agent attestation',
+			'OpenClaw zones declaring more than one `zones[].agents` entry during the',
+		] as const;
+
+		const activeDocContents = await Promise.all(
+			activeDocPaths.map(async (activeDocPath) => ({
+				content: await readFile(activeDocPath, 'utf8'),
+				path: activeDocPath,
+			})),
+		);
+
+		for (const activeDocContent of activeDocContents) {
+			for (const stalePhrase of stalePhrases) {
+				expect(activeDocContent.content, activeDocContent.path).not.toContain(stalePhrase);
+			}
+		}
+	});
+
 	it('builds an agent-facing AGENTS.md index that points at the manual', () => {
 		const content = buildAgentVmAgentsTemplate({
 			defaultZoneId: 'shravan',
@@ -93,6 +122,9 @@ describe('manual templates', () => {
 		expect(observabilityManual).toContain('host.observability.stack.mode=managed');
 		expect(observabilityManual).toContain('host.observability.stack.mode=external');
 		expect(observabilityManual).toContain(
+			'at least one selected managed OpenClaw zone has zones[].observability enabled',
+		);
+		expect(observabilityManual).toContain(
 			'host.observability.stack.scrubbing.responsibility=external-collector',
 		);
 		expect(observabilityManual).toContain('Controller startup does not start Docker Compose');
@@ -101,7 +133,10 @@ describe('manual templates', () => {
 		);
 		expect(observabilityManual).toContain('controllerStartPolicy=degraded');
 		expect(observabilityManual).toContain('host.observability.dataDir');
-		expect(observabilityManual).toContain('zones[].observability.openclaw.diagnosticsFlags');
+		expect(observabilityManual).toContain('Gondolin HTTP mediation');
+		expect(observabilityManual).toContain(
+			'Tool VM SSH is the only managed gateway raw TCP exception',
+		);
 		expect(observabilityManual).toContain('Never log secrets');
 		const gatewayIngressManual = files.find((file) =>
 			file.relativePath.endsWith('gateway-ingress.md'),
@@ -228,8 +263,11 @@ describe('manual templates', () => {
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('approvals.plugin.mode');
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'approvals.plugin.mode=session',
+			'rejects calls.requiresApproval',
 		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('approvals.plugin.mode=session');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('::ffff:198.18.0.1');
@@ -238,9 +276,21 @@ describe('manual templates', () => {
 		).toContain('@agent-vm/openclaw-agent-vm-plugin');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
-		).toContain('@agent-vm/openclaw-mcp-portal-plugin');
+		).not.toContain('@agent-vm/openclaw-mcp-portal-plugin');
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'mcp_portal_describe',
+			'tool_portal_describe',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'namespace + name',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('namespace + toolName');
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Tool Portal is the model-visible',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'MCP Portal remains the MCP-provider backend',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Denied tools do not enter',
@@ -248,6 +298,15 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'diagnostics',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'items',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'status',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('results is keyed by request/call id');
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'deny-all',
 		);
@@ -262,6 +321,12 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Prefer http-mediation for MCP provider API keys, including stdio providers',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Live validate starts referenced MCP providers/namespaces',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'configured but not referenced by an active MCP Portal profile',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Store MCP provider secrets as raw values',
@@ -316,7 +381,7 @@ describe('manual templates', () => {
 			'The OpenClaw plugin may accept Tool VM guest cwd intent',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'The controller `/lease workMountDir` is stricter',
+			'The controller-owned lease flow is stricter',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'Direct Tool VM guest paths such as `/workspace` and `/work` are rejected at the controller boundary',
@@ -328,10 +393,16 @@ describe('manual templates', () => {
 			'hostWorkMountDir',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'binds the controller port before recovery',
+			'acquires <runtimeDir>/vm-ownership/controller-ownership.lock before secret resolution',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'uses `lsof` to check TCP listener ownership',
+			'<stateDir>/tool-leases/<recordId>.json',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'Controller restart adopts no VM',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'HTTP health and telemetry remain diagnostic only',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'persistent zone files live at /zone',
@@ -344,9 +415,22 @@ describe('manual templates', () => {
 		)?.content;
 		expect(toolVmLeaseManual).toContain('defaultToolVmProfile');
 		expect(toolVmLeaseManual).toContain('one compatible Tool VM per zone and OpenClaw agent id');
-		expect(toolVmLeaseManual).toContain('discarded before the controller lease request');
+		expect(toolVmLeaseManual).toContain(
+			'Managed OpenClaw supports multiple declared agents in the same zone',
+		);
+		expect(toolVmLeaseManual).toContain('discarded before controller-owned lease resolution');
+		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_renew');
+		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_use_heartbeat');
+		expect(toolVmLeaseManual).toContain('private gateway_control_rpc lease_reacquire');
+		expect(toolVmLeaseManual).toContain('old lease id is correlation only, not authority');
+		expect(toolVmLeaseManual).toContain('No later shell, file, exec, heartbeat, or finalize work');
+		expect(toolVmLeaseManual).not.toContain('controller lease request');
+		expect(toolVmLeaseManual).not.toContain('GET lease');
+		expect(toolVmLeaseManual).not.toContain('POST renew');
 		expect(toolVmLeaseManual).not.toContain('scopeKey');
-		expect(toolVmLeaseManual).toContain('active shell/file operations heartbeat per-use records');
+		expect(toolVmLeaseManual).toContain(
+			'active shell/file operations use private gateway_control_rpc lease_use_heartbeat records',
+		);
 		expect(toolVmLeaseManual).toContain('lease-heartbeat');
 		expect(toolVmLeaseManual).toContain('lease-renew');
 		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
@@ -360,11 +444,10 @@ describe('manual templates', () => {
 		expect(operationsManual).toContain('agent-vm controller health-snapshot --config');
 		expect(operationsManual).toContain('gateway-recovery');
 		expect(operationsManual).toContain('gateway-recovery-suspended');
-		expect(operationsManual).toContain(
-			'10 consecutive gateway-service or gateway-control-link failures',
-		);
+		expect(operationsManual).toContain('same-Gateway OpenClaw process recovery');
+		expect(operationsManual).toContain('Gateway VM restart is the outward escalation');
 		expect(operationsManual).toContain('61 minute cooldown');
-		expect(operationsManual).toContain('3 consecutive failed automatic recoveries');
+		expect(operationsManual).toContain('3 consecutive failed automatic Gateway recoveries');
 		expect(operationsManual).toContain(
 			'gateway infrastructure, gateway service, channel-provider, and Tool VM lease health',
 		);
@@ -373,7 +456,12 @@ describe('manual templates', () => {
 		expect(operationsManual).toContain('unhealthy-unrecoverable');
 		expect(operationsManual).toContain('secret-resolution-failed is a recovery blocker');
 		expect(operationsManual).toContain('<runtimeDir>/controller-health/events.jsonl');
-		expect(operationsManual).toContain('runtime records plus current process/port checks');
+		expect(operationsManual).toContain(
+			'schema-v2 runtime records plus revalidated process and endpoint identity',
+		);
+		expect(operationsManual).toContain('exported telemetry are not lifecycle authority');
+		expect(operationsManual).toContain('controller_final');
+		expect(operationsManual).toContain('stale_to_reacquired');
 		expect(operationsManual).toContain(
 			'Tool VM lease failures retire or quarantine one lease before gateway restart',
 		);
@@ -407,6 +495,9 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('tool-access.md'))?.content).toContain(
 			'agentToolVmProfiles',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('tool-access.md'))?.content).toContain(
+			'Managed OpenClaw zones may declare multiple trusted agents',
+		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('gateway.authProfilesByAgent');
@@ -419,6 +510,12 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('Native Codex-runtime agents use codex-harness --all-agents');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).toContain('controller-owned zone Git push capability');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).not.toContain('zone_git_push');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfile');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfiles');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('/home/openclaw/zone-files');
@@ -426,6 +523,10 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.content).join('\n')).not.toContain('one workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('which workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('allowedHosts');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('exactly one trusted agent');
+		expect(files.map((file) => file.content).join('\n')).not.toContain(
+			'controller-signed agent attestation',
+		);
 	});
 
 	it('documents graceful stop and scoped offline cleanup without broad qemu pkill', () => {
@@ -440,6 +541,22 @@ describe('manual templates', () => {
 			'agent-vm controller cleanup --config config/system.jsonc --zone beta',
 		);
 		expect(operations?.content).toContain('--force');
+		expect(operations?.content).toContain(
+			'never bypasses the ownership lock or exact-evidence checks',
+		);
+		expect(operations?.content).toContain(
+			'<stateDir>/tool-leases/<recordId>.json first, then <stateDir>/gateway-runtime.json',
+		);
+		expect(operations?.content).toContain(
+			'never adopts an old VM, and deletes a record only after exact process and endpoint absence is proven',
+		);
+		expect(operations?.content).toContain(
+			'Unknown identity preserves the evidence and prevents Gateway replacement or Tool TCP-slot reuse',
+		);
+		expect(operations?.content).toContain('at most four child destroys concurrently');
+		expect(operations?.content).toContain('whole subtree has a 300 second deadline');
+		expect(operations?.content).not.toContain('private Gateway membership journal');
+		expect(operations?.content).not.toContain('resource-by-resource destruction receipts');
 		expect(operations?.content).not.toContain('pkill -f qemu-system');
 	});
 });

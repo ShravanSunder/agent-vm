@@ -2,13 +2,21 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type {
+	ControlEnvelope,
+	DomainControlMessageIdentity,
+} from '@agent-vm/control-protocol-contracts';
+import {
+	WorkerControlRpcMessageSchema,
+	type WorkerControlRpcMessage,
+} from '@agent-vm/worker-control-contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { workerConfigSchema, type WorkerConfig } from '../config/worker-config.js';
 import { replayEvents } from '../state/event-log.js';
 import type { TaskStatus } from '../state/task-event-types.js';
 import type { WorkExecutor } from '../work-executor/executor-interface.js';
-import type { Coordinator } from './coordinator-types.js';
+import type { Coordinator, CoordinatorDeps } from './coordinator-types.js';
 import { createCoordinator } from './coordinator.js';
 
 const mocks = vi.hoisted(() => ({
@@ -128,6 +136,43 @@ function enqueueHappyPathExecutors(): void {
 			]),
 		)
 		.mockReturnValueOnce(createMockExecutor([JSON.stringify({ summary: 'wrapup' })]));
+}
+
+function createWorkerControlServiceMock(): {
+	readonly emittedMessages: WorkerControlRpcMessage[];
+	readonly service: NonNullable<CoordinatorDeps['workerControlService']>;
+} {
+	const emittedMessages: WorkerControlRpcMessage[] = [];
+	let nextSequence = 1;
+	return {
+		emittedMessages,
+		service: {
+			emitApplicationMessage: vi.fn(
+				async (
+					_envelope: ControlEnvelope,
+					_domainMessage: DomainControlMessageIdentity,
+					payload: unknown,
+				) => {
+					emittedMessages.push(WorkerControlRpcMessageSchema.parse(payload));
+					return { received: true };
+				},
+			),
+			getAcceptedSession: vi.fn(async () => ({
+				bootId: 'worker-boot-a',
+				connectionId: '55555555-5555-4555-8555-555555555555',
+				controllerEpoch: 'controller-epoch-a',
+				generationId: 'worker-generation-a',
+				peerId: 'worker-zone-a',
+				sessionId: '33333333-3333-4333-8333-333333333333',
+				zoneId: 'zone-a',
+			})),
+			nextPeerSequence: vi.fn(() => {
+				const sequence = nextSequence;
+				nextSequence += 1;
+				return sequence;
+			}),
+		},
+	};
 }
 
 async function readEventNames(stateDir: string, taskId: string): Promise<readonly string[]> {
@@ -295,6 +340,22 @@ describe('coordinator', () => {
 		);
 	});
 
+	it('keeps a closed task active until the in-flight runner exits', async () => {
+		mocks.createWorkExecutor.mockReturnValue(createMockExecutor([], { neverResolve: true }));
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workDir: tempDir,
+		});
+
+		await coordinator.submitTask({ taskId: 'first', prompt: 'one' });
+		await coordinator.closeTask('first');
+
+		expect(coordinator.getActiveTaskId()).toBe('first');
+		await expect(coordinator.submitTask({ taskId: 'second', prompt: 'two' })).rejects.toThrow(
+			/Another task is already active: first/u,
+		);
+	});
+
 	it('sanitizes token-bearing failure messages', async () => {
 		mocks.createWorkExecutor.mockReturnValueOnce(createMockExecutor(['not used'], undefined));
 		mocks.createWorkExecutor.mockImplementationOnce(() => {
@@ -311,6 +372,47 @@ describe('coordinator', () => {
 		expect(coordinator.getTaskState(taskId)?.failureReason).toContain(
 			'https://x-access-token:***@github.com/repo.git',
 		);
+	});
+
+	it('publishes failed runtime advisory events when task failure is recorded', async () => {
+		const workerControl = createWorkerControlServiceMock();
+		mocks.createWorkExecutor.mockImplementationOnce(() => {
+			throw new Error('boom');
+		});
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workDir: tempDir,
+			workerControlService: workerControl.service,
+		});
+
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'failed-advisory',
+			prompt: 'fix',
+		});
+
+		await waitForStatus(coordinator, taskId, 'failed');
+		await expect
+			.poll(() =>
+				workerControl.emittedMessages.some(
+					(message) =>
+						message.kind === 'event' &&
+						message.operation === 'worker_runtime_observation' &&
+						message.payload.state === 'failed' &&
+						message.payload.task.taskId === taskId,
+				),
+			)
+			.toBe(true);
+		await expect
+			.poll(() =>
+				workerControl.emittedMessages.some(
+					(message) =>
+						message.kind === 'event' &&
+						message.operation === 'worker_runtime_status' &&
+						message.payload.statusKind === 'task_status' &&
+						message.payload.findings.some((finding) => !finding.ok && finding.severity === 'error'),
+				),
+			)
+			.toBe(true);
 	});
 
 	it('rejects status waits when a task reaches a different terminal state', async () => {

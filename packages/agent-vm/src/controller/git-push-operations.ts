@@ -18,6 +18,7 @@ const GIT_PUSH_RETRY_AFTER_SECONDS = 300;
 export interface PushBranchRequest {
 	readonly repoUrl: string;
 	readonly branchName: string;
+	readonly expectedHead?: string;
 }
 
 export interface PushCommitSummary {
@@ -79,6 +80,36 @@ function buildPushUrl(repoUrl: string, githubToken: string): string {
 
 function sanitizeBranchName(name: string): string {
 	return name.replace(/[^a-zA-Z0-9\-_./]/gu, '-');
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function gitBranchPatternMatches(pattern: string, branch: string): boolean {
+	const regex = new RegExp(`^${pattern.split('*').map(escapeRegExp).join('.*')}$`, 'u');
+	return regex.test(branch);
+}
+
+function protectedBranchPolicyDescription(options: {
+	readonly branchName: string;
+	readonly pushPolicy: Extract<
+		ActiveWorkerTask['repos'][number]['pushPolicy'],
+		{ readonly kind: 'trusted_config' }
+	>;
+}): string | undefined {
+	if (new Set(options.pushPolicy.protectedBranches).has(options.branchName)) {
+		return `protected branch "${options.branchName}"`;
+	}
+	if (options.pushPolicy.defaultBranch === options.branchName) {
+		return `protected default branch "${options.branchName}"`;
+	}
+	const protectedBranchPattern = options.pushPolicy.protectedBranchPatterns.find((pattern) =>
+		gitBranchPatternMatches(pattern, options.branchName),
+	);
+	return protectedBranchPattern === undefined
+		? undefined
+		: `protected branch pattern "${protectedBranchPattern}"`;
 }
 
 function errorMessage(error: unknown): string {
@@ -537,12 +568,25 @@ async function pushOneBranchForTask(options: {
 	const branchName = sanitizeBranchName(options.branch.branchName);
 	let pushAttempts = 0;
 	try {
-		if (branchName === options.repo.baseBranch) {
+		const pushPolicy = options.repo.pushPolicy;
+		if (pushPolicy.kind === 'missing') {
 			return {
 				repoUrl: options.branch.repoUrl,
 				branch: branchName,
 				success: false,
-				error: `Refusing to push: you are on the default branch "${options.repo.baseBranch}". Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
+				error: `Refusing to push: repo "${options.repo.repoUrl}" has no trusted controller push policy. Configure the worker zone repoPushPolicies entry before controller push.`,
+			};
+		}
+		const protectedBranchDescription = protectedBranchPolicyDescription({
+			branchName,
+			pushPolicy,
+		});
+		if (protectedBranchDescription !== undefined) {
+			return {
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+				success: false,
+				error: `Refusing to push: "${branchName}" is a ${protectedBranchDescription}. Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
 			};
 		}
 		await recordPushEvent({
@@ -556,7 +600,7 @@ async function pushOneBranchForTask(options: {
 
 		await fetchRemoteRefs({
 			gitDir: options.repo.hostGitDir,
-			defaultBranch: options.repo.baseBranch,
+			defaultBranch: pushPolicy.defaultBranch,
 			repoUrl: options.branch.repoUrl,
 			githubToken: options.githubToken,
 			...(options.recordEvent ? { recordEvent: options.recordEvent } : {}),
@@ -572,6 +616,15 @@ async function pushOneBranchForTask(options: {
 			['rev-parse', 'HEAD'],
 			options.signal,
 		);
+		if (options.branch.expectedHead !== undefined && options.branch.expectedHead !== localHead) {
+			return {
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+				success: false,
+				error: `Refusing to push: local HEAD '${localHead}' does not match expectedHead '${options.branch.expectedHead}'. Refresh task state before retrying.`,
+				localHead,
+			};
+		}
 		if (previousRemoteBranchHead === localHead) {
 			return {
 				repoUrl: options.branch.repoUrl,
@@ -601,7 +654,7 @@ async function pushOneBranchForTask(options: {
 		const state = await buildBranchState({
 			gitDir: options.repo.hostGitDir,
 			branchName,
-			defaultBranch: options.repo.baseBranch,
+			defaultBranch: pushPolicy.defaultBranch,
 			previousRemoteBranchHead,
 			...(options.signal ? { signal: options.signal } : {}),
 		});

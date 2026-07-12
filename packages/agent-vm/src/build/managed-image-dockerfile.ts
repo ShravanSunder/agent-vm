@@ -19,17 +19,14 @@ import {
 } from './package-overrides.js';
 
 const managedOpenClawAgentVmPluginPackageName = '@agent-vm/openclaw-agent-vm-plugin';
-const managedOpenClawMcpPortalPluginPackageName = '@agent-vm/openclaw-mcp-portal-plugin';
 const managedMcpPortalPackageName = '@agent-vm/mcp-portal';
 const managedOpenAiCodexCliPackageName = '@openai/codex';
 const managedCoreOpenClawPackageNames = ['openclaw', '@openclaw/codex'] as const;
 const managedOpenClawPackageNames = new Set([
 	managedOpenClawAgentVmPluginPackageName,
-	managedOpenClawMcpPortalPluginPackageName,
 	managedMcpPortalPackageName,
 ]);
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
-const managedOpenClawMcpPortalPluginExtensionPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const managedPnpmHomePath = '/pnpm';
 const managedPnpmGlobalDirectory = '/pnpm/global';
 const requiredManagedRuntimeDependencyPatchesByOpenClawVersion = new Map<
@@ -37,17 +34,26 @@ const requiredManagedRuntimeDependencyPatchesByOpenClawVersion = new Map<
 	readonly { readonly packageName: string; readonly version: string }[]
 >(
 	[
-		[
-			'2026.6.8',
 			[
-				{
-					packageName: 'undici',
-					version: '8.5.0',
-				},
+				'2026.6.5',
+				[
+					{
+						packageName: 'undici',
+						version: '8.5.0',
+					},
+				],
+			],
+			[
+				'2026.6.8',
+				[
+					{
+						packageName: 'undici',
+						version: '8.5.0',
+					},
+				],
 			],
 		],
-	],
-);
+	);
 
 export interface ManagedImageSource {
 	readonly kind: 'managedBase';
@@ -103,7 +109,6 @@ export interface ManagedDockerfilePlan {
 	readonly imageTargetFamily: 'gateway' | 'toolVm';
 	readonly imageTargetName: string;
 	readonly openClawAgentVmPluginPackage?: ManagedDockerfilePackagePlanEntry;
-	readonly openClawMcpPortalPluginPackage?: ManagedDockerfilePackagePlanEntry;
 	readonly mcpPortalPackage?: ManagedDockerfilePackagePlanEntry;
 	readonly directNpmPackages: readonly ManagedDockerfilePackagePlanEntry[];
 	readonly openClawDependencyOverrides: readonly ManagedDockerfileDependencyOverridePlanEntry[];
@@ -374,7 +379,6 @@ function renderManagedDockerfile(props: {
 	readonly mcpPortalPackageSpec?: string;
 	readonly openClawAgentVmPackageInstallMode?: 'managed-packages' | 'local-overlay' | undefined;
 	readonly openClawAgentVmPluginPackageSpec?: string;
-	readonly openClawMcpPortalPluginPackageSpec?: string;
 	readonly openClawPackages: readonly ManagedDockerfilePackagePlanEntry[];
 	readonly pnpmOverrides: readonly ResolvedPackageOverrideVersion[];
 }): string {
@@ -461,21 +465,13 @@ function renderManagedDockerfile(props: {
 		let managedFinalStagePackageSpecs: readonly string[];
 		if (openClawAgentVmPackageInstallMode === 'managed-packages') {
 			const openClawAgentVmPluginPackageSpec = props.openClawAgentVmPluginPackageSpec;
-			const openClawMcpPortalPluginPackageSpec = props.openClawMcpPortalPluginPackageSpec;
-			const mcpPortalPackageSpec = props.mcpPortalPackageSpec;
-			if (
-				!openClawAgentVmPluginPackageSpec ||
-				!openClawMcpPortalPluginPackageSpec ||
-				!mcpPortalPackageSpec
-			) {
+			if (!openClawAgentVmPluginPackageSpec) {
 				throw new Error(
-					'OpenClaw gateway managed Dockerfiles require all managed OpenClaw plugin package specs.',
+					'OpenClaw gateway managed Dockerfiles require the managed OpenClaw plugin package spec.',
 				);
 			}
 			managedFinalStagePackageSpecs = [
 				openClawAgentVmPluginPackageSpec,
-				openClawMcpPortalPluginPackageSpec,
-				mcpPortalPackageSpec,
 			];
 		} else {
 			managedFinalStagePackageSpecs = [];
@@ -510,7 +506,6 @@ function renderManagedDockerfile(props: {
 				'    printf \'#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n\' > /usr/local/bin/openclaw && \\',
 				'    chmod 755 /usr/local/bin/openclaw && \\',
 				`    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" ${managedOpenClawAgentVmPluginExtensionPath} && \\`,
-				`    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" ${managedOpenClawMcpPortalPluginExtensionPath} && \\`,
 				'    pnpm store prune && \\',
 				'    rm -rf /root/.cache /root/.npm /tmp/*',
 			].join('\n'),
@@ -658,13 +653,8 @@ export async function generateManagedDockerfile(
 		options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages'
 			? await resolveManagedOpenClawAgentVmPluginPackageSpec()
 			: undefined;
-	const openClawMcpPortalPluginPackageSpec =
-		options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages'
-			? await resolveManagedPackageSpec(managedOpenClawMcpPortalPluginPackageName)
-			: undefined;
 	const mcpPortalPackageSpec =
-		(options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages') ||
-		(options.base === 'tool-vm' && !usesLocalAgentVmPackageOverlay)
+		options.base === 'tool-vm' && !usesLocalAgentVmPackageOverlay
 			? await resolveManagedPackageSpec(managedMcpPortalPackageName)
 			: undefined;
 	const mcpPortalPackagePlan =
@@ -714,9 +704,6 @@ export async function generateManagedDockerfile(
 			...(openClawAgentVmPluginPackageSpec === undefined
 				? {}
 				: { openClawAgentVmPluginPackageSpec }),
-			...(openClawMcpPortalPluginPackageSpec === undefined
-				? {}
-				: { openClawMcpPortalPluginPackageSpec }),
 			openClawPackages,
 			pnpmOverrides: effectivePnpmOverrides,
 		}),
@@ -742,15 +729,6 @@ export async function generateManagedDockerfile(
 							name: managedOpenClawAgentVmPluginPackageName,
 							source: 'installed-package',
 							spec: openClawAgentVmPluginPackageSpec,
-						},
-					}),
-			...(openClawMcpPortalPluginPackageSpec === undefined
-				? {}
-				: {
-						openClawMcpPortalPluginPackage: {
-							name: managedOpenClawMcpPortalPluginPackageName,
-							source: 'installed-package',
-							spec: openClawMcpPortalPluginPackageSpec,
 						},
 					}),
 			...(mcpPortalPackagePlan === undefined ? {} : { mcpPortalPackage: mcpPortalPackagePlan }),

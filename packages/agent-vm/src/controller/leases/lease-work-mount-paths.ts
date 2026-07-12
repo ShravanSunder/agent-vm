@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -88,6 +88,37 @@ function isPathWithin(candidatePath: string, rootPath: string): boolean {
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
+export function findOpenClawLeaseWorkMountAgentMismatch(options: {
+	readonly agentId: string;
+	readonly relativePath: string;
+	readonly rootId: string;
+	readonly workMountDir: string;
+}): string | undefined {
+	if (
+		options.rootId === 'openclaw-sandboxes' &&
+		!options.relativePath.startsWith(`${options.agentId}/`)
+	) {
+		return `Lease workMountDir '${options.workMountDir}' matched OpenClaw sandboxes, but only '${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/${options.agentId}/...' is allowed for agent '${options.agentId}'.`;
+	}
+	if (
+		options.rootId === 'openclaw-state' &&
+		options.relativePath !== `workspace-${options.agentId}`
+	) {
+		return `Lease workMountDir '${options.workMountDir}' matched OpenClaw state, but only '${OPENCLAW_STATE_VM_ROOT}/workspace-${options.agentId}' is allowed for agent '${options.agentId}'.`;
+	}
+	if (options.rootId === 'zone-files') {
+		const expectedAgentWorkspacePath = `agents/${options.agentId}`;
+		if (
+			options.relativePath === expectedAgentWorkspacePath ||
+			options.relativePath.startsWith(`${expectedAgentWorkspacePath}/`)
+		) {
+			return undefined;
+		}
+		return `Lease workMountDir '${options.workMountDir}' matched OpenClaw zone files, but only '${OPENCLAW_ZONE_FILES_VM_ROOT}/${expectedAgentWorkspacePath}' or its children are allowed for agent '${options.agentId}'.`;
+	}
+	return undefined;
+}
+
 async function realpathIfDirectory(directoryPath: string): Promise<string> {
 	try {
 		return await realpath(directoryPath);
@@ -117,6 +148,38 @@ async function realpathAllowedRoot(directoryPath: string): Promise<string | null
 			'allowed-root-realpath-failed',
 			`Lease allowed work mount root '${directoryPath}' failed directory realpath check (${code}): ${message}`,
 			{ cause: error },
+		);
+	}
+}
+
+async function assertAgentOwnedRootIsRealDirectory(options: {
+	readonly agentId: string;
+	readonly ownedHostRoot: string;
+	readonly workMountDir: string;
+}): Promise<void> {
+	let rootStats: Awaited<ReturnType<typeof lstat>>;
+	try {
+		rootStats = await lstat(options.ownedHostRoot);
+	} catch (error) {
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+			throw new LeaseWorkMountValidationError(
+				'work-mount-purpose-not-allowed',
+				`Lease workMountDir '${options.workMountDir}' does not have a host workspace owned by agent '${options.agentId}'.`,
+			);
+		}
+		const code =
+			error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
+		const message = error instanceof Error ? error.message : String(error);
+		throw new LeaseWorkMountValidationError(
+			'allowed-root-realpath-failed',
+			`Lease owned work mount root '${options.ownedHostRoot}' failed directory lstat check (${code}): ${message}`,
+			{ cause: error },
+		);
+	}
+	if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+		throw new LeaseWorkMountValidationError(
+			'work-mount-purpose-not-allowed',
+			`Lease workMountDir '${options.workMountDir}' must resolve through a real host workspace owned by agent '${options.agentId}', not a symlink or non-directory root.`,
 		);
 	}
 }
@@ -160,6 +223,54 @@ async function validateResolvedLeaseWorkMountDir(options: {
 		);
 	}
 	return realCandidatePath;
+}
+
+function hostAgentOwnedLeaseRoot(options: {
+	readonly agentId: string;
+	readonly rootId: string;
+	readonly zone: ZoneConfig;
+}): string | undefined {
+	if (options.zone.gateway.type !== 'openclaw') {
+		return undefined;
+	}
+	if (options.rootId === 'openclaw-sandboxes') {
+		return path.join(options.zone.gateway.stateDir, 'sandboxes', options.agentId);
+	}
+	if (options.rootId === 'openclaw-state') {
+		return path.join(options.zone.gateway.stateDir, `workspace-${options.agentId}`);
+	}
+	if (options.rootId === 'zone-files') {
+		return path.join(options.zone.gateway.zoneFilesDir, 'agents', options.agentId);
+	}
+	return undefined;
+}
+
+async function assertResolvedLeaseWorkMountKeepsAgentOwnership(options: {
+	readonly agentId: string;
+	readonly realHostWorkMountDir: string;
+	readonly rootId: string;
+	readonly workMountDir: string;
+	readonly zone: ZoneConfig;
+}): Promise<void> {
+	const ownedHostRoot = hostAgentOwnedLeaseRoot(options);
+	if (ownedHostRoot === undefined) {
+		return;
+	}
+	await assertAgentOwnedRootIsRealDirectory({
+		agentId: options.agentId,
+		ownedHostRoot,
+		workMountDir: options.workMountDir,
+	});
+	const realOwnedHostRoot = await realpathAllowedRoot(ownedHostRoot);
+	if (
+		realOwnedHostRoot === null ||
+		!isPathWithin(options.realHostWorkMountDir, realOwnedHostRoot)
+	) {
+		throw new LeaseWorkMountValidationError(
+			'work-mount-purpose-not-allowed',
+			`Lease workMountDir '${options.workMountDir}' resolves outside the host workspace owned by agent '${options.agentId}'.`,
+		);
+	}
 }
 
 export async function validateResolvedToolWorkMountDir(options: {
@@ -232,17 +343,24 @@ export async function resolveLeaseWorkMountDir(options: {
 			guidance: translation.error.retryGuidance,
 		});
 	}
-	if (
-		translation.value.rootId === 'openclaw-state' &&
-		translation.value.relativePath !== `workspace-${options.agentId}`
-	) {
-		throw new LeaseWorkMountValidationError(
-			'work-mount-purpose-not-allowed',
-			`Lease workMountDir '${options.workMountDir}' matched OpenClaw state, but only '${OPENCLAW_STATE_VM_ROOT}/workspace-${options.agentId}' is allowed for agent '${options.agentId}'.`,
-		);
+	const agentMismatchMessage = findOpenClawLeaseWorkMountAgentMismatch({
+		agentId: options.agentId,
+		relativePath: translation.value.relativePath,
+		rootId: translation.value.rootId,
+		workMountDir: options.workMountDir,
+	});
+	if (agentMismatchMessage !== undefined) {
+		throw new LeaseWorkMountValidationError('work-mount-purpose-not-allowed', agentMismatchMessage);
 	}
 	const realHostWorkMountDir = await validateResolvedLeaseWorkMountDir({
 		hostWorkMountDir: translation.value.outputPath,
+		zone: options.zone,
+	});
+	await assertResolvedLeaseWorkMountKeepsAgentOwnership({
+		agentId: options.agentId,
+		realHostWorkMountDir,
+		rootId: translation.value.rootId,
+		workMountDir: options.workMountDir,
 		zone: options.zone,
 	});
 	if (

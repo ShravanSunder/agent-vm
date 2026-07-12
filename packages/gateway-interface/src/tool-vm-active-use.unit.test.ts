@@ -30,7 +30,7 @@ describe('tool VM active-use helpers', () => {
 			const endActiveUse = vi.fn(async () => {});
 
 			const handle = await createToolVmActiveUseHandle({
-				correlation: { toolName: 'shell' },
+				correlation: { toolCallId: 'tool-call-123' },
 				endActiveUse,
 				heartbeatActiveUse,
 				heartbeatJitterRatio: 0,
@@ -44,7 +44,7 @@ describe('tool VM active-use helpers', () => {
 
 			expect(startActiveUse).toHaveBeenCalledWith(
 				expect.objectContaining({
-					correlation: { toolName: 'shell' },
+					correlation: { toolCallId: 'tool-call-123' },
 					useId: expect.any(String),
 				}),
 			);

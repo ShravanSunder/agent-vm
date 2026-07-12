@@ -10,6 +10,7 @@ import {
 	closePinnedRealFsRoot,
 	createPinnedRealFsProvider,
 	pinRealFsRoot,
+	type PinnedRealFsRoot,
 } from './pinned-realfs.js';
 
 const createdDirectories: string[] = [];
@@ -45,6 +46,23 @@ describe('pinned RealFS roots', () => {
 		closePinnedRealFsRoot(root);
 
 		expect(closeSyncSpy).toHaveBeenCalledExactlyOnceWith(root.fd);
+	});
+
+	it('terminally closes one root capability once and cannot act on a reused fd', () => {
+		const reusedFd = 42;
+		const root = {
+			device: 1,
+			fd: reusedFd,
+			hostPath: '/tmp/pinned-root',
+			inode: 2,
+			realPath: '/tmp/pinned-root',
+		} satisfies PinnedRealFsRoot;
+		const closeSyncSpy = vi.spyOn(fs, 'closeSync').mockImplementation(() => undefined);
+
+		closePinnedRealFsRoot(root);
+		closePinnedRealFsRoot(root);
+
+		expect(closeSyncSpy).toHaveBeenCalledExactlyOnceWith(reusedFd);
 	});
 
 	it('detects a root path swap before provider operations reach Gondolin RealFS', () => {

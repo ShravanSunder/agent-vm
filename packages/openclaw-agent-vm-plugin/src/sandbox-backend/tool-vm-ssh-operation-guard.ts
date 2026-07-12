@@ -1,5 +1,6 @@
 import type {
 	AgentVmHealthEvent,
+	ToolVmActiveUseCorrelation,
 	ToolVmActiveUseOperationReport,
 	ToolVmSshHealthOperation,
 	ToolVmSshFailureKind,
@@ -24,6 +25,7 @@ export interface ToolVmSshOperationGuardOptions<TResult> {
 	readonly clearTimeoutImpl?: typeof clearTimeout | undefined;
 	readonly healthEvent?: {
 		readonly agentId: string;
+		readonly correlation?: ToolVmActiveUseCorrelation | undefined;
 		readonly leaseId: string;
 		readonly operation: ToolVmSshHealthOperation;
 		readonly publish: (event: AgentVmHealthEvent) => Promise<void>;
@@ -58,6 +60,21 @@ async function publishHealthEvent(options: {
 	}
 	const event = {
 		agentId: options.guardOptions.healthEvent.agentId,
+		...(options.guardOptions.healthEvent.correlation?.requestId === undefined
+			? {}
+			: { requestId: options.guardOptions.healthEvent.correlation.requestId }),
+		...(options.guardOptions.healthEvent.correlation?.runId === undefined
+			? {}
+			: { runId: options.guardOptions.healthEvent.correlation.runId }),
+		...(options.guardOptions.healthEvent.correlation?.sessionKeyDigest === undefined
+			? {}
+			: { sessionKeyDigest: options.guardOptions.healthEvent.correlation.sessionKeyDigest }),
+		...(options.guardOptions.healthEvent.correlation?.toolCallId === undefined
+			? {}
+			: { toolCallId: options.guardOptions.healthEvent.correlation.toolCallId }),
+		...(options.guardOptions.healthEvent.correlation?.traceId === undefined
+			? {}
+			: { traceId: options.guardOptions.healthEvent.correlation.traceId }),
 		elapsedMs: options.elapsedMs,
 		...(options.errorCode === undefined ? {} : { errorCode: options.errorCode }),
 		kind: 'tool-vm-ssh',

@@ -8,9 +8,11 @@ import type { GatewayZoneStartResult } from '../../gateway/gateway-zone-support.
 import type { ControllerRuntimeZoneStatus } from '../../operations/controller-status.js';
 import type { RunTaskFn } from '../../shared/run-task.js';
 import type { ActiveTaskRegistry } from '../active-task-registry.js';
+import type { GatewayDisposableControlSessionClient } from '../control-session/index.js';
 import type { PullDefaultRequest, PullDefaultResult } from '../git-pull-default-operations.js';
 import type { PushBranchRequest, PushBranchResult } from '../git-push-operations.js';
 import type { LeaseManager, ToolVmProfile } from '../leases/lease-manager.js';
+import type { OpenClawProcessSupervisor } from '../process-supervisor/openclaw-process-supervisor.js';
 import type { RequestHeartbeatRegistry } from '../request-heartbeat-registry.js';
 import type {
 	PreparedWorkerTask,
@@ -27,9 +29,16 @@ import type {
 export type ControllerZoneConfig = SystemConfig['zones'][number];
 
 export interface GatewayZoneRuntimeHandle {
+	readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
+	readonly controlSessionRecoverySourceKey?: GatewayZoneStartResult['controlSessionRecoverySourceKey'];
 	readonly ingress: GatewayZoneStartResult['ingress'];
+	readonly openClawProcessSupervisor?: OpenClawProcessSupervisor | undefined;
+	readonly openClawProcessEpochOwner?: GatewayZoneStartResult['openClawProcessEpochOwner'];
+	readonly processEpoch?: string | undefined;
 	readonly processSpec: GatewayProcessSpec;
+	readonly terminateVm: GatewayZoneStartResult['terminateVm'];
 	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'getHostPid' | 'id'>;
+	readonly vmOwnership: GatewayZoneStartResult['vmOwnership'];
 }
 
 export type ControllerZoneRuntimeSnapshot = ControllerRuntimeZoneStatus;
@@ -74,7 +83,15 @@ export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 	getLifecycleState(): GatewayZoneLifecycleState;
 	getDiagnosis(): GatewayDiagnosisSnapshot;
 	getLogs(): Promise<{ readonly output: string; readonly zoneId: string }>;
-	refreshCredentials(): Promise<{ readonly ok: true; readonly zoneId: string }>;
+	refreshCredentials(options?: {
+		readonly signal?: AbortSignal | undefined;
+		readonly timeoutMs?: number | undefined;
+	}): Promise<{ readonly ok: true; readonly zoneId: string }>;
+	requestControlSessionRecovery?:
+		| ((request: {
+				readonly sourceKey: NonNullable<GatewayZoneStartResult['controlSessionRecoverySourceKey']>;
+		  }) => Promise<void>)
+		| undefined;
 	restart(options?: OpenClawZoneRestartOptions): Promise<OpenClawZoneRestartResult>;
 	start(): Promise<void>;
 	stop(): Promise<void>;

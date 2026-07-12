@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
-import { runControllerOfflineCleanup } from './controller-offline-cleanup.js';
+import { ControllerOwnershipLockError } from '../controller/vm-ownership/controller-ownership-lock.js';
+import { runControllerOfflineCleanup as runControllerOfflineCleanupProduction } from './controller-offline-cleanup.js';
 
 function createSystemConfig(
 	options: { readonly controllerPort?: number } = {},
@@ -65,6 +66,7 @@ function createSystemConfig(
 						zoneFilesDir: '/zone-files/beta',
 					},
 					id: 'beta',
+					agents: [{ id: 'main' }],
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							audience: 'gateway',
@@ -114,9 +116,33 @@ async function findClosedLocalPort(): Promise<number> {
 	);
 }
 
+function runControllerOfflineCleanup(
+	options: Parameters<typeof runControllerOfflineCleanupProduction>[0],
+	dependencies: Parameters<typeof runControllerOfflineCleanupProduction>[1] = {},
+): ReturnType<typeof runControllerOfflineCleanupProduction> {
+	return runControllerOfflineCleanupProduction(options, {
+		acquireControllerOwnershipLock: async () => ({ release: async () => {} }),
+		...dependencies,
+	});
+}
+
 describe('runControllerOfflineCleanup', () => {
 	it('refuses to clean up while the configured controller is reachable', async () => {
-		const cleanupOrphanedGatewayIfPresent = vi.fn();
+		const operationOrder: string[] = [];
+		const release = vi.fn(async () => {
+			operationOrder.push('release-lock');
+		});
+		const acquireControllerOwnershipLock = vi.fn(async () => {
+			operationOrder.push('acquire-lock');
+			return { release };
+		});
+		const assertControllerUnavailableForOfflineCleanup = vi.fn(async () => {
+			operationOrder.push('probe-controller');
+			throw new Error('controller is reachable');
+		});
+		const cleanupRecordedVmTree = vi.fn(async () => {
+			operationOrder.push('cleanup-records');
+		});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -125,19 +151,45 @@ describe('runControllerOfflineCleanup', () => {
 					zoneId: 'beta',
 				},
 				{
-					assertControllerUnavailableForOfflineCleanup: async () => {
-						throw new Error('controller is reachable');
-					},
-					cleanupOrphanedGatewayIfPresent,
+					acquireControllerOwnershipLock,
+					assertControllerUnavailableForOfflineCleanup,
+					cleanupRecordedVmTree,
 				},
 			),
 		).rejects.toThrow(/controller is reachable/u);
 
-		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
+		expect(operationOrder).toEqual(['acquire-lock', 'probe-controller', 'release-lock']);
+		expect(release).toHaveBeenCalledOnce();
+	});
+
+	it('does not probe or clean records when the deployment ownership lock is held', async () => {
+		const lockConflict = new ControllerOwnershipLockError('controller-already-active');
+		const assertControllerUnavailableForOfflineCleanup = vi.fn(async () => {});
+		const cleanupRecordedVmTree = vi.fn(async () => {});
+
+		await expect(
+			runControllerOfflineCleanup(
+				{
+					systemConfig: createSystemConfig(),
+					zoneId: 'beta',
+				},
+				{
+					acquireControllerOwnershipLock: vi.fn(async () => {
+						throw lockConflict;
+					}),
+					assertControllerUnavailableForOfflineCleanup,
+					cleanupRecordedVmTree,
+				},
+			),
+		).rejects.toBe(lockConflict);
+
+		expect(assertControllerUnavailableForOfflineCleanup).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 	});
 
 	it('refuses cleanup when controller reachability is ambiguous', async () => {
-		const cleanupOrphanedGatewayIfPresent = vi.fn();
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -149,16 +201,16 @@ describe('runControllerOfflineCleanup', () => {
 					assertControllerUnavailableForOfflineCleanup: async () => {
 						throw new Error('health probe timed out');
 					},
-					cleanupOrphanedGatewayIfPresent,
+					cleanupRecordedVmTree,
 				},
 			),
 		).rejects.toThrow(/health probe timed out/u);
 
-		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 	});
 
 	it('refuses cleanup when the controller health endpoint returns an HTTP response', async () => {
-		const cleanupOrphanedGatewayIfPresent = vi.fn();
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 		await withHttpServer(
 			(_request, response) => {
 				response.writeHead(503);
@@ -171,21 +223,18 @@ describe('runControllerOfflineCleanup', () => {
 							systemConfig: createSystemConfig({ controllerPort }),
 							zoneId: 'beta',
 						},
-						{ cleanupOrphanedGatewayIfPresent },
+						{ cleanupRecordedVmTree },
 					),
 				).rejects.toThrow(/HTTP 503/u);
 			},
 		);
 
-		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 	});
 
 	it('allows cleanup when the controller port refuses connections', async () => {
 		const controllerPort = await findClosedLocalPort();
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
-			cleanedUp: true,
-			killedPid: null,
-		}));
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -193,30 +242,178 @@ describe('runControllerOfflineCleanup', () => {
 					systemConfig: createSystemConfig({ controllerPort }),
 					zoneId: 'beta',
 				},
-				{ cleanupOrphanedGatewayIfPresent },
+				{ cleanupRecordedVmTree },
 			),
 		).resolves.toEqual({
 			results: [
 				{
-					cleanedUp: true,
-					killedPid: null,
+					ownershipDisposition: 'complete',
 					stateDir: '/state/beta',
-					toolVmCleanup: {
-						cleanedCount: 0,
-						killedPids: [],
-						quarantinedCount: 0,
-						warnings: [],
-					},
 					zoneId: 'beta',
 				},
 			],
 		});
+		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
 	});
 
 	it('allows forced cleanup even while the configured controller is reachable', async () => {
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
+		const operationOrder: string[] = [];
+		const release = vi.fn(async () => {
+			operationOrder.push('release-lock');
+		});
+		const acquireControllerOwnershipLock = vi.fn(async () => {
+			operationOrder.push('acquire-lock');
+			return { release };
+		});
+		const assertControllerUnavailableForOfflineCleanup = vi.fn(async () => {
+			throw new Error('should not probe when forced');
+		});
+		const cleanupRecordedVmTree = vi.fn(async () => {
+			operationOrder.push('cleanup-records');
+		});
+
+		await expect(
+			runControllerOfflineCleanup(
+				{
+					force: true,
+					systemConfig: createSystemConfig(),
+					zoneId: 'beta',
+				},
+				{
+					acquireControllerOwnershipLock,
+					assertControllerUnavailableForOfflineCleanup,
+					cleanupRecordedVmTree,
+				},
+			),
+		).resolves.toEqual({
+			results: [
+				{
+					ownershipDisposition: 'complete',
+					stateDir: '/state/beta',
+					zoneId: 'beta',
+				},
+			],
+		});
+		expect(assertControllerUnavailableForOfflineCleanup).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
+		expect(acquireControllerOwnershipLock).toHaveBeenCalledWith({
+			runtimeDirectory: '/runtime',
+		});
+		expect(operationOrder).toEqual(['acquire-lock', 'cleanup-records', 'release-lock']);
+	});
+
+	it('cleans only the requested zone from the selected installation config', async () => {
+		const systemConfig = createSystemConfig();
+		const operationOrder: string[] = [];
+		const release = vi.fn(async () => {
+			operationOrder.push('release-lock');
+		});
+		const acquireControllerOwnershipLock = vi.fn(async () => {
+			operationOrder.push('acquire-lock');
+			return { release };
+		});
+		const assertControllerUnavailableForOfflineCleanup = vi.fn(async () => {
+			operationOrder.push('probe-controller');
+		});
+		const cleanupRecordedVmTree = vi.fn(async () => {
+			operationOrder.push('cleanup-records');
+		});
+
+		await expect(
+			runControllerOfflineCleanup(
+				{
+					systemConfig,
+					zoneId: 'beta',
+				},
+				{
+					acquireControllerOwnershipLock,
+					assertControllerUnavailableForOfflineCleanup,
+					cleanupRecordedVmTree,
+				},
+			),
+		).resolves.toEqual({
+			results: [
+				{
+					ownershipDisposition: 'complete',
+					stateDir: '/state/beta',
+					zoneId: 'beta',
+				},
+			],
+		});
+
+		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
+		expect(cleanupRecordedVmTree).toHaveBeenCalledWith({
+			systemConfig,
+			zoneId: 'beta',
+		});
+		expect(operationOrder).toEqual([
+			'acquire-lock',
+			'probe-controller',
+			'cleanup-records',
+			'release-lock',
+		]);
+	});
+
+	it('cleans recorded Tool VM runners before the recorded Gateway runner', async () => {
+		const systemConfig = createSystemConfig();
+		const operationOrder: string[] = [];
+		const cleanupRecordedToolVmRuntimes = vi.fn(async () => {
+			operationOrder.push('cleanup-tools');
+			return { cleanedCount: 2, killedPids: [31, 32], quarantinedCount: 0, warnings: [] };
+		});
+		const cleanupRecordedGatewayRuntime = vi.fn(async () => {
+			operationOrder.push('cleanup-gateway');
+			return { cleanedUp: true, killedPid: 30 };
+		});
+
+		await expect(
+			runControllerOfflineCleanup(
+				{
+					force: true,
+					systemConfig,
+					zoneId: 'beta',
+				},
+				{
+					cleanupRecordedGatewayRuntime,
+					cleanupRecordedToolVmRuntimes,
+				},
+			),
+		).resolves.toEqual({
+			results: [
+				{
+					ownershipDisposition: 'complete',
+					stateDir: '/state/beta',
+					zoneId: 'beta',
+				},
+			],
+		});
+
+		expect(operationOrder).toEqual(['cleanup-tools', 'cleanup-gateway']);
+		expect(cleanupRecordedToolVmRuntimes).toHaveBeenCalledWith({
+			expectedConfigPath: systemConfig.systemConfigPath,
+			expectedControllerPort: systemConfig.host.controllerPort,
+			mode: 'offline-cleanup',
+			projectNamespace: systemConfig.host.projectNamespace,
+			stateDir: '/state/beta',
+			tcpBasePort: systemConfig.tcpPool.basePort,
+			zoneId: 'beta',
+		});
+		expect(cleanupRecordedGatewayRuntime).toHaveBeenCalledWith({
+			configuredIngressPort: 18891,
+			expectedConfigPath: systemConfig.systemConfigPath,
+			expectedControllerPort: systemConfig.host.controllerPort,
+			mode: 'offline-cleanup',
+			projectNamespace: systemConfig.host.projectNamespace,
+			stateDir: '/state/beta',
+			zoneId: 'beta',
+		});
+	});
+
+	it('preserves the Gateway record when Tool VM cleanup fails closed', async () => {
+		const identityMismatch = new Error('recorded Tool VM process identity changed');
+		const cleanupRecordedGatewayRuntime = vi.fn(async () => ({
 			cleanedUp: true,
-			killedPid: 48282,
+			killedPid: 30,
 		}));
 
 		await expect(
@@ -227,105 +424,79 @@ describe('runControllerOfflineCleanup', () => {
 					zoneId: 'beta',
 				},
 				{
-					assertControllerUnavailableForOfflineCleanup: async () => {
-						throw new Error('should not probe when forced');
-					},
-					cleanupOrphanedGatewayIfPresent,
+					cleanupRecordedGatewayRuntime,
+					cleanupRecordedToolVmRuntimes: vi.fn(async () => {
+						throw identityMismatch;
+					}),
 				},
 			),
-		).resolves.toEqual({
-			results: [
-				{
-					cleanedUp: true,
-					killedPid: 48282,
-					stateDir: '/state/beta',
-					toolVmCleanup: {
-						cleanedCount: 0,
-						killedPids: [],
-						quarantinedCount: 0,
-						warnings: [],
-					},
-					zoneId: 'beta',
-				},
-			],
-		});
+		).rejects.toBe(identityMismatch);
+
+		expect(cleanupRecordedGatewayRuntime).not.toHaveBeenCalled();
 	});
 
-	it('cleans only the requested zone from the selected installation config', async () => {
-		const cleanupOrphanedToolVmsIfPresent = vi.fn(async () => ({
-			cleanedCount: 0,
-			killedPids: [],
-			quarantinedCount: 0,
-			warnings: [],
-		}));
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
+	it('does not report completion when a Tool VM runtime record could not be deleted', async () => {
+		const cleanupRecordedGatewayRuntime = vi.fn(async () => ({
 			cleanedUp: true,
-			killedPid: 48282,
+			killedPid: 30,
 		}));
 
 		await expect(
 			runControllerOfflineCleanup(
 				{
+					force: true,
 					systemConfig: createSystemConfig(),
 					zoneId: 'beta',
 				},
 				{
-					assertControllerUnavailableForOfflineCleanup: async () => {},
-					cleanupOrphanedGatewayIfPresent,
-					cleanupOrphanedToolVmsIfPresent,
+					cleanupRecordedGatewayRuntime,
+					cleanupRecordedToolVmRuntimes: vi.fn(async () => ({
+						cleanedCount: 0,
+						killedPids: [31],
+						quarantinedCount: 0,
+						warnings: ['runtime record deletion failed'],
+					})),
 				},
 			),
-		).resolves.toEqual({
-			results: [
+		).rejects.toThrow(/runtime record deletion failed/u);
+
+		expect(cleanupRecordedGatewayRuntime).not.toHaveBeenCalled();
+	});
+
+	it('does not report completion when the Gateway runtime record could not be deleted', async () => {
+		await expect(
+			runControllerOfflineCleanup(
 				{
-					cleanedUp: true,
-					killedPid: 48282,
-					stateDir: '/state/beta',
-					toolVmCleanup: {
+					force: true,
+					systemConfig: createSystemConfig(),
+					zoneId: 'beta',
+				},
+				{
+					cleanupRecordedGatewayRuntime: vi.fn(async () => ({
+						cleanedUp: false,
+						cleanupWarning: 'gateway runtime record deletion failed',
+						killedPid: 30,
+					})),
+					cleanupRecordedToolVmRuntimes: vi.fn(async () => ({
 						cleanedCount: 0,
 						killedPids: [],
 						quarantinedCount: 0,
 						warnings: [],
-					},
-					zoneId: 'beta',
+					})),
 				},
-			],
-		});
-
-		expect(cleanupOrphanedToolVmsIfPresent).toHaveBeenCalledWith({
-			expectedConfigPath: '/deployments/shravan-claw-beta/config/system.jsonc',
-			expectedControllerPort: 18900,
-			mode: 'offline-cleanup',
-			projectNamespace: 'shravan-claw-beta-25319b68',
-			stateDir: '/state/beta',
-			tcpBasePort: 19000,
-			zoneId: 'beta',
-		});
-		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
-			expectedConfigPath: '/deployments/shravan-claw-beta/config/system.jsonc',
-			expectedControllerPort: 18900,
-			mode: 'offline-cleanup',
-			projectNamespace: 'shravan-claw-beta-25319b68',
-			stateDir: '/state/beta',
-			zoneId: 'beta',
-		});
-		expect(cleanupOrphanedToolVmsIfPresent.mock.invocationCallOrder[0]).toBeLessThan(
-			cleanupOrphanedGatewayIfPresent.mock.invocationCallOrder[0] ?? 0,
-		);
+			),
+		).rejects.toThrow(/gateway runtime record deletion failed/u);
 	});
 
-	it('preserves cleanup warnings in the per-zone result', async () => {
-		const cleanupOrphanedToolVmsIfPresent = vi.fn(async () => ({
-			cleanedCount: 1,
-			killedPids: [123],
-			quarantinedCount: 0,
-			warnings: ['tool vm warning'],
-		}));
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
-			cleanedUp: false,
-			cleanupWarning: 'failed to remove stale runtime record',
-			killedPid: 48282,
-		}));
+	it('propagates owner-unsafe recorded-process cleanup without a success result', async () => {
+		const ownershipError = Object.assign(
+			new Error('recorded VM process cleanup refused owner-unsafe evidence'),
+			{ code: 'owner-unsafe' as const },
+		);
+		const cleanupRecordedVmTree = vi.fn(async () => {
+			throw ownershipError;
+		});
+		const release = vi.fn(async () => {});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -334,32 +505,22 @@ describe('runControllerOfflineCleanup', () => {
 					zoneId: 'beta',
 				},
 				{
+					acquireControllerOwnershipLock: vi.fn(async () => ({ release })),
 					assertControllerUnavailableForOfflineCleanup: async () => {},
-					cleanupOrphanedGatewayIfPresent,
-					cleanupOrphanedToolVmsIfPresent,
+					cleanupRecordedVmTree,
 				},
 			),
-		).resolves.toEqual({
-			results: [
-				{
-					cleanedUp: false,
-					cleanupWarning: 'failed to remove stale runtime record',
-					killedPid: 48282,
-					stateDir: '/state/beta',
-					toolVmCleanup: {
-						cleanedCount: 1,
-						killedPids: [123],
-						quarantinedCount: 0,
-						warnings: ['tool vm warning'],
-					},
-					zoneId: 'beta',
-				},
-			],
-		});
+		).rejects.toBe(ownershipError);
+
+		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
+		expect(release).toHaveBeenCalledOnce();
 	});
 
 	it('rejects an unknown zone before touching runtime records', async () => {
-		const cleanupOrphanedGatewayIfPresent = vi.fn();
+		const acquireControllerOwnershipLock = vi.fn(async () => ({
+			release: async () => {},
+		}));
+		const cleanupRecordedVmTree = vi.fn(async () => {});
 
 		await expect(
 			runControllerOfflineCleanup(
@@ -368,12 +529,14 @@ describe('runControllerOfflineCleanup', () => {
 					zoneId: 'sunfam',
 				},
 				{
+					acquireControllerOwnershipLock,
 					assertControllerUnavailableForOfflineCleanup: async () => {},
-					cleanupOrphanedGatewayIfPresent,
+					cleanupRecordedVmTree,
 				},
 			),
 		).rejects.toThrow(/Unknown zone 'sunfam'/u);
 
-		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
+		expect(acquireControllerOwnershipLock).not.toHaveBeenCalled();
+		expect(cleanupRecordedVmTree).not.toHaveBeenCalled();
 	});
 });

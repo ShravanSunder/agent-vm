@@ -185,7 +185,6 @@ vfsMounts:
   /zone           -> zoneFilesDir (realfs)
 
 tcpHosts:
-  controller.vm.host:18800           -> 127.0.0.1:<controllerPort>
   tool-N.vm.host:22                  -> 127.0.0.1:<basePort+N>  (per tcpPool)
 
 rootfsMode: cow
@@ -243,7 +242,6 @@ Not implemented.  Worker has no host-side preparation.
 ```
 environment:
   HOME                  = /home/coder
-  CONTROLLER_BASE_URL   = http://controller.vm.host:18800
   NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
   AGENT_VM_ZONE_ID      = <zone.id>
   STATE_DIR             = /state
@@ -268,13 +266,11 @@ rootfs/COW paths:
   /work/tmp              -> TMPDIR/TMP/TEMP target
   /work/cache            -> disposable package-manager cache
 
-tcpHosts:
-  controller.vm.host:18800 -> 127.0.0.1:<controllerPort>
-
 rootfsMode: cow
 ```
 
-Worker does not use tcpPool slots -- it only tunnels to the controller.
+Worker does not use tcpPool slots. Controller/Worker control traffic uses the
+private Worker control session over Gondolin ingress.
 
 ### buildProcessSpec
 
@@ -300,7 +296,7 @@ Not implemented.  Worker has no interactive auth.
 | **authConfig**        | list providers / login command                   | None                                            |
 | **HOME**              | `/home/openclaw`                                 | `/home/coder`                                   |
 | **vfsMounts**         | config, cache, state, logs, zone files          | state + task gitdirs; `/work/repos` is rootfs/COW |
-| **tcpHosts**          | controller + tool pool + WS bypass               | controller only                                 |
+| **tcpHosts**          | Tool VM SSH + explicit TCP resources             | explicit TCP resources only                    |
 | **bootstrap**         | Shell env file in `/etc/profile.d/`              | `npm install -g` codex + worker tarball         |
 | **startCommand**      | `openclaw gateway --port 18789`                  | `agent-vm-worker serve --port 18789`            |
 | **healthCheck path**  | `/readyz`                                        | `/health`                                       |

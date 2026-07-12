@@ -13,13 +13,18 @@ import type {
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	composeNodeOptions,
-	controllerVmHost,
 	FORCE_IPV4_EGRESS_NODE_OPTIONS,
+	GATEWAY_CONTROL_PRIVATE_ENVIRONMENT_NAMES,
 	gatewayVmAllowedHosts,
 	mergeRuntimeGatewaySecrets,
+	normalizeGitReposForSshReadAllowlist,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
-import { writeFileAtomically } from '@agent-vm/gondolin-adapter';
+import {
+	createGitReadOnlySshEgressOptions,
+	type ManagedSshEgressOptions,
+	writeFileAtomically,
+} from '@agent-vm/gondolin-adapter';
 import {
 	redactOnePasswordReferences,
 	type SecretRef,
@@ -39,16 +44,36 @@ const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
 const openClawCommandVmPath = '/usr/local/bin/openclaw';
 const openClawGatewayGuestPort = 18789;
-const openClawGatewaySupervisorRestartDelaySeconds = 5;
-const openClawGatewaySupervisorRestartWindowSeconds = 60;
-const openClawGatewaySupervisorMaxRestarts = 6;
+const openClawProcessSupervisorHelperVmPath =
+	'/usr/local/libexec/agent-vm-openclaw-process-supervisor';
+const openClawProcessSupervisorStateDirVmPath = '/run/agent-vm/openclaw-process-supervisor';
 const openClawGatewayGuestPath =
 	'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const diagnosticsOtelPluginId = 'diagnostics-otel';
 const diagnosticsOtelPackageName = '@openclaw/diagnostics-otel';
 const diagnosticsOtelGlobalPackageVmPath = '/pnpm/global/5/node_modules/@openclaw/diagnostics-otel';
+const deprecatedMcpPortalPluginId = 'mcp-portal';
 const openClawInstalledPluginDirectoryName = 'plugins';
 const openClawInstalledPluginIndexFileName = 'installs.json';
+const gondolinPluginConfigFields = new Set([
+	'controlSession',
+	'controllerUrl',
+	'profileId',
+	'toolPortal',
+	'zoneGitToken',
+	'zoneGitTokenEnv',
+	'zoneId',
+]);
+const gondolinControlSessionConfigFields = new Set([
+	'bootId',
+	'callerContextProofKey',
+	'controllerEpoch',
+	'generationId',
+	'peerId',
+	'processEpoch',
+	'verifierPublicKeyPem',
+]);
+const gondolinToolPortalConfigFields = new Set(['configDir']);
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -70,33 +95,49 @@ function setTcpHost(tcpHosts: Record<string, string>, key: string, target: strin
 	tcpHosts[key] = target;
 }
 
-function buildGatewayTcpHosts(
-	zone: GatewayZoneConfig,
-	controllerPort: number,
-	tcpPool: { readonly basePort: number; readonly size: number },
-): Record<string, string> {
+function buildGatewayTcpHosts(tcpPool: {
+	readonly basePort: number;
+	readonly size: number;
+}): Record<string, string> {
 	const tcpHosts: Record<string, string> = {};
-	setTcpHost(tcpHosts, `${controllerVmHost}:18800`, `127.0.0.1:${controllerPort}`);
 
 	for (let slot = 0; slot < tcpPool.size; slot += 1) {
 		setTcpHost(tcpHosts, `tool-${slot}.vm.host:22`, `127.0.0.1:${tcpPool.basePort + slot}`);
 	}
 
-	if (zone.observability?.mode === 'collector') {
-		const { collector } = zone.observability;
-		setTcpHost(
-			tcpHosts,
-			`${collector.host}:${String(collector.grpcPort)}`,
-			`${collector.targetHost}:${String(collector.targetGrpcPort)}`,
-		);
-		setTcpHost(
-			tcpHosts,
-			`${collector.host}:${String(collector.httpPort)}`,
-			`${collector.targetHost}:${String(collector.targetHttpPort)}`,
-		);
-	}
-
 	return tcpHosts;
+}
+
+function mergeGatewayAllowedHosts(
+	egressHosts: GatewayZoneConfig['egressHosts'],
+	observability: GatewayZoneConfig['observability'],
+): readonly string[] {
+	const allowedHosts = [...gatewayVmAllowedHosts(egressHosts)];
+	if (observability?.mode === 'collector' && !allowedHosts.includes(observability.collector.host)) {
+		allowedHosts.push(observability.collector.host);
+	}
+	return allowedHosts;
+}
+
+function createManagedGitReadOnlySshEgressOptions(options: {
+	readonly gitReadAllowlistRepos: readonly string[] | undefined;
+}): ManagedSshEgressOptions | undefined {
+	const agent = process.env.SSH_AUTH_SOCK;
+	if (agent === undefined || agent.length === 0) {
+		return undefined;
+	}
+	const normalizedAllowlist = normalizeGitReposForSshReadAllowlist(options.gitReadAllowlistRepos);
+	if (
+		normalizedAllowlist.allowedHosts.length === 0 ||
+		normalizedAllowlist.allowedRepos.length === 0
+	) {
+		return undefined;
+	}
+	return createGitReadOnlySshEgressOptions({
+		agent,
+		allowedHosts: normalizedAllowlist.allowedHosts,
+		allowedRepos: normalizedAllowlist.allowedRepos,
+	});
 }
 
 function buildOpenClawBootstrapCommand(
@@ -168,6 +209,14 @@ function buildOpenClawBootstrapCommand(
 		'chmod 600 /root/.ssh/config /home/openclaw/.ssh/config && ';
 	const diagnosticsOtelRegistryCommand =
 		zone.observability?.mode === 'collector' ? 'openclaw plugins registry --refresh && ' : '';
+	const processSupervisorHelperBase64 = Buffer.from(
+		buildOpenClawProcessSupervisorHelperSource(),
+		'utf8',
+	).toString('base64');
+	const processSupervisorInstallCommand =
+		`mkdir -p /usr/local/libexec ${openClawProcessSupervisorStateDirVmPath} && ` +
+		`printf '%s' ${shellQuote(processSupervisorHelperBase64)} | base64 -d > ${openClawProcessSupervisorHelperVmPath} && ` +
+		`chmod 700 ${openClawProcessSupervisorHelperVmPath} ${openClawProcessSupervisorStateDirVmPath} && `;
 
 	return (
 		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
@@ -179,6 +228,7 @@ function buildOpenClawBootstrapCommand(
 		gatewayTokenFileCommand +
 		`chmod 600 ${openClawGatewayTokenEnvFilePath} && ` +
 		sshConfigCommand +
+		processSupervisorInstallCommand +
 		diagnosticsOtelRegistryCommand +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
@@ -345,41 +395,203 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
-function buildOpenClawGatewaySupervisorCommand(): string {
-	return [
-		`restart_delay_seconds="\${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS:-${openClawGatewaySupervisorRestartDelaySeconds}}"`,
-		`restart_window_seconds="\${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS:-${openClawGatewaySupervisorRestartWindowSeconds}}"`,
-		`max_restarts="\${AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS:-${openClawGatewaySupervisorMaxRestarts}}"`,
-		'attempt=0',
-		'failure_count=0',
-		'first_failure_at=0',
-		'while true',
-		'do attempt=$((attempt + 1))',
-		'printf "gateway-supervisor: starting openclaw gateway attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'set -a',
-		`if ! . ${openClawRuntimeSecretsEnvFilePath}; then printf "gateway-supervisor: failed to source runtime secrets attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; exit 1; fi`,
-		'set +a',
-		`${openClawCommandVmPath} gateway --port ${openClawGatewayGuestPort}`,
-		'exit_code=$?',
-		'now=$(date -u +%s)',
-		'if [ "$first_failure_at" -eq 0 ] || [ $((now - first_failure_at)) -gt "$restart_window_seconds" ]; then first_failure_at=$now; failure_count=1; else failure_count=$((failure_count + 1)); fi',
-		'printf "gateway-supervisor: openclaw gateway exited attempt=%s exit_code=%s failure_count=%s window_seconds=%s at=%s\\n" "$attempt" "$exit_code" "$failure_count" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'if [ "$failure_count" -ge "$max_restarts" ]; then printf "gateway-supervisor: restart limit exceeded failure_count=%s max_restarts=%s window_seconds=%s at=%s\\n" "$failure_count" "$max_restarts" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if [ "$exit_code" -eq 0 ]; then exit 1; fi; exit "$exit_code"; fi',
-		'sleep "$restart_delay_seconds"',
-		'done',
-	].join('; ');
+function buildOpenClawProcessSupervisorHelperSource(): string {
+	return `#!/usr/bin/env node
+const { createHash } = require('node:crypto');
+const { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } = require('node:fs');
+const { spawn, spawnSync } = require('node:child_process');
+const path = require('node:path');
+const directory = '${openClawProcessSupervisorStateDirVmPath}';
+const requestPath = path.join(directory, 'request-v1.json');
+const receiptPath = path.join(directory, 'receipt-v1.json');
+const statePath = path.join(directory, 'state-v1.json');
+const failurePath = path.join(directory, 'failure-v1.json');
+const lockPath = path.join(directory, 'operation.lock');
+const identifier = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join('\\0') === [...keys].sort().join('\\0');
+const validGateway = (value) => exactKeys(value, ['controllerEpoch', 'gatewayEpochId', 'gatewayVmId']) && identifier.test(value.controllerEpoch) && identifier.test(value.gatewayEpochId) && identifier.test(value.gatewayVmId);
+const parseRequest = (value) => {
+  const common = ['actionId', 'contractVersion', 'expectedProcessEpoch', 'gateway', 'kind'];
+  const keys = value?.kind === 'start' ? [...common, 'selectedProcessEpoch'] : common;
+  if (!exactKeys(value, keys) || value.contractVersion !== 1 || !['contain', 'observe', 'start', 'terminate-for-reliability-test'].includes(value.kind) || !identifier.test(value.actionId) || !validGateway(value.gateway) || (value.expectedProcessEpoch !== null && !identifier.test(value.expectedProcessEpoch)) || (value.kind === 'start' && !identifier.test(value.selectedProcessEpoch)) || (value.kind === 'terminate-for-reliability-test' && value.expectedProcessEpoch === null)) throw new Error('invalid-request');
+  return value;
+};
+const atomicWrite = (filePath, value) => {
+  const temporaryPath = filePath + '.' + process.pid + '.tmp';
+  writeFileSync(temporaryPath, JSON.stringify(value) + '\\n', { mode: 0o600 });
+  renameSync(temporaryPath, filePath);
+};
+const sameGateway = (left, right) => left && left.controllerEpoch === right.controllerEpoch && left.gatewayEpochId === right.gatewayEpochId && left.gatewayVmId === right.gatewayVmId;
+const populated = (groupPath) => {
+  const events = readFileSync(path.join(groupPath, 'cgroup.events'), 'utf8');
+  const match = /^populated ([01])$/mu.exec(events);
+  if (!match) throw new Error('cgroup-events-unavailable');
+  return match[1] === '1';
+};
+const waitForPopulation = (groupPath, expected) => {
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  const maximumAttempts = 500;
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    if (populated(groupPath) === expected) return true;
+    Atomics.wait(sleeper, 0, 0, 10);
+  }
+  return false;
+};
+const ensureCgroup2 = () => {
+  mkdirSync('/sys/fs/cgroup', { recursive: true });
+  const mounts = readFileSync('/proc/mounts', 'utf8');
+  if (!mounts.split('\\n').some((line) => line.split(' ')[1] === '/sys/fs/cgroup' && line.split(' ')[2] === 'cgroup2')) {
+    const mounted = spawnSync('mount', ['-t', 'cgroup2', 'none', '/sys/fs/cgroup']);
+    if (mounted.status !== 0) throw new Error('cgroup-mount-failed');
+  }
+};
+mkdirSync(directory, { recursive: true, mode: 0o700 });
+let lock;
+try { lock = openSync(lockPath, 'wx', 0o600); } catch { process.exit(73); }
+const terminated = Symbol('terminated');
+const terminate = (exitCode) => { process.exitCode = exitCode; throw terminated; };
+let activeRequest = null;
+let activeStage = 'initializing';
+try {
+
+  activeStage = 'read-request';
+  activeStage = 'parse-request-json';
+  const requestValue = JSON.parse(readFileSync(0, 'utf8'));
+  activeStage = 'validate-request';
+  const request = parseRequest(requestValue);
+  activeRequest = request;
+  const digest = createHash('sha256').update(JSON.stringify(request)).digest('hex');
+  activeStage = 'persist-request-audit';
+  atomicWrite(requestPath, request);
+  activeStage = 'read-state';
+  let state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { contractVersion: 1, gateway: request.gateway, currentProcessEpoch: null, cgroupName: null, status: 'absent', actionOrder: [], actions: {} };
+  const recordOperationStage = (stage) => {
+    activeStage = stage;
+    state = { ...state, lastOperation: { actionId: request.actionId, kind: request.kind, stage } };
+    atomicWrite(statePath, state);
+  };
+  const writeReceipt = (receipt) => {
+    const actionOrder = [...state.actionOrder.filter((actionId) => actionId !== request.actionId), request.actionId].slice(-128);
+    const actions = { ...state.actions, [request.actionId]: { digest, receipt } };
+    for (const actionId of Object.keys(actions)) if (!actionOrder.includes(actionId)) delete actions[actionId];
+    state = { ...state, actionOrder, actions };
+    atomicWrite(statePath, state); atomicWrite(receiptPath, receipt);
+  };
+  const priorAction = state.actions[request.actionId];
+  if (priorAction) {
+    if (priorAction.digest !== digest) {
+      atomicWrite(receiptPath, { actionId: request.actionId, cgroup: { name: state.cgroupName, populated: state.cgroupName ? populated(path.join('/sys/fs/cgroup', state.cgroupName)) : false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason: 'action-reused', status: 'refused' });
+      terminate(2);
+    }
+    atomicWrite(receiptPath, priorAction.receipt); terminate(0);
+  }
+  const refuse = (reason) => { writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: state.cgroupName ? populated(path.join('/sys/fs/cgroup', state.cgroupName)) : false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason, status: 'refused' }); terminate(2); };
+  if (!sameGateway(state.gateway, request.gateway)) refuse('gateway-fence-mismatch');
+  if (state.currentProcessEpoch !== request.expectedProcessEpoch) refuse('process-fence-mismatch');
+  if (request.kind === 'start') {
+    if (state.currentProcessEpoch !== null || !['absent', 'contained'].includes(state.status)) refuse('process-overlap');
+    recordOperationStage('ensure-cgroup2');
+    ensureCgroup2();
+    const cgroupName = 'agent-vm-' + createHash('sha256').update(request.gateway.gatewayEpochId + '\\0' + request.selectedProcessEpoch).digest('hex').slice(0, 24);
+    const groupPath = path.join('/sys/fs/cgroup', cgroupName);
+    recordOperationStage('create-cgroup');
+    mkdirSync(groupPath, { mode: 0o700 });
+    recordOperationStage('inspect-created-cgroup');
+    if (populated(groupPath)) refuse('process-overlap');
+    recordOperationStage('bind-process');
+    state = { ...state, currentProcessEpoch: request.selectedProcessEpoch, cgroupName, status: 'starting' };
+    writeReceipt({ actionId: request.actionId, cgroup: { name: cgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: request.selectedProcessEpoch, reason: 'helper-failed', status: 'incomplete' });
+    try {
+      const logFd = openSync('${openClawGatewayBootLogFileVmPath}', 'a', 0o600);
+      const launch = 'echo $$ > ' + JSON.stringify(path.join(groupPath, 'cgroup.procs')) + '; set -a; . ${openClawRuntimeSecretsEnvFilePath}; set +a; cd /home/openclaw; exec ${openClawCommandVmPath} gateway --port ${openClawGatewayGuestPort}';
+      let child;
+      try {
+        child = spawn('/bin/sh', ['-c', launch], { detached: true, stdio: ['ignore', logFd, logFd] });
+      } finally {
+        closeSync(logFd);
+      }
+      child.unref();
+      if (!waitForPopulation(groupPath, true)) throw new Error('cgroup-membership-unproven');
+      state = { ...state, status: 'running' };
+      writeReceipt({ actionId: request.actionId, cgroup: { name: cgroupName, populated: true }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: request.selectedProcessEpoch, status: 'completed' });
+    } catch (error) {
+      const isPopulated = populated(groupPath);
+      const reason = error instanceof Error && error.message === 'cgroup-membership-unproven' ? 'cgroup-unavailable' : 'helper-failed';
+      state = { ...state, status: isPopulated ? 'starting' : 'exited' };
+      writeReceipt({ actionId: request.actionId, cgroup: { name: cgroupName, populated: isPopulated }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: request.selectedProcessEpoch, reason, status: 'incomplete' });
+      terminate(2);
+    }
+  } else if (request.kind === 'observe') {
+    if (state.currentProcessEpoch === null || state.cgroupName === null) {
+      writeReceipt({ actionId: request.actionId, cgroup: { name: null, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: null, status: 'completed' });
+    } else {
+      const isPopulated = populated(path.join('/sys/fs/cgroup', state.cgroupName));
+      state = { ...state, status: isPopulated ? 'running' : 'exited' };
+      writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: isPopulated }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, status: 'completed' });
+    }
+  } else if (request.kind === 'terminate-for-reliability-test') {
+	if (state.currentProcessEpoch === null || state.cgroupName === null) refuse('process-fence-mismatch');
+	const groupPath = path.join('/sys/fs/cgroup', state.cgroupName);
+	try {
+	  if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('reliability-cgroup-kill-unavailable');
+	  writeFileSync(path.join(groupPath, 'cgroup.kill'), '1\\n');
+	  if (!waitForPopulation(groupPath, false)) throw new Error('cgroup-empty-unproven');
+	  state = { ...state, status: 'exited' };
+	  writeReceipt({ actionId: request.actionId, cgroup: { emptyObserved: true, name: state.cgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, status: 'completed' });
+	} catch (error) {
+	  const reason = error instanceof Error && error.message === 'cgroup-empty-unproven' ? 'cgroup-empty-unproven' : 'cgroup-unavailable';
+	  writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: populated(groupPath) }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason, status: 'incomplete' });
+	  terminate(2);
+	}
+  } else {
+    if (state.currentProcessEpoch === null || state.cgroupName === null) refuse('process-fence-mismatch');
+    const groupPath = path.join('/sys/fs/cgroup', state.cgroupName);
+    try {
+      const containedProcessEpoch = state.currentProcessEpoch;
+      const containedCgroupName = state.cgroupName;
+      if (existsSync(groupPath)) {
+        if (populated(groupPath)) {
+          if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('cgroup-kill-unavailable');
+          writeFileSync(path.join(groupPath, 'cgroup.kill'), '1\\n');
+          if (!waitForPopulation(groupPath, false)) throw new Error('cgroup-empty-unproven');
+        }
+        rmdirSync(groupPath);
+      } else if (state.status !== 'exited') {
+        throw new Error('cgroup-absence-unproven');
+      }
+      state = { ...state, currentProcessEpoch: null, cgroupName: null, status: 'contained' };
+      writeReceipt({ actionId: request.actionId, cgroup: { emptyObserved: true, name: containedCgroupName, populated: false }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: containedProcessEpoch, status: 'completed' });
+    } catch (error) {
+      const reason = error instanceof Error && error.message === 'cgroup-empty-unproven' ? 'cgroup-empty-unproven' : 'cgroup-unavailable';
+      const isPopulated = existsSync(groupPath) ? populated(groupPath) : false;
+      writeReceipt({ actionId: request.actionId, cgroup: { name: state.cgroupName, populated: isPopulated }, contractVersion: 1, expectedProcessEpoch: request.expectedProcessEpoch, gateway: request.gateway, kind: request.kind, observedProcessEpoch: state.currentProcessEpoch, reason, status: 'incomplete' });
+      terminate(2);
+    }
+  }
+} catch (error) {
+  if (error !== terminated) {
+    try {
+      const candidateErrorCode = error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'unknown';
+      const errorCode = /^[A-Z0-9_]{1,32}$/.test(candidateErrorCode) ? candidateErrorCode : 'unknown';
+      atomicWrite(failurePath, { actionId: activeRequest?.actionId ?? null, errorCode, kind: activeRequest?.kind ?? null, stage: activeStage });
+    } catch {}
+    process.stderr.write('agent-vm-process-supervisor-failure:' + activeStage + '\\n');
+    process.exitCode = 1;
+  }
+} finally { closeSync(lock); rmSync(lockPath, { force: true }); }
+`;
 }
 
 function buildOpenClawGatewayStartCommand(): string {
 	return [
-		'set -a',
-		`. ${openClawRuntimeSecretsEnvFilePath}`,
-		'set +a',
 		`{ printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > ${openClawGatewayBootLogFileVmPath}; }`,
-		'cd /home/openclaw',
-		`nohup sh -c ${shellQuote(buildOpenClawGatewaySupervisorCommand())} >> ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
+		`printf 'gateway-supervisor: controller-owned helper ready; awaiting typed request\\n' >> ${openClawGatewayBootLogFileVmPath}`,
 	].join(' && ');
 }
+
+export const processSupervisorHelperTestInternals = {
+	buildOpenClawProcessSupervisorHelperSource,
+};
 
 function includesShellUnsafeControlByte(value: string): boolean {
 	for (const character of value) {
@@ -436,6 +648,35 @@ function assertAllowedOpenClawEnvironmentSecrets(
 		throw new Error(
 			`[${logPrefix}] OpenClaw env secret '${secretName}' must be listed in gateway.rawEnvSecrets or use injection 'http-mediation'.`,
 		);
+	}
+}
+
+function assertNoOpenClawPrivateEnvironmentCollisions(options: {
+	readonly environmentSecrets: Readonly<Record<string, string>>;
+	readonly runtimeEnvironment: Readonly<Record<string, string>> | undefined;
+	readonly runtimePrivateEnvironment: GatewayZoneConfig['runtimePrivateEnvironment'] | undefined;
+}): void {
+	const privateEnvironmentNames = new Set<string>(GATEWAY_CONTROL_PRIVATE_ENVIRONMENT_NAMES);
+	for (const secretName of Object.keys(options.environmentSecrets)) {
+		if (privateEnvironmentNames.has(secretName)) {
+			throw new Error(
+				`OpenClaw runtime environment secret '${secretName}' collides with a controller-owned private environment variable.`,
+			);
+		}
+	}
+	for (const environmentName of Object.keys(options.runtimeEnvironment ?? {})) {
+		if (privateEnvironmentNames.has(environmentName)) {
+			throw new Error(
+				`OpenClaw runtime environment '${environmentName}' collides with a controller-owned private environment variable.`,
+			);
+		}
+	}
+	for (const environmentName of Object.keys(options.runtimePrivateEnvironment ?? {})) {
+		if (!privateEnvironmentNames.has(environmentName)) {
+			throw new Error(
+				`OpenClaw private environment variable '${environmentName}' is not a registered controller-owned private environment variable.`,
+			);
+		}
 	}
 }
 
@@ -551,15 +792,6 @@ function buildEffectiveSecretsConfig(
 	};
 }
 
-function buildEffectiveMcpPortalPluginConfig(
-	_existingPluginConfig: Record<string, unknown>,
-	runtimeConfig: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
-	return {
-		...runtimeConfig,
-	};
-}
-
 function appendUniqueStrings(
 	existingValues: readonly string[],
 	additionalValues: readonly string[],
@@ -581,15 +813,225 @@ function buildDiagnosticsOtelManagedInstallRecord(): Record<string, unknown> {
 	};
 }
 
+function omitPluginConfigEntry(
+	config: Record<string, unknown>,
+	pluginId: string,
+): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(config).filter(([key]) => key !== pluginId));
+}
+
+function assertNoRemovedGondolinRawControlConfig(config: Readonly<Record<string, unknown>>): void {
+	if (Object.hasOwn(config, 'controllerUrl')) {
+		throw new Error('Gondolin plugin config no longer accepts controllerUrl.');
+	}
+	if (Object.hasOwn(config, 'zoneGitToken') || Object.hasOwn(config, 'zoneGitTokenEnv')) {
+		throw new Error('Gondolin plugin config no longer accepts zone git token fields.');
+	}
+	const rawControlSessionConfig = config.controlSession;
+	if (
+		isObjectRecord(rawControlSessionConfig) &&
+		Object.hasOwn(rawControlSessionConfig, 'callerContextProofKey')
+	) {
+		throw new Error('Gondolin plugin controlSession no longer accepts callerContextProofKey.');
+	}
+}
+
+function assertNoUnknownGondolinConfigFields(options: {
+	readonly allowedFields: ReadonlySet<string>;
+	readonly label: string;
+	readonly record: Readonly<Record<string, unknown>>;
+}): void {
+	for (const fieldName of Object.keys(options.record)) {
+		if (!options.allowedFields.has(fieldName)) {
+			throw new Error(`Gondolin plugin ${options.label} does not accept field '${fieldName}'.`);
+		}
+	}
+}
+
+function assertOptionalGondolinStringField(options: {
+	readonly fieldName: string;
+	readonly label: string;
+	readonly record: Readonly<Record<string, unknown>>;
+}): void {
+	if (!Object.hasOwn(options.record, options.fieldName)) {
+		return;
+	}
+	const fieldValue = options.record[options.fieldName];
+	if (typeof fieldValue !== 'string') {
+		throw new Error(`Gondolin plugin ${options.label} requires string ${options.fieldName}.`);
+	}
+	if (fieldValue.trim() === '') {
+		throw new Error(`Gondolin plugin ${options.label} requires non-empty ${options.fieldName}.`);
+	}
+}
+
+function assertRequiredGondolinStringField(options: {
+	readonly fieldName: string;
+	readonly label: string;
+	readonly record: Readonly<Record<string, unknown>>;
+}): void {
+	const fieldValue = options.record[options.fieldName];
+	if (typeof fieldValue !== 'string') {
+		throw new Error(`Gondolin plugin ${options.label} requires string ${options.fieldName}.`);
+	}
+	if (fieldValue.trim() === '') {
+		throw new Error(`Gondolin plugin ${options.label} requires non-empty ${options.fieldName}.`);
+	}
+}
+
+function assertOptionalManagedGondolinObjectField(options: {
+	readonly config: Readonly<Record<string, unknown>>;
+	readonly fieldName: 'controlSession' | 'toolPortal';
+}): Readonly<Record<string, unknown>> | undefined {
+	if (!Object.hasOwn(options.config, options.fieldName)) {
+		return undefined;
+	}
+	const rawFieldValue = options.config[options.fieldName];
+	if (!isObjectRecord(rawFieldValue)) {
+		throw new Error(`Gondolin plugin ${options.fieldName} must be an object when present.`);
+	}
+	return rawFieldValue;
+}
+
+function assertManagedGondolinPluginConfig(options: {
+	readonly config: Readonly<Record<string, unknown>>;
+	readonly requireCompleteNestedConfig?: boolean;
+}): void {
+	const config = options.config;
+	assertNoRemovedGondolinRawControlConfig(config);
+	assertNoUnknownGondolinConfigFields({
+		allowedFields: gondolinPluginConfigFields,
+		label: 'config',
+		record: config,
+	});
+	assertOptionalGondolinStringField({ fieldName: 'profileId', label: 'config', record: config });
+	assertOptionalGondolinStringField({ fieldName: 'zoneId', label: 'config', record: config });
+	const controlSessionConfig = assertOptionalManagedGondolinObjectField({
+		config,
+		fieldName: 'controlSession',
+	});
+	if (controlSessionConfig !== undefined) {
+		assertNoUnknownGondolinConfigFields({
+			allowedFields: gondolinControlSessionConfigFields,
+			label: 'controlSession',
+			record: controlSessionConfig,
+		});
+		for (const fieldName of [
+			'bootId',
+			'controllerEpoch',
+			'generationId',
+			'peerId',
+			'processEpoch',
+			'verifierPublicKeyPem',
+		] as const) {
+			assertOptionalGondolinStringField({
+				fieldName,
+				label: 'controlSession',
+				record: controlSessionConfig,
+			});
+		}
+		if (options.requireCompleteNestedConfig === true) {
+			for (const fieldName of [
+				'bootId',
+				'controllerEpoch',
+				'generationId',
+				'peerId',
+				'processEpoch',
+				'verifierPublicKeyPem',
+			] as const) {
+				assertRequiredGondolinStringField({
+					fieldName,
+					label: 'controlSession',
+					record: controlSessionConfig,
+				});
+			}
+		}
+	}
+	const toolPortalConfig = assertOptionalManagedGondolinObjectField({
+		config,
+		fieldName: 'toolPortal',
+	});
+	if (toolPortalConfig !== undefined) {
+		assertNoUnknownGondolinConfigFields({
+			allowedFields: gondolinToolPortalConfigFields,
+			label: 'toolPortal',
+			record: toolPortalConfig,
+		});
+		assertOptionalGondolinStringField({
+			fieldName: 'configDir',
+			label: 'toolPortal',
+			record: toolPortalConfig,
+		});
+		if (options.requireCompleteNestedConfig === true) {
+			assertRequiredGondolinStringField({
+				fieldName: 'configDir',
+				label: 'toolPortal',
+				record: toolPortalConfig,
+			});
+		}
+	}
+}
+
+function isDeprecatedMcpPortalLoadPath(value: string): boolean {
+	const normalizedValue = value.replace(/\/+$/u, '');
+	return path.posix.basename(normalizedValue) === deprecatedMcpPortalPluginId;
+}
+
+function stripDeprecatedMcpPortalLoadConfig(loadConfig: unknown): unknown {
+	if (!isObjectRecord(loadConfig)) {
+		return loadConfig;
+	}
+	const paths = Array.isArray(loadConfig.paths)
+		? loadConfig.paths.filter(
+				(value): value is string =>
+					typeof value === 'string' && !isDeprecatedMcpPortalLoadPath(value),
+			)
+		: undefined;
+	return {
+		...loadConfig,
+		...(paths === undefined ? {} : { paths }),
+	};
+}
+
+function stripDeprecatedMcpPortalPluginConfig(
+	pluginsConfig: Record<string, unknown>,
+): Record<string, unknown> {
+	const allow = Array.isArray(pluginsConfig.allow)
+		? pluginsConfig.allow.filter(
+				(value): value is string =>
+					typeof value === 'string' && value !== deprecatedMcpPortalPluginId,
+			)
+		: undefined;
+	const entries = isObjectRecord(pluginsConfig.entries)
+		? omitPluginConfigEntry(pluginsConfig.entries, deprecatedMcpPortalPluginId)
+		: undefined;
+	const installs = isObjectRecord(pluginsConfig.installs)
+		? omitPluginConfigEntry(pluginsConfig.installs, deprecatedMcpPortalPluginId)
+		: undefined;
+	const load = stripDeprecatedMcpPortalLoadConfig(pluginsConfig.load);
+	return {
+		...pluginsConfig,
+		...(allow === undefined ? {} : { allow }),
+		...(entries === undefined ? {} : { entries }),
+		...(installs === undefined ? {} : { installs }),
+		...(load === undefined ? {} : { load }),
+	};
+}
+
 function buildEffectivePluginsConfig(
 	parsedBaseConfig: Record<string, unknown>,
 	runtimePluginConfigs: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
 	options: { readonly includeManagedDiagnosticsOtelInstall: boolean },
 ): Record<string, unknown> {
 	const existingPluginsConfig = isObjectRecord(parsedBaseConfig.plugins)
-		? parsedBaseConfig.plugins
+		? stripDeprecatedMcpPortalPluginConfig(parsedBaseConfig.plugins)
 		: {};
 	const runtimePluginIds = Object.keys(runtimePluginConfigs ?? {});
+	if (runtimePluginIds.includes(deprecatedMcpPortalPluginId)) {
+		throw new Error(
+			'managed OpenClaw does not accept runtime mcp-portal plugin config; use Tool Portal through the managed gondolin plugin',
+		);
+	}
 	const existingAllowConfig = Array.isArray(existingPluginsConfig.allow)
 		? existingPluginsConfig.allow.filter((value): value is string => typeof value === 'string')
 		: [];
@@ -601,8 +1043,20 @@ function buildEffectivePluginsConfig(
 		: {};
 	const runtimeEntriesConfig: Record<string, unknown> = {};
 	for (const [pluginId, runtimeConfig] of Object.entries(runtimePluginConfigs ?? {})) {
-		const existingEntryConfig = isObjectRecord(existingEntriesConfig[pluginId])
-			? existingEntriesConfig[pluginId]
+		const rawExistingEntryConfig = existingEntriesConfig[pluginId];
+		if (pluginId === 'gondolin' && Object.hasOwn(existingEntriesConfig, pluginId)) {
+			if (!isObjectRecord(rawExistingEntryConfig)) {
+				throw new Error('Gondolin plugin entry must be an object when present.');
+			}
+			if (
+				Object.hasOwn(rawExistingEntryConfig, 'config') &&
+				!isObjectRecord(rawExistingEntryConfig.config)
+			) {
+				throw new Error('Gondolin plugin config must be an object when present.');
+			}
+		}
+		const existingEntryConfig = isObjectRecord(rawExistingEntryConfig)
+			? rawExistingEntryConfig
 			: {};
 		if (pluginId === diagnosticsOtelPluginId) {
 			runtimeEntriesConfig[pluginId] = {
@@ -613,13 +1067,20 @@ function buildEffectivePluginsConfig(
 		const existingPluginConfig = isObjectRecord(existingEntryConfig.config)
 			? existingEntryConfig.config
 			: {};
-		const config =
-			pluginId === 'mcp-portal'
-				? buildEffectiveMcpPortalPluginConfig(existingPluginConfig, runtimeConfig)
-				: {
-						...existingPluginConfig,
-						...runtimeConfig,
-					};
+		if (pluginId === 'gondolin') {
+			assertManagedGondolinPluginConfig({ config: existingPluginConfig });
+			assertManagedGondolinPluginConfig({ config: runtimeConfig });
+		}
+		const config = {
+			...existingPluginConfig,
+			...runtimeConfig,
+		};
+		if (pluginId === 'gondolin') {
+			assertManagedGondolinPluginConfig({
+				config,
+				requireCompleteNestedConfig: true,
+			});
+		}
 		runtimeEntriesConfig[pluginId] = {
 			...existingEntryConfig,
 			config,
@@ -643,6 +1104,49 @@ function buildEffectivePluginsConfig(
 			...existingEntriesConfig,
 			...runtimeEntriesConfig,
 		},
+	};
+}
+
+function managedToolPortalConfigDir(
+	runtimePluginConfigs: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
+): string | undefined {
+	const gondolinConfig = runtimePluginConfigs?.gondolin;
+	if (!isObjectRecord(gondolinConfig)) {
+		return undefined;
+	}
+	const toolPortalConfig = gondolinConfig.toolPortal;
+	if (!isObjectRecord(toolPortalConfig)) {
+		return undefined;
+	}
+	return typeof toolPortalConfig.configDir === 'string' ? toolPortalConfig.configDir : undefined;
+}
+
+function managedToolPortalEffectiveConfigMount(options: {
+	readonly gatewayCacheDir: string;
+	readonly runtimePluginConfigs:
+		| Readonly<Record<string, Readonly<Record<string, unknown>>>>
+		| undefined;
+}):
+	| {
+			readonly guestPath: string;
+			readonly hostPath: string;
+	  }
+	| undefined {
+	const configDir = managedToolPortalConfigDir(options.runtimePluginConfigs);
+	if (configDir === undefined) {
+		return undefined;
+	}
+	const relativeConfigPath = path.posix.relative(openClawCacheDirVmPath, configDir);
+	if (
+		relativeConfigPath.length === 0 ||
+		relativeConfigPath.startsWith('..') ||
+		path.posix.isAbsolute(relativeConfigPath)
+	) {
+		return undefined;
+	}
+	return {
+		guestPath: configDir,
+		hostPath: path.join(options.gatewayCacheDir, relativeConfigPath),
 	};
 }
 
@@ -916,16 +1420,10 @@ async function buildEffectiveOpenClawConfigContent(zone: GatewayZoneConfig): Pro
 					}
 				: {}),
 			gondolin: {
-				controllerUrl: `http://${controllerVmHost}:18800`,
-				gatewayControlLinkMonitor: {
-					baseIntervalMs: 10_000,
-					enabled: true,
-					maxIntervalMs: 120_000,
-				},
-				zoneId: zone.id,
 				...(isObjectRecord(zone.runtimePluginConfigs?.gondolin)
 					? zone.runtimePluginConfigs.gondolin
 					: {}),
+				zoneId: zone.id,
 			},
 		};
 		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
@@ -1028,7 +1526,6 @@ export const openclawLifecycle: GatewayLifecycle = {
 	},
 
 	buildVmSpec({
-		controllerPort,
 		gatewayCacheDir,
 		projectNamespace,
 		resolvedSecrets,
@@ -1053,9 +1550,21 @@ export const openclawLifecycle: GatewayLifecycle = {
 			environmentSecrets,
 			'openclaw-vm-runtime-raw-env-secrets',
 		);
+		assertNoOpenClawPrivateEnvironmentCollisions({
+			environmentSecrets,
+			runtimeEnvironment: zone.runtimeEnvironment,
+			runtimePrivateEnvironment: zone.runtimePrivateEnvironment,
+		});
+		const sshEgress = createManagedGitReadOnlySshEgressOptions({
+			gitReadAllowlistRepos: zone.gitReadAllowlistRepos,
+		});
+		const toolPortalEffectiveConfigMount = managedToolPortalEffectiveConfigMount({
+			gatewayCacheDir,
+			runtimePluginConfigs: zone.runtimePluginConfigs,
+		});
 
 		return {
-			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
+			allowedHosts: mergeGatewayAllowedHosts(zone.egressHosts, zone.observability),
 			environment: {
 				HOME: '/home/openclaw',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
@@ -1072,6 +1581,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				npm_config_cache: '/work/cache/npm',
 				pnpm_config_store_dir: '/work/cache/pnpm/store',
 				...environmentSecrets,
+				...zone.runtimePrivateEnvironment,
 				// NODE_OPTIONS goes AFTER the spread so a user-supplied
 				// NODE_OPTIONS in environmentSecrets cannot drop the
 				// forced IPv4-preference flags. composeNodeOptions
@@ -1086,7 +1596,8 @@ export const openclawLifecycle: GatewayLifecycle = {
 				? { runtimeRootfsSize: zone.gateway.runtimeRootfsSize }
 				: {}),
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
-			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),
+			...(sshEgress === undefined ? {} : { sshEgress }),
+			tcpHosts: buildGatewayTcpHosts(tcpPool),
 			websocketUpgrades: zone.websocketUpgrades ?? [],
 			vfsMounts: {
 				'/home/openclaw/.openclaw/config': {
@@ -1097,6 +1608,14 @@ export const openclawLifecycle: GatewayLifecycle = {
 					hostPath: gatewayCacheDir,
 					kind: 'realfs',
 				},
+				...(toolPortalEffectiveConfigMount === undefined
+					? {}
+					: {
+							[toolPortalEffectiveConfigMount.guestPath]: {
+								hostPath: toolPortalEffectiveConfigMount.hostPath,
+								kind: 'realfs-readonly',
+							},
+						}),
 				'/home/openclaw/.openclaw/state': {
 					hostPath: zone.gateway.stateDir,
 					kind: 'realfs',

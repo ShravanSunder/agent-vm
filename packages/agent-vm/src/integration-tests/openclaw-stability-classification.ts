@@ -8,7 +8,7 @@ export interface OpenClawStabilityEventScanOptions {
 
 export interface OpenClawStabilityEventScan {
 	readonly failures: readonly string[];
-	readonly gatewayControlLinkFailureEvents: number;
+	readonly gatewayControlSessionFailureEvents: number;
 	readonly gatewayRecoveryEvents: number;
 	readonly gatewayRecoverySuspendedEvents: number;
 	readonly gatewayServiceFailureEvents: number;
@@ -37,8 +37,8 @@ export function scanOpenClawStabilityEvents(
 	const gatewayServiceFailureEvents = postReadinessEvents.filter(
 		(event) => event.kind === 'gateway-service-health' && event.result !== 'ok',
 	).length;
-	const gatewayControlLinkFailureEvents = postReadinessEvents.filter(
-		(event) => event.kind === 'gateway-control-link' && event.result !== 'ok',
+	const gatewayControlSessionFailureEvents = postReadinessEvents.filter(
+		(event) => event.kind === 'gateway-control-session' && event.result !== 'ok',
 	).length;
 	const failures: string[] = [];
 	if (gatewayRecoveryEvents > 0) {
@@ -52,14 +52,14 @@ export function scanOpenClawStabilityEvents(
 			`gateway-service-health had ${String(gatewayServiceFailureEvents)} non-ok events after readiness`,
 		);
 	}
-	if (gatewayControlLinkFailureEvents > allowedTransientFailuresPerKind) {
+	if (gatewayControlSessionFailureEvents > allowedTransientFailuresPerKind) {
 		failures.push(
-			`gateway-control-link had ${String(gatewayControlLinkFailureEvents)} non-ok events after readiness`,
+			`gateway-control-session had ${String(gatewayControlSessionFailureEvents)} non-ok events after readiness`,
 		);
 	}
 	return {
 		failures,
-		gatewayControlLinkFailureEvents,
+		gatewayControlSessionFailureEvents,
 		gatewayRecoveryEvents,
 		gatewayRecoverySuspendedEvents,
 		gatewayServiceFailureEvents,

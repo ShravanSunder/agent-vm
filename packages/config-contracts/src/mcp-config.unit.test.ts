@@ -25,6 +25,7 @@ describe('loadMcpConfig', () => {
 					"transport": {
 						"kind": "streamable-http",
 						"url": "https://mcp.linear.test/mcp",
+						"connectionTimeoutMs": 120000,
 						"headers": {
 							"authorization": { "source": "environment", "name": "LINEAR_MCP_TOKEN" }
 						}
@@ -37,6 +38,7 @@ describe('loadMcpConfig', () => {
 		expect(config.providers.linear?.transport.kind).toBe('streamable-http');
 		expect(mcpConfigToResolvedProviders(config)).toEqual([
 			{
+				connectionTimeoutMs: 120_000,
 				headers: {
 					authorization: { source: 'environment', name: 'LINEAR_MCP_TOKEN' },
 				},
@@ -137,6 +139,7 @@ describe('loadMcpConfig', () => {
 						"kind": "stdio",
 						"command": "node",
 						"args": ["dist/server.js", "--stdio"],
+						"connectionTimeoutMs": 45000,
 						"cwd": "/work/mcp/local-search",
 						"env": {
 							"LOCAL_SEARCH_TOKEN": {
@@ -155,6 +158,7 @@ describe('loadMcpConfig', () => {
 			{
 				args: ['dist/server.js', '--stdio'],
 				command: 'node',
+				connectionTimeoutMs: 45_000,
 				cwd: '/work/mcp/local-search',
 				env: {
 					LOCAL_SEARCH_TOKEN: {

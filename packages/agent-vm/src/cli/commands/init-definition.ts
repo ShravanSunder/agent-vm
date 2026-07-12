@@ -222,7 +222,7 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 				type: optional(string),
 				long: 'openclaw-agents',
 				description:
-					'Comma-separated OpenClaw agent ids to scaffold, for example: sun,shravan,alevtina.',
+					'Single OpenClaw agent id to scaffold during the Socket.IO control-plane hard cutover.',
 			}),
 			onePasswordKeychainAccountName: option({
 				type: optional(string),

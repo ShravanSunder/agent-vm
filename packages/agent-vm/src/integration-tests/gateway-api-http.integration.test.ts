@@ -1,72 +1,55 @@
-import net from 'node:net';
-
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 /**
- * Live e2e test: gateway API client → controller lease API round-trip.
+ * Live integration test: gateway API client → controller HTTP surfaces.
  *
- * This test verifies the gateway API client and controller lease API work
- * together over real HTTP, without requiring a gateway VM or QEMU.
+ * This test verifies the gateway API client and live controller diagnostic HTTP
+ * routes over real HTTP, without requiring a gateway VM or QEMU.
  *
  * The full end-to-end test (gateway VM + OpenClaw + sandbox plugin) is
- * validated manually via scripts/live-sandbox-manual.mjs or by sending
- * a message through WhatsApp/Discord and checking controller logs.
+ * validated through the OpenClaw e2e project or by sending a real
+ * WhatsApp/Discord message and checking controller logs.
  *
  * Run: pnpm vitest run packages/agent-vm/src/integration-tests/gateway-api-http.integration.test.ts
  */
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import type { z } from 'zod';
 
 import { createControllerApp } from '../controller/http/controller-http-routes.js';
-import type { controllerLeaseCreateRequestSchema } from '../controller/http/controller-request-schemas.js';
 import type { Lease } from '../controller/leases/lease-manager.js';
 import { OPENCLAW_TOOL_VM_WORKSPACE_MOUNT } from '../controller/leases/lease-work-mount-paths.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 
-type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequestSchema>;
+type HonoServer = ReturnType<typeof serve>;
 
-function createLeaseRequestBody(
-	overrides: Partial<ControllerLeaseCreateRequestBody> = {},
-): ControllerLeaseCreateRequestBody {
-	return {
-		agentId: 'main',
-		agentWorkspaceDir: '/work',
-		profileId: 'standard',
-		sessionKey: 'agent:main:smoke-test',
-		workMountDir: '/work',
-		zoneId: 'shravan',
-		...overrides,
-	};
+function getBoundPort(server: HonoServer): number {
+	const address = server.address();
+	if (!address || typeof address === 'string') {
+		throw new Error('Failed to determine bound server port.');
+	}
+	return address.port;
 }
 
-async function findAvailablePort(): Promise<number> {
-	return await new Promise((resolve, reject) => {
-		const server = net.createServer();
+async function waitForServerListening(server: HonoServer): Promise<void> {
+	if (server.listening) {
+		return;
+	}
+	await new Promise<void>((resolve, reject) => {
 		server.once('error', reject);
-		server.listen(0, '127.0.0.1', () => {
-			const address = server.address();
-			if (!address || typeof address === 'string') {
-				server.close(() => reject(new Error('Failed to determine an available port.')));
-				return;
-			}
-			server.close((error) => {
-				if (error) {
-					reject(error);
-					return;
-				}
-				resolve(address.port);
-			});
+		server.once('listening', () => {
+			server.off('error', reject);
+			resolve();
 		});
 	});
 }
 
 describe('live integration: API client → controller over real HTTP', () => {
-	let controllerServer: { close: (cb?: () => void) => void } | null = null;
-	let gatewayServer: { close: (cb?: () => void) => void } | null = null;
+	let controllerServer: HonoServer | null = null;
+	let gatewayServer: HonoServer | null = null;
 	let activeGatewayPort: number | null = null;
 
 	afterAll(async () => {
@@ -76,10 +59,6 @@ describe('live integration: API client → controller over real HTTP', () => {
 	});
 
 	it('gateway API client talks to a real Hono HTTP server', async () => {
-		const gatewayPort = await findAvailablePort();
-		const controllerPort = await findAvailablePort();
-		activeGatewayPort = gatewayPort;
-
 		// --- Mock gateway that simulates OpenClaw's /tools/invoke and /readyz ---
 		const toolInvocations: unknown[] = [];
 		const gatewayApp = new Hono();
@@ -99,9 +78,12 @@ describe('live integration: API client → controller over real HTTP', () => {
 			});
 		});
 
-		gatewayServer = serve({ fetch: gatewayApp.fetch, port: gatewayPort });
+		gatewayServer = serve({ fetch: gatewayApp.fetch, hostname: '127.0.0.1', port: 0 });
+		await waitForServerListening(gatewayServer);
+		const gatewayPort = getBoundPort(gatewayServer);
+		activeGatewayPort = gatewayPort;
 
-		// --- Real controller lease API ---
+		// --- Real controller diagnostic HTTP route ---
 		const lease: Lease = {
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
@@ -113,16 +95,25 @@ describe('live integration: API client → controller over real HTTP', () => {
 			runtimeRecordId: 'smoke-lease-001',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {
+				close: async () => {},
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',
 				port: 19000,
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 				user: 'sandbox',
 			},
 			tcpSlot: 0,
 			vm: {
 				close: vi.fn(async () => {}),
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableIngress: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					host: '127.0.0.1',
+					port: 18791,
+				})),
 				enableSsh: vi.fn(async () => ({
+					close: async () => {},
+					command: 'ssh tool-vm-smoke',
+					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 					host: '127.0.0.1',
 					identityFile: '/tmp/key',
 					port: 19000,
@@ -134,11 +125,11 @@ describe('live integration: API client → controller over real HTTP', () => {
 				setIngressRoutes: vi.fn(),
 				getHostPid: () => null,
 				getVmInstance: vi.fn(),
+				start: async () => {},
 			},
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 			zoneId: 'shravan',
 		};
-		const createLease = vi.fn(async () => lease);
 		const controllerApp = createControllerApp({
 			readIdentityPem: async () => 'pem-smoke',
 			toolVmProfiles: {
@@ -149,7 +140,7 @@ describe('live integration: API client → controller over real HTTP', () => {
 				},
 			},
 			leaseManager: {
-				createLease,
+				createLease: vi.fn(async () => lease),
 				renewLease: vi.fn(async () => ({
 					kind: 'renewed' as const,
 					lastUsedAt: lease.lastUsedAt,
@@ -164,7 +155,9 @@ describe('live integration: API client → controller over real HTTP', () => {
 				hostWorkMountDir: workMountDir,
 			}),
 		});
-		controllerServer = serve({ fetch: controllerApp.fetch, port: controllerPort });
+		controllerServer = serve({ fetch: controllerApp.fetch, hostname: '127.0.0.1', port: 0 });
+		await waitForServerListening(controllerServer);
+		const controllerPort = getBoundPort(controllerServer);
 
 		// --- Exercise the gateway API client ---
 		const gatewayClient = createGatewayApiClient({
@@ -186,26 +179,9 @@ describe('live integration: API client → controller over real HTTP', () => {
 		expect(toolInvocations).toHaveLength(1);
 		expect(toolInvocations[0]).toMatchObject({ tool: 'shell', args: { command: 'echo hello' } });
 
-		// Verify controller lease API works over real HTTP
-		const leaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify(
-				createLeaseRequestBody({
-					agentId: 'smoke-test',
-					sessionKey: 'agent:smoke-test:integration',
-				}),
-			),
-		});
-		const leaseBody = (await leaseResponse.json()) as { leaseId: string };
-		expect(leaseResponse.status).toBe(200);
-		expect(leaseBody.leaseId).toBe('smoke-lease-001');
-		expect(createLease).toHaveBeenCalled();
-
-		// Verify lease list over real HTTP
+		// Verify the old public lease list is not exposed over real HTTP.
 		const leasesResponse = await fetch(`http://127.0.0.1:${controllerPort}/leases`);
-		const leasesBody = (await leasesResponse.json()) as unknown[];
-		expect(leasesBody).toHaveLength(1);
+		expect(leasesResponse.status).toBe(404);
 	});
 
 	it('gateway API client rejects unauthorized requests', async () => {

@@ -15,10 +15,25 @@ WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 PACKAGE_ROWS_PATH="$WORKDIR/package-rows.tsv"
 PACKAGE_VERSIONS_PATH="$WORKDIR/package-versions.txt"
+DEPRECATED_PACKAGE_VIOLATIONS_PATH="$WORKDIR/deprecated-package-violations.txt"
 
 find packages -mindepth 2 -maxdepth 2 -name package.json -print0 |
 	xargs -0 jq -r '
-			select(.name | startswith("@agent-vm/")) |
+			select(.name == "@agent-vm/openclaw-mcp-portal-plugin" and .private != true) |
+			input_filename
+		' > "$DEPRECATED_PACKAGE_VIOLATIONS_PATH"
+
+if [[ -s "$DEPRECATED_PACKAGE_VIOLATIONS_PATH" ]]; then
+	echo "[publish] error: deprecated managed OpenClaw MCP Portal plugin identity must be private" >&2
+	while IFS= read -r package_file_path; do
+		echo "[publish]   ${package_file_path}" >&2
+	done < "$DEPRECATED_PACKAGE_VIOLATIONS_PATH"
+	exit 1
+fi
+
+find packages -mindepth 2 -maxdepth 2 -name package.json -print0 |
+	xargs -0 jq -r '
+			select((.name | startswith("@agent-vm/")) and .private != true) |
 			[.version, .name, input_filename] | @tsv
 		' |
 	sort -k2,2 > "$PACKAGE_ROWS_PATH"
@@ -42,4 +57,4 @@ fi
 
 PACKAGE_COUNT="$(wc -l < "$PACKAGE_ROWS_PATH" | tr -d '[:space:]')"
 PACKAGE_VERSION="$(sed -n '1p' "$PACKAGE_VERSIONS_PATH")"
-echo "[publish] ${PACKAGE_COUNT} @agent-vm packages are synced at ${PACKAGE_VERSION}"
+echo "[publish] ${PACKAGE_COUNT} publishable @agent-vm packages are synced at ${PACKAGE_VERSION}"

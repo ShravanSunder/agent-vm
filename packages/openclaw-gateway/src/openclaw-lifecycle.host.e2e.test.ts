@@ -1,7 +1,8 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import {
 	access,
-	chmod,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -15,20 +16,35 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
+import {
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+	type GatewayZoneConfig,
+} from '@agent-vm/gateway-interface';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { openclawLifecycle } from './openclaw-lifecycle.js';
+import { openclawLifecycle, processSupervisorHelperTestInternals } from './openclaw-lifecycle.js';
 
 const createdDirectories: string[] = [];
 const execFileAsync = promisify(execFile);
 type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
-type ExecFileError = Error & {
-	readonly code?: number | string;
-	readonly killed?: boolean;
-	readonly signal?: NodeJS.Signals | null;
-};
+type InvalidFinalManagedGondolinConfigTestCase =
+	| {
+			readonly error: RegExp;
+			readonly name: 'partial controlSession';
+			readonly runtimeConfig: {
+				readonly controlSession: {
+					readonly bootId: string;
+				};
+			};
+	  }
+	| {
+			readonly error: RegExp;
+			readonly name: 'empty toolPortal';
+			readonly runtimeConfig: {
+				readonly toolPortal: Record<never, never>;
+			};
+	  };
 
 async function pathExists(filePath: string): Promise<boolean> {
 	try {
@@ -37,6 +53,28 @@ async function pathExists(filePath: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+async function runNodeHelperWithStdin(
+	helperPath: string,
+	stdin: string,
+): Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }> {
+	const child = spawn(process.execPath, [helperPath], {
+		stdio: ['pipe', 'pipe', 'pipe'],
+	});
+	let stderr = '';
+	let stdout = '';
+	child.stderr.setEncoding('utf8');
+	child.stdout.setEncoding('utf8');
+	child.stderr.on('data', (chunk: string) => {
+		stderr += chunk;
+	});
+	child.stdout.on('data', (chunk: string) => {
+		stdout += chunk;
+	});
+	child.stdin.end(stdin);
+	const [exitCode] = (await once(child, 'close')) as [number | null, NodeJS.Signals | null];
+	return { exitCode: exitCode ?? -1, stderr, stdout };
 }
 
 async function renderBootstrapFiles(
@@ -48,54 +86,14 @@ async function renderBootstrapFiles(
 		.replaceAll('/root', path.join(rootDirectory, 'root'))
 		.replaceAll('/etc/profile.d', path.join(rootDirectory, 'etc', 'profile.d'))
 		.replaceAll('/run/openclaw', path.join(rootDirectory, 'run', 'openclaw'))
+		.replaceAll('/usr/local/libexec', path.join(rootDirectory, 'usr', 'local', 'libexec'))
 		.replaceAll('/work', path.join(rootDirectory, 'work'))
 		.replace(`chown -R openclaw:openclaw ${path.join(rootDirectory, 'work')} && `, '');
 	await execFileAsync('sh', ['-lc', rootedCommand], { env });
 }
 
-function renderStartCommandForHost(
-	command: string,
-	props: {
-		readonly fakeOpenClawPath: string;
-		readonly rootDirectory: string;
-	},
-): string {
-	return command
-		.replaceAll('/usr/local/bin/openclaw', props.fakeOpenClawPath)
-		.replaceAll('/run/openclaw', path.join(props.rootDirectory, 'run', 'openclaw'))
-		.replaceAll('/agent-vm/logs', path.join(props.rootDirectory, 'agent-vm', 'logs'))
-		.replaceAll('/home/openclaw', path.join(props.rootDirectory, 'home', 'openclaw'))
-		.replace('nohup sh -c', 'sh -c')
-		.replace(/ &$/u, '');
-}
-
 function shellQuoteForTest(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
-}
-
-function buildExpectedOpenClawGatewaySupervisorScriptForTest(): string {
-	return [
-		'restart_delay_seconds="${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS:-5}"',
-		'restart_window_seconds="${AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS:-60}"',
-		'max_restarts="${AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS:-6}"',
-		'attempt=0',
-		'failure_count=0',
-		'first_failure_at=0',
-		'while true',
-		'do attempt=$((attempt + 1))',
-		'printf "gateway-supervisor: starting openclaw gateway attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'set -a',
-		'if ! . /run/openclaw/secrets.env; then printf "gateway-supervisor: failed to source runtime secrets attempt=%s at=%s\\n" "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; exit 1; fi',
-		'set +a',
-		'/usr/local/bin/openclaw gateway --port 18789',
-		'exit_code=$?',
-		'now=$(date -u +%s)',
-		'if [ "$first_failure_at" -eq 0 ] || [ $((now - first_failure_at)) -gt "$restart_window_seconds" ]; then first_failure_at=$now; failure_count=1; else failure_count=$((failure_count + 1)); fi',
-		'printf "gateway-supervisor: openclaw gateway exited attempt=%s exit_code=%s failure_count=%s window_seconds=%s at=%s\\n" "$attempt" "$exit_code" "$failure_count" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
-		'if [ "$failure_count" -ge "$max_restarts" ]; then printf "gateway-supervisor: restart limit exceeded failure_count=%s max_restarts=%s window_seconds=%s at=%s\\n" "$failure_count" "$max_restarts" "$restart_window_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if [ "$exit_code" -eq 0 ]; then exit 1; fi; exit "$exit_code"; fi',
-		'sleep "$restart_delay_seconds"',
-		'done',
-	].join('; ');
 }
 
 async function captureThrownError(promise: Promise<unknown> | undefined): Promise<Error> {
@@ -141,12 +139,14 @@ const resolvedSecrets: Record<string, string> = {
 function createZone(overrides?: {
 	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
 	readonly gateway?: Partial<OpenClawGatewayConfig>;
-	readonly mcpPortal?: GatewayZoneConfig['mcpPortal'];
+	readonly toolPortal?: GatewayZoneConfig['toolPortal'];
 	readonly runtimeMcpServers?: GatewayZoneConfig['runtimeMcpServers'];
 	readonly runtimeEnvironment?: GatewayZoneConfig['runtimeEnvironment'];
 	readonly runtimeMediatedSecrets?: GatewayZoneConfig['runtimeMediatedSecrets'];
+	readonly runtimePrivateEnvironment?: GatewayZoneConfig['runtimePrivateEnvironment'];
 	readonly observability?: GatewayZoneConfig['observability'];
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
+	readonly gitReadAllowlistRepos?: GatewayZoneConfig['gitReadAllowlistRepos'];
 	readonly withoutAuthProfilesRef?: boolean;
 	readonly secrets?: GatewayZoneConfig['secrets'];
 	readonly websocketUpgrades?: GatewayZoneConfig['websocketUpgrades'];
@@ -160,7 +160,7 @@ function createZone(overrides?: {
 		config: '/host/config/shravan/openclaw.json',
 		memory: '2G',
 		port: 18791,
-		rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
+		rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
 		ssh: { secretEnv: 'explicit' },
 		stateDir: '/host/state/shravan',
 		type: 'openclaw',
@@ -185,7 +185,8 @@ function createZone(overrides?: {
 			...overrides?.gateway,
 		},
 		id: 'shravan',
-		...(overrides?.mcpPortal ? { mcpPortal: overrides.mcpPortal } : {}),
+		agents: [{ id: 'shravan' }],
+		...(overrides?.toolPortal ? { toolPortal: overrides.toolPortal } : {}),
 		...(overrides?.observability ? { observability: overrides.observability } : {}),
 		secrets: overrides?.secrets ?? {
 			DISCORD_BOT_TOKEN: {
@@ -209,9 +210,15 @@ function createZone(overrides?: {
 			},
 		},
 		defaultToolVmProfile: 'standard',
+		...(overrides?.gitReadAllowlistRepos
+			? { gitReadAllowlistRepos: overrides.gitReadAllowlistRepos }
+			: {}),
 		...(overrides?.runtimeEnvironment ? { runtimeEnvironment: overrides.runtimeEnvironment } : {}),
 		...(overrides?.runtimeMediatedSecrets
 			? { runtimeMediatedSecrets: overrides.runtimeMediatedSecrets }
+			: {}),
+		...(overrides?.runtimePrivateEnvironment
+			? { runtimePrivateEnvironment: overrides.runtimePrivateEnvironment }
 			: {}),
 		...(overrides?.runtimePluginConfigs
 			? { runtimePluginConfigs: overrides.runtimePluginConfigs }
@@ -459,6 +466,7 @@ describe('openclawLifecycle', () => {
 				},
 				zone: createZone(),
 			});
+			expect(vmSpec.vfsMounts).not.toHaveProperty('/run/agent-vm/openclaw-process-supervisor');
 
 			expect(vmSpec.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
 			expect(vmSpec.environment.OPENCLAW_GATEWAY_TOKEN).toBe("gateway'token");
@@ -493,7 +501,7 @@ describe('openclawLifecycle', () => {
 		it('rejects OPENCLAW_DIAGNOSTICS raw env overrides for observability-enabled zones', () => {
 			const zone = createZone({
 				gateway: {
-					rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN', 'OPENCLAW_DIAGNOSTICS'],
+					rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'OPENCLAW_DIAGNOSTICS'],
 				},
 				observability: createObservabilityConfig(),
 				secrets: {
@@ -526,7 +534,7 @@ describe('openclawLifecycle', () => {
 			).toThrow(/OPENCLAW_DIAGNOSTICS/u);
 		});
 
-		it('injects runtime environment without mediating or persisting it', () => {
+		it('injects explicitly allowlisted runtime environment without mediating or persisting it', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -538,14 +546,65 @@ describe('openclawLifecycle', () => {
 					size: 3,
 				},
 				zone: createZone({
+					gateway: {
+						rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'OPENCLAW_TEST_RUNTIME_SECRET'],
+					},
 					runtimeEnvironment: {
-						AGENT_VM_ZONE_GIT_TOKEN: 'runtime-zone-git-token',
+						OPENCLAW_TEST_RUNTIME_SECRET: 'runtime-test-secret',
 					},
 				}),
 			});
 
-			expect(vmSpec.environment.AGENT_VM_ZONE_GIT_TOKEN).toBe('runtime-zone-git-token');
-			expect(vmSpec.mediatedSecrets.AGENT_VM_ZONE_GIT_TOKEN).toBeUndefined();
+			expect(vmSpec.environment.OPENCLAW_TEST_RUNTIME_SECRET).toBe('runtime-test-secret');
+			expect(vmSpec.mediatedSecrets.OPENCLAW_TEST_RUNTIME_SECRET).toBeUndefined();
+		});
+
+		it('injects controller-owned private environment without runtime secret mediation', () => {
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 3,
+				},
+				zone: createZone({
+					runtimePrivateEnvironment: {
+						[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'private-proof-key',
+					},
+				}),
+			});
+
+			expect(vmSpec.environment[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBe(
+				'private-proof-key',
+			);
+			expect(vmSpec.mediatedSecrets[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBeUndefined();
+		});
+
+		it('rejects user runtime environment that collides with controller-owned private names', () => {
+			expect(() =>
+				openclawLifecycle.buildVmSpec({
+					controllerPort: 18800,
+					gatewayCacheDir: '/host/cache/gateways/shravan',
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					resolvedSecrets,
+					runtimeDir: '/host/runtime',
+					tcpPool: {
+						basePort: 19000,
+						size: 3,
+					},
+					zone: createZone({
+						gateway: {
+							rawEnvSecrets: ['DISCORD_BOT_TOKEN', GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV],
+						},
+						runtimeEnvironment: {
+							[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'user-proof-key',
+						},
+					}),
+				}),
+			).toThrow(/collides with a controller-owned private environment variable/u);
 		});
 
 		it('injects generated runtime mediated secrets without authored zone secret config entries', () => {
@@ -635,11 +694,7 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.NODE_OPTIONS).toBe(
 				'--dns-result-order=ipv4first --no-network-family-autoselection',
 			);
-			expect(vmSpec.allowedHosts).toEqual([
-				'controller.vm.host',
-				'api.openai.com',
-				'api.perplexity.ai',
-			]);
+			expect(vmSpec.allowedHosts).toEqual(['api.openai.com', 'api.perplexity.ai']);
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
 				kind: 'realfs',
@@ -661,14 +716,41 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.vfsMounts['/home/openclaw/workspace']).toBeUndefined();
 			expect(vmSpec.vfsMounts['/var/lib/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
-				'controller.vm.host:18800': '127.0.0.1:18800',
 				'tool-0.vm.host:22': '127.0.0.1:19000',
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
 			expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
 		});
 
-		it('maps host observability collector endpoints into the gateway VM tcp hosts', () => {
+		it('mounts managed Tool Portal effective config read-only when configured', () => {
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone({
+					runtimePluginConfigs: {
+						gondolin: {
+							toolPortal: {
+								configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+							},
+						},
+					},
+				}),
+			});
+
+			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/cache/tool-portal-effective']).toEqual({
+				hostPath: '/host/cache/gateways/shravan/tool-portal-effective',
+				kind: 'realfs-readonly',
+			});
+		});
+
+		it('routes collector-mode observability through mediated HTTP instead of raw collector tcp hosts', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -684,15 +766,11 @@ describe('openclawLifecycle', () => {
 				}),
 			});
 
-			expect(vmSpec.tcpHosts).toMatchObject({
-				'otel-collector.observability.vm.host:4317': '127.0.0.1:24317',
-				'otel-collector.observability.vm.host:4318': '127.0.0.1:24318',
+			expect(vmSpec.allowedHosts).toContain('otel-collector.observability.vm.host');
+			expect(vmSpec.tcpHosts).toEqual({
+				'tool-0.vm.host:22': '127.0.0.1:19000',
+				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
-			expect(vmSpec.allowedHosts).toEqual([
-				'controller.vm.host',
-				'api.openai.com',
-				'api.perplexity.ai',
-			]);
 		});
 
 		it('carries websocket upgrade URL policy into the gateway VM spec', () => {
@@ -729,6 +807,113 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.websocketUpgrades).toEqual(websocketUpgrades);
 		});
 
+		it('denies Git SSH reads when no trusted repo allowlist is available', async () => {
+			vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone(),
+			});
+
+			expect(vmSpec.sshEgress).toBeUndefined();
+		});
+
+		it('allows only trusted Git SSH reads from the gateway VM spec', async () => {
+			vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone({
+					gitReadAllowlistRepos: ['ssh://git@git.example.com/shravan/zone-files.git'],
+				}),
+			});
+
+			expect(vmSpec.sshEgress?.allowedHosts).toEqual(['git.example.com']);
+			expect(vmSpec.sshEgress?.agent).toBe('/tmp/agent-vm-test-agent.sock');
+			if (!vmSpec.sshEgress?.execPolicy) {
+				throw new Error('Expected OpenClaw gateway read-only Git SSH policy');
+			}
+			await expect(
+				Promise.resolve(
+					vmSpec.sshEgress.execPolicy({
+						command: "git-upload-pack 'shravan/zone-files.git'",
+						guestUsername: 'git',
+						hostname: 'git.example.com',
+						port: 22,
+						src: { ip: '198.18.0.2', port: 48_000 },
+					}),
+				),
+			).resolves.toEqual({ allow: true });
+			await expect(
+				Promise.resolve(
+					vmSpec.sshEgress.execPolicy({
+						command: "git-upload-pack 'shravan/other-private.git'",
+						guestUsername: 'git',
+						hostname: 'git.example.com',
+						port: 22,
+						src: { ip: '198.18.0.2', port: 48_003 },
+					}),
+				),
+			).resolves.toMatchObject({ allow: false });
+			await expect(
+				Promise.resolve(
+					vmSpec.sshEgress.execPolicy({
+						command: "git-receive-pack 'shravan/zone-files.git'",
+						guestUsername: 'git',
+						hostname: 'git.example.com',
+						port: 22,
+						src: { ip: '198.18.0.2', port: 48_001 },
+					}),
+				),
+			).resolves.toMatchObject({ allow: false });
+			await expect(
+				Promise.resolve(
+					vmSpec.sshEgress.execPolicy({
+						command: 'bash',
+						guestUsername: 'git',
+						hostname: 'github.com',
+						port: 22,
+						src: { ip: '198.18.0.2', port: 48_002 },
+					}),
+				),
+			).resolves.toMatchObject({ allow: false });
+		});
+
+		it('omits OpenClaw SSH egress when no host SSH agent is available', () => {
+			vi.stubEnv('SSH_AUTH_SOCK', '');
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone(),
+			});
+
+			expect(vmSpec.sshEgress).toBeUndefined();
+		});
+
 		it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
 			// Regression test for the merge-order bug surfaced in PR #93
 			// review: a zone secret named NODE_OPTIONS must NOT drop our
@@ -736,7 +921,7 @@ describe('openclawLifecycle', () => {
 			// synthetic AAAA again.
 			const baseZone = createZone({
 				gateway: {
-					rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN', 'NODE_OPTIONS'],
+					rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'NODE_OPTIONS'],
 				},
 			});
 			const zoneWithNodeOptions: GatewayZoneConfig = {
@@ -777,24 +962,16 @@ describe('openclawLifecycle', () => {
 
 	describe('buildProcessSpec', () => {
 		it('builds bootstrap and start commands with runtime-injected gateway token', () => {
-			const processSpec = openclawLifecycle.buildProcessSpec(
-				createZone({
-					runtimeEnvironment: {
-						AGENT_VM_ZONE_GIT_TOKEN: 'runtime-zone-git-token',
-					},
-				}),
-				resolvedSecrets,
-			);
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
 			expect(processSpec.bootstrapCommand).toContain("printf '%s\\n'");
 			expect(processSpec.bootstrapCommand).toContain('DISCORD_BOT_TOKEN');
 			expect(processSpec.bootstrapCommand).toContain('OPENCLAW_GATEWAY_TOKEN');
-			expect(processSpec.bootstrapCommand).toContain('AGENT_VM_ZONE_GIT_TOKEN');
+			expect(processSpec.bootstrapCommand).not.toContain('AGENT_VM_ZONE_GIT_TOKEN');
 			expect(processSpec.bootstrapCommand).not.toContain('discord-token');
 			expect(processSpec.bootstrapCommand).not.toContain("gateway'token");
-			expect(processSpec.bootstrapCommand).not.toContain('runtime-zone-git-token');
 			expect(processSpec.bootstrapCommand).not.toContain(
 				`cat > /run/openclaw/secrets.env << 'ENVEOF'`,
 			);
@@ -812,27 +989,17 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).toContain('PNPM_HOME=/pnpm');
 			expect(processSpec.bootstrapCommand).toContain('PATH=/pnpm:$PATH');
 			expect(processSpec.bootstrapCommand).toContain('npm_config_cache=/work/cache/npm');
-			expect(processSpec.startCommand).toContain('. /run/openclaw/secrets.env');
-			expect(processSpec.startCommand).toContain('cd /home/openclaw');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
-			expect(processSpec.startCommand).toContain(
-				`nohup sh -c ${shellQuoteForTest(buildExpectedOpenClawGatewaySupervisorScriptForTest())}`,
+			expect(processSpec.bootstrapCommand).toContain(
+				'/usr/local/libexec/agent-vm-openclaw-process-supervisor',
 			);
 			expect(processSpec.startCommand).toContain(
-				'gateway-supervisor: starting openclaw gateway attempt=',
+				'gateway-supervisor: controller-owned helper ready; awaiting typed request',
 			);
-			expect(processSpec.startCommand).toContain(
-				'gateway-supervisor: openclaw gateway exited attempt=',
-			);
-			expect(processSpec.startCommand).toContain(
-				'gateway-supervisor: restart limit exceeded failure_count=',
-			);
-			expect(processSpec.startCommand).toContain('sleep "$restart_delay_seconds"');
-			expect(processSpec.startCommand).not.toContain(
-				'nohup /usr/local/bin/openclaw gateway --port 18789',
-			);
-			expect(processSpec.startCommand).toContain('> /agent-vm/logs/gateway-boot-latest.log 2>&1');
+			expect(processSpec.startCommand).not.toContain('while true');
+			expect(processSpec.startCommand).not.toContain('nohup');
+			expect(processSpec.startCommand).not.toContain('openclaw gateway --port');
 			expect(processSpec.healthCheck).toEqual({
 				type: 'http',
 				port: 18789,
@@ -841,61 +1008,763 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
 		});
 
-		it('fails hard after a bounded fast crash loop so controller recovery can escalate', async () => {
+		it('installs a fixed non-network helper without autonomously launching a process', async () => {
 			const tempDirectory = await mkdtemp(
-				path.join(os.tmpdir(), 'openclaw-lifecycle-supervisor-crash-loop-'),
+				path.join(os.tmpdir(), 'openclaw-lifecycle-process-supervisor-helper-'),
 			);
 			createdDirectories.push(tempDirectory);
-			await mkdir(path.join(tempDirectory, 'run', 'openclaw'), { recursive: true });
-			await mkdir(path.join(tempDirectory, 'agent-vm', 'logs'), { recursive: true });
-			await mkdir(path.join(tempDirectory, 'home', 'openclaw'), { recursive: true });
-			const fakeOpenClawPath = path.join(tempDirectory, 'fake-openclaw');
-			const attemptsLogPath = path.join(tempDirectory, 'fake-openclaw-attempts.log');
-			await writeFile(
-				fakeOpenClawPath,
-				['#!/bin/sh', 'printf "attempt\\n" >> "$FAKE_OPENCLAW_ATTEMPTS_LOG"', 'exit 42'].join('\n'),
-				'utf8',
-			);
-			await chmod(fakeOpenClawPath, 0o700);
-			await writeFile(
-				path.join(tempDirectory, 'run', 'openclaw', 'secrets.env'),
-				['NODE_OPTIONS=--dns-result-order=ipv4first', 'OPENCLAW_GATEWAY_TOKEN=test-token'].join(
-					'\n',
-				),
-				'utf8',
-			);
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
-			const foregroundStartCommand = renderStartCommandForHost(processSpec.startCommand, {
-				fakeOpenClawPath,
-				rootDirectory: tempDirectory,
-			});
-
-			const supervisorExit = (await captureThrownError(
-				execFileAsync('sh', ['-lc', foregroundStartCommand], {
-					env: {
-						...process.env,
-						AGENT_VM_OPENCLAW_SUPERVISOR_MAX_RESTARTS: '3',
-						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_DELAY_SECONDS: '0',
-						AGENT_VM_OPENCLAW_SUPERVISOR_RESTART_WINDOW_SECONDS: '60',
-						FAKE_OPENCLAW_ATTEMPTS_LOG: attemptsLogPath,
-					},
-					timeout: 5_000,
-				}),
-			)) as ExecFileError;
-			expect(supervisorExit.code).toBe(42);
-			expect(supervisorExit.killed).not.toBe(true);
-			expect(supervisorExit.signal).toBeNull();
-
-			const attemptsLog = await readFile(attemptsLogPath, 'utf8');
-			expect(attemptsLog.trim().split('\n')).toHaveLength(3);
-			const bootLog = await readFile(
-				path.join(tempDirectory, 'agent-vm', 'logs', 'gateway-boot-latest.log'),
-				'utf8',
+			const encodedHelper =
+				/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > \/usr\/local\/libexec\/agent-vm-openclaw-process-supervisor/u.exec(
+					processSpec.bootstrapCommand,
+				);
+			expect(encodedHelper?.[1]).toBeDefined();
+			const helperPath = path.join(tempDirectory, 'agent-vm-openclaw-process-supervisor');
+			const helperSource = Buffer.from(encodedHelper?.[1] ?? '', 'base64').toString('utf8');
+			await writeFile(helperPath, helperSource, 'utf8');
+			await expect(execFileAsync(process.execPath, ['--check', helperPath])).resolves.toMatchObject(
+				{
+					stderr: '',
+				},
 			);
-			expect(bootLog).toContain(
-				'gateway-supervisor: restart limit exceeded failure_count=3 max_restarts=3',
+			expect(helperSource).toContain("refuse('process-overlap')");
+			expect(helperSource).toContain("path.join(groupPath, 'cgroup.kill')");
+			expect(helperSource).toContain("path.join(groupPath, 'cgroup.events')");
+			expect(helperSource).toContain('const maximumAttempts = 500;');
+			expect(helperSource).toContain('Atomics.wait(sleeper, 0, 0, 10);');
+			expect(helperSource).toContain('rmdirSync(groupPath)');
+			expect(helperSource).not.toContain('rmSync(groupPath, { recursive: false })');
+			expect(helperSource).toContain('emptyObserved: true');
+			expect(helperSource).toContain(
+				`set -a; . /run/openclaw/secrets.env; set +a; cd /home/openclaw; exec /usr/local/bin/openclaw gateway --port 18789`,
+			);
+			expect(helperSource).not.toContain('exec su ');
+			expect(processSpec.startCommand).not.toMatch(
+				/(?:openclaw gateway|while true|restart_delay_seconds|nohup)/u,
 			);
 		});
+
+		it.each([
+			{
+				failureStage: 'create-cgroup',
+				injectionTarget: 'mkdirSync(groupPath, { mode: 0o700 });',
+			},
+			{
+				failureStage: 'inspect-created-cgroup',
+				injectionTarget: "if (populated(groupPath)) refuse('process-overlap');",
+			},
+		] as const)(
+			'persists only the bounded $failureStage start marker when that pre-receipt stage fails',
+			async ({ failureStage, injectionTarget }) => {
+				const tempDirectory = await mkdtemp(
+					path.join(os.tmpdir(), `openclaw-process-supervisor-${failureStage}-`),
+				);
+				createdDirectories.push(tempDirectory);
+				const stateDirectory = path.join(tempDirectory, 'state');
+				const cgroupRoot = path.join(tempDirectory, 'cgroup');
+				const mountsPath = path.join(tempDirectory, 'mounts');
+				const helperPath = path.join(tempDirectory, 'helper');
+				const rawFailurePayload = `private-${failureStage}-failure:${tempDirectory}`;
+				await Promise.all([
+					mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
+					mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
+					writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
+				]);
+				const helperSource = processSupervisorHelperTestInternals
+					.buildOpenClawProcessSupervisorHelperSource()
+					.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
+					.replaceAll('/sys/fs/cgroup', cgroupRoot)
+					.replaceAll('/proc/mounts', mountsPath);
+				for (const expectedStage of [
+					'ensure-cgroup2',
+					'create-cgroup',
+					'inspect-created-cgroup',
+					'bind-process',
+				]) {
+					expect(helperSource.split(`recordOperationStage('${expectedStage}')`)).toHaveLength(2);
+				}
+				const injectedHelperSource = helperSource.replace(
+					injectionTarget,
+					`throw new Error(${JSON.stringify(rawFailurePayload)});`,
+				);
+				expect(injectedHelperSource).not.toBe(helperSource);
+				await writeFile(helperPath, injectedHelperSource, 'utf8');
+				const request = {
+					actionId: `action-fail-${failureStage}`,
+					contractVersion: 1,
+					expectedProcessEpoch: null,
+					gateway: {
+						controllerEpoch: 'controller-1',
+						gatewayEpochId: 'gateway-epoch-1',
+						gatewayVmId: 'gateway-vm-1',
+					},
+					kind: 'start',
+					selectedProcessEpoch: 'process-1',
+				};
+
+				const outcome = await runNodeHelperWithStdin(helperPath, `${JSON.stringify(request)}\n`);
+				expect(outcome).toMatchObject({
+					stderr: `agent-vm-process-supervisor-failure:${failureStage}\n`,
+				});
+				expect((outcome as { readonly stderr: string }).stderr).not.toContain(rawFailurePayload);
+				expect((outcome as { readonly stderr: string }).stderr).not.toContain(tempDirectory);
+				const persistedStateContent = await readFile(
+					path.join(stateDirectory, 'state-v1.json'),
+					'utf8',
+				);
+				expect(JSON.parse(persistedStateContent)).toMatchObject({
+					lastOperation: {
+						actionId: `action-fail-${failureStage}`,
+						kind: 'start',
+						stage: failureStage,
+					},
+				});
+				expect(persistedStateContent).not.toContain(rawFailurePayload);
+				expect(persistedStateContent).not.toContain(tempDirectory);
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'request-v1.json'), 'utf8')),
+				).toEqual(request);
+			},
+		);
+
+		it('reads one exact stdin request and persists the guest audit before acting', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-process-supervisor-request-stdin-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			const cgroupRoot = path.join(tempDirectory, 'cgroup');
+			const mountsPath = path.join(tempDirectory, 'mounts');
+			const helperPath = path.join(tempDirectory, 'helper');
+			await Promise.all([
+				mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
+				mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
+				writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
+			]);
+			const helperSource = processSupervisorHelperTestInternals
+				.buildOpenClawProcessSupervisorHelperSource()
+				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
+				.replaceAll('/sys/fs/cgroup', cgroupRoot)
+				.replaceAll('/proc/mounts', mountsPath);
+			await writeFile(helperPath, helperSource, 'utf8');
+			const request = {
+				actionId: 'action-stdin-request',
+				contractVersion: 1,
+				expectedProcessEpoch: null,
+				gateway: {
+					controllerEpoch: 'controller-1',
+					gatewayEpochId: 'gateway-epoch-1',
+					gatewayVmId: 'gateway-vm-1',
+				},
+				kind: 'observe',
+			};
+			const serializedRequest = `${JSON.stringify(request)}\n`;
+
+			await expect(runNodeHelperWithStdin(helperPath, serializedRequest)).resolves.toMatchObject({
+				exitCode: 0,
+				stderr: '',
+			});
+			expect(await readFile(path.join(stateDirectory, 'request-v1.json'), 'utf8')).toBe(
+				serializedRequest,
+			);
+			expect(
+				JSON.parse(await readFile(path.join(stateDirectory, 'receipt-v1.json'), 'utf8')),
+			).toMatchObject({
+				actionId: 'action-stdin-request',
+				expectedProcessEpoch: null,
+				kind: 'observe',
+				observedProcessEpoch: null,
+				status: 'completed',
+			});
+		});
+
+		it('bounds invalid stdin without persisting an audit or performing an action', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-process-supervisor-request-read-invalid-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			const cgroupRoot = path.join(tempDirectory, 'cgroup');
+			const mountsPath = path.join(tempDirectory, 'mounts');
+			const helperPath = path.join(tempDirectory, 'helper');
+			await Promise.all([
+				mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
+				mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
+				writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
+			]);
+			const helperSource = processSupervisorHelperTestInternals
+				.buildOpenClawProcessSupervisorHelperSource()
+				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
+				.replaceAll('/sys/fs/cgroup', cgroupRoot)
+				.replaceAll('/proc/mounts', mountsPath);
+			await writeFile(helperPath, helperSource, 'utf8');
+
+			const outcome = await runNodeHelperWithStdin(helperPath, '{"contractVersion":');
+			expect(outcome).toMatchObject({
+				stderr: 'agent-vm-process-supervisor-failure:parse-request-json\n',
+			});
+			expect((outcome as { readonly stderr: string }).stderr).not.toContain(
+				'Unexpected end of JSON input',
+			);
+			expect((outcome as { readonly stderr: string }).stderr).not.toContain(tempDirectory);
+			expect(outcome.exitCode).not.toBe(0);
+			expect(await pathExists(path.join(stateDirectory, 'request-v1.json'))).toBe(false);
+			expect(await pathExists(path.join(stateDirectory, 'state-v1.json'))).toBe(false);
+			expect(await pathExists(path.join(stateDirectory, 'receipt-v1.json'))).toBe(false);
+			expect(await readdir(cgroupRoot)).toEqual([]);
+		});
+
+		it('executes the generated helper through start, reliability termination, containment, and successor start', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-process-supervisor-behavior-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const stateDirectory = path.join(tempDirectory, 'state');
+			const cgroupRoot = path.join(tempDirectory, 'cgroup');
+			const mountsPath = path.join(tempDirectory, 'mounts');
+			const helperPath = path.join(tempDirectory, 'helper');
+			const watcherPath = path.join(tempDirectory, 'fixture-cgroup-watcher.mjs');
+			const watcherModePath = path.join(tempDirectory, 'fixture-cgroup-mode');
+			const cgroupRemovalMarkerPath = path.join(tempDirectory, 'fixture-cgroup-removed');
+			const bootLogPath = path.join(tempDirectory, 'gateway.log');
+			const gateway = {
+				controllerEpoch: 'controller-1',
+				gatewayEpochId: 'gateway-epoch-1',
+				gatewayVmId: 'gateway-vm-1',
+			} as const;
+			const processEpoch = 'process-1';
+			const successorProcessEpoch = 'process-2';
+			const cgroupName = `agent-vm-${createHash('sha256')
+				.update(`${gateway.gatewayEpochId}\0${processEpoch}`)
+				.digest('hex')
+				.slice(0, 24)}`;
+			const successorCgroupName = `agent-vm-${createHash('sha256')
+				.update(`${gateway.gatewayEpochId}\0${successorProcessEpoch}`)
+				.digest('hex')
+				.slice(0, 24)}`;
+			const cgroupPath = path.join(cgroupRoot, cgroupName);
+			const successorCgroupPath = path.join(cgroupRoot, successorCgroupName);
+			await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+			await Promise.all(
+				[cgroupPath, successorCgroupPath].map(async (fixtureCgroupPath) => {
+					await mkdir(fixtureCgroupPath, { recursive: true, mode: 0o700 });
+					await Promise.all([
+						writeFile(path.join(fixtureCgroupPath, 'cgroup.events'), 'populated 0\n', 'utf8'),
+						writeFile(path.join(fixtureCgroupPath, 'cgroup.kill'), '', 'utf8'),
+						writeFile(path.join(fixtureCgroupPath, 'cgroup.procs'), '', 'utf8'),
+					]);
+				}),
+			);
+			await writeFile(watcherModePath, 'normal', 'utf8');
+			await writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8');
+			const helperSource = processSupervisorHelperTestInternals
+				.buildOpenClawProcessSupervisorHelperSource()
+				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
+				.replaceAll('/sys/fs/cgroup', cgroupRoot)
+				.replaceAll('/proc/mounts', mountsPath)
+				.replaceAll('/agent-vm/logs/gateway-boot-latest.log', bootLogPath)
+				.replace(
+					'mkdirSync(groupPath, { mode: 0o700 });',
+					'mkdirSync(groupPath, { mode: 0o700, recursive: true });',
+				)
+				.replace(
+					'rmdirSync(groupPath);',
+					"writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');",
+				);
+			await writeFile(
+				watcherPath,
+				`import { existsSync, readFileSync, watch, writeFileSync } from 'node:fs';
+const groupPaths = ${JSON.stringify([cgroupPath, successorCgroupPath])};
+const modePath = ${JSON.stringify(watcherModePath)};
+const cgroupWatches = groupPaths.flatMap((groupPath) => {
+  const processPath = groupPath + '/cgroup.procs';
+  const killPath = groupPath + '/cgroup.kill';
+  const eventsPath = groupPath + '/cgroup.events';
+  return [
+    watch(processPath, () => {
+      if (readFileSync(modePath, 'utf8').trim() === 'ignore-membership') return;
+      const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
+      if (Number.isInteger(pid)) writeFileSync(eventsPath, 'populated 1\\n');
+    }),
+    watch(killPath, () => {
+      if (readFileSync(modePath, 'utf8').trim() === 'ignore-kill') return;
+      if (!existsSync(killPath) || readFileSync(killPath, 'utf8').trim() !== '1') return;
+      const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
+      if (Number.isInteger(pid)) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
+      writeFileSync(eventsPath, 'populated 0\\n');
+    }),
+  ];
+});
+process.stdout.write('ready\\n');
+await new Promise((resolve) => process.once('SIGTERM', resolve));
+for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
+`,
+				'utf8',
+			);
+			const watcher = spawn(process.execPath, [watcherPath], {
+				stdio: ['ignore', 'pipe', 'pipe'],
+			});
+			try {
+				await once(watcher.stdout, 'data');
+				const invoke = async (
+					request: Record<string, unknown>,
+				): Promise<{
+					readonly outcome: {
+						readonly exitCode: number;
+						readonly stderr: string;
+						readonly stdout: string;
+					};
+					readonly receipt: unknown;
+				}> => {
+					await rm(path.join(stateDirectory, 'receipt-v1.json'), { force: true });
+					const outcome = await runNodeHelperWithStdin(helperPath, `${JSON.stringify(request)}\n`);
+					const receiptContent = await readFile(
+						path.join(stateDirectory, 'receipt-v1.json'),
+						'utf8',
+					).catch((error: unknown) => {
+						throw new Error(`Helper produced no receipt: ${JSON.stringify(outcome)}`, {
+							cause: error,
+						});
+					});
+					return {
+						outcome,
+						receipt: JSON.parse(receiptContent) as unknown,
+					};
+				};
+				const startRequest = {
+					actionId: 'action-a',
+					contractVersion: 1,
+					expectedProcessEpoch: null,
+					gateway,
+					kind: 'start',
+					selectedProcessEpoch: processEpoch,
+				};
+				const interruptedHelperSource = helperSource.replace(
+					"if (!waitForPopulation(groupPath, true)) throw new Error('cgroup-membership-unproven');",
+					"if (!waitForPopulation(groupPath, true)) throw new Error('cgroup-membership-unproven'); throw new Error('injected-after-launch-interruption');",
+				);
+				expect(interruptedHelperSource).not.toBe(helperSource);
+				await writeFile(helperPath, interruptedHelperSource, 'utf8');
+				const interruptedStart = await invoke({
+					...startRequest,
+					actionId: 'action-interrupted-start',
+				});
+				expect(interruptedStart).toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-interrupted-start',
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						reason: 'helper-failed',
+						status: 'incomplete',
+					},
+				});
+				await writeFile(helperPath, helperSource, 'utf8');
+				await expect(
+					invoke({
+						actionId: 'action-interrupted-observe',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'observe',
+					}),
+				).resolves.toMatchObject({
+					receipt: {
+						cgroup: { name: cgroupName },
+						observedProcessEpoch: processEpoch,
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-interrupted-contain',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					receipt: {
+						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				await writeFile(watcherModePath, 'ignore-membership', 'utf8');
+				const membershipFailed = await invoke({
+					...startRequest,
+					actionId: 'action-membership-failed-start',
+				});
+				expect(membershipFailed).toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-membership-failed-start',
+						cgroup: { name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						reason: 'cgroup-unavailable',
+						status: 'incomplete',
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-membership-failed-observe',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'observe',
+					}),
+				).resolves.toMatchObject({
+					receipt: {
+						cgroup: { name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-membership-failed-contain',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					receipt: {
+						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				await writeFile(watcherModePath, 'normal', 'utf8');
+				const started = await invoke(startRequest);
+				expect(started).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						actionId: 'action-a',
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				await expect(invoke(startRequest)).resolves.toEqual(started);
+				await expect(
+					invoke({
+						...startRequest,
+						actionId: 'action-interrupted-start',
+						selectedProcessEpoch: 'process-changed-after-interruption',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-interrupted-start',
+						reason: 'action-reused',
+						status: 'refused',
+					},
+				});
+				const changedActionA = await invoke({
+					...startRequest,
+					selectedProcessEpoch: 'process-changed',
+				});
+				expect(changedActionA).toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: { actionId: 'action-a', reason: 'action-reused', status: 'refused' },
+				});
+				const observed = await invoke({
+					actionId: 'action-b',
+					contractVersion: 1,
+					expectedProcessEpoch: processEpoch,
+					gateway,
+					kind: 'observe',
+				});
+				expect(observed).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: { observedProcessEpoch: processEpoch, status: 'completed' },
+				});
+				await expect(
+					invoke({ ...startRequest, selectedProcessEpoch: 'process-changed-after-b' }),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: { actionId: 'action-a', reason: 'action-reused' },
+				});
+				const unavailableContainHelperSource = helperSource.replace(
+					"if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('cgroup-kill-unavailable');",
+					"throw new Error('cgroup-kill-unavailable');",
+				);
+				expect(unavailableContainHelperSource).not.toBe(helperSource);
+				await writeFile(helperPath, unavailableContainHelperSource, 'utf8');
+				await expect(
+					invoke({
+						actionId: 'action-contain-unavailable',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-contain-unavailable',
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						reason: 'cgroup-unavailable',
+						status: 'incomplete',
+					},
+				});
+				await writeFile(helperPath, helperSource, 'utf8');
+				await writeFile(watcherModePath, 'ignore-kill', 'utf8');
+				await expect(
+					invoke({
+						actionId: 'action-contain-still-populated',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-contain-still-populated',
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						reason: 'cgroup-empty-unproven',
+						status: 'incomplete',
+					},
+				});
+				await writeFile(path.join(cgroupPath, 'cgroup.kill'), '', 'utf8');
+				await writeFile(watcherModePath, 'normal', 'utf8');
+				await writeFile(path.join(stateDirectory, 'operation.lock'), 'stale', 'utf8');
+				await expect(
+					runNodeHelperWithStdin(helperPath, `${JSON.stringify(startRequest)}\n`),
+				).resolves.toMatchObject({ exitCode: 73 });
+				await rm(path.join(stateDirectory, 'operation.lock'), { force: true });
+				await expect(
+					invoke({
+						actionId: 'action-reliability-terminate-wrong-process',
+						contractVersion: 1,
+						expectedProcessEpoch: 'process-wrong',
+						gateway,
+						kind: 'terminate-for-reliability-test',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						cgroup: { name: cgroupName, populated: true },
+						observedProcessEpoch: processEpoch,
+						reason: 'process-fence-mismatch',
+						status: 'refused',
+					},
+				});
+				const reliabilityTerminationRequest = {
+					actionId: 'action-reliability-terminate',
+					contractVersion: 1,
+					expectedProcessEpoch: processEpoch,
+					gateway,
+					kind: 'terminate-for-reliability-test',
+				};
+				const reliabilityTermination = await invoke(reliabilityTerminationRequest);
+				expect(reliabilityTermination).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				await expect(invoke(reliabilityTerminationRequest)).resolves.toEqual(
+					reliabilityTermination,
+				);
+				await expect(
+					invoke({
+						...reliabilityTerminationRequest,
+						expectedProcessEpoch: 'process-changed',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						actionId: 'action-reliability-terminate',
+						reason: 'action-reused',
+						status: 'refused',
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-observe-empty-bound-process',
+						contractVersion: 1,
+						expectedProcessEpoch: processEpoch,
+						gateway,
+						kind: 'observe',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
+				).toMatchObject({
+					cgroupName,
+					currentProcessEpoch: processEpoch,
+					status: 'exited',
+				});
+				const removeFixtureCgroupHelperSource = helperSource.replace(
+					"writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');",
+					`writeFileSync(${JSON.stringify(cgroupRemovalMarkerPath)}, groupPath); writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');`,
+				);
+				expect(removeFixtureCgroupHelperSource).not.toBe(helperSource);
+				await rm(path.join(cgroupPath, 'cgroup.kill'));
+				await writeFile(helperPath, removeFixtureCgroupHelperSource, 'utf8');
+				const contained = await invoke({
+					actionId: 'action-c',
+					contractVersion: 1,
+					expectedProcessEpoch: processEpoch,
+					gateway,
+					kind: 'contain',
+				});
+				expect(contained).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
+						observedProcessEpoch: processEpoch,
+						status: 'completed',
+					},
+				});
+				expect(await readFile(cgroupRemovalMarkerPath, 'utf8')).toBe(cgroupPath);
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
+				).toMatchObject({
+					cgroupName: null,
+					currentProcessEpoch: null,
+					status: 'contained',
+				});
+				await writeFile(helperPath, helperSource, 'utf8');
+				const successorStarted = await invoke({
+					actionId: 'action-start-successor',
+					contractVersion: 1,
+					expectedProcessEpoch: null,
+					gateway,
+					kind: 'start',
+					selectedProcessEpoch: successorProcessEpoch,
+				});
+				expect(successorStarted).toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { name: successorCgroupName, populated: true },
+						observedProcessEpoch: successorProcessEpoch,
+						status: 'completed',
+					},
+				});
+				await expect(
+					invoke({
+						actionId: 'action-reliability-terminate-successor',
+						contractVersion: 1,
+						expectedProcessEpoch: successorProcessEpoch,
+						gateway,
+						kind: 'terminate-for-reliability-test',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { emptyObserved: true, name: successorCgroupName, populated: false },
+						observedProcessEpoch: successorProcessEpoch,
+						status: 'completed',
+					},
+				});
+				await rm(successorCgroupPath, { recursive: true });
+				await writeFile(helperPath, removeFixtureCgroupHelperSource, 'utf8');
+				await expect(
+					invoke({
+						actionId: 'action-contain-already-absent',
+						contractVersion: 1,
+						expectedProcessEpoch: successorProcessEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 0 },
+					receipt: {
+						cgroup: { emptyObserved: true, name: successorCgroupName, populated: false },
+						observedProcessEpoch: successorProcessEpoch,
+						status: 'completed',
+					},
+				});
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
+				).toMatchObject({
+					cgroupName: null,
+					currentProcessEpoch: null,
+					status: 'contained',
+				});
+				const unprovenAbsentProcessEpoch = 'process-unproven-absent';
+				const unprovenAbsentCgroupName = 'agent-vm-unproven-absent';
+				const containedState = JSON.parse(
+					await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8'),
+				) as Record<string, unknown>;
+				await writeFile(
+					path.join(stateDirectory, 'state-v1.json'),
+					`${JSON.stringify({
+						...containedState,
+						cgroupName: unprovenAbsentCgroupName,
+						currentProcessEpoch: unprovenAbsentProcessEpoch,
+						status: 'running',
+					})}\n`,
+					'utf8',
+				);
+				await expect(
+					invoke({
+						actionId: 'action-contain-unproven-absent',
+						contractVersion: 1,
+						expectedProcessEpoch: unprovenAbsentProcessEpoch,
+						gateway,
+						kind: 'contain',
+					}),
+				).resolves.toMatchObject({
+					outcome: { exitCode: 2 },
+					receipt: {
+						cgroup: { name: unprovenAbsentCgroupName, populated: false },
+						observedProcessEpoch: unprovenAbsentProcessEpoch,
+						reason: 'cgroup-unavailable',
+						status: 'incomplete',
+					},
+				});
+				expect(
+					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
+				).toMatchObject({
+					cgroupName: unprovenAbsentCgroupName,
+					currentProcessEpoch: unprovenAbsentProcessEpoch,
+					status: 'running',
+				});
+				const state = JSON.parse(
+					await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8'),
+				) as { actionOrder: string[]; actions: Record<string, unknown> };
+				expect(state.actionOrder).toEqual([
+					'action-interrupted-start',
+					'action-interrupted-observe',
+					'action-interrupted-contain',
+					'action-membership-failed-start',
+					'action-membership-failed-observe',
+					'action-membership-failed-contain',
+					'action-a',
+					'action-b',
+					'action-contain-unavailable',
+					'action-contain-still-populated',
+					'action-reliability-terminate-wrong-process',
+					'action-reliability-terminate',
+					'action-observe-empty-bound-process',
+					'action-c',
+					'action-start-successor',
+					'action-reliability-terminate-successor',
+					'action-contain-already-absent',
+					'action-contain-unproven-absent',
+				]);
+				expect(Object.keys(state.actions)).toEqual(state.actionOrder);
+			} finally {
+				if (watcher.exitCode === null && watcher.signalCode === null) {
+					watcher.kill('SIGKILL');
+					await once(watcher, 'exit').catch(() => undefined);
+				}
+			}
+		}, 60_000);
 
 		it('refreshes the managed diagnostics-otel registry before observable gateway startup', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(
@@ -1096,7 +1965,6 @@ describe('openclawLifecycle', () => {
 								gondolin: {
 									enabled: true,
 									config: {
-										controllerUrl: 'http://controller.vm.host:18800',
 										zoneId: 'shravan',
 									},
 								},
@@ -1118,11 +1986,6 @@ describe('openclawLifecycle', () => {
 							source: '1password',
 							ref: 'op://vault/item/shravan-auth-profiles',
 						},
-					},
-				},
-				runtimePluginConfigs: {
-					gondolin: {
-						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 					},
 				},
 			});
@@ -1178,13 +2041,6 @@ describe('openclawLifecycle', () => {
 						gondolin: {
 							enabled: true,
 							config: {
-								controllerUrl: 'http://controller.vm.host:18800',
-								gatewayControlLinkMonitor: {
-									baseIntervalMs: 10_000,
-									enabled: true,
-									maxIntervalMs: 120_000,
-								},
-								zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 								zoneId: 'shravan',
 							},
 						},
@@ -1203,6 +2059,8 @@ describe('openclawLifecycle', () => {
 			expect(
 				(await stat(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).mode & 0o777,
 			).toBe(0o600);
+			expect(effectiveOpenClawConfigContent).not.toContain('controller.vm.host:18800');
+			expect(effectiveOpenClawConfigContent).not.toContain('"controllerUrl"');
 			await expect(
 				readFile(
 					path.join(zone.gateway.stateDir, 'agents', 'main', 'agent', 'auth-profiles.json'),
@@ -1265,7 +2123,7 @@ describe('openclawLifecycle', () => {
 			).resolves.toBe('{"profiles":["shravan-inline"]}');
 		});
 
-		it('injects MCP Portal configDir and replaces stale plugin config', async () => {
+		it('strips stale MCP Portal plugin config from the managed effective config', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-mcp-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
@@ -1286,6 +2144,12 @@ describe('openclawLifecycle', () => {
 									},
 								},
 							},
+							load: {
+								paths: [
+									'/home/openclaw/.openclaw/extensions/mcp-portal',
+									'/home/openclaw/.openclaw/extensions/acme-mcp-portal-bridge',
+								],
+							},
 						},
 					},
 					null,
@@ -1299,9 +2163,554 @@ describe('openclawLifecycle', () => {
 					stateDir: path.join(tempDirectory, 'state'),
 					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
-				mcpPortal: { configDir: configDirectory },
+				toolPortal: { configDir: configDirectory },
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			const effectiveOpenClawConfig = JSON.parse(effectiveOpenClawConfigContent) as {
+				readonly plugins?: {
+					readonly allow?: readonly string[];
+					readonly entries?: Record<string, unknown>;
+					readonly load?: { readonly paths?: readonly string[] };
+				};
+			};
+			expect(effectiveOpenClawConfig.plugins?.allow).not.toContain('mcp-portal');
+			expect(effectiveOpenClawConfig.plugins?.entries?.['mcp-portal']).toBeUndefined();
+			expect(effectiveOpenClawConfig.plugins?.load?.paths).toEqual([
+				'/home/openclaw/.openclaw/extensions/acme-mcp-portal-bridge',
+			]);
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-portal-binary');
+			expect(effectiveOpenClawConfigContent).not.toContain('binPath');
+			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
+		});
+
+		it.each([
+			{
+				config: { controllerUrl: 'http://controller.vm.host:18800' },
+				error: /Gondolin plugin config no longer accepts controllerUrl/u,
+				name: 'controllerUrl',
+			},
+			{
+				config: { zoneGitToken: 'stale-zone-git-token' },
+				error: /Gondolin plugin config no longer accepts zone git token fields/u,
+				name: 'zoneGitToken',
+			},
+			{
+				config: { zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN' },
+				error: /Gondolin plugin config no longer accepts zone git token fields/u,
+				name: 'zoneGitTokenEnv',
+			},
+			{
+				config: { controlSession: { callerContextProofKey: 'stale-proof-key' } },
+				error: /Gondolin plugin controlSession no longer accepts callerContextProofKey/u,
+				name: 'controlSession.callerContextProofKey',
+			},
+		] satisfies readonly {
+			readonly config: Record<string, unknown>;
+			readonly error: RegExp;
+			readonly name: string;
+		}[])(
+			'rejects stale Gondolin raw-control $name in managed OpenClaw config',
+			async (testCase) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-raw-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+										config: {
+											...testCase.config,
+											zoneId: 'shravan',
+										},
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					testCase.error,
+				);
+			},
+		);
+
+		it('rejects non-object authored managed Gondolin config before writing the effective config', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						plugins: {
+							allow: ['gondolin'],
+							entries: {
+								gondolin: {
+									enabled: true,
+									config: true,
+								},
+							},
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				/Gondolin plugin config must be an object when present/u,
+			);
+		});
+
+		it.each([
+			{ fieldName: 'controlSession', value: true },
+			{ fieldName: 'toolPortal', value: true },
+		] satisfies readonly {
+			readonly fieldName: 'controlSession' | 'toolPortal';
+			readonly value: boolean;
+		}[])(
+			'rejects malformed managed Gondolin $fieldName config before writing the effective config',
+			async ({ fieldName, value }) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+										config: {
+											[fieldName]: value,
+											zoneId: 'shravan',
+										},
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					`Gondolin plugin ${fieldName} must be an object when present.`,
+				);
+			},
+		);
+
+		it.each([
+			{
+				authoredConfig: {
+					toolPortal: {
+						configDir: 42,
+					},
+					zoneId: 'shravan',
+				},
+				error: /Gondolin plugin toolPortal requires string configDir/u,
+				name: 'toolPortal.configDir',
+				runtimeConfig: {
+					toolPortal: {
+						configDir: '/home/openclaw/.openclaw/config',
+					},
+				},
+			},
+			{
+				authoredConfig: {
+					controlSession: {
+						bootId: 42,
+					},
+					zoneId: 'shravan',
+				},
+				error: /Gondolin plugin controlSession requires string bootId/u,
+				name: 'controlSession.bootId',
+				runtimeConfig: {
+					controlSession: {
+						bootId: 'boot-a',
+						controllerEpoch: 'epoch-a',
+						generationId: 'generation-a',
+						peerId: 'gateway-shravan',
+						processEpoch: 'process-a',
+						verifierPublicKeyPem: 'public-key',
+					},
+				},
+			},
+		] satisfies readonly {
+			readonly authoredConfig: Record<string, unknown>;
+			readonly error: RegExp;
+			readonly name: string;
+			readonly runtimeConfig: Record<string, unknown>;
+		}[])(
+			'rejects malformed authored Gondolin $name field before runtime config can overwrite it',
+			async (testCase) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+										config: testCase.authoredConfig,
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+					runtimePluginConfigs: {
+						gondolin: testCase.runtimeConfig,
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					testCase.error,
+				);
+			},
+		);
+
+		it.each([
+			{ fieldName: 'controlSession', value: true },
+			{ fieldName: 'toolPortal', value: true },
+		] satisfies readonly {
+			readonly fieldName: 'controlSession' | 'toolPortal';
+			readonly value: boolean;
+		}[])(
+			'rejects malformed authored Gondolin $fieldName even when runtime config provides a managed object',
+			async ({ fieldName, value }) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+										config: {
+											[fieldName]: value,
+											zoneId: 'shravan',
+										},
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+					runtimePluginConfigs: {
+						gondolin: {
+							[fieldName]: { managed: true },
+						},
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					`Gondolin plugin ${fieldName} must be an object when present.`,
+				);
+			},
+		);
+
+		it.each([
+			{
+				error: /Gondolin plugin controlSession requires string controllerEpoch/u,
+				name: 'partial controlSession',
+				runtimeConfig: {
+					controlSession: {
+						bootId: 'boot-a',
+					},
+				},
+			},
+			{
+				error: /Gondolin plugin toolPortal requires string configDir/u,
+				name: 'empty toolPortal',
+				runtimeConfig: {
+					toolPortal: {},
+				},
+			},
+		] satisfies readonly InvalidFinalManagedGondolinConfigTestCase[])(
+			'rejects final managed Gondolin $name config before writing the effective config',
+			async (testCase) => {
+				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
+				createdDirectories.push(tempDirectory);
+				const configDirectory = path.join(tempDirectory, 'config');
+				await mkdir(configDirectory, { recursive: true });
+				await writeFile(
+					path.join(configDirectory, 'openclaw.json'),
+					JSON.stringify(
+						{
+							plugins: {
+								allow: ['gondolin'],
+								entries: {
+									gondolin: {
+										enabled: true,
+									},
+								},
+							},
+						},
+						null,
+						2,
+					),
+					'utf8',
+				);
+				const zone = createZone({
+					gateway: {
+						config: path.join(configDirectory, 'openclaw.json'),
+						stateDir: path.join(tempDirectory, 'state'),
+						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					},
+					runtimePluginConfigs: {
+						gondolin: testCase.runtimeConfig,
+					},
+				});
+				const secretResolver: SecretResolver = {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://vault/item/auth-profiles') {
+							return '{"profiles":["main"]}';
+						}
+						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+							return 'resolved-gateway-token';
+						}
+						throw new Error(`Unexpected ref: ${secretRef.ref}`);
+					},
+					resolveAll: async () => ({}),
+				};
+
+				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+					testCase.error,
+				);
+			},
+		);
+
+		it('rejects runtime MCP Portal plugin config for managed OpenClaw', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-mcp-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						plugins: {
+							allow: ['gondolin'],
+							entries: { gondolin: { enabled: true } },
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				toolPortal: { configDir: configDirectory },
 				runtimePluginConfigs: {
 					'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' },
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				/managed OpenClaw does not accept runtime mcp-portal plugin config/u,
+			);
+		});
+
+		it('does not serialize the gateway caller-context proof key into effective OpenClaw config', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-proof-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						plugins: {
+							allow: ['gondolin'],
+							entries: { gondolin: { enabled: true } },
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				runtimePluginConfigs: {
+					gondolin: {
+						controlSession: {
+							bootId: 'boot-a',
+							controllerEpoch: 'epoch-a',
+							generationId: 'generation-a',
+							peerId: 'gateway-shravan',
+							processEpoch: 'process-a',
+							verifierPublicKeyPem: 'public-key',
+						},
+					},
+				},
+				runtimePrivateEnvironment: {
+					[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'private-proof-key',
 				},
 			});
 			const secretResolver: SecretResolver = {
@@ -1323,18 +2732,29 @@ describe('openclawLifecycle', () => {
 				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
 				'utf8',
 			);
+			expect(effectiveOpenClawConfigContent).not.toContain('private-proof-key');
+			expect(effectiveOpenClawConfigContent).not.toContain(
+				GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+			);
 			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
 				plugins: {
 					entries: {
-						'mcp-portal': {
-							config: { configDir: '/home/openclaw/.openclaw/config' },
+						gondolin: {
+							config: {
+								controlSession: {
+									bootId: 'boot-a',
+									controllerEpoch: 'epoch-a',
+									generationId: 'generation-a',
+									peerId: 'gateway-shravan',
+									processEpoch: 'process-a',
+									verifierPublicKeyPem: 'public-key',
+								},
+								zoneId: 'shravan',
+							},
 						},
 					},
 				},
 			});
-			expect(effectiveOpenClawConfigContent).not.toContain('stale-portal-binary');
-			expect(effectiveOpenClawConfigContent).not.toContain('binPath');
-			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
 		});
 
 		it('resolves all per-agent auth profiles before writing files', async () => {

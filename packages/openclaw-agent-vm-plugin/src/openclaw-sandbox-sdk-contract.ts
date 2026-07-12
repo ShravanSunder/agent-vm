@@ -37,6 +37,7 @@ export interface SshHelpers {
 	readonly createSshSandboxSessionFromSettings: (settings: {
 		readonly command: string;
 		readonly identityData?: string;
+		readonly knownHostsData?: string;
 		readonly strictHostKeyChecking: boolean;
 		readonly target: string;
 		readonly updateHostKeys: boolean;
@@ -61,7 +62,13 @@ export interface SshHelpers {
 
 export interface OpenClawToolRegistration {
 	readonly description: string;
-	readonly execute: (toolCallId: string, params: unknown) => Promise<OpenClawToolResult>;
+	readonly execute: (
+		toolCallId: string,
+		params: unknown,
+		signal?: AbortSignal,
+		onUpdate?: (update: Record<string, unknown>) => Promise<void> | void,
+	) => Promise<OpenClawToolResult>;
+	readonly label?: string;
 	readonly name: string;
 	readonly parameters: Record<string, unknown>;
 }
@@ -77,11 +84,41 @@ export interface OpenClawToolResult {
 	readonly details?: unknown;
 }
 
+export interface OpenClawPluginToolContext {
+	readonly agentDir?: string;
+	readonly agentId?: string;
+	readonly workspaceDir?: string;
+	readonly sessionId?: string;
+	readonly sessionKey?: string;
+}
+
 export interface OpenClawToolRegistrationApi {
 	readonly registerTool?: (
-		tool: OpenClawToolRegistration,
+		tool:
+			| OpenClawToolRegistration
+			| ((context: OpenClawPluginToolContext) => readonly OpenClawToolRegistration[]),
 		options?: OpenClawToolRegistrationOptions,
 	) => void;
+}
+
+export interface OpenClawHttpRouteRegistration {
+	readonly auth: 'gateway' | 'plugin';
+	readonly handler: (
+		req: IncomingMessage,
+		res: ServerResponse,
+	) => Promise<boolean | void> | boolean | void;
+	readonly handleUpgrade?: (
+		req: IncomingMessage,
+		socket: Duplex,
+		head: Buffer,
+	) => Promise<boolean | void> | boolean | void;
+	readonly match?: 'exact' | 'prefix';
+	readonly path: string;
+	readonly replaceExisting?: boolean;
+}
+
+export interface OpenClawHttpRouteRegistrationApi {
+	readonly registerHttpRoute?: (route: OpenClawHttpRouteRegistration) => void;
 }
 
 export function assertSdkShape(value: unknown): asserts value is SshHelpers & {
@@ -116,3 +153,5 @@ export function assertSdkShape(value: unknown): asserts value is SshHelpers & {
 		}
 	}
 }
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';

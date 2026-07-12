@@ -355,6 +355,9 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 				}),
 				updatedAt,
 			};
+		case 'worker-control-runtime-observation':
+		case 'worker-control-runtime-status':
+			return { ...state, updatedAt };
 		case 'task-completed':
 			return { ...state, status: 'completed', updatedAt };
 		case 'task-failed':

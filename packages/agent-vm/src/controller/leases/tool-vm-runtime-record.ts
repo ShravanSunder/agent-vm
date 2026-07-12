@@ -1,35 +1,46 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildGatewaySessionLabel, buildToolSessionLabel } from '@agent-vm/gateway-interface';
+import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
 import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 
 import { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
+import {
+	gatewayEpochIdentitySchema,
+	type GatewayEpochIdentity,
+} from '../vm-ownership/vm-ownership-contracts.js';
 
-export const toolVmRuntimeRecordSchema = z.strictObject({
-	schemaVersion: z.literal(1),
-	recordId: z.uuid(),
-	agentId: z.string().min(1),
-	leaseId: z.string().min(1),
-	vmId: z.string().min(1),
-	qemuPid: z.number().int().positive(),
-	processIdentity: z.strictObject({
-		command: z.string().min(1),
-		lstart: z.string().min(1),
-	}),
-	configPath: z.string().min(1),
-	controllerPort: z.number().int().positive(),
-	projectNamespace: z.string().min(1),
-	zoneId: z.string().min(1),
-	gateway: z.strictObject({
+export const toolVmRuntimeRecordSchema = z
+	.strictObject({
+		schemaVersion: z.literal(2),
+		recordId: z.uuid(),
+		agentId: z.string().min(1),
+		leaseId: z.string().min(1),
+		vmId: z.string().min(1),
+		qemuPid: z.number().int().positive(),
+		processIdentity: z.strictObject({
+			command: z.string().min(1),
+			lstart: z.string().min(1),
+		}),
+		configPath: z.string().min(1),
+		controllerPort: z.number().int().positive(),
+		projectNamespace: z.string().min(1),
+		zoneId: z.string().min(1),
+		gateway: gatewayEpochIdentitySchema,
+		tcpSlot: z.number().int().nonnegative(),
 		sessionLabel: z.string().min(1),
-		vmId: z.string().min(1).optional(),
-	}),
-	tcpSlot: z.number().int().nonnegative(),
-	sessionLabel: z.string().min(1),
-	createdAt: z.iso.datetime(),
-});
+		createdAt: z.iso.datetime(),
+	})
+	.superRefine((record, context) => {
+		if (record.gateway.zoneId !== record.zoneId) {
+			context.addIssue({
+				code: 'custom',
+				message: 'Parent Gateway epoch zone must match the Tool VM runtime record zone.',
+				path: ['gateway', 'zoneId'],
+			});
+		}
+	});
 
 export type ToolVmRuntimeRecord = z.infer<typeof toolVmRuntimeRecordSchema>;
 export type ToolVmRuntimeLog = (message: string) => void;
@@ -176,10 +187,7 @@ function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
 export async function buildToolVmRuntimeRecord(options: {
 	readonly agentId: string;
 	readonly controllerPort: number;
-	readonly gateway?: {
-		readonly sessionLabel: string;
-		readonly vmId?: string;
-	};
+	readonly gatewayIdentity: GatewayEpochIdentity;
 	readonly leaseId: string;
 	readonly managedVm: ManagedVm;
 	readonly projectNamespace: string;
@@ -202,15 +210,13 @@ export async function buildToolVmRuntimeRecord(options: {
 		configPath: options.systemConfigPath,
 		controllerPort: options.controllerPort,
 		createdAt: new Date().toISOString(),
-		gateway: options.gateway ?? {
-			sessionLabel: buildGatewaySessionLabel(options.projectNamespace, options.zoneId),
-		},
+		gateway: options.gatewayIdentity,
 		leaseId: options.leaseId,
 		processIdentity,
 		projectNamespace: options.projectNamespace,
 		qemuPid,
 		recordId: options.recordId,
-		schemaVersion: 1,
+		schemaVersion: 2,
 		sessionLabel: buildToolSessionLabel(options.projectNamespace, options.zoneId, options.tcpSlot),
 		tcpSlot: options.tcpSlot,
 		vmId: options.managedVm.id,

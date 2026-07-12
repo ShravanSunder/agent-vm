@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
 import {
 	checkMissingGatewayRuntimeRecordPortPreflight,
-	cleanupOrphanedGatewayIfPresent,
+	cleanupRecordedGatewayRuntime,
 } from './gateway-recovery.js';
 import type {
 	GatewayRuntimeRecord,
@@ -22,13 +22,21 @@ function createGatewayRuntimeRecord(
 		configPath: '/deployments/shravan-claw/config/system.jsonc',
 		controllerPort: 18_800,
 		createdAt: '2026-04-13T12:34:56.000Z',
+		gateway: {
+			bootId: 'boot-a',
+			controllerEpoch: 'controller-epoch-a',
+			gatewayEpochId: 'gateway-epoch-a',
+			gatewayVmId: 'gateway-vm-123',
+			generationId: 'generation-a',
+			zoneId: 'shravan',
+		},
 		gatewayType: 'openclaw',
 		guestListenPort: 18_789,
 		ingressPort: 18_791,
 		processIdentity: matchingProcessIdentity,
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		qemuPid: 48_282,
-		schemaVersion: 1,
+		schemaVersion: 2,
 		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 		vmId: 'gateway-vm-123',
 		zoneId: 'shravan',
@@ -45,8 +53,8 @@ function loadedGatewayRuntimeRecord(record: GatewayRuntimeRecord): GatewayRuntim
 }
 
 function createGatewayRecoveryOptions(
-	overrides: Partial<Parameters<typeof cleanupOrphanedGatewayIfPresent>[0]> = {},
-): Parameters<typeof cleanupOrphanedGatewayIfPresent>[0] {
+	overrides: Partial<Parameters<typeof cleanupRecordedGatewayRuntime>[0]> = {},
+): Parameters<typeof cleanupRecordedGatewayRuntime>[0] {
 	return {
 		expectedConfigPath: '/deployments/shravan-claw/config/system.jsonc',
 		expectedControllerPort: 18_800,
@@ -61,10 +69,10 @@ async function matchingIdentityResolver(): Promise<{ command: string; lstart: st
 	return matchingProcessIdentity;
 }
 
-describe('cleanupOrphanedGatewayIfPresent', () => {
+describe('cleanupRecordedGatewayRuntime', () => {
 	it('returns no cleanup when no runtime record exists', async () => {
 		await expect(
-			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions(), {
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
 				loadGatewayRuntimeRecordResult: async () => ({
 					kind: 'missing',
 					path: '/state/shravan/gateway-runtime.json',
@@ -119,7 +127,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const killProcess = vi.fn();
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(
+			cleanupRecordedGatewayRuntime(
 				createGatewayRecoveryOptions({
 					configuredIngressPort: 18_791,
 					mode: 'in-process-recovery',
@@ -151,19 +159,16 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const logMessages: string[] = [];
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(
-				createGatewayRecoveryOptions({ mode: 'in-process-recovery' }),
-				{
-					loadGatewayRuntimeRecordResult: async () => ({
-						error: new Error('expected schemaVersion'),
-						kind: 'parse-error',
-						path: '/state/shravan/gateway-runtime.json',
-					}),
-					log: (message) => {
-						logMessages.push(message);
-					},
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'in-process-recovery' }), {
+				loadGatewayRuntimeRecordResult: async () => ({
+					error: new Error('expected schemaVersion'),
+					kind: 'parse-error',
+					path: '/state/shravan/gateway-runtime.json',
+				}),
+				log: (message) => {
+					logMessages.push(message);
 				},
-			),
+			}),
 		).resolves.toEqual({
 			cleanedUp: false,
 			cleanupWarning: expect.stringContaining('Malformed gateway runtime record'),
@@ -179,7 +184,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 
 	it('throws on malformed records during offline cleanup', async () => {
 		await expect(
-			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions({ mode: 'offline-cleanup' }), {
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'offline-cleanup' }), {
 				loadGatewayRuntimeRecordResult: async () => ({
 					error: new Error('expected schemaVersion'),
 					kind: 'parse-error',
@@ -191,7 +196,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 
 	it('refuses to clean up a runtime record from another project namespace', async () => {
 		await expect(
-			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions(), {
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
 				deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 				isProcessAlive: () => true,
 				killProcess: vi.fn(),
@@ -213,7 +218,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const killProcess = vi.fn();
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(
+			cleanupRecordedGatewayRuntime(
 				createGatewayRecoveryOptions({
 					mode: 'in-process-recovery',
 					projectNamespace: 'shravan-claw-beta-25319b68',
@@ -275,7 +280,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			const killProcess = vi.fn();
 
 			await expect(
-				cleanupOrphanedGatewayIfPresent(
+				cleanupRecordedGatewayRuntime(
 					createGatewayRecoveryOptions({ mode: 'in-process-recovery' }),
 					{
 						deleteGatewayRuntimeRecord,
@@ -303,20 +308,17 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const logMessages: string[] = [];
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(
-				createGatewayRecoveryOptions({ mode: 'in-process-recovery' }),
-				{
-					killProcess,
-					loadGatewayRuntimeRecordResult: async () =>
-						loadedGatewayRuntimeRecord(
-							createGatewayRuntimeRecord({ ingressPort: 18_891, qemuPid: 111 }),
-						),
-					log: (message) => {
-						logMessages.push(message);
-					},
-					readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 222 }),
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'in-process-recovery' }), {
+				killProcess,
+				loadGatewayRuntimeRecordResult: async () =>
+					loadedGatewayRuntimeRecord(
+						createGatewayRuntimeRecord({ ingressPort: 18_891, qemuPid: 111 }),
+					),
+				log: (message) => {
+					logMessages.push(message);
 				},
-			),
+				readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 222 }),
+			}),
 		).resolves.toEqual({
 			cleanedUp: false,
 			cleanupWarning: expect.stringContaining('held by pid 222'),
@@ -336,7 +338,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const killProcess = vi.fn();
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions({ mode: 'offline-cleanup' }), {
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'offline-cleanup' }), {
 				killProcess,
 				loadGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(
@@ -354,19 +356,16 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const record = createGatewayRuntimeRecord({ ingressPort: 18_891, qemuPid: 111 });
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(
-				createGatewayRecoveryOptions({ mode: 'in-process-recovery' }),
-				{
-					deleteGatewayRuntimeRecord,
-					isProcessAlive: () => false,
-					killProcess,
-					loadGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
-					readTcpListenPortOwner: async () => ({
-						command: 'node agent-vm controller start',
-						pid: process.pid,
-					}),
-				},
-			),
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'in-process-recovery' }), {
+				deleteGatewayRuntimeRecord,
+				isProcessAlive: () => false,
+				killProcess,
+				loadGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
+				readTcpListenPortOwner: async () => ({
+					command: 'node agent-vm controller start',
+					pid: process.pid,
+				}),
+			}),
 		).resolves.toEqual({
 			cleanedUp: true,
 			killedPid: null,
@@ -386,7 +385,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			.mockReturnValueOnce(false);
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions(), {
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
 				deleteGatewayRuntimeRecord,
 				isProcessAlive,
 				killProcess,
@@ -404,12 +403,43 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
 	});
 
+	it('kills an early persisted gateway process when ingress has not been established', async () => {
+		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
+		const killProcess = vi.fn();
+		const record = createGatewayRuntimeRecord({ ingressPort: undefined, qemuPid: 111 });
+		const isProcessAlive = vi
+			.fn()
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(false);
+		const readTcpListenPortOwner = vi.fn();
+
+		await expect(
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
+				deleteGatewayRuntimeRecord,
+				isProcessAlive,
+				killProcess,
+				loadGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
+				readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+				readProcessIdentity: async () => record.processIdentity,
+				readTcpListenPortOwner,
+				sleep: async () => {},
+			}),
+		).resolves.toEqual({
+			cleanedUp: true,
+			killedPid: 111,
+		});
+		expect(readTcpListenPortOwner).not.toHaveBeenCalled();
+		expect(killProcess).toHaveBeenCalledWith(111, 'SIGTERM');
+		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
+	});
+
 	it('refuses to delete a port-free gateway record when the recorded pid was reused', async () => {
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
 		const killProcess = vi.fn();
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions(), {
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
 				deleteGatewayRuntimeRecord,
 				isProcessAlive: () => true,
 				killProcess,
@@ -428,7 +458,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
 	});
 
-	it('kills an owned orphaned qemu process, deletes the runtime record, and reports cleanup', async () => {
+	it('terminates an owned recorded qemu process, deletes the runtime record, and reports cleanup', async () => {
 		const logMessages: string[] = [];
 		const readProcessCommand = vi.fn(async () => 'qemu-system-aarch64 -nodefaults');
 		const isProcessAlive = vi
@@ -440,7 +470,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions(), {
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
 				deleteGatewayRuntimeRecord,
 				isProcessAlive,
 				killProcess,
@@ -466,7 +496,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
 		expect(logMessages).toEqual([
 			"Found persisted gateway runtime for zone 'shravan' (pid 48282, vm gateway-vm-123).",
-			"Removed stale gateway runtime record for zone 'shravan' after terminating orphaned gateway pid 48282.",
+			"Removed stale gateway runtime record for zone 'shravan' after terminating recorded gateway pid 48282.",
 		]);
 	});
 
@@ -474,15 +504,12 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const killProcess = vi.fn();
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(
-				createGatewayRecoveryOptions({ mode: 'in-process-recovery' }),
-				{
-					killProcess,
-					loadGatewayRuntimeRecordResult: async () =>
-						loadedGatewayRuntimeRecord(createGatewayRuntimeRecord({ qemuPid: 111 })),
-					readTcpListenPortOwner: async () => ({ command: '/usr/bin/python3', pid: 111 }),
-				},
-			),
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'in-process-recovery' }), {
+				killProcess,
+				loadGatewayRuntimeRecordResult: async () =>
+					loadedGatewayRuntimeRecord(createGatewayRuntimeRecord({ qemuPid: 111 })),
+				readTcpListenPortOwner: async () => ({ command: '/usr/bin/python3', pid: 111 }),
+			}),
 		).resolves.toEqual({
 			cleanedUp: false,
 			cleanupWarning: expect.stringContaining('not a managed VM process'),
@@ -501,7 +528,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		const killProcess = vi.fn();
 
 		await expect(
-			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions(), {
+			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
 				deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 				isProcessAlive: () => true,
 				killProcess,

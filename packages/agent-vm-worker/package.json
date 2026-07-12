@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-vm-worker",
-	"version": "0.0.108",
+	"version": "0.0.114",
 	"description": "Worker process that runs inside a sandboxed VM, plans, edits, validates, and reviews coding tasks.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -41,18 +41,23 @@
 		"start": "node ./dist/main.js"
 	},
 	"dependencies": {
+		"@agent-vm/control-protocol-contracts": "workspace:*",
 		"@agent-vm/gateway-interface": "workspace:*",
+		"@agent-vm/worker-control-contracts": "workspace:*",
 		"@hono/node-server": "^2.0.2",
 		"@hono/zod-validator": "^0.8.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
-		"@openai/codex-sdk": "^0.130.0",
+		"@openai/codex-sdk": "^0.142.5",
 		"cmd-ts": "^0.15.0",
+		"engine.io": "6.6.9",
 		"execa": "^9.6.1",
 		"hono": "^4.12.18",
 		"jsonc-parser": "^3.3.1",
+		"socket.io": "4.8.1",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
+		"socket.io-client": "4.8.1",
 		"vitest": "^4.1.5"
 	}
 }

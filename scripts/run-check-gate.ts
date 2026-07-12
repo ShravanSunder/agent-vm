@@ -4,9 +4,15 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export type CheckGateCommandId =
+	| 'build'
+	| 'lint'
 	| 'package-versions'
+	| 'portal-architecture'
+	| 'portal-exports'
 	| 'zod-version'
 	| 'test-taxonomy'
+	| 'vm-ownership-boundaries'
+	| 'reliability-fault-boundaries'
 	| 'format'
 	| 'type-aware-lint'
 	| 'typecheck';
@@ -60,6 +66,17 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 		{
 			commands: [
 				{
+					args: ['run', 'build'],
+					command: 'pnpm',
+					id: 'build',
+					label: 'workspace build',
+				},
+			],
+			name: 'build artifacts',
+		},
+		{
+			commands: [
+				{
 					args: ['run', 'check:package-versions'],
 					command: 'pnpm',
 					id: 'package-versions',
@@ -76,6 +93,36 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					command: 'pnpm',
 					id: 'test-taxonomy',
 					label: 'test taxonomy audit',
+				},
+				{
+					args: ['run', 'test:portal-architecture'],
+					command: 'pnpm',
+					id: 'portal-architecture',
+					label: 'portal architecture audit',
+				},
+				{
+					args: ['run', 'test:portal-exports'],
+					command: 'pnpm',
+					id: 'portal-exports',
+					label: 'portal package export audit',
+				},
+				{
+					args: ['run', 'test:vm-ownership-boundaries'],
+					command: 'pnpm',
+					id: 'vm-ownership-boundaries',
+					label: 'VM ownership boundary audit',
+				},
+				{
+					args: ['run', 'test:reliability-fault-boundaries'],
+					command: 'pnpm',
+					id: 'reliability-fault-boundaries',
+					label: 'reliability fault boundary audit',
+				},
+				{
+					args: ['run', 'lint'],
+					command: 'pnpm',
+					id: 'lint',
+					label: 'lint',
 				},
 				{
 					args: ['run', 'fmt:check'],

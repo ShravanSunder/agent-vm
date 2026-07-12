@@ -9,16 +9,22 @@ export {
 	gatewayVmAllowedHosts,
 	targetsAudience,
 	vmAudienceValues,
+	workerVmAllowedHosts,
 } from './audience.js';
 export {
 	createWebSocketUpgradeRequestGuard,
 	websocketUpgradesForAudience,
 } from './websocket-upgrade-policy.js';
 export {
+	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+	GATEWAY_CONTROL_PRIVATE_ENVIRONMENT_NAMES,
+} from './gateway-control-private-environment.js';
+export {
 	agentVmHealthEventKinds,
 	agentVmHealthResultKinds,
 	deriveZoneHealthSnapshot,
-	gatewayControlLinkHealthPins,
+	gatewayControlSessionHealthOperations,
 	gatewayRecoveryHealthReasons,
 	healthEventBucketKey,
 	isAgentVmHealthEvent,
@@ -26,19 +32,25 @@ export {
 	zoneHealthStateKinds,
 } from './health/agent-vm-health.js';
 export {
+	normalizeGitHubRepoForSshReadAllowlist,
+	normalizeGitHubReposForSshReadAllowlist,
+	normalizeGitRepoForSshReadAllowlist,
+	normalizeGitReposForSshReadAllowlist,
+	type NormalizedGitSshReadAllowlist,
+	type NormalizedGitSshReadAllowlistEntry,
+} from './git-read-allowlist.js';
+export {
 	controllerRequestPolicies,
 	ControllerRequestPolicyTransportError,
 	drainControllerResponseBody,
 	externalControllerRoutes,
-	fetchControllerWithPolicy,
-	gatewayInternalControllerRequestOperations,
 	genericControllerRequestEventOperations,
-	workerInternalControllerRequestOperations,
 } from './health/controller-request-policy.js';
 export { composeNodeOptions, FORCE_IPV4_EGRESS_NODE_OPTIONS } from './force-ipv4-egress.js';
 export type { EgressHostConfig, RuntimeVmAudience, VmAudience } from './audience.js';
 export type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 export type { GatewayType } from './gateway-runtime-contract.js';
+export type { GatewayControlPrivateEnvironmentName } from './gateway-control-private-environment.js';
 export type {
 	AgentVmHealthEvent,
 	AgentVmHealthEventBase,
@@ -47,6 +59,7 @@ export type {
 	AgentChannelProviderHealthDetails,
 	AgentChannelProviderHealthKind,
 	DeriveZoneHealthSnapshotOptions,
+	GatewayControlSessionHealthOperation,
 	GatewayRecoveryEventAction,
 	GatewayRecoveryHealthReason,
 	GatewayRecoveryTimeoutErrorCode,
@@ -62,10 +75,7 @@ export type {
 	ControllerRequestPolicyTransportErrorCode,
 	ControllerRequestPolicyOperation,
 	ExternalControllerRoute,
-	FetchControllerWithPolicyOptions,
-	GatewayInternalControllerRequestOperation,
 	GenericControllerRequestEventOperation,
-	WorkerInternalControllerRequestOperation,
 } from './health/controller-request-policy.js';
 export type {
 	BuildGatewayVmSpecOptions,
@@ -91,6 +101,7 @@ export {
 	createToolVmActiveUseHandle,
 	createToolVmActiveUseId,
 	isToolVmActiveUseId,
+	normalizeToolVmActiveUseCorrelation,
 } from './tool-vm-active-use.js';
 export {
 	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
@@ -100,7 +111,11 @@ export {
 	translateRuntimePath,
 } from './runtime-paths/runtime-path-mapping.js';
 export { createToolVmLeaseId, isToolVmLeaseId, parseToolVmLeaseId } from './tool-vm-lease-id.js';
-export { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
+export {
+	defaultToolVmLeaseAuthorityTombstoneTtlMs,
+	isToolVmLeasePeek,
+	isToolVmSshLease,
+} from './tool-vm-lease.js';
 export {
 	isVmCapabilityLease,
 	isVmSshEndpoint,

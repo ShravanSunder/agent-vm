@@ -14,23 +14,7 @@ function createControllerClientStub(overrides?: {
 		enableZoneSsh: overrides?.enableZoneSsh ?? (async () => ({})),
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
-		peekLease: async () => ({
-			agentId: 'main',
-			createdAt: 1,
-			idleTtlMs: 6_000_000,
-			lastUsedAt: 1,
-			leaseId: 'lease-123',
-			profileId: 'standard',
-			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-			tcpSlot: 0,
-			transport: 'ssh-sandbox' as const,
-			workdir: '/workspace',
-
-			zoneId: 'shravan',
-		}),
-		listLeases: async () => [],
 		refreshZoneCredentials: async () => ({}),
-		releaseLease: async () => {},
 		stopController: async () => ({}),
 		upgradeZone: async () => ({}),
 	};

@@ -3,8 +3,59 @@ import { Readable } from 'node:stream';
 import type {
 	ManagedExecProcess,
 	ManagedExecResult,
+	ManagedVm,
 	ManagedVmFs,
+	SshServerHostKey,
 } from '@agent-vm/gondolin-adapter';
+
+import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
+
+export const TEST_SSH_SERVER_HOST_KEY = {
+	algorithm: 'ssh-ed25519',
+	publicKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+} satisfies SshServerHostKey;
+
+export interface CapturedManagedVmTermination {
+	terminate(): Promise<void>;
+}
+
+export async function captureManagedVmTermination(
+	managedVm: ManagedVm,
+): Promise<CapturedManagedVmTermination> {
+	const hostPid = managedVm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Managed VM '${managedVm.id}' has no live runner to capture.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(
+			`Managed VM '${managedVm.id}' pid ${String(hostPid)} disappeared before identity capture.`,
+		);
+	}
+	return {
+		async terminate(): Promise<void> {
+			await terminateLiveManagedVm({
+				contextLabel: `test VM '${managedVm.id}'`,
+				dependencies: {
+					isProcessAlive,
+					killProcess,
+					readProcessCommand,
+					readProcessIdentity,
+					sleep,
+				},
+				target: { hostPid, processIdentity, vmId: managedVm.id },
+				vm: managedVm,
+			});
+		},
+	};
+}
 
 export interface ManagedExecProcessStubOptions {
 	readonly beforeResolve?: () => void;

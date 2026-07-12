@@ -243,12 +243,38 @@ describe('upstream MCP client runtime', () => {
 				namespace: 'linear',
 				phase: 'list_tools',
 				timeoutMs: 5,
-				transport: { kind: 'streamable-http', url: 'https://mcp.example.test' },
+				transport: { kind: 'streamable-http', url: 'https://mcp.example.test/' },
 			},
 		});
 		await expect(
 			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
 		).rejects.not.toThrow(/secret-token-value/u);
+	});
+
+	it('uses 12 seconds as the default namespace discovery timeout', async () => {
+		const failingClient: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => {
+				throw new Error('list failed');
+			}),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => failingClient,
+			createTransport: vi.fn(() => ({})),
+			servers: [createServer()],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toMatchObject({
+			details: {
+				namespace: 'linear',
+				phase: 'list_tools',
+				timeoutMs: 12_000,
+			},
+		});
 	});
 
 	it('wraps stdio connect failures with command and arg count diagnostics', async () => {

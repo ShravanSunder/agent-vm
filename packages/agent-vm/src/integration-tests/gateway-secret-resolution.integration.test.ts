@@ -9,9 +9,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { createSecretResolverFromSystemConfig } from '../controller/controller-runtime-support.js';
+import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
@@ -30,16 +32,20 @@ function createFakeManagedVmInstance(): FakeManagedVmInstance {
 	return {
 		close: async () => {},
 		exec: () => createManagedExecProcessStub(),
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
+			close: async () => {},
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh fake',
 			host: '127.0.0.1',
+			identityFile: '/tmp/fake-key',
 			port: 2222,
 			privateKeyPath: '/tmp/fake-key',
 			user: 'root',
 		}),
 		fs: createManagedVmFsStub(),
-		id: 'gateway-secret-resolution-smoke-instance',
+		getHostPid: () => 12_345,
+		id: 'gateway-secret-resolution-smoke-vm',
 		server: {
 			controller: {
 				child: {
@@ -48,6 +54,7 @@ function createFakeManagedVmInstance(): FakeManagedVmInstance {
 			},
 		},
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
@@ -56,10 +63,13 @@ function createFakeManagedVm(): ManagedVm {
 	return {
 		id: 'gateway-secret-resolution-smoke-vm',
 		close: async () => {},
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
+			close: async () => {},
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh fake',
 			host: '127.0.0.1',
+			identityFile: '/tmp/fake-key',
 			port: 2222,
 			privateKeyPath: '/tmp/fake-key',
 			user: 'root',
@@ -69,6 +79,25 @@ function createFakeManagedVm(): ManagedVm {
 		getHostPid: () => 12_345,
 		getVmInstance: () => fakeVmInstance,
 		setIngressRoutes: () => {},
+		start: async () => {},
+	};
+}
+
+function createExactVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: 'worker-secret-smoke',
+		controllerEpoch: 'controller-secret-smoke',
+		gatewayEpochId: 'gateway-secret-smoke',
+		generationId: 'generation-secret-smoke',
+		zoneId: 'secret-smoke',
+	};
+	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
+	return {
+		attachGatewayVm: () => gatewayIdentity,
+		containPendingCreate: async () => {},
+		destroyLive: async (destroyVm) => await destroyVm(),
+		gatewayIdentity,
+		gatewaySeed,
 	};
 }
 
@@ -204,6 +233,8 @@ describe('smoke: gateway startup secret resolution', () => {
 		try {
 			await startGatewayZone(
 				{
+					createVmOwnership: async () =>
+						createExactVmOwnershipStub('gateway-secret-resolution-smoke-vm'),
 					secretResolver,
 					systemConfig,
 					zoneId: 'secret-smoke',
@@ -213,10 +244,6 @@ describe('smoke: gateway startup secret resolution', () => {
 						built: false,
 						fingerprint: 'gateway-secret-resolution-smoke',
 						imagePath: path.join(tempRoot, 'image'),
-					}),
-					cleanupOrphanedGatewayIfPresent: async () => ({
-						cleanedUp: false,
-						killedPid: null,
 					}),
 					createManagedVm: async () => createFakeManagedVm(),
 					loadBuildConfig: async () =>

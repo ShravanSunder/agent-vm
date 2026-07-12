@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-	classifyToolVmLeaseCloseOutcome,
 	classifyToolVmLeaseReleaseRequest,
 	classifyToolVmLeaseRenewal,
 	isToolVmLeaseExpired,
@@ -83,17 +82,5 @@ describe('Tool VM lease lifecycle classification', () => {
 				lastUsedAt: 2_000,
 			}),
 		).toEqual({ kind: 'skip-recently-used' });
-	});
-
-	it('classifies close success as safe TCP release and record deletion', () => {
-		expect(classifyToolVmLeaseCloseOutcome({ closeSucceeded: true })).toEqual({
-			kind: 'release-tcp-and-delete-record',
-		});
-	});
-
-	it('classifies close failure as TCP quarantine and runtime-record preservation', () => {
-		expect(classifyToolVmLeaseCloseOutcome({ closeSucceeded: false })).toEqual({
-			kind: 'quarantine-tcp-and-preserve-record',
-		});
 	});
 });

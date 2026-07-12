@@ -1,8 +1,14 @@
+import type { ControlEnvelope } from '@agent-vm/control-protocol-contracts';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { buildSafeGitEnvironment } from './controller-tool-support.js';
 import { createGitPullDefaultTool } from './git-pull-default-tool.js';
 import { createGitPushTool } from './git-push-tool.js';
+import {
+	WorkerControlRpcCommandError,
+	createWorkerControlControllerToolsClient,
+	type WorkerControlControllerToolsClient,
+} from './worker-control-rpc-client.js';
 
 const { execaMock } = vi.hoisted(() => ({ execaMock: vi.fn() }));
 
@@ -16,6 +22,84 @@ const repos = [
 		workPath: '/work/repos/widgets',
 	},
 ];
+
+function createMockWorkerControlClient(
+	options: {
+		readonly gitPullDefault?: WorkerControlControllerToolsClient['gitPullDefault'];
+		readonly gitPush?: WorkerControlControllerToolsClient['gitPush'];
+	} = {},
+): WorkerControlControllerToolsClient {
+	return {
+		gitPullDefault:
+			options.gitPullDefault ??
+			vi.fn(async () => ({
+				kind: 'advanced' as const,
+				success: true as const,
+				message: 'Default branch refreshed.',
+				defaultBranch: 'main',
+				repoUrl: 'https://github.com/acme/widgets.git',
+				remoteDefaultHead: 'remote-main-sha',
+				localDefaultHead: 'local-main-sha',
+				fetchedCommits: [],
+				commitsSinceForkPoint: [],
+				divergence: { aheadOfDefault: 0, behindDefault: 0, forkPoint: 'fork-sha' },
+			})),
+		gitPush:
+			options.gitPush ??
+			vi.fn(async () => ({
+				results: [
+					{ branch: 'agent/task-1', repoUrl: 'https://github.com/acme/widgets.git', success: true },
+				],
+			})),
+	};
+}
+
+function pullDefaultSuccessResult(): Awaited<
+	ReturnType<WorkerControlControllerToolsClient['gitPullDefault']>
+> {
+	return {
+		kind: 'advanced',
+		success: true,
+		message: 'Default branch refreshed.',
+		defaultBranch: 'main',
+		repoUrl: 'https://github.com/acme/widgets.git',
+		remoteDefaultHead: 'remote-main-sha',
+		localDefaultHead: 'local-main-sha',
+		fetchedCommits: [],
+		commitsSinceForkPoint: [],
+		divergence: { aheadOfDefault: 0, behindDefault: 0, forkPoint: 'fork-sha' },
+	};
+}
+
+function createWorkerControlToolsServiceMock(
+	onEnvelope: (envelope: ControlEnvelope) => void,
+): Parameters<typeof createWorkerControlControllerToolsClient>[0] {
+	let nextPeerSequence = 6;
+	return {
+		emitApplicationMessage: async (envelope: ControlEnvelope): Promise<unknown> => {
+			onEnvelope(envelope);
+			return {
+				kind: 'command_result',
+				operation: envelope.operation,
+				payload: {
+					gitPush: { results: [] },
+					responseToMessageId: envelope.messageId,
+					result: 'ok',
+				},
+			};
+		},
+		getAcceptedSession: async () => ({
+			bootId: 'worker-boot-unit',
+			connectionId: 'worker-connection-unit',
+			controllerEpoch: 'controller-epoch-unit',
+			generationId: 'worker-generation-unit',
+			peerId: 'worker-peer-unit',
+			sessionId: '0f8602ba-903d-4f21-982d-6b80ea631470',
+			zoneId: 'worker-zone-unit',
+		}),
+		nextPeerSequence: () => nextPeerSequence++,
+	};
+}
 
 describe('controller tools', () => {
 	afterEach(() => {
@@ -42,21 +126,43 @@ describe('controller tools', () => {
 		});
 	});
 
-	test('git-push posts current branch to controller', async () => {
-		execaMock.mockResolvedValue({ stdout: 'agent/task-1', stderr: '', exitCode: 0 });
-		const fetchMock = vi.fn(
-			async () =>
-				new Response(JSON.stringify({ results: [{ branch: 'agent/task-1', success: true }] }), {
-					status: 200,
-				}),
+	test('worker control controller-tools client uses the session peer sequence allocator', async () => {
+		const emittedEnvelopes: ControlEnvelope[] = [];
+		const client = createWorkerControlControllerToolsClient(
+			createWorkerControlToolsServiceMock((envelope) => emittedEnvelopes.push(envelope)),
 		);
-		vi.stubGlobal('fetch', fetchMock);
+
+		await client.gitPush({
+			branchName: 'agent/task-1',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			taskId: 'task-1',
+		});
+		await client.gitPush({
+			branchName: 'agent/task-2',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			taskId: 'task-2',
+		});
+
+		expect(emittedEnvelopes.map((envelope) => envelope.sequence)).toEqual([6, 7]);
+	});
+
+	test('git-push emits current branch over worker control RPC', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			if (args[0] === 'branch') return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			if (args[0] === 'rev-parse') return { stdout: 'local-agent-sha', stderr: '', exitCode: 0 };
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const gitPush = vi.fn(async () => ({
+			results: [
+				{ branch: 'agent/task-1', repoUrl: 'https://github.com/acme/widgets.git', success: true },
+			],
+		}));
+		const workerControlClient = createMockWorkerControlClient({ gitPush });
 
 		const tool = createGitPushTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		const result = await tool.execute({});
@@ -64,18 +170,18 @@ describe('controller tools', () => {
 		expect(result).toEqual({
 			type: 'push',
 			success: true,
-			artifact: { results: [{ branch: 'agent/task-1', success: true }] },
+			artifact: {
+				results: [
+					{ branch: 'agent/task-1', repoUrl: 'https://github.com/acme/widgets.git', success: true },
+				],
+			},
 		});
-		expect(fetchMock).toHaveBeenCalledWith(
-			'http://controller/zones/zone-1/tasks/task-1/push-branches',
-			expect.objectContaining({
-				body: JSON.stringify({
-					branches: [
-						{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' },
-					],
-				}),
-			}),
-		);
+		expect(gitPush).toHaveBeenCalledWith({
+			branchName: 'agent/task-1',
+			expectedHead: 'local-agent-sha',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			taskId: 'task-1',
+		});
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
 			['branch', '--show-current'],
@@ -90,33 +196,36 @@ describe('controller tools', () => {
 		);
 	});
 
-	test('git-push reports controller HTTP errors as tool failures', async () => {
-		execaMock.mockResolvedValue({ stdout: 'agent/task-1', stderr: '', exitCode: 0 });
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response('auth failed', { status: 500 })),
-		);
+	test('git-push reports worker control errors as tool failures', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			if (args[0] === 'branch') return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			if (args[0] === 'rev-parse') return { stdout: 'local-agent-sha', stderr: '', exitCode: 0 };
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const workerControlClient = createMockWorkerControlClient({
+			gitPush: vi.fn(async () => {
+				throw new WorkerControlRpcCommandError('auth failed', false);
+			}),
+		});
 		const tool = createGitPushTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({})).resolves.toEqual({
 			type: 'push',
 			success: false,
-			artifact: 'Controller request failed with HTTP 500: auth failed',
+			artifact: 'auth failed',
 		});
 	});
 
 	test('git-push refuses default branch', async () => {
 		execaMock.mockResolvedValue({ stdout: 'main', stderr: '', exitCode: 0 });
 		const tool = createGitPushTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient: createMockWorkerControlClient(),
 		});
 
 		await expect(tool.execute({})).resolves.toMatchObject({
@@ -133,10 +242,9 @@ describe('controller tools', () => {
 			exitCode: 128,
 		});
 		const tool = createGitPushTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient: createMockWorkerControlClient(),
 		});
 
 		await expect(tool.execute({})).resolves.toEqual({
@@ -147,6 +255,35 @@ describe('controller tools', () => {
 		});
 	});
 
+	test('git-push reports git HEAD read failures before worker control RPC', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			if (args[0] === 'branch') return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			if (args[0] === 'rev-parse') {
+				return { stdout: '', stderr: 'fatal: ambiguous argument HEAD', exitCode: 128 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const gitPush = vi.fn(async () => ({
+			results: [
+				{ branch: 'agent/task-1', repoUrl: 'https://github.com/acme/widgets.git', success: true },
+			],
+		}));
+		const workerControlClient = createMockWorkerControlClient({ gitPush });
+		const tool = createGitPushTool({
+			taskId: 'task-1',
+			repos,
+			workerControlClient,
+		});
+
+		await expect(tool.execute({})).resolves.toEqual({
+			type: 'push',
+			success: false,
+			artifact:
+				'Unable to read current git HEAD: git rev-parse HEAD failed\nfatal: ambiguous argument HEAD',
+		});
+		expect(gitPush).not.toHaveBeenCalled();
+	});
+
 	test('git-pull-default posts selected repo to controller', async () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			if (args[0] === 'branch') return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
@@ -154,37 +291,36 @@ describe('controller tools', () => {
 			if (args[0] === 'status') return { stdout: '', stderr: '', exitCode: 0 };
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
-		const fetchMock = vi.fn(
-			async () =>
-				new Response(
-					JSON.stringify({
-						kind: 'advanced',
-						success: true,
-						message:
-							"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' was already up to date with origin/agent/task-1.",
-						defaultBranch: 'main',
-						currentBranchSync: {
-							status: 'up-to-date',
-							branch: 'agent/task-1',
-							upstreamTrackingRef: 'origin/agent/task-1',
-							localHead: 'local-agent-sha',
-							remoteHead: 'local-agent-sha',
-						},
-					}),
-					{
-						status: 200,
-					},
-				),
-		);
-		vi.stubGlobal('fetch', fetchMock);
+		const gitPullDefault = vi.fn(async () => ({
+			kind: 'advanced' as const,
+			success: true as const,
+			message:
+				"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' was already up to date with origin/agent/task-1.",
+			defaultBranch: 'main',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			remoteDefaultHead: 'remote-main-sha',
+			localDefaultHead: 'local-main-sha',
+			fetchedCommits: [],
+			commitsSinceForkPoint: [],
+			divergence: { aheadOfDefault: 0, behindDefault: 0, forkPoint: 'fork-sha' },
+			currentBranchSync: {
+				status: 'up-to-date' as const,
+				branch: 'agent/task-1',
+				upstreamTrackingRef: 'origin/agent/task-1',
+				localHead: 'local-agent-sha',
+				remoteHead: 'local-agent-sha',
+			},
+		}));
+		const workerControlClient = createMockWorkerControlClient({
+			gitPullDefault,
+		});
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
-		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
+		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toMatchObject({
 			type: 'pull-default',
 			success: true,
 			artifact: {
@@ -206,17 +342,13 @@ describe('controller tools', () => {
 				},
 			},
 		});
-		expect(fetchMock).toHaveBeenCalledWith(
-			'http://controller/zones/zone-1/tasks/task-1/pull-default',
-			expect.objectContaining({
-				body: JSON.stringify({
-					repoUrl: 'https://github.com/acme/widgets.git',
-					currentBranch: 'agent/task-1',
-					currentHead: 'local-agent-sha',
-					worktreeDirty: false,
-				}),
-			}),
-		);
+		expect(gitPullDefault).toHaveBeenCalledWith({
+			repoUrl: 'https://github.com/acme/widgets.git',
+			currentBranch: 'agent/task-1',
+			currentHead: 'local-agent-sha',
+			taskId: 'task-1',
+			worktreeDirty: false,
+		});
 	});
 
 	test('git-pull-default reports branch command termination before controller request', async () => {
@@ -224,13 +356,12 @@ describe('controller tools', () => {
 			if (args[0] === 'branch') return { stdout: '', stderr: 'killed', exitCode: undefined };
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
-		const fetchMock = vi.fn();
-		vi.stubGlobal('fetch', fetchMock);
+		const gitPullDefault = vi.fn(async () => pullDefaultSuccessResult());
+		const workerControlClient = createMockWorkerControlClient({ gitPullDefault });
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
@@ -239,7 +370,7 @@ describe('controller tools', () => {
 			artifact:
 				'Unable to read current git branch: git branch --show-current terminated without an exit code\nkilled',
 		});
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(gitPullDefault).not.toHaveBeenCalled();
 	});
 
 	test('git-pull-default resets the worktree after a controller fast-forward', async () => {
@@ -250,34 +381,32 @@ describe('controller tools', () => {
 			if (args[0] === 'reset') return { stdout: '', stderr: '', exitCode: 0 };
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(
-				async () =>
-					new Response(
-						JSON.stringify({
-							kind: 'advanced',
-							success: true,
-							message:
-								"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' fast-forwarded from local-agent-sha to remote-agent-sha; the worker reset the worktree to materialize the new HEAD.",
-							defaultBranch: 'main',
-							currentBranchSync: {
-								status: 'fast-forwarded',
-								branch: 'agent/task-1',
-								upstreamTrackingRef: 'origin/agent/task-1',
-								localHead: 'local-agent-sha',
-								remoteHead: 'remote-agent-sha',
-							},
-						}),
-						{ status: 200 },
-					),
-			),
-		);
+		const workerControlClient = createMockWorkerControlClient({
+			gitPullDefault: vi.fn(async () => ({
+				kind: 'advanced' as const,
+				success: true as const,
+				message:
+					"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' fast-forwarded from local-agent-sha to remote-agent-sha; the worker reset the worktree to materialize the new HEAD.",
+				defaultBranch: 'main',
+				repoUrl: 'https://github.com/acme/widgets.git',
+				remoteDefaultHead: 'remote-main-sha',
+				localDefaultHead: 'local-main-sha',
+				fetchedCommits: [],
+				commitsSinceForkPoint: [],
+				divergence: { aheadOfDefault: 0, behindDefault: 0, forkPoint: 'fork-sha' },
+				currentBranchSync: {
+					status: 'fast-forwarded' as const,
+					branch: 'agent/task-1',
+					upstreamTrackingRef: 'origin/agent/task-1',
+					localHead: 'local-agent-sha',
+					remoteHead: 'remote-agent-sha',
+				},
+			})),
+		});
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toMatchObject({
@@ -306,36 +435,34 @@ describe('controller tools', () => {
 			if (args[0] === 'reset') return { stdout: '', stderr: '', exitCode: 0 };
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(
-				async () =>
-					new Response(
-						JSON.stringify({
-							kind: 'advanced',
-							success: true,
-							message:
-								"Default branch 'main' is now at remote-main-sha. Current branch 'main' is the default branch; it fast-forwarded from local-main-sha to remote-main-sha, and the worker reset the worktree to materialize the new HEAD.",
-							defaultBranch: 'main',
-							currentBranchSync: {
-								status: 'default-branch',
-								branch: 'main',
-								upstreamTrackingRef: 'origin/main',
-								localHead: 'local-main-sha',
-								remoteHead: 'remote-main-sha',
-								reason:
-									"Current branch 'main' is the default branch and was fast-forwarded from local-main-sha to remote-main-sha.",
-							},
-						}),
-						{ status: 200 },
-					),
-			),
-		);
+		const workerControlClient = createMockWorkerControlClient({
+			gitPullDefault: vi.fn(async () => ({
+				kind: 'advanced' as const,
+				success: true as const,
+				message:
+					"Default branch 'main' is now at remote-main-sha. Current branch 'main' is the default branch; it fast-forwarded from local-main-sha to remote-main-sha, and the worker reset the worktree to materialize the new HEAD.",
+				defaultBranch: 'main',
+				repoUrl: 'https://github.com/acme/widgets.git',
+				remoteDefaultHead: 'remote-main-sha',
+				localDefaultHead: 'local-main-sha',
+				fetchedCommits: [],
+				commitsSinceForkPoint: [],
+				divergence: { aheadOfDefault: 0, behindDefault: 0, forkPoint: 'fork-sha' },
+				currentBranchSync: {
+					status: 'default-branch' as const,
+					branch: 'main',
+					upstreamTrackingRef: 'origin/main',
+					localHead: 'local-main-sha',
+					remoteHead: 'remote-main-sha',
+					reason:
+						"Current branch 'main' is the default branch and was fast-forwarded from local-main-sha to remote-main-sha.",
+				},
+			})),
+		});
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toMatchObject({
@@ -357,13 +484,12 @@ describe('controller tools', () => {
 			}
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
-		const fetchMock = vi.fn();
-		vi.stubGlobal('fetch', fetchMock);
+		const gitPullDefault = vi.fn(async () => pullDefaultSuccessResult());
+		const workerControlClient = createMockWorkerControlClient({ gitPullDefault });
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
@@ -372,7 +498,7 @@ describe('controller tools', () => {
 			artifact:
 				'Unable to read current git HEAD: git rev-parse HEAD terminated without an exit code\nkilled',
 		});
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(gitPullDefault).not.toHaveBeenCalled();
 	});
 
 	test('git-pull-default reports status command termination before controller request', async () => {
@@ -382,13 +508,12 @@ describe('controller tools', () => {
 			if (args[0] === 'status') return { stdout: '', stderr: 'killed', exitCode: undefined };
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
-		const fetchMock = vi.fn();
-		vi.stubGlobal('fetch', fetchMock);
+		const gitPullDefault = vi.fn(async () => pullDefaultSuccessResult());
+		const workerControlClient = createMockWorkerControlClient({ gitPullDefault });
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
@@ -397,7 +522,7 @@ describe('controller tools', () => {
 			artifact:
 				'Unable to read worktree status: git status --porcelain terminated without an exit code\nkilled',
 		});
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(gitPullDefault).not.toHaveBeenCalled();
 	});
 
 	test('git-pull-default reports reset termination after controller fast-forward', async () => {
@@ -408,33 +533,32 @@ describe('controller tools', () => {
 			if (args[0] === 'reset') return { stdout: '', stderr: 'killed', exitCode: undefined };
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(
-				async () =>
-					new Response(
-						JSON.stringify({
-							kind: 'advanced',
-							success: true,
-							message:
-								"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' fast-forwarded from local-agent-sha to remote-agent-sha; the worker reset the worktree to materialize the new HEAD.",
-							currentBranchSync: {
-								status: 'fast-forwarded',
-								branch: 'agent/task-1',
-								upstreamTrackingRef: 'origin/agent/task-1',
-								localHead: 'local-agent-sha',
-								remoteHead: 'remote-agent-sha',
-							},
-						}),
-						{ status: 200 },
-					),
-			),
-		);
+		const workerControlClient = createMockWorkerControlClient({
+			gitPullDefault: vi.fn(async () => ({
+				kind: 'advanced' as const,
+				success: true as const,
+				message:
+					"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' fast-forwarded from local-agent-sha to remote-agent-sha; the worker reset the worktree to materialize the new HEAD.",
+				defaultBranch: 'main',
+				repoUrl: 'https://github.com/acme/widgets.git',
+				remoteDefaultHead: 'remote-main-sha',
+				localDefaultHead: 'local-main-sha',
+				fetchedCommits: [],
+				commitsSinceForkPoint: [],
+				divergence: { aheadOfDefault: 0, behindDefault: 0, forkPoint: 'fork-sha' },
+				currentBranchSync: {
+					status: 'fast-forwarded' as const,
+					branch: 'agent/task-1',
+					upstreamTrackingRef: 'origin/agent/task-1',
+					localHead: 'local-agent-sha',
+					remoteHead: 'remote-agent-sha',
+				},
+			})),
+		});
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
@@ -452,26 +576,19 @@ describe('controller tools', () => {
 			if (args[0] === 'status') return { stdout: '', stderr: '', exitCode: 0 };
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(
-				async () =>
-					new Response(
-						JSON.stringify({
-							kind: 'failed',
-							success: false,
-							message: 'Fetch failed without leaking tokens.',
-							error: 'Fetch failed without leaking tokens.',
-						}),
-						{ status: 200 },
-					),
-			),
-		);
+		const workerControlClient = createMockWorkerControlClient({
+			gitPullDefault: vi.fn(async () => ({
+				kind: 'failed' as const,
+				success: false as const,
+				repoUrl: 'https://github.com/acme/widgets.git',
+				message: 'Fetch failed without leaking tokens.',
+				error: 'Fetch failed without leaking tokens.',
+			})),
+		});
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
@@ -481,62 +598,58 @@ describe('controller tools', () => {
 		});
 	});
 
-	test('git-pull-default reports controller HTTP errors as tool failures', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response('repo not registered', { status: 400 })),
-		);
+	test('git-pull-default reports worker control command errors as tool failures', async () => {
+		const workerControlClient = createMockWorkerControlClient({
+			gitPullDefault: vi.fn(async () => {
+				throw new WorkerControlRpcCommandError('repo not registered', false);
+			}),
+		});
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
 			type: 'pull-default',
 			success: false,
-			artifact: 'Controller request failed with HTTP 400: repo not registered',
+			artifact: 'repo not registered',
 		});
 	});
 
-	test('git-pull-default reports controller transport errors as transport failures', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => {
+	test('git-pull-default reports worker control transport errors as transport failures', async () => {
+		const workerControlClient = createMockWorkerControlClient({
+			gitPullDefault: vi.fn(async () => {
 				throw new Error('controller offline');
 			}),
-		);
+		});
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
 			type: 'pull-default',
 			success: false,
-			artifact: 'Controller request failed before HTTP response: controller offline',
+			artifact: 'Worker control git_pull_default failed: controller offline',
 		});
 	});
 
-	test('git-pull-default reports malformed controller JSON separately', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response('not-json', { status: 200 })),
-		);
+	test('git-pull-default reports malformed worker control result separately', async () => {
+		const workerControlClient = createMockWorkerControlClient({
+			gitPullDefault: vi.fn(async () => ({ nope: true }) as never),
+		});
 		const tool = createGitPullDefaultTool({
-			controllerBaseUrl: 'http://controller',
-			zoneId: 'zone-1',
 			taskId: 'task-1',
 			repos,
+			workerControlClient,
 		});
 
 		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
 			type: 'pull-default',
 			success: false,
-			artifact: expect.stringContaining('Controller response parse failed:'),
+			artifact: 'Controller returned an unexpected pull-default response.',
 		});
 	});
 });

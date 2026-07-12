@@ -14,7 +14,8 @@ RUN apt-get update && \
       openssh-server \
       ca-certificates \
       git \
-      curl && \
+      curl \
+      e2fsprogs && \
     rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates && \
     npm install -g pnpm@10.33.0 && \

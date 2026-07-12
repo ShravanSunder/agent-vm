@@ -226,11 +226,12 @@ describe('portal core event stream', () => {
 
 		expect(result.auditEvents).toEqual([
 			expect.objectContaining({
-				causeMessage: 'Authentication failed',
+				causeMessage: 'Upstream MCP provider failed.',
 				hint: expect.stringContaining('verify URL'),
 				kind: 'upstream_mcp_failed',
 				namespace: 'tavily',
 				phase: 'connect',
+				transport: { kind: 'streamable-http' },
 			}),
 		]);
 		await core.close();
@@ -332,11 +333,11 @@ describe('portal core event stream', () => {
 				{
 					error: {
 						code: 'upstream_call_failed',
-						message: 'linear: call_tool explode failed: 502 Bad Gateway',
+						message: 'linear: call_tool explode failed',
 						namespace: 'linear',
 						toolName: 'explode',
 						upstream: {
-							causeMessage: '502 Bad Gateway',
+							causeMessage: 'Upstream MCP provider failed.',
 							hint: expect.stringContaining('provider accepted discovery'),
 							kind: 'upstream_mcp_failed',
 							namespace: 'linear',
@@ -344,7 +345,6 @@ describe('portal core event stream', () => {
 							toolName: 'explode',
 							transport: {
 								kind: 'streamable-http',
-								url: 'https://linear.example.test/mcp',
 							},
 						},
 					},

@@ -83,6 +83,102 @@ describe('server', () => {
 		expect(body.executor).toBeDefined();
 	});
 
+	it('GET /__agent-vm/worker-ready returns a private control credential when configured', async () => {
+		const issueCredentialForReadyHeaders = vi.fn((_headers: Headers) => ({
+			audience: 'worker_control' as const,
+			bootId: 'worker-boot-a',
+			controllerEpoch: 'controller-epoch-a',
+			credentialId: 'credential-a',
+			expiresAtMs: 2_000,
+			generationId: 'worker-generation-a',
+			issuedAtMs: 1_000,
+			nonce: 'nonce-nonce-nonce-nonce',
+			peerId: 'worker-zone-a',
+			protocolVersion: 1 as const,
+			zoneId: 'zone-a',
+		}));
+		const app = createApp(
+			createDeps({
+				workerControlService: {
+					issueCredentialForReadyHeaders,
+				},
+			}),
+		);
+
+		const response = await app.request('/__agent-vm/worker-ready', {
+			headers: { 'x-agent-vm-control-ready-request-id': 'request-a' },
+		});
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(issueCredentialForReadyHeaders).toHaveBeenCalledOnce();
+		expect(
+			issueCredentialForReadyHeaders.mock.calls[0]?.[0].get('x-agent-vm-control-ready-request-id'),
+		).toBe('request-a');
+		const body = genericJsonResponseSchema.parse(await response.json());
+		expect(body.audience).toBe('worker_control');
+		expect(body.credentialId).toBe('credential-a');
+	});
+
+	it('GET /__agent-vm/worker-ready returns 401 when ready proof is unauthorized', async () => {
+		const app = createApp(
+			createDeps({
+				workerControlService: {
+					issueCredentialForReadyHeaders: () => {
+						throw new Error('worker control ready request is unauthorized');
+					},
+				},
+			}),
+		);
+
+		const response = await app.request('/__agent-vm/worker-ready');
+
+		expect(response.status).toBe(401);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		const body = genericJsonResponseSchema.parse(await response.json());
+		expect(body.error).toBe('worker-control-unauthorized');
+	});
+
+	it('GET /__agent-vm/worker-ready rejects any query string before issuing credentials', async () => {
+		const issueCredentialForReadyHeaders = vi.fn();
+		const app = createApp(
+			createDeps({
+				workerControlService: {
+					issueCredentialForReadyHeaders,
+				},
+			}),
+		);
+
+		const response = await app.request(
+			'/__agent-vm/worker-ready?x-agent-vm-control-signature=leak',
+			{
+				headers: { 'x-agent-vm-control-ready-request-id': 'request-a' },
+			},
+		);
+
+		expect(response.status).toBe(401);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(issueCredentialForReadyHeaders).not.toHaveBeenCalled();
+		const body = genericJsonResponseSchema.parse(await response.json());
+		expect(body.error).toBe('worker-control-unauthorized');
+
+		const neutralResponse = await app.request('/__agent-vm/worker-ready?debug=signature-leak', {
+			headers: { 'x-agent-vm-control-ready-request-id': 'request-a' },
+		});
+
+		expect(neutralResponse.status).toBe(401);
+		expect(issueCredentialForReadyHeaders).not.toHaveBeenCalled();
+	});
+
+	it('GET /__agent-vm/worker-ready fails closed when worker control is not configured', async () => {
+		const app = createApp(createDeps());
+		const response = await app.request('/__agent-vm/worker-ready');
+
+		expect(response.status).toBe(503);
+		const body = genericJsonResponseSchema.parse(await response.json());
+		expect(body.error).toBe('worker-control-unavailable');
+	});
+
 	it('POST /tasks creates a task and returns 201', async () => {
 		const app = createApp(createDeps());
 		const response = await app.request('/tasks', {

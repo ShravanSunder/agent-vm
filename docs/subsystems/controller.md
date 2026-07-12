@@ -15,42 +15,51 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
 ```
   startControllerRuntime(options, dependencies)
     |
-    |-- 1. Resolve secrets
+    |-- 1. Acquire the deployment ownership lock
+    |      Holds runtimeDir/vm-ownership/controller-ownership.lock
+    |      for the controller's complete lifetime
+    |
+    |-- 2. Resolve secrets
     |      createSecretResolver(systemConfig, createOpCliSecretResolver)
     |      Resolves 1Password service account token from configured source
     |      Builds composite resolver (1password | environment dispatch)
     |
-    |-- 2. Create TCP pool
+    |-- 3. Create TCP pool
     |      createTcpPool({ basePort, size })
     |      Fixed array of port slots for tool VM SSH forwarding
     |
-    |-- 3. Create zone runtime registry
+    |-- 4. Reconcile recorded VM cleanup evidence
+    |      Validate schema-v2 deployment, Gateway-parent, VM, pid, and process identity
+    |      Destroy recorded old Tool VM children before their Gateway
+    |      Refuse malformed/mismatched/unproven evidence; adopt nothing
+    |
+    |-- 5. Create zone runtime registry
     |      Builds one runtime per selected zone
     |      OpenClaw and Worker zones dispatch by gateway type
     |
-    |-- 4. Create lease manager
+    |-- 6. Create lease manager
     |      createLeaseManager({ tcpPool, createManagedVm, now })
     |      Wires VM creation and TCP slot bookkeeping into the lease lifecycle
     |
-    |-- 5. Start idle reaper
+    |-- 7. Start idle reaper
     |      createIdleReaper({ ttlForLease })
     |      TTL comes from the single leaseIdleTtl policy
     |      Attached to a 60-second interval timer
     |      Runs one immediate reap pass before accepting requests
     |
-    |-- 6. Start selected gateway zones
+    |-- 8. Start selected gateway zones
     |      startGatewayZone({ secretResolver, systemConfig, zoneId })
-    |      Full orchestration: orphan cleanup, image build, VM boot, health check
+    |      Image build, Gateway epoch admission, VM boot, runtime record, health check
     |
-    |-- 7. Wire operations + task runner
+    |-- 9. Wire operations + task runner
     |      OpenClaw zones: zone runtime operations + stopController
     |      Worker zones:   worker task runtime + push/pull/close + stopController
     |
-    |-- 8. Build Hono app
+    |-- 10. Build Hono app
     |      createControllerService({ leaseManager, operations, workerTaskRunner })
     |      Mounts lease routes, zone operation routes, /health
     |
-    |-- 9. Bind HTTP server
+    |-- 11. Bind HTTP server
     |      startControllerHttpServer({ app, port: config.host.controllerPort })
     |
     v
@@ -66,15 +75,23 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |-- 1. Mark runtime stopping
     |-- 2. Clear reaper interval timer
     |-- 3. Stop the gateway-service health monitor and await an in-flight tick
-    |-- 4. Release all leases (sequential to avoid TCP slot races)
-    |-- 5. Stop gateway zone: vm.close() + delete runtime record
-    |-- 6. Close HTTP server
-    |-- If any lease release failed, throw after server close
+    |-- 4. Seal each Gateway epoch and stop admitting Tool VM children
+    |-- 5. Exact-destroy Tool VM children, then exact-destroy their Gateway
+    |-- 6. Close HTTP server and flush controller evidence
+    |-- 7. Release the deployment ownership lock last
+    |-- If any disposition is incomplete, preserve owner-unsafe evidence and fail
 ```
 
 The `stopController` operation (exposed via `POST /stop-controller`) follows the same sequence but triggers the HTTP server close on a 100ms delay so the response can flush before the socket drops.
 
-Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first refuses to run while the configured controller health endpoint is reachable. When the controller is responding but cannot stop the gateway, operators can pass `--force`. Cleanup reads the selected config, loads the zone's `gateway-runtime.json`, validates `projectNamespace`, `zoneId`, `sessionLabel`, and the recorded PID command, then terminates only that recorded gateway VM process. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
+Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first acquires the same deployment-wide ownership lock held for the controller's full lifetime, then refuses to run while the configured controller health endpoint is reachable. `--force` skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence validation. The lock is mutual exclusion, not destruction evidence.
+
+Cleanup reads schema-v2 Tool records from `<stateDir>/tool-leases/<recordId>.json` before the zone's `<stateDir>/gateway-runtime.json`. Each record must match the canonical config path, controller port, project namespace, zone, session label, full Gateway parent identity, VM id, pid, and process command/start identity as applicable. Cleanup revalidates the live process and endpoint before signaling, deletes records only after the recorded process and relevant endpoint are absent, and never adopts an old VM. Old, malformed, mismatched, or otherwise unproven evidence fails closed and remains for operator diagnosis. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
+
+Gateway subtree destruction runs at most four child dispositions concurrently.
+When the bounded subtree attempt aborts or any exact child disposition remains
+unproven, queued children do not start, the Gateway is not closed, and a
+successor Gateway is refused until recorded cleanup evidence is resolved.
 
 ---
 
@@ -87,17 +104,7 @@ All routes are served by Hono on the configured `host.controllerPort` (default 1
 | Method | Path | Description | Response |
 |--------|------|-------------|----------|
 | `GET` | `/health` | Liveness probe | `{ ok, port }` |
-| `POST` | `/zones/:zoneId/health-events` | Record one zone-scoped health event from a gateway VM or controller observer | `{ ok: true }` |
 | `GET` | `/zones/:zoneId/health-snapshot` | Read the current in-memory zone health snapshot | Discriminated snapshot body |
-| `POST` | `/lease` | Create a tool VM lease | Lease with SSH access details |
-| `GET` | `/lease/:leaseId` | Read a lease without extending its idle timer | Lease with SSH identity PEM |
-| `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | Lease summary without SSH identity PEM |
-| `POST` | `/lease/:leaseId/renew` | Renew an idle cached lease | Lease with SSH identity PEM |
-| `POST` | `/lease/:leaseId/uses` | Start an in-flight Tool VM use with a UUIDv7 use id | `{ useId, expiresAt, heartbeatAfterMs }` |
-| `POST` | `/lease/:leaseId/uses/:useId/heartbeat` | Heartbeat an in-flight Tool VM use | `{ expiresAt, heartbeatAfterMs }` |
-| `DELETE` | `/lease/:leaseId/uses/:useId` | End an in-flight Tool VM use | 204 No Content |
-| `GET` | `/leases` | List all active leases | Array of lease summaries |
-| `DELETE` | `/lease/:leaseId` | Release a lease, destroy its VM | 204 No Content |
 
 ### Zone Operation Routes (controller-zone-operation-routes.ts)
 
@@ -117,8 +124,6 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
-| `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push task branches from the host | Worker |
-| `POST` | `/zones/:zoneId/tasks/:taskId/pull-default` | Refresh a repo's default branch from the host | Worker |
 | `POST` | `/stop-controller` | Graceful shutdown | Both |
 
 Request bodies are validated with Zod schemas (`controller-request-schemas.ts`). Invalid payloads return 400 with structured `error` and `issues` fields.
@@ -145,9 +150,11 @@ context.
 Health snapshots and the bounded event history are in-memory controller state
 for fast live reads. Accepted health and recovery events are also appended to
 `<runtimeDir>/controller-health/events.jsonl` as diagnostic evidence. That
-durable JSONL log is not backup state and is not authority for ownership or
-recovery decisions; runtime records plus current process/port checks remain the
-authority.
+durable JSONL log is not backup state and is not authority for ownership,
+destruction, adoption, or slot reuse. The controller owns lifecycle decisions;
+schema-v2 runtime records plus revalidated process and endpoint identity are
+durable cleanup evidence after a crash. Telemetry cannot substitute for that
+evidence.
 
 Operators can read the same zone-scoped health evidence through the CLI:
 `agent-vm controller health --config <system-config> --zone <zone>` runs the
@@ -162,16 +169,14 @@ agent-vm controller
   |-- probes gateway-service through the zone runtime health check
   |     -> gateway-service-health
   |
-gateway VM / gateway plugin
-  |-- calls GET /health over controller.vm.host:18800
-  |     -> gateway-control-link
-  |-- may POST /zones/:zoneId/health-events when it has a stable source
+controller -> gateway VM private ingress
+  |-- Socket.IO control session
+  |     -> gateway-control-session
+  |-- gateway_control_rpc health_event
   |     -> agent-channel-provider-health
-  |
-lease routes
-  |-- POST /lease/:leaseId/renew
+  |-- gateway_control_rpc lease_renew
   |     -> lease-renew
-  |-- POST /lease/:leaseId/uses/:useId/heartbeat
+  |-- gateway_control_rpc lease_use_heartbeat
   |     -> lease-heartbeat
   |
 Tool VM SSH guard
@@ -179,36 +184,41 @@ Tool VM SSH guard
         -> tool-vm-ssh
   |
 automatic gateway VM restart
-  |-- repeated gateway-service or gateway-control-link failures
+  |-- repeated gateway-service or control-session failures
         -> gateway-recovery
 ```
 
-`lease-heartbeat` is the user-facing name for
-`POST /lease/:leaseId/uses/:useId/heartbeat`. It keeps an in-flight Tool VM use
-alive and touches the lease when successful. `lease-renew` keeps an idle cached
-lease alive before reuse. Both can extend lease state, but they diagnose
-different paths: heartbeat means "an active operation still exists"; renew
-means "a cached lease can be reused."
+`lease-heartbeat` is the user-facing name for the active-use heartbeat sent over
+`gateway_control_rpc`. It keeps an in-flight Tool VM use alive and touches the
+lease when successful. `lease-renew` keeps an idle cached lease alive before
+reuse. Both can extend lease state, but they diagnose different paths:
+heartbeat means "an active operation still exists"; renew means "a cached lease
+can be reused."
 
 Bounded controller communication is operation-specific, not globally
 aggressive. Health probes use short timeouts and no retry. Git push/pull and
 lease-create operations use longer timeouts because normal work can legitimately
 take longer. Unsafe mutations are not retried without an idempotency proof.
 
-For OpenClaw zones, the controller can automatically recover a gateway when the
-host-side gateway-service probe, the in-VM gateway-control-link observation, or
-a generic channel-provider health event fails repeatedly. The default running
-gateway trigger is 10 consecutive degraded gateway-service/control-link
-observations, a 61 minute per-zone cooldown, and a 10 minute recovery deadline.
+For OpenClaw zones, the controller can automatically recover from repeated
+host-side gateway-service, control-session, or policy-enabled generic
+channel-provider degradation. Dead control while Gateway service remains live
+first requests bounded same-Gateway OpenClaw process recovery, replacing the
+process and disposable control session while preserving the Gateway VM and
+healthy Tool VMs. Gateway VM restart is outward escalation after process
+recovery is exhausted or Gateway service/lifecycle evidence requires
+replacement. The default Gateway-recovery budget has a 61 minute per-zone
+cooldown and a 10 minute recovery deadline.
 Generic channel-provider health has its own policy: `unhealthy-recoverable`
 degrades readiness/status by default and feeds recovery only when
 `restartGatewayOnRecoverable` is explicitly enabled, `transitioning` is observed
 until its timeout, and `unhealthy-unrecoverable` is surfaced without restart by
 default.
 
-Recovery action selection comes from the internal gateway lifecycle state. A
-running or degraded gateway is restarted. A stopped or cold-start-eligible failed
-gateway is cold-started after current ownership checks prove the old runtime
+Gateway recovery action selection comes from the internal Gateway lifecycle
+state after the same-Gateway process-recovery boundary has escalated. A running
+or degraded Gateway is restarted. A stopped or cold-start-eligible failed
+Gateway is cold-started after current ownership checks prove the old runtime
 record and ingress port are safe. An owner-unsafe or ambiguous failed runtime
 requires operator action. Failed or timed-out recovery attempts are recorded as
 failed `gateway-recovery` events and do not freeze the monitor loop. After 3
@@ -233,20 +243,23 @@ the zone runtime.
 
 `startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in the [gateway zone orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
 
-- **Step 1 (orphan cleanup)** runs `gateway-recovery.ts`: loads a persisted `GatewayRuntimeRecord` from `stateDir`, checks PID liveness via `kill(pid, 0)`, verifies the command matches `/qemu-system|krun/`, then sends SIGTERM (2s grace) and SIGKILL (2s grace). Non-managed PIDs cause a hard error. Record deletion failures produce a warning but do not block startup.
-- **Step 15 (runtime record write)** persists pid, vmId, and zoneId so orphan cleanup works on next startup if the controller crashes.
-- The controller holds the returned `{ vm, ingress, processSpec }` for the lifetime of the zone and uses `vm.close()` + runtime record deletion during shutdown.
+- Before a fresh OpenClaw tree is published, controller recovery adopts nothing: it validates v2 Tool and Gateway records, destroys verified old Tool runners before their Gateway parent, and refuses a successor when identity or endpoint absence is unproven.
+- Gateway startup allocates an epoch seed before stock VM construction, attaches the returned VM id, starts the VM, captures pid/process identity, and persists `<stateDir>/gateway-runtime.json` before publishing the runtime. The ingress port is added when available.
+- The controller holds the returned live VM handle for the zone lifetime. Normal teardown fences admission, destroys Tool children, terminates the exact recorded Gateway process, observes runner absence, calls stock `VM.close()`, verifies endpoint absence, and only then deletes the runtime record.
+- Gateway-to-Tool command and file bytes stay on direct SSH. Socket.IO carries bounded control; health events and telemetry are not lifecycle authority.
 
 ---
 
 ## Lease Manager
 
-The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM leases. It is the bridge between the HTTP API and the Gondolin VM layer.
+The lease manager (`lease-manager.ts`) creates, tracks, and releases Tool VM
+leases. In managed gateway mode it is driven by gateway-control RPC handlers,
+not by VM-facing public HTTP lease routes.
 
 ### Lease Lifecycle
 
 ```
-  POST /lease { zoneId, agentId, sessionKey, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
+  gateway_control_rpc lease_create { callerContextId, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
     |
     v
   resolveLeaseWorkMountDir()
@@ -268,39 +281,54 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |-- 4. selectToolVmProfileForAgent()
     |       |-- zone.agentToolVmProfiles[agentId]
     |       |-- otherwise zone.defaultToolVmProfile
-    |-- 5. createManagedVm(...)        Boot a tool VM with the slot's port
-    |-- 5. vm.enableSsh({ port })      Start SSH listener, get access details
-    |-- 6. Build Lease record          id = UUIDv7
-    |-- 7. Store in leases Map with effectiveIdleTtlMs
+    |-- 5. Begin provisional Tool membership under the exact Gateway epoch
+    |-- 6. createManagedVm(...)        Construct an unstarted stock Gondolin VM
+    |-- 7. Attach vm.id, vm.start(), capture pid + process-start identity
+    |-- 8. Persist <stateDir>/tool-leases/<recordId>.json (schema v2)
+    |-- 9. vm.enableSsh({ port })      Start SSH listener, validate exact server identity
+    |-- 10. Commit membership + lease  Publish current lease only after durable evidence
     |
-    |   On failure at step 2-3:
-    |     vm.close() (if created) then tcpPool.release(slot)
+    |   On failure:
+    |     exact-terminate a recorded runner; otherwise close only an unstarted/absent runner
+    |     preserve evidence and quarantine the slot when identity/absence is unproven
     |
     v
-  DELETE /lease/:leaseId
+  gateway_control_rpc lease_release
     |
     v
   releaseLease()
     |-- 1. Reject when active uses exist unless force=true
-    |-- 2. vm.close()                  Destroy the tool VM
-    |-- 3. leases.delete(leaseId)      Remove from tracking map
-    |-- 4. tcpPool.release(slot)       Return slot to pool
+    |-- 2. Close SSH and terminate the exact recorded process
+    |-- 3. Observe Gondolin runner + Tool SSH endpoint absent; stock VM.close()
+    |-- 4. Delete runtime record and mark membership destroyed
+    |-- 5. tcpPool.release(slot)       Return slot only after absence proof
 ```
 
 Each lease holds: `id`, `zoneId`, `agentId`, `profileId`, `agentWorkspaceDir`,
 `hostWorkMountDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
-identity file, user), `createdAt`, `lastUsedAt`, and `effectiveIdleTtlMs`. The
+client identity file, user, exact Ed25519 server identity), `createdAt`,
+`lastUsedAt`, and `effectiveIdleTtlMs`. The
 lease manager does not clean work mount files on release; OpenClaw-selected
 lease work mounts are owned by the caller that supplied `workMountDir`.
 
-`GET /lease/:leaseId` and `GET /lease/:leaseId/peek` are read-only. Lease-level
-idle renewal is `POST /lease/:leaseId/renew`. In-flight work uses
-`POST /lease/:leaseId/uses`, periodic use heartbeats, and
-`DELETE /lease/:leaseId/uses/:useId`; those active uses prevent idle reaping
-while the command or file-bridge operation is still running. Use ids are
-caller-issued UUIDv7 values so retries can be idempotent without another
-round-trip. Ended uses leave short tombstones so a duplicate start after a
-completed use is rejected instead of resurrecting old work.
+Operator-visible lease counts are exposed through controller status and health
+snapshot diagnostics. Managed gateway leases are otherwise created, renewed,
+and released through the gateway control session. In-flight work uses active-use
+start, heartbeat, and end messages; those active uses prevent idle reaping while
+the command or file-bridge operation is still running. Use ids are caller-issued
+UUIDv7 values so retries can be idempotent without another round-trip. Ended
+uses leave short tombstones so a duplicate
+start after a completed use is rejected instead of resurrecting old work.
+
+Stale cached handles do not reacquire by calling normal `lease_create`.
+`gateway_control_rpc lease_reacquire` is the controller-owned replacement path:
+the plugin supplies stale evidence for the old lease id, and the controller
+checks bounded old-lease authority plus the current caller context before
+returning a replacement lease. Missing or mismatched authority returns a typed
+denial such as `lease_authority_absent`, `caller_context_absent`,
+`caller_context_session_mismatch`, or `ownership_denied`. The old lease id is
+kept only as correlation evidence for the tombstone window. It must not be used
+for later active-use, heartbeat, SSH, file, exec, or finalize work.
 
 `workMountDir` is a gateway VM path, not a host path and not a `system.json`
 field. It must name a concrete child path below `/zone` or
@@ -311,9 +339,12 @@ For the canonical name/location/storage vocabulary, see
 [Lease Path Vocabulary](../architecture/storage-model.md#lease-path-vocabulary).
 
 For OpenClaw leases, the route resolves `profileId` from the request `agentId`
-and the zone's Tool VM policy. `agentToolVmProfiles[agentId]` wins when
-present; otherwise the lease uses `defaultToolVmProfile`. This lets one zone
-serve multiple agents with different disposable Tool VM images.
+and the zone's Tool VM policy. During the Socket.IO control-plane hard cutover,
+managed OpenClaw zones may declare multiple trusted agents. The active policy is
+`agentToolVmProfiles[agentId]` when present, otherwise the zone fallback
+`defaultToolVmProfile`. Caller context must still be controller-vetted before a
+Tool VM lease is issued: undeclared agents, mismatched session keys, and
+cross-agent workspace/work-mount provenance fail closed.
 
 ### TCP Pool
 
@@ -411,7 +442,7 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |   30-minute timeout (configurable via timeoutMs)
     |
     |== TEARDOWN (always runs in finally block) ===============
-    |   1. vm.close()
+    |   1. Stop the prepared Worker runtime through controller-managed exact VM termination
     |   2. Stop selected repo resource Compose providers
     |   3. Check gitdirs for dirty/unpushed work
     |   4. Push, export recovery artifact, or discard before cleanup

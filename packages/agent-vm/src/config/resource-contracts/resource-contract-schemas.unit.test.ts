@@ -211,6 +211,12 @@ describe('resource contract schemas', () => {
 			baseBranch: 'main',
 		});
 		expect(() =>
+			repoTargetSchema.parse({
+				repoUrl: 'https://github.com/example/app.git',
+				protectedBranches: ['release'],
+			}),
+		).toThrow(/Unrecognized key/u);
+		expect(() =>
 			workerTaskRequestSchema.parse({
 				prompt: 'wire repos',
 				repos: Array.from({ length: 21 }, (_, index) => ({

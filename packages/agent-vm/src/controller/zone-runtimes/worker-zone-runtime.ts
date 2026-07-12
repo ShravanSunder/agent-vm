@@ -3,9 +3,14 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerDestroy as runControllerDestroyDefault } from '../../operations/destroy-zone.js';
+import { containsManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveTaskRegistry, ActiveWorkerTask } from '../active-task-registry.js';
 import { pullDefaultForTask, type PullDefaultRequest } from '../git-pull-default-operations.js';
-import { pushBranchesForTask, type PushBranchRequest } from '../git-push-operations.js';
+import {
+	pushBranchesForTask,
+	type PushBranchRequest,
+	type PushBranchResult,
+} from '../git-push-operations.js';
 import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
@@ -49,6 +54,7 @@ export interface CreateWorkerZoneRuntimeOptions {
 		| 'tryReserve'
 	>;
 	readonly controllerGithubToken: string | null;
+	readonly controllerEpoch: string;
 	readonly callerUrl?: string;
 	readonly executeWorkerTask?: (
 		prepared: PreparedWorkerTask,
@@ -119,6 +125,110 @@ export function createWorkerZoneRuntime(
 ): WorkerZoneRuntime {
 	const readTaskState = createTaskStateReader({ systemConfig: options.systemConfig }).read;
 
+	async function pullDefaultForActiveTask(
+		taskId: string,
+		input: PullDefaultRequest,
+	): Promise<Awaited<ReturnType<typeof pullDefaultForTask>>> {
+		const activeTask = options.activeTaskRegistry.get(options.zone.id, taskId);
+		if (!activeTask) {
+			throw new ControllerZoneTaskNotFoundError(options.zone.id, taskId);
+		}
+		if (!options.controllerGithubToken) {
+			throw new ControllerZoneConfigurationError(
+				options.zone.id,
+				'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
+			);
+		}
+		return await pullDefaultForTask({
+			activeTask,
+			...(input.currentBranch !== undefined ? { currentBranch: input.currentBranch } : {}),
+			...(input.currentHead !== undefined ? { currentHead: input.currentHead } : {}),
+			githubToken: options.controllerGithubToken,
+			recordEvent: async (event) => {
+				await recordActiveTaskEvent({
+					event,
+					eventLogPath: activeTask.eventLogPath,
+				});
+			},
+			repoUrl: input.repoUrl,
+			...(input.worktreeDirty !== undefined ? { worktreeDirty: input.worktreeDirty } : {}),
+		});
+	}
+
+	async function pushBranchesForActiveTask(
+		taskId: string,
+		input: { readonly branches: readonly PushBranchRequest[] },
+	): Promise<{ readonly results: readonly PushBranchResult[] }> {
+		const activeTask = options.activeTaskRegistry.get(options.zone.id, taskId);
+		if (!activeTask) {
+			throw new ControllerZoneTaskNotFoundError(options.zone.id, taskId);
+		}
+		if (!options.controllerGithubToken) {
+			throw new ControllerZoneConfigurationError(
+				options.zone.id,
+				'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
+			);
+		}
+		return await pushBranchesForTask({
+			activeTask,
+			branches: input.branches,
+			githubToken: options.controllerGithubToken,
+			recordEvent: async (event) => {
+				await recordActiveTaskEvent({
+					event,
+					eventLogPath: activeTask.eventLogPath,
+				});
+			},
+		});
+	}
+
+	async function closeActiveWorkerTasksForZone(zoneId: string): Promise<void> {
+		const activeTasks = options.activeTaskRegistry.listForZone(zoneId);
+		const occupiedTaskCount = options.activeTaskRegistry.countOccupiedForZone(zoneId);
+		if (occupiedTaskCount > activeTasks.length) {
+			const message = `Zone '${zoneId}' has ${String(occupiedTaskCount - activeTasks.length)} worker task reservation(s) still preparing and cannot be destroyed safely yet.`;
+			writeWorkerZoneRuntimeLog(`destroy refused: ${message}`);
+			throw new ControllerZoneTaskNotReadyError(zoneId, null, message);
+		}
+		const preparingTask = activeTasks.find((activeTask) => !activeTask.workerIngress);
+		if (preparingTask) {
+			const message = `Task '${preparingTask.taskId}' in zone '${zoneId}' is still preparing and cannot be destroyed safely yet.`;
+			writeWorkerZoneRuntimeLog(`destroy refused: ${message}`);
+			throw new ControllerZoneTaskNotReadyError(zoneId, preparingTask.taskId, message);
+		}
+		const closeResults = await Promise.allSettled(
+			activeTasks.map(async (activeTask) => await closeActiveWorkerTask(activeTask)),
+		);
+		const closeFailures = closeResults.flatMap((result, index) => {
+			const activeTask = activeTasks[index];
+			if (result.status === 'fulfilled') {
+				if (activeTask) {
+					options.activeTaskRegistry.clear(activeTask.zoneId, activeTask.taskId);
+				}
+				return [];
+			}
+			if (result.reason instanceof ControllerZoneWorkerCloseError) {
+				return [result.reason];
+			}
+			return activeTask
+				? [
+						new ControllerZoneWorkerCloseError({
+							body: result.reason instanceof Error ? result.reason.message : String(result.reason),
+							httpStatus: 0,
+							taskId: activeTask.taskId,
+							zoneId: activeTask.zoneId,
+						}),
+					]
+				: [];
+		});
+		if (closeFailures.length === 1) {
+			throw closeFailures[0];
+		}
+		if (closeFailures.length > 1) {
+			throw new ControllerZoneWorkerCloseAggregateError(zoneId, closeFailures);
+		}
+	}
+
 	return {
 		closeTaskForZone: async (taskId) => {
 			const activeTask = options.activeTaskRegistry.get(options.zone.id, taskId);
@@ -142,55 +252,7 @@ export function createWorkerZoneRuntime(
 					{ purge, systemConfig: options.systemConfig, zoneId: options.zone.id },
 					{
 						releaseZoneLeases: async () => {},
-						stopGatewayZone: async (zoneId) => {
-							const activeTasks = options.activeTaskRegistry.listForZone(zoneId);
-							const occupiedTaskCount = options.activeTaskRegistry.countOccupiedForZone(zoneId);
-							if (occupiedTaskCount > activeTasks.length) {
-								const message = `Zone '${zoneId}' has ${String(occupiedTaskCount - activeTasks.length)} worker task reservation(s) still preparing and cannot be destroyed safely yet.`;
-								writeWorkerZoneRuntimeLog(`destroy refused: ${message}`);
-								throw new ControllerZoneTaskNotReadyError(zoneId, null, message);
-							}
-							const preparingTask = activeTasks.find((activeTask) => !activeTask.workerIngress);
-							if (preparingTask) {
-								const message = `Task '${preparingTask.taskId}' in zone '${zoneId}' is still preparing and cannot be destroyed safely yet.`;
-								writeWorkerZoneRuntimeLog(`destroy refused: ${message}`);
-								throw new ControllerZoneTaskNotReadyError(zoneId, preparingTask.taskId, message);
-							}
-							const closeResults = await Promise.allSettled(
-								activeTasks.map(async (activeTask) => await closeActiveWorkerTask(activeTask)),
-							);
-							const closeFailures = closeResults.flatMap((result, index) => {
-								const activeTask = activeTasks[index];
-								if (result.status === 'fulfilled') {
-									if (activeTask) {
-										options.activeTaskRegistry.clear(activeTask.zoneId, activeTask.taskId);
-									}
-									return [];
-								}
-								if (result.reason instanceof ControllerZoneWorkerCloseError) {
-									return [result.reason];
-								}
-								return activeTask
-									? [
-											new ControllerZoneWorkerCloseError({
-												body:
-													result.reason instanceof Error
-														? result.reason.message
-														: String(result.reason),
-												httpStatus: 0,
-												taskId: activeTask.taskId,
-												zoneId: activeTask.zoneId,
-											}),
-										]
-									: [];
-							});
-							if (closeFailures.length === 1) {
-								throw closeFailures[0];
-							}
-							if (closeFailures.length > 1) {
-								throw new ControllerZoneWorkerCloseAggregateError(zoneId, closeFailures);
-							}
-						},
+						stopGatewayZone: closeActiveWorkerTasksForZone,
 					},
 				);
 			} finally {
@@ -207,6 +269,14 @@ export function createWorkerZoneRuntime(
 					heartbeatAcquired = true;
 				}
 				return await (options.executeWorkerTask ?? executeWorkerTaskDefault)(prepared, {
+					controllerEpoch: options.controllerEpoch,
+					controlSession: {
+						controllerEpoch: options.controllerEpoch,
+						operations: {
+							pullDefaultForTask: pullDefaultForActiveTask,
+							pushTaskBranches: pushBranchesForActiveTask,
+						},
+					},
 					onTaskFinished: async (finishedZoneId, taskId) => {
 						options.activeTaskRegistry.clear(finishedZoneId, taskId);
 						await options.onWorkerTaskFinished?.(finishedZoneId, taskId);
@@ -219,7 +289,10 @@ export function createWorkerZoneRuntime(
 					systemConfig: options.systemConfig,
 				});
 			} catch (error) {
-				if (options.activeTaskRegistry.get(prepared.zoneId, prepared.taskId)) {
+				if (
+					!containsManagedVmTerminationUnprovenError(error) &&
+					options.activeTaskRegistry.get(prepared.zoneId, prepared.taskId)
+				) {
 					options.activeTaskRegistry.clear(prepared.zoneId, prepared.taskId);
 				}
 				throw error;
@@ -262,58 +335,26 @@ export function createWorkerZoneRuntime(
 			}
 		},
 		pullDefaultForTask: async (taskId, input: PullDefaultRequest) => {
-			const activeTask = options.activeTaskRegistry.get(options.zone.id, taskId);
-			if (!activeTask) {
-				throw new ControllerZoneTaskNotFoundError(options.zone.id, taskId);
-			}
-			if (!options.controllerGithubToken) {
-				throw new ControllerZoneConfigurationError(
-					options.zone.id,
-					'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
-				);
-			}
-			return await pullDefaultForTask({
-				activeTask,
-				...(input.currentBranch !== undefined ? { currentBranch: input.currentBranch } : {}),
-				...(input.currentHead !== undefined ? { currentHead: input.currentHead } : {}),
-				githubToken: options.controllerGithubToken,
-				recordEvent: async (event) => {
-					await recordActiveTaskEvent({
-						event,
-						eventLogPath: activeTask.eventLogPath,
-					});
-				},
-				repoUrl: input.repoUrl,
-				...(input.worktreeDirty !== undefined ? { worktreeDirty: input.worktreeDirty } : {}),
-			});
+			return await pullDefaultForActiveTask(taskId, input);
 		},
 		pushTaskBranches: async (
 			taskId,
 			input: { readonly branches: readonly PushBranchRequest[] },
 		) => {
-			const activeTask = options.activeTaskRegistry.get(options.zone.id, taskId);
-			if (!activeTask) {
-				throw new ControllerZoneTaskNotFoundError(options.zone.id, taskId);
-			}
-			if (!options.controllerGithubToken) {
-				throw new ControllerZoneConfigurationError(
-					options.zone.id,
-					'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
-				);
-			}
-			return await pushBranchesForTask({
-				activeTask,
-				branches: input.branches,
-				githubToken: options.controllerGithubToken,
-				recordEvent: async (event) => {
-					await recordActiveTaskEvent({
-						event,
-						eventLogPath: activeTask.eventLogPath,
-					});
-				},
-			});
+			return await pushBranchesForActiveTask(taskId, input);
 		},
-		shutdown: async () => {},
+		shutdown: async () => {
+			let destroyGateAcquired = false;
+			try {
+				options.activeTaskRegistry.beginZoneDestroy(options.zone.id);
+				destroyGateAcquired = true;
+				await closeActiveWorkerTasksForZone(options.zone.id);
+			} finally {
+				if (destroyGateAcquired) {
+					options.activeTaskRegistry.endZoneDestroy(options.zone.id);
+				}
+			}
+		},
 		zoneId: options.zone.id,
 	};
 }

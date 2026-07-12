@@ -86,6 +86,30 @@ const degradedSession = {
 	},
 } satisfies PortalSession;
 
+const transportFailureSession = {
+	...session,
+	catalog: {
+		...session.catalog,
+		discoveryFailures: [
+			{
+				causeMessage: 'spawn /secret/bin/mcp-provider ENOENT',
+				elapsedMs: 12,
+				kind: 'upstream_mcp_failed',
+				message: 'local-tools: connect failed: spawn /secret/bin/mcp-provider ENOENT',
+				namespace: 'local-tools',
+				operation: 'initialize',
+				phase: 'connect',
+				transport: {
+					argCount: 2,
+					command: '/secret/bin/mcp-provider',
+					cwd: '/secret/workdir',
+					kind: 'stdio',
+				},
+			},
+		],
+	},
+} satisfies PortalSession;
+
 function allowDecision(calls: readonly { readonly id: string }[]): {
 	readonly decisionsByCallId: Readonly<Record<string, { readonly kind: 'allow' }>>;
 } {
@@ -134,7 +158,7 @@ describe('portal tool handlers', () => {
 		const expectedDiagnostics = [
 			{
 				kind: 'upstream_discovery_failed',
-				message: 'readwise unavailable',
+				message: 'MCP provider discovery failed.',
 				namespace: 'readwise',
 			},
 		];
@@ -181,6 +205,79 @@ describe('portal tool handlers', () => {
 		).resolves.toMatchObject({ diagnostics: expectedDiagnostics, ok: true });
 	});
 
+	it('redacts transport details from list discovery diagnostics', async () => {
+		const handlers = createPortalToolHandlers({
+			callUpstreamTool: vi.fn(),
+			getSession: vi.fn(async () => transportFailureSession),
+		});
+
+		const listResult = await handlers.list({
+			identity: transportFailureSession.identity,
+			input: { requests: [{ id: 'linear-tools', limit: 10 }] },
+		});
+
+		expect(listResult.diagnostics).toMatchObject([
+			{
+				causeMessage: 'Upstream MCP provider failed.',
+				kind: 'upstream_mcp_failed',
+				message: 'local-tools: connect failed',
+				namespace: 'local-tools',
+				transport: { kind: 'stdio' },
+			},
+		]);
+		const serializedResult = JSON.stringify(listResult);
+		expect(serializedResult).not.toContain('/secret/bin/mcp-provider');
+		expect(serializedResult).not.toContain('/secret/workdir');
+		expect(serializedResult).not.toContain('ENOENT');
+		expect(serializedResult).not.toContain('argCount');
+	});
+
+	it('fails closed with a disabled namespace error when a degraded namespace is called', async () => {
+		const callUpstreamTool = vi.fn(async () => ({ content: [] }));
+		const handlers = createPortalToolHandlers({
+			approval: allowDecision,
+			callUpstreamTool,
+			getSession: vi.fn(async () => degradedSession),
+		});
+
+		await expect(
+			handlers.call({
+				identity: session.identity,
+				input: {
+					calls: [
+						{
+							arguments: { query: 'deployment' },
+							id: 'call-readwise',
+							namespace: 'readwise',
+							toolName: 'search_highlights',
+						},
+					],
+				},
+			}),
+		).resolves.toMatchObject({
+			diagnostics: [
+				{
+					kind: 'upstream_discovery_failed',
+					message: 'MCP provider discovery failed.',
+					namespace: 'readwise',
+				},
+			],
+			ok: false,
+			results: {
+				'call-readwise': {
+					error: {
+						kind: 'namespace_unavailable',
+						message: 'MCP namespace "readwise" is disabled/unavailable: readwise unavailable',
+						namespace: 'readwise',
+						toolName: 'search_highlights',
+					},
+					ok: false,
+				},
+			},
+		});
+		expect(callUpstreamTool).not.toHaveBeenCalled();
+	});
+
 	it('returns structured discovery diagnostics in portal tool responses', async () => {
 		const structuredDegradedSession = {
 			...session,
@@ -188,11 +285,12 @@ describe('portal tool handlers', () => {
 				...session.catalog,
 				discoveryFailures: [
 					{
-						causeMessage: 'Authentication failed',
+						causeMessage: 'Authentication failed for https://mcp.tavily.com/mcp/?token=secret',
 						elapsedMs: 44,
 						hint: 'remote MCP connection failed; verify URL, auth header, network egress, and transport kind.',
 						kind: 'upstream_mcp_failed',
-						message: 'tavily: connect failed: Authentication failed',
+						message:
+							'tavily: connect failed: Authentication failed for https://mcp.tavily.com/mcp/?token=secret',
 						namespace: 'tavily',
 						operation: 'MCP streamable-http connect for namespace "tavily"',
 						phase: 'connect',
@@ -207,24 +305,27 @@ describe('portal tool handlers', () => {
 			getSession: vi.fn(async () => structuredDegradedSession),
 		});
 
-		await expect(
-			handlers.list({
-				identity: session.identity,
-				input: { requests: [{ id: 'list-tools' }] },
-			}),
-		).resolves.toMatchObject({
+		const listResult = await handlers.list({
+			identity: session.identity,
+			input: { requests: [{ id: 'list-tools' }] },
+		});
+
+		expect(listResult).toMatchObject({
 			diagnostics: [
 				{
-					causeMessage: 'Authentication failed',
+					causeMessage: 'Upstream MCP provider failed.',
 					hint: expect.stringContaining('verify URL'),
 					kind: 'upstream_mcp_failed',
+					message: 'tavily: connect failed',
 					namespace: 'tavily',
 					phase: 'connect',
-					transport: { kind: 'streamable-http', url: 'https://mcp.tavily.com/mcp/' },
+					transport: { kind: 'streamable-http' },
 				},
 			],
 			ok: true,
 		});
+		expect(JSON.stringify(listResult)).not.toContain('https://mcp.tavily.com/mcp/');
+		expect(JSON.stringify(listResult)).not.toContain('token=secret');
 	});
 
 	it('rejects model-supplied identity fields and duplicate ids at the envelope level', async () => {
@@ -694,7 +795,7 @@ describe('portal tool handlers', () => {
 		const callUpstreamTool = vi.fn(async (call: { readonly toolName: string }) => {
 			if (call.toolName === 'create_issue') {
 				throw new UpstreamMcpError({
-					causeMessage: '502 Bad Gateway',
+					causeMessage: '502 Bad Gateway from https://linear.example.test/mcp?token=secret',
 					elapsedMs: 47,
 					hint: 'MCP provider accepted discovery but the tool call failed; inspect the tool arguments and upstream provider response.',
 					kind: 'upstream_mcp_failed',
@@ -716,27 +817,27 @@ describe('portal tool handlers', () => {
 			getSession: vi.fn(async () => session),
 		});
 
-		await expect(
-			handlers.call({
-				identity: session.identity,
-				input: {
-					calls: [
-						{
-							arguments: { title: 'Fix deploy' },
-							id: 'failed-create',
-							namespace: 'linear',
-							toolName: 'create_issue',
-						},
-						{
-							arguments: {},
-							id: 'defaulted-create',
-							namespace: 'linear',
-							toolName: 'create_issue_with_default',
-						},
-					],
-				},
-			}),
-		).resolves.toMatchObject({
+		const callResult = await handlers.call({
+			identity: session.identity,
+			input: {
+				calls: [
+					{
+						arguments: { title: 'Fix deploy' },
+						id: 'failed-create',
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+					{
+						arguments: {},
+						id: 'defaulted-create',
+						namespace: 'linear',
+						toolName: 'create_issue_with_default',
+					},
+				],
+			},
+		});
+
+		expect(callResult).toMatchObject({
 			ok: false,
 			results: {
 				'defaulted-create': {
@@ -749,18 +850,17 @@ describe('portal tool handlers', () => {
 				'failed-create': {
 					error: {
 						kind: 'upstream_call_failed',
-						message: 'linear: call_tool create_issue failed: 502 Bad Gateway',
+						message: 'linear: call_tool create_issue failed',
 						namespace: 'linear',
 						toolName: 'create_issue',
 						upstream: {
-							causeMessage: '502 Bad Gateway',
+							causeMessage: 'Upstream MCP provider failed.',
 							kind: 'upstream_mcp_failed',
 							namespace: 'linear',
 							phase: 'call_tool',
 							toolName: 'create_issue',
 							transport: {
 								kind: 'streamable-http',
-								url: 'https://linear.example.test/mcp',
 							},
 						},
 					},
@@ -774,6 +874,8 @@ describe('portal tool handlers', () => {
 				},
 			},
 		});
+		expect(JSON.stringify(callResult)).not.toContain('https://linear.example.test/mcp');
+		expect(JSON.stringify(callResult)).not.toContain('token=secret');
 		expect(callUpstreamTool).toHaveBeenCalledTimes(2);
 	});
 

@@ -2,8 +2,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
 import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-interface';
-import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { readDurableHealthEvents } from '../controller/health/durable-health-event-log.js';
@@ -127,35 +127,6 @@ async function readHealthSnapshot(controllerUrl: string): Promise<ZoneHealthSnap
 	return snapshot as unknown as ZoneHealthSnapshot;
 }
 
-async function publishOpenClawRuntimeStatus(options: {
-	readonly controllerUrl: string;
-	readonly openClawConfigPath: string;
-}): Promise<void> {
-	const parsedConfig: unknown = JSON.parse(await fs.readFile(options.openClawConfigPath, 'utf8'));
-	if (!isObjectRecord(parsedConfig)) {
-		throw new Error(`Expected OpenClaw stability config at ${options.openClawConfigPath}.`);
-	}
-	const response = await fetch(
-		`${options.controllerUrl}/zones/${encodeURIComponent(zoneId)}/openclaw-runtime-status`,
-		{
-			body: JSON.stringify(
-				buildOpenClawRuntimeStatusReport({
-					config: parsedConfig,
-					zoneId,
-				}),
-			),
-			headers: { 'content-type': 'application/json' },
-			method: 'POST',
-			signal: AbortSignal.timeout(5_000),
-		},
-	);
-	if (!response.ok) {
-		throw new Error(
-			`OpenClaw runtime status publish failed HTTP ${String(response.status)}: ${await response.text()}`,
-		);
-	}
-}
-
 async function runStabilityProbeIteration(options: {
 	readonly controllerUrl: string;
 	readonly iteration: number;
@@ -254,7 +225,6 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 	let harness: E2eHarnessRuntime | undefined;
 	let project: OpenClawE2eProject | undefined;
 	let systemConfig: E2eHarnessRuntime['systemConfig'] | undefined;
-	let openClawConfigPath: string | undefined;
 	const gatewayVmIds: string[] = [];
 
 	beforeAll(async () => {
@@ -270,10 +240,9 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 			controller: {
 				health: {
 					...project.systemConfig.controller?.health,
+					controlSessionDeathGraceMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
 					enabled: true,
 					eventHistoryLimit: 200,
-					gatewayControlLinkBackoffCeilingMs: 2_000,
-					gatewayControlLinkIntervalMs: 1_000,
 					gatewayServiceAutoRestart: {
 						...stabilityGatewayServiceAutoRestart,
 					},
@@ -287,7 +256,6 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 		if (!systemZone || systemZone.gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw stability project to contain an OpenClaw zone.');
 		}
-		openClawConfigPath = systemZone.gateway.config;
 		await disableOpenClawMcpPortalPlugin(systemZone.gateway.config);
 		await useLocalOpenClawPluginGatewayImage({
 			profileName: systemZone.gateway.imageProfile,
@@ -337,12 +305,7 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 	});
 
 	it('keeps controller health, zone health, service health, and health snapshots stable', async () => {
-		if (
-			harness === undefined ||
-			openClawConfigPath === undefined ||
-			project === undefined ||
-			systemConfig === undefined
-		) {
+		if (harness === undefined || project === undefined || systemConfig === undefined) {
 			throw new Error('Expected OpenClaw stability harness to be initialized.');
 		}
 		const durationMs = positiveIntegerFromEnv(
@@ -372,10 +335,6 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 				serviceOk: true,
 				snapshotOk: true,
 				zoneOk: true,
-			});
-			await publishOpenClawRuntimeStatus({
-				controllerUrl: harness.controllerUrl,
-				openClawConfigPath,
 			});
 			const postReadinessEvents = await readPostReadinessHealthEvents({
 				readyAtMs,

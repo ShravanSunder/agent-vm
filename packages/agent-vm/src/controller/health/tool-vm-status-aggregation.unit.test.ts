@@ -84,11 +84,13 @@ function toolVmSshEvent(
 	leaseId: string,
 	operation: 'command' | 'file-bridge' | 'finalize' | 'probe',
 	options: {
+		readonly lifecycleEventRole?: 'controller_final' | 'plugin_observation';
+		readonly lifecycleTransition?: 'current_to_stale' | 'stale_to_reacquired';
 		readonly observedAtMs?: number;
 		readonly result?: 'failed' | 'ok' | 'stale' | 'timeout';
 	} = {},
 ): AgentVmHealthEvent {
-	return {
+	const eventBase = {
 		agentId: 'shravan',
 		elapsedMs: 10,
 		kind: 'tool-vm-ssh',
@@ -97,6 +99,26 @@ function toolVmSshEvent(
 		operation,
 		result: options.result ?? 'ok',
 		zoneId: 'sunfam',
+	} satisfies AgentVmHealthEvent;
+	if (options.lifecycleEventRole === undefined || options.lifecycleTransition === undefined) {
+		return eventBase;
+	}
+	const lifecycleBase = {
+		...eventBase,
+		lifecycleEventRole: options.lifecycleEventRole,
+		oldLeaseId: leaseId,
+		transitionId: '77777777-7777-4777-8777-777777777777',
+	};
+	if (options.lifecycleTransition === 'stale_to_reacquired') {
+		return {
+			...lifecycleBase,
+			lifecycleTransition: options.lifecycleTransition,
+			replacementLeaseId: leaseId,
+		};
+	}
+	return {
+		...lifecycleBase,
+		lifecycleTransition: options.lifecycleTransition,
 	};
 }
 
@@ -243,6 +265,34 @@ describe('classifyLifecycleAwareToolVmPlane', () => {
 					toolVmSshEvent('lease-1', 'command', { result: 'failed' }),
 					toolVmSshEvent('lease-1', 'file-bridge', { result: 'failed' }),
 					toolVmSshEvent('lease-1', 'finalize', { result: 'failed' }),
+				],
+				leases: [leaseView('lease-1')],
+			}),
+		).toBe('ok');
+	});
+
+	it('uses controller-final lifecycle events as Tool VM plane evidence', () => {
+		expect(
+			classify({
+				events: [
+					toolVmSshEvent('lease-1', 'file-bridge', {
+						lifecycleEventRole: 'controller_final',
+						lifecycleTransition: 'current_to_stale',
+						result: 'failed',
+					}),
+				],
+				leases: [leaseView('lease-1')],
+			}),
+		).toBe('failed');
+
+		expect(
+			classify({
+				events: [
+					toolVmSshEvent('lease-1', 'file-bridge', {
+						lifecycleEventRole: 'plugin_observation',
+						lifecycleTransition: 'current_to_stale',
+						result: 'failed',
+					}),
 				],
 				leases: [leaseView('lease-1')],
 			}),

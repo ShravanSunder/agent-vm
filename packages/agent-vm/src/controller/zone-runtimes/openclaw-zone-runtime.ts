@@ -13,7 +13,11 @@ import {
 	startGatewayZone,
 } from '../../gateway/gateway-zone-orchestrator.js';
 import type {
+	GatewayControlSessionAttemptOutcome,
+	GatewayControlSessionHeartbeat,
+	GatewayControlSessionReconnectExhausted,
 	GatewayZoneStartResult,
+	PendingGatewayVmCreationContainment,
 	StartGatewayZoneOptions as StartGatewayZoneRequestOptions,
 } from '../../gateway/gateway-zone-support.js';
 import { runControllerCredentialsRefresh as runControllerCredentialsRefreshDefault } from '../../operations/credentials-refresh.js';
@@ -21,7 +25,14 @@ import { runControllerDestroy as runControllerDestroyDefault } from '../../opera
 import { runControllerUpgrade as runControllerUpgradeDefault } from '../../operations/upgrade-zone.js';
 import { runControllerLogs as runControllerLogsDefault } from '../../operations/zone-logs.js';
 import { isProcessAlive as defaultIsProcessAlive } from '../../shared/managed-vm-process.js';
-import type { LeaseManager } from '../leases/lease-manager.js';
+import { deleteGatewayControlSessionMaterial as deleteGatewayControlSessionMaterialDefault } from '../control-session/gateway-control-session-material-store.js';
+import type { GatewayDisposableControlSessionClient } from '../control-session/gateway-disposable-control-session-client.js';
+import type { OpenClawProcessReliabilityFaultActuator } from '../process-supervisor/openclaw-process-supervisor.js';
+import type { OpenClawProcessReliabilityFaultTargetRegistry } from '../reliability/testing/openclaw-process-reliability-fault-target-registry.js';
+import {
+	gatewayIdentitiesEqual,
+	type GatewayEpochIdentity,
+} from '../vm-ownership/vm-ownership-contracts.js';
 import {
 	appendGatewayLifecycleOperationRecord as appendGatewayLifecycleOperationRecordDefault,
 	type GatewayLifecycleGatewayIdentity,
@@ -36,6 +47,10 @@ import {
 	type GatewayLifecycleOperation,
 	type GatewayZoneLifecycleState,
 } from './gateway-zone-state-machine.js';
+import {
+	createOpenClawProcessRecoveryCoordinator,
+	type OpenClawProcessRecoveryCoordinator,
+} from './openclaw-process-recovery.js';
 import {
 	ControllerZoneRuntimeStartError,
 	ControllerZoneRuntimeUnavailableError,
@@ -52,18 +67,41 @@ type OpenClawZoneConfig = ControllerZoneConfig & {
 	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'openclaw' }>;
 };
 
+interface OpenClawProcessReliabilityFaultTargetCapture {
+	readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
+	readonly gateway: GatewayEpochIdentity;
+	readonly processEpoch: string;
+	readonly reliabilityFaultActuator: OpenClawProcessReliabilityFaultActuator;
+}
+
+export const OPENCLAW_PROCESS_OBSERVATION_INTERVAL_MS = 10_000;
+export const OPENCLAW_PROCESS_RECOVERY_ACTION_TIMEOUT_MS = 90_000;
+
 export interface CreateOpenClawZoneRuntimeOptions {
+	readonly clearIntervalImpl?: ((timer: NodeJS.Timeout) => void) | undefined;
 	readonly clearTimeoutImpl?: ((timer: NodeJS.Timeout) => void) | undefined;
-	readonly closeGatewayTimeoutMs?: number | undefined;
 	readonly createFreshSecretResolver?: (() => Promise<SecretResolver>) | undefined;
+	readonly createVmOwnership: StartGatewayZoneRequestOptions['createVmOwnership'];
+	readonly deleteGatewayControlSessionMaterial?: (
+		runtimeDirectory: string,
+		zoneId: string,
+	) => Promise<void>;
 	readonly deleteGatewayRuntimeRecord?: (stateDirectory: string) => Promise<void>;
 	readonly appendGatewayLifecycleOperationRecord?: (
 		record: GatewayLifecycleOperationRecord,
 	) => Promise<void>;
 	readonly isProcessAlive?: (pid: number) => boolean;
-	readonly leaseManager: Pick<LeaseManager, 'listLeases' | 'releaseLease'>;
 	readonly now: () => number;
+	readonly openClawProcessReliabilityFaultTargetRegistry?:
+		| OpenClawProcessReliabilityFaultTargetRegistry
+		| undefined;
 	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStartDefault;
+	readonly recoverGatewayAfterProcessFailure?:
+		| ((request: {
+				readonly gateway: GatewayEpochIdentity;
+				readonly reason: unknown;
+		  }) => Promise<void>)
+		| undefined;
 	readonly restartGatewayZone?: (
 		zoneId: string,
 		options?: GatewayZoneStartOptions,
@@ -73,15 +111,26 @@ export interface CreateOpenClawZoneRuntimeOptions {
 	readonly runControllerLogs?: typeof runControllerLogsDefault;
 	readonly runControllerUpgrade?: typeof runControllerUpgradeDefault;
 	readonly secretResolver: SecretResolver;
+	readonly setIntervalImpl?: (
+		callback: () => void | Promise<void>,
+		delayMs: number,
+	) => NodeJS.Timeout;
 	readonly setTimeoutImpl?: ((callback: () => void, delayMs: number) => NodeJS.Timeout) | undefined;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zone: OpenClawZoneConfig;
 }
 
-const defaultGatewayCloseTimeoutMs = 60_000;
-
 interface GatewayZoneStartOptions {
 	readonly observabilityStartupCheck?: 'default' | 'skip';
+	readonly onControlSessionAttemptOutcome?: (outcome: GatewayControlSessionAttemptOutcome) => void;
+	readonly onPendingVmCreation?: (containment: PendingGatewayVmCreationContainment) => void;
+	readonly onControlSessionHeartbeat?: (transition: GatewayControlSessionHeartbeat) => void;
+	readonly onControlSessionReconnectExhausted?: (
+		transition: GatewayControlSessionReconnectExhausted,
+	) => void;
+	readonly onOpenClawProcessReliabilityFaultTarget?:
+		| ((target: OpenClawProcessReliabilityFaultTargetCapture) => void)
+		| undefined;
 	readonly prebuiltImage?: BuildImageResult | undefined;
 	readonly runtimeEnvironment?: StartGatewayZoneRequestOptions['runtimeEnvironment'];
 	readonly runtimePluginConfigs?: StartGatewayZoneRequestOptions['runtimePluginConfigs'];
@@ -111,6 +160,13 @@ function isLifecycleOperationExecutionWithLock<TResult>(
 	return typeof execution === 'object' && execution !== null && 'lock' in execution;
 }
 
+function isOwnerUnsafeLifecycleState(state: GatewayZoneLifecycleState): boolean {
+	return (
+		state.kind === 'owner-unsafe' ||
+		(state.kind === 'failed' && !state.coldStartEligible && state.error.code === 'owner-unsafe')
+	);
+}
+
 function isRecoverySecretResolutionFailure(
 	record: Pick<GatewayLifecycleOperationRecord, 'errorCode' | 'operationTrigger'>,
 ): boolean {
@@ -127,6 +183,17 @@ class OpenClawZoneRestartTimeoutError extends Error {
 	constructor(zoneId: string, timeoutMs: number) {
 		super(`OpenClaw gateway restart timed out for zone '${zoneId}' after ${timeoutMs}ms`);
 		this.name = 'OpenClawZoneRestartTimeoutError';
+	}
+}
+
+class OpenClawProcessRecoveryTimeoutError extends Error {
+	readonly code = 'OPENCLAW_PROCESS_RECOVERY_TIMEOUT';
+
+	constructor(zoneId: string) {
+		super(
+			`OpenClaw process recovery timed out for zone '${zoneId}' after ${String(OPENCLAW_PROCESS_RECOVERY_ACTION_TIMEOUT_MS)}ms`,
+		);
+		this.name = 'OpenClawProcessRecoveryTimeoutError';
 	}
 }
 
@@ -215,9 +282,10 @@ export function createOpenClawZoneRuntime(
 	options: CreateOpenClawZoneRuntimeOptions,
 ): OpenClawZoneRuntime {
 	const clearTimeoutImpl = options.clearTimeoutImpl ?? clearTimeout;
-	const closeGatewayTimeoutMs = options.closeGatewayTimeoutMs ?? defaultGatewayCloseTimeoutMs;
+	const clearIntervalImpl = options.clearIntervalImpl ?? clearInterval;
 	const isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
 	const setTimeoutImpl = options.setTimeoutImpl ?? setTimeout;
+	const setIntervalImpl = options.setIntervalImpl ?? setInterval;
 	const appendGatewayLifecycleOperationRecord = options.appendGatewayLifecycleOperationRecord;
 	let gateway: GatewayZoneRuntimeHandle | undefined;
 	let bootedAt: string | undefined;
@@ -228,6 +296,150 @@ export function createOpenClawZoneRuntime(
 	let lifecycleOperation: Promise<void> = Promise.resolve();
 	let lifecycleGeneration = 0;
 	let staleGatewayPendingClose: GatewayZoneRuntimeHandle | undefined;
+	let currentReliabilityFaultTarget: OpenClawProcessReliabilityFaultTargetCapture | undefined;
+	let acceptedReliabilityFaultActuatorCapture:
+		| Pick<OpenClawProcessReliabilityFaultTargetCapture, 'gateway' | 'reliabilityFaultActuator'>
+		| undefined;
+	const revokeCurrentReliabilityFaultTarget = (
+		activeGateway?: GatewayZoneRuntimeHandle,
+		optionsForRevocation: { readonly preserveActuatorCapture?: boolean } = {},
+	): void => {
+		const target = currentReliabilityFaultTarget;
+		if (target === undefined) {
+			const activeGatewayIdentity = activeGateway?.vmOwnership.gatewayIdentity;
+			if (
+				optionsForRevocation.preserveActuatorCapture !== true &&
+				(activeGatewayIdentity === undefined ||
+					(acceptedReliabilityFaultActuatorCapture !== undefined &&
+						gatewayIdentitiesEqual(
+							acceptedReliabilityFaultActuatorCapture.gateway,
+							activeGatewayIdentity,
+						)))
+			) {
+				acceptedReliabilityFaultActuatorCapture = undefined;
+			}
+			return;
+		}
+		const activeGatewayIdentity = activeGateway?.vmOwnership.gatewayIdentity;
+		if (
+			activeGatewayIdentity !== undefined &&
+			!gatewayIdentitiesEqual(target.gateway, activeGatewayIdentity)
+		) {
+			return;
+		}
+		options.openClawProcessReliabilityFaultTargetRegistry?.revoke({
+			gateway: target.gateway,
+			processEpoch: target.processEpoch,
+		});
+		currentReliabilityFaultTarget = undefined;
+		if (optionsForRevocation.preserveActuatorCapture !== true) {
+			acceptedReliabilityFaultActuatorCapture = undefined;
+		}
+	};
+	const publishReliabilityFaultTarget = (
+		target: OpenClawProcessReliabilityFaultTargetCapture,
+	): void => {
+		options.openClawProcessReliabilityFaultTargetRegistry?.publish(target);
+		currentReliabilityFaultTarget = target;
+		acceptedReliabilityFaultActuatorCapture = {
+			gateway: target.gateway,
+			reliabilityFaultActuator: target.reliabilityFaultActuator,
+		};
+	};
+	const processRecoveryCoordinatorRef: {
+		current?: OpenClawProcessRecoveryCoordinator;
+	} = {};
+	let processObservationInFlight = false;
+	let processObservationTimer: NodeJS.Timeout | undefined;
+	let processRecoveryActionInFlight = false;
+	const requestControlSessionProcessRecovery = (
+		transition: GatewayControlSessionReconnectExhausted,
+	): void => {
+		const coordinator = processRecoveryCoordinatorRef.current;
+		if (coordinator === undefined) {
+			return;
+		}
+		void coordinator
+			.requestRecovery({
+				gateway: transition.gateway,
+				kind: 'control-reconnect-exhausted',
+				processEpoch: transition.processEpoch,
+			})
+			.catch((error: unknown) => {
+				writeOpenClawZoneRuntimeLog(
+					`process recovery failed for zone '${options.zone.id}': ${formatUnknownError(error)}`,
+				);
+			});
+	};
+	const recordControlSessionHeartbeat = (transition: GatewayControlSessionHeartbeat): void => {
+		processRecoveryCoordinatorRef.current?.recordControlHeartbeat({
+			gateway: transition.gateway,
+			processEpoch: transition.processEpoch,
+		});
+	};
+	const observeCurrentOpenClawProcess = async (): Promise<void> => {
+		if (processObservationInFlight || processRecoveryActionInFlight) {
+			return;
+		}
+		const currentState = getLifecycleState();
+		if (currentState.kind !== 'running' && currentState.kind !== 'running-degraded') {
+			return;
+		}
+		const currentGateway = currentState.gateway;
+		const supervisor = currentGateway.openClawProcessSupervisor;
+		const processOwner = currentGateway.openClawProcessEpochOwner;
+		const gatewayIdentity = currentGateway.vmOwnership.gatewayIdentity;
+		if (supervisor === undefined || processOwner === undefined || gatewayIdentity === undefined) {
+			return;
+		}
+		const processEpoch = processOwner.getCurrentBinding().material.processEpoch;
+		processObservationInFlight = true;
+		try {
+			let processObserved = false;
+			try {
+				const receipt = await supervisor.observe({
+					actionId: `process-observe-${randomUUID()}`,
+					expectedProcessEpoch: processEpoch,
+				});
+				processObserved = receipt.cgroup.populated;
+			} catch {
+				processObserved = false;
+			}
+			if (!processObserved) {
+				await processRecoveryCoordinatorRef.current?.requestRecovery({
+					gateway: gatewayIdentity,
+					kind: 'process-observation-failed',
+					processEpoch,
+				});
+			} else {
+				processRecoveryCoordinatorRef.current?.recordPopulatedProcessObservation({
+					gateway: gatewayIdentity,
+					processEpoch,
+				});
+			}
+		} finally {
+			processObservationInFlight = false;
+		}
+	};
+	const stopProcessObservation = (): void => {
+		if (processObservationTimer !== undefined) {
+			clearIntervalImpl(processObservationTimer);
+			processObservationTimer = undefined;
+		}
+	};
+	const startProcessObservation = (): void => {
+		stopProcessObservation();
+		processObservationTimer = setIntervalImpl(
+			() =>
+				void observeCurrentOpenClawProcess().catch((error: unknown) => {
+					writeOpenClawZoneRuntimeLog(
+						`process observation recovery failed for zone '${options.zone.id}': ${formatUnknownError(error)}`,
+					);
+				}),
+			OPENCLAW_PROCESS_OBSERVATION_INTERVAL_MS,
+		);
+		processObservationTimer.unref?.();
+	};
 
 	const startGateway = async (
 		startOptions: GatewayZoneStartOptions = {},
@@ -239,12 +451,29 @@ export function createOpenClawZoneRuntime(
 						? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
 						: {}),
 					...(startOptions.prebuiltImage ? { prebuiltImage: startOptions.prebuiltImage } : {}),
+					...(startOptions.onPendingVmCreation
+						? { onPendingVmCreation: startOptions.onPendingVmCreation }
+						: {}),
+					...(startOptions.onControlSessionAttemptOutcome
+						? {
+								onControlSessionAttemptOutcome: startOptions.onControlSessionAttemptOutcome,
+							}
+						: {}),
+					...(startOptions.onControlSessionReconnectExhausted
+						? {
+								onControlSessionReconnectExhausted: startOptions.onControlSessionReconnectExhausted,
+							}
+						: {}),
+					...(startOptions.onControlSessionHeartbeat
+						? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
+						: {}),
 					...(startOptions.runtimeEnvironment
 						? { runtimeEnvironment: startOptions.runtimeEnvironment }
 						: {}),
 					...(startOptions.runtimePluginConfigs
 						? { runtimePluginConfigs: startOptions.runtimePluginConfigs }
 						: {}),
+					createVmOwnership: options.createVmOwnership,
 					secretResolver: startOptions.secretResolver ?? options.secretResolver,
 					systemConfig: options.systemConfig,
 					zoneId: options.zone.id,
@@ -376,6 +605,7 @@ export function createOpenClawZoneRuntime(
 			staleGatewayPendingClose === undefined &&
 			(lifecycleState.kind === 'running' || lifecycleState.kind === 'running-degraded')
 		) {
+			revokeCurrentReliabilityFaultTarget(lifecycleState.gateway);
 			staleGatewayPendingClose = lifecycleState.gateway;
 		}
 		const errorMessage = `vm-process-missing: ${message}`;
@@ -406,7 +636,7 @@ export function createOpenClawZoneRuntime(
 				operationTrigger: operationContext.operationTrigger,
 				previousGateway: gatewayIdentityFor(staleGateway),
 			});
-			await closeGatewayWithDeadline(staleGateway);
+			await closeGateway(staleGateway);
 			await recordLifecycleOperation({
 				kind: 'vm-close-finished',
 				operationId: operationContext.operationId,
@@ -484,6 +714,13 @@ export function createOpenClawZoneRuntime(
 		return lifecycleState;
 	};
 
+	const assertGatewaySuccessorCreationAllowed = (): void => {
+		const currentState = getLifecycleState();
+		if (currentState.kind === 'failed' && !currentState.coldStartEligible) {
+			throw new ControllerZoneRuntimeUnavailableError(options.zone.id, currentState.error.message);
+		}
+	};
+
 	const runLifecycleOperation = async <TResult>(
 		operation: () =>
 			| LifecycleOperationExecution<TResult>
@@ -516,14 +753,24 @@ export function createOpenClawZoneRuntime(
 	};
 
 	const withLifecycleTimeout = <TResult>(props: {
+		readonly invalidateLifecycleGeneration?: boolean;
+		readonly releaseLockWhen?: Promise<void> | undefined;
+		readonly onTimeout?: () => void;
 		readonly operation: Promise<TResult>;
+		readonly timeoutError?: () => Error;
 		readonly timeoutMs: number;
 	}): { readonly lock: Promise<unknown>; readonly publicResult: Promise<TResult> } => {
 		let timeout: NodeJS.Timeout | undefined;
 		const timeoutPromise = new Promise<never>((_resolve, reject) => {
 			timeout = setTimeoutImpl(() => {
-				lifecycleGeneration += 1;
-				reject(new OpenClawZoneRestartTimeoutError(options.zone.id, props.timeoutMs));
+				if (props.invalidateLifecycleGeneration !== false) {
+					lifecycleGeneration += 1;
+				}
+				props.onTimeout?.();
+				reject(
+					props.timeoutError?.() ??
+						new OpenClawZoneRestartTimeoutError(options.zone.id, props.timeoutMs),
+				);
 			}, props.timeoutMs);
 			timeout.unref?.();
 		});
@@ -532,63 +779,96 @@ export function createOpenClawZoneRuntime(
 				clearTimeoutImpl(timeout);
 			}
 		});
+		const operationSettled = props.operation.then(
+			() => undefined,
+			() => undefined,
+		);
 		return {
-			lock: props.operation.then(
-				() => undefined,
-				() => undefined,
-			),
+			lock:
+				props.releaseLockWhen === undefined
+					? operationSettled
+					: Promise.race([operationSettled, props.releaseLockWhen]),
 			publicResult,
 		};
 	};
 
-	const releaseZoneLeases = async (
-		zoneId: string,
-	): Promise<{ readonly failedLeaseIds: readonly string[] }> => {
-		const leases = options.leaseManager
-			.listLeases()
-			.filter((activeLease) => activeLease.zoneId === zoneId);
-		const releaseResults = await Promise.allSettled(
-			leases.map(
-				async (lease) => await options.leaseManager.releaseLease(lease.id, { force: true }),
-			),
-		);
-		const failedLeaseIds: string[] = [];
-		for (const [index, releaseResult] of releaseResults.entries()) {
-			if (releaseResult.status === 'fulfilled') {
-				continue;
+	const createPendingVmCreationTimeoutContainment = (
+		operationContext: GatewayLifecycleOperationContext,
+	): {
+		readonly releaseLifecycleLock: Promise<void>;
+		onPendingVmCreation(containment: PendingGatewayVmCreationContainment): void;
+		onTimeout(): void;
+	} => {
+		let containmentStarted = false;
+		let pendingVmCreation: PendingGatewayVmCreationContainment | undefined;
+		let releaseLifecycleLock: (() => void) | undefined;
+		let timeoutExpired = false;
+		const containmentTerminal = new Promise<void>((resolve) => {
+			releaseLifecycleLock = resolve;
+		});
+
+		const containPendingVmCreation = (): void => {
+			if (containmentStarted || pendingVmCreation === undefined) {
+				return;
 			}
-			const leaseId = leases[index]?.id ?? `(unknown lease at index ${index})`;
-			failedLeaseIds.push(leaseId);
-			writeOpenClawZoneRuntimeLog(
-				`lease '${leaseId}' release failed while restarting zone '${zoneId}': ${formatUnknownError(releaseResult.reason)}`,
-			);
-		}
-		return { failedLeaseIds };
+			containmentStarted = true;
+			void pendingVmCreation
+				.contain()
+				.catch((error: unknown) => {
+					const errorMessage = `Pending Gateway VM creation containment is owner-unsafe for zone '${options.zone.id}': ${formatUnknownError(error)}`;
+					lastError = errorMessage;
+					lifecycleState = {
+						coldStartEligible: false,
+						error: { code: 'owner-unsafe', message: errorMessage },
+						kind: 'failed',
+					};
+					void recordLifecycleOperation({
+						errorCode: 'owner-unsafe',
+						errorMessage,
+						kind: 'operation-failed',
+						operationId: operationContext.operationId,
+						operationTrigger: operationContext.operationTrigger,
+						previousGateway: gatewayIdentityFor(operationContext.previousGateway),
+					}).catch((recordError: unknown) => {
+						writeOpenClawZoneRuntimeLog(
+							`failed to record pending Gateway VM containment failure for zone '${options.zone.id}': ${formatUnknownError(recordError)}`,
+						);
+					});
+				})
+				.finally(() => {
+					releaseLifecycleLock?.();
+					releaseLifecycleLock = undefined;
+				});
+		};
+
+		return {
+			onPendingVmCreation(containment): void {
+				pendingVmCreation = containment;
+				if (timeoutExpired) {
+					containPendingVmCreation();
+				}
+			},
+			onTimeout(): void {
+				timeoutExpired = true;
+				containPendingVmCreation();
+			},
+			releaseLifecycleLock: containmentTerminal,
+		};
 	};
 
-	const closeGatewayWithDeadline = async (
-		activeGateway: GatewayZoneRuntimeHandle,
-	): Promise<void> => {
-		let timeout: NodeJS.Timeout | undefined;
-		try {
-			await Promise.race([
-				activeGateway.vm.close(),
-				new Promise<never>((_resolve, reject) => {
-					timeout = setTimeoutImpl(() => {
-						reject(
-							new Error(
-								`Gateway VM close timed out for zone '${options.zone.id}' after ${closeGatewayTimeoutMs}ms`,
-							),
-						);
-					}, closeGatewayTimeoutMs);
-					timeout.unref?.();
-				}),
-			]);
-		} finally {
-			if (timeout) {
-				clearTimeoutImpl(timeout);
-			}
-		}
+	const closeGateway = async (activeGateway: GatewayZoneRuntimeHandle): Promise<void> => {
+		revokeCurrentReliabilityFaultTarget(activeGateway);
+		activeGateway.controlSession?.close();
+		await activeGateway.vmOwnership.destroyLive(activeGateway.terminateVm);
+	};
+
+	const deleteGatewayRuntimeArtifacts = async (): Promise<void> => {
+		await (options.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
+			options.zone.gateway.stateDir,
+		);
+		await (
+			options.deleteGatewayControlSessionMaterial ?? deleteGatewayControlSessionMaterialDefault
+		)(options.systemConfig.runtimeDir, options.zone.id);
 	};
 
 	const abortIfLifecycleGenerationStale = async (props: {
@@ -624,7 +904,11 @@ export function createOpenClawZoneRuntime(
 		next: 'stopped' | 'starting' = 'stopped',
 		operationContext?: GatewayLifecycleOperationContext,
 	): Promise<void> => {
+		stopProcessObservation();
 		const activeGateway = gateway;
+		if (activeGateway === undefined && isOwnerUnsafeLifecycleState(getLifecycleState())) {
+			return;
+		}
 		const operationId = operationContext?.operationId ?? createOperationId('stop');
 		const operationTrigger = operationContext?.operationTrigger ?? 'operator-stop';
 		const previousGateway = operationContext?.previousGateway ?? activeGateway;
@@ -648,7 +932,7 @@ export function createOpenClawZoneRuntime(
 					operationTrigger,
 					previousGateway: gatewayIdentityFor(previousGateway),
 				});
-				await closeGatewayWithDeadline(activeGateway);
+				await closeGateway(activeGateway);
 				await recordLifecycleOperation({
 					kind: 'vm-close-finished',
 					operationId,
@@ -656,9 +940,7 @@ export function createOpenClawZoneRuntime(
 					previousGateway: gatewayIdentityFor(previousGateway),
 				});
 			}
-			await (options.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
-				options.zone.gateway.stateDir,
-			);
+			await deleteGatewayRuntimeArtifacts();
 			await recordLifecycleOperation({
 				kind: 'runtime-record-deleted',
 				operationId,
@@ -703,6 +985,7 @@ export function createOpenClawZoneRuntime(
 			operationId,
 			startedAtMs: options.now(),
 		};
+		let capturedReliabilityFaultTarget: OpenClawProcessReliabilityFaultTargetCapture | undefined;
 		try {
 			await recordLifecycleOperation({
 				kind: 'start-requested',
@@ -710,14 +993,37 @@ export function createOpenClawZoneRuntime(
 				operationTrigger,
 				previousGateway: gatewayIdentityFor(operationContext?.previousGateway),
 			});
-			const startedGateway = await startGateway(startOptions);
+			const startedGateway = await startGateway({
+				...startOptions,
+				onControlSessionAttemptOutcome: (outcome) => {
+					const attemptResult =
+						outcome.kind === 'hello_response'
+							? `hello_response:${outcome.outcome}`
+							: 'connect_error';
+					writeOpenClawZoneRuntimeLog(
+						`control attachment attempt for zone '${options.zone.id}' process '${outcome.processEpoch}' attachment ${String(outcome.attachmentGeneration)}: ${attemptResult}`,
+					);
+				},
+				onControlSessionHeartbeat: recordControlSessionHeartbeat,
+				onControlSessionReconnectExhausted: requestControlSessionProcessRecovery,
+				...(options.openClawProcessReliabilityFaultTargetRegistry === undefined
+					? {}
+					: {
+							onOpenClawProcessReliabilityFaultTarget: (target) => {
+								if (capturedReliabilityFaultTarget !== undefined) {
+									throw new Error(
+										`OpenClaw zone '${options.zone.id}' captured more than one reliability fault target for one Gateway start.`,
+									);
+								}
+								capturedReliabilityFaultTarget = target;
+							},
+						}),
+			});
 			if (expectedGeneration !== undefined && expectedGeneration !== lifecycleGeneration) {
 				try {
-					await closeGatewayWithDeadline(startedGateway);
+					await closeGateway(startedGateway);
 					if (lifecycleGeneration === expectedGeneration + 1) {
-						await (options.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
-							options.zone.gateway.stateDir,
-						);
+						await deleteGatewayRuntimeArtifacts();
 						await recordLifecycleOperation({
 							currentGateway: gatewayIdentityFor(startedGateway),
 							kind: 'runtime-record-deleted',
@@ -755,10 +1061,28 @@ export function createOpenClawZoneRuntime(
 				}
 				return;
 			}
+			if (options.openClawProcessReliabilityFaultTargetRegistry !== undefined) {
+				const gatewayIdentity = startedGateway.vmOwnership.gatewayIdentity;
+				if (
+					capturedReliabilityFaultTarget === undefined ||
+					gatewayIdentity === undefined ||
+					!gatewayIdentitiesEqual(capturedReliabilityFaultTarget.gateway, gatewayIdentity) ||
+					capturedReliabilityFaultTarget.processEpoch !== startedGateway.processEpoch
+				) {
+					await closeGateway(startedGateway);
+					throw new Error(
+						`OpenClaw zone '${options.zone.id}' did not capture the exact accepted Gateway/process reliability fault target.`,
+					);
+				}
+			}
 			gateway = startedGateway;
 			bootedAt = new Date(options.now()).toISOString();
 			lastError = undefined;
 			lifecycleState = { gateway: startedGateway, kind: 'running' };
+			if (capturedReliabilityFaultTarget !== undefined) {
+				publishReliabilityFaultTarget(capturedReliabilityFaultTarget);
+			}
+			startProcessObservation();
 			await recordLifecycleOperation({
 				currentGateway: gatewayIdentityFor(startedGateway),
 				kind: 'operation-finished',
@@ -767,6 +1091,12 @@ export function createOpenClawZoneRuntime(
 				previousGateway: gatewayIdentityFor(operationContext?.previousGateway),
 			});
 		} catch (error) {
+			if (currentReliabilityFaultTarget === capturedReliabilityFaultTarget) {
+				revokeCurrentReliabilityFaultTarget(gateway);
+			}
+			if (gateway === undefined && isOwnerUnsafeLifecycleState(getLifecycleState())) {
+				throw error;
+			}
 			if (error instanceof GatewayOwnershipUnsafeError) {
 				gateway = undefined;
 				bootedAt = undefined;
@@ -858,20 +1188,23 @@ export function createOpenClawZoneRuntime(
 		}
 	};
 
-	const stop = async (): Promise<void> => await runLifecycleOperation(async () => await stopNow());
+	const stop = async (): Promise<void> => {
+		processRecoveryCoordinatorRef.current?.cancelPendingRecovery();
+		await runLifecycleOperation(async () => await stopNow());
+	};
 
 	const start = async (): Promise<void> =>
-		await runLifecycleOperation(
-			async () =>
-				await startNow(
-					undefined,
-					{},
-					{
-						operationId: createOperationId('start'),
-						operationTrigger: 'controller-start',
-					},
-				),
-		);
+		await runLifecycleOperation(async () => {
+			assertGatewaySuccessorCreationAllowed();
+			return await startNow(
+				undefined,
+				{},
+				{
+					operationId: createOperationId('start'),
+					operationTrigger: 'controller-start',
+				},
+			);
+		});
 
 	const restartWithStartOptions = async (
 		restartOptions: OpenClawZoneRestartOptions = {},
@@ -897,6 +1230,17 @@ export function createOpenClawZoneRuntime(
 						? currentState.gateway
 						: undefined,
 			};
+			const pendingVmCreationContainment =
+				createPendingVmCreationTimeoutContainment(operationContext);
+			const startOptionsWithPendingContainment: GatewayZoneStartOptions =
+				restartOptions.timeoutMs === undefined
+					? startOptions
+					: {
+							...startOptions,
+							onPendingVmCreation: (containment) => {
+								pendingVmCreationContainment.onPendingVmCreation(containment);
+							},
+						};
 			const restartOperation =
 				currentState.kind === 'running' || currentState.kind === 'running-degraded'
 					? (async (): Promise<OpenClawZoneRestartResult> => {
@@ -907,7 +1251,7 @@ export function createOpenClawZoneRuntime(
 								previousGateway: gatewayIdentityFor(operationContext.previousGateway),
 							});
 							const preflightedStartOptions = await preflightGatewayStartOptions(
-								startOptions,
+								startOptionsWithPendingContainment,
 								operationContext,
 							);
 							await abortIfLifecycleGenerationStale({
@@ -922,7 +1266,6 @@ export function createOpenClawZoneRuntime(
 								operationId,
 								previousGateway: currentState.gateway,
 							};
-							const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
 							await abortIfLifecycleGenerationStale({
 								operationContext,
 								operationGeneration,
@@ -939,18 +1282,19 @@ export function createOpenClawZoneRuntime(
 								);
 							}
 							return {
-								leaseReleaseFailureCount: leaseReleaseResult.failedLeaseIds.length,
+								leaseReleaseFailureCount: 0,
 								operationId,
 							};
 						})()
 					: (async (): Promise<OpenClawZoneRestartResult> => {
+							assertGatewaySuccessorCreationAllowed();
 							await recordLifecycleOperation({
 								kind: 'cold-start-requested',
 								operationId,
 								operationTrigger: operationContext.operationTrigger,
 							});
 							const preflightedStartOptions = await preflightGatewayStartOptions(
-								startOptions,
+								startOptionsWithPendingContainment,
 								operationContext,
 							);
 							await abortIfLifecycleGenerationStale({
@@ -959,7 +1303,6 @@ export function createOpenClawZoneRuntime(
 								stage: 'lease release',
 								timeoutMs: restartOptions.timeoutMs,
 							});
-							const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
 							await abortIfLifecycleGenerationStale({
 								operationContext,
 								operationGeneration,
@@ -975,7 +1318,7 @@ export function createOpenClawZoneRuntime(
 								);
 							}
 							return {
-								leaseReleaseFailureCount: leaseReleaseResult.failedLeaseIds.length,
+								leaseReleaseFailureCount: 0,
 								operationId,
 							};
 						})();
@@ -985,7 +1328,11 @@ export function createOpenClawZoneRuntime(
 			}
 
 			return withLifecycleTimeout({
+				onTimeout: () => {
+					pendingVmCreationContainment.onTimeout();
+				},
 				operation: restartOperation,
+				releaseLockWhen: pendingVmCreationContainment.releaseLifecycleLock,
 				timeoutMs: restartOptions.timeoutMs,
 			});
 		});
@@ -994,6 +1341,122 @@ export function createOpenClawZoneRuntime(
 	const restart = async (
 		restartOptions: OpenClawZoneRestartOptions = {},
 	): Promise<OpenClawZoneRestartResult> => await restartWithStartOptions(restartOptions);
+
+	processRecoveryCoordinatorRef.current = createOpenClawProcessRecoveryCoordinator({
+		escalateGatewayRecovery: async (reason, binding) => {
+			if (options.recoverGatewayAfterProcessFailure !== undefined) {
+				await options.recoverGatewayAfterProcessFailure({ gateway: binding.gateway, reason });
+				return;
+			}
+			await restartWithStartOptions(
+				{
+					operationTrigger: 'auto-recovery',
+					timeoutMs: OPENCLAW_PROCESS_RECOVERY_ACTION_TIMEOUT_MS,
+				},
+				{},
+				{ operationTrigger: 'auto-recovery' },
+			);
+		},
+		getCurrentBinding: () => {
+			const currentGateway = gateway;
+			const currentProcessBinding = currentGateway?.openClawProcessEpochOwner?.getCurrentBinding();
+			const gatewayIdentity = currentGateway?.vmOwnership.gatewayIdentity;
+			if (currentProcessBinding === undefined || gatewayIdentity === undefined) {
+				return undefined;
+			}
+			return {
+				gateway: gatewayIdentity,
+				processEpoch: currentProcessBinding.material.processEpoch,
+			};
+		},
+		nowMs: options.now,
+		recoverCurrentProcess: async (trigger, attemptBudget) => {
+			await runLifecycleOperation(() => {
+				const recoveryTimeoutError = new OpenClawProcessRecoveryTimeoutError(options.zone.id);
+				const recoveryAbortController = new AbortController();
+				const recoveryOperation = (async (): Promise<void> => {
+					processRecoveryActionInFlight = true;
+					try {
+						const currentState = getLifecycleState();
+						if (currentState.kind !== 'running' && currentState.kind !== 'running-degraded') {
+							return;
+						}
+						const currentGateway = currentState.gateway;
+						const processOwner = currentGateway.openClawProcessEpochOwner;
+						const gatewayIdentity = currentGateway.vmOwnership.gatewayIdentity;
+						if (processOwner === undefined || gatewayIdentity === undefined) {
+							throw new Error(
+								`OpenClaw zone '${options.zone.id}' cannot recover a process without an exact process owner.`,
+							);
+						}
+						const currentBinding = processOwner.getCurrentBinding();
+						if (
+							currentBinding.material.processEpoch !== trigger.processEpoch ||
+							!gatewayIdentitiesEqual(gatewayIdentity, trigger.gateway)
+						) {
+							return;
+						}
+						revokeCurrentReliabilityFaultTarget(currentGateway, {
+							preserveActuatorCapture: true,
+						});
+						let successorBinding: Awaited<ReturnType<typeof processOwner.replaceCurrentProcess>>;
+						try {
+							successorBinding = await processOwner.replaceCurrentProcess({
+								action: { signal: recoveryAbortController.signal },
+								expectedProcessEpoch: trigger.processEpoch,
+								selectSuccessorProcessEpoch: () =>
+									attemptBudget.selectSuccessorAttempt() ? randomUUID() : undefined,
+							});
+						} catch (error) {
+							writeOpenClawZoneRuntimeLog(
+								`same-G process recovery failed for zone '${options.zone.id}' before Gateway escalation: ${formatUnknownError(error)}`,
+							);
+							throw error;
+						}
+						if (recoveryAbortController.signal.aborted) {
+							throw recoveryAbortController.signal.reason;
+						}
+						const successorGateway = {
+							...currentGateway,
+							controlSession: successorBinding.controlSession,
+							processEpoch: successorBinding.material.processEpoch,
+							processSpec: successorBinding.processSpec,
+						} satisfies GatewayZoneRuntimeHandle;
+						const reliabilityFaultActuator =
+							acceptedReliabilityFaultActuatorCapture !== undefined &&
+							gatewayIdentitiesEqual(
+								acceptedReliabilityFaultActuatorCapture.gateway,
+								gatewayIdentity,
+							)
+								? acceptedReliabilityFaultActuatorCapture.reliabilityFaultActuator
+								: undefined;
+						if (
+							options.openClawProcessReliabilityFaultTargetRegistry !== undefined &&
+							reliabilityFaultActuator !== undefined
+						) {
+							publishReliabilityFaultTarget({
+								controlSession: successorBinding.controlSession,
+								gateway: gatewayIdentity,
+								processEpoch: successorBinding.material.processEpoch,
+								reliabilityFaultActuator,
+							});
+						}
+						gateway = successorGateway;
+						lifecycleState = { ...currentState, gateway: successorGateway };
+					} finally {
+						processRecoveryActionInFlight = false;
+					}
+				})();
+				return withLifecycleTimeout({
+					invalidateLifecycleGeneration: false,
+					onTimeout: () => recoveryAbortController.abort(recoveryTimeoutError),
+					operation: recoveryOperation,
+					timeoutError: () => recoveryTimeoutError,
+					timeoutMs: OPENCLAW_PROCESS_RECOVERY_ACTION_TIMEOUT_MS,
+				});
+			});
+		},
+	});
 
 	const coldStartWithStartOptions = async (
 		restartOptions: OpenClawZoneRestartOptions = {},
@@ -1011,15 +1474,26 @@ export function createOpenClawZoneRuntime(
 				operationTrigger:
 					operationMetadata.operationTrigger ?? restartOptions.operationTrigger ?? 'auto-recovery',
 			};
+			const pendingVmCreationContainment =
+				createPendingVmCreationTimeoutContainment(operationContext);
+			const startOptionsWithPendingContainment: GatewayZoneStartOptions =
+				restartOptions.timeoutMs === undefined
+					? startOptions
+					: {
+							...startOptions,
+							onPendingVmCreation: (containment) => {
+								pendingVmCreationContainment.onPendingVmCreation(containment);
+							},
+						};
 			const coldStartOperation = (async (): Promise<OpenClawZoneRestartResult> => {
-				getLifecycleState();
+				assertGatewaySuccessorCreationAllowed();
 				await recordLifecycleOperation({
 					kind: 'cold-start-requested',
 					operationId: operationContext.operationId,
 					operationTrigger: operationContext.operationTrigger,
 				});
 				const preflightedStartOptions = await preflightGatewayStartOptions(
-					startOptions,
+					startOptionsWithPendingContainment,
 					operationContext,
 				);
 				await abortIfLifecycleGenerationStale({
@@ -1028,7 +1502,6 @@ export function createOpenClawZoneRuntime(
 					stage: 'lease release',
 					timeoutMs: restartOptions.timeoutMs,
 				});
-				const leaseReleaseResult = await releaseZoneLeases(options.zone.id);
 				await abortIfLifecycleGenerationStale({
 					operationContext,
 					operationGeneration,
@@ -1041,7 +1514,7 @@ export function createOpenClawZoneRuntime(
 					throw new OpenClawZoneRestartTimeoutError(options.zone.id, restartOptions.timeoutMs ?? 0);
 				}
 				return {
-					leaseReleaseFailureCount: leaseReleaseResult.failedLeaseIds.length,
+					leaseReleaseFailureCount: 0,
 					operationId: operationContext.operationId,
 				};
 			})();
@@ -1051,7 +1524,11 @@ export function createOpenClawZoneRuntime(
 			}
 
 			return withLifecycleTimeout({
+				onTimeout: () => {
+					pendingVmCreationContainment.onTimeout();
+				},
 				operation: coldStartOperation,
+				releaseLockWhen: pendingVmCreationContainment.releaseLifecycleLock,
 				timeoutMs: restartOptions.timeoutMs,
 			});
 		});
@@ -1067,9 +1544,7 @@ export function createOpenClawZoneRuntime(
 			await (options.runControllerDestroy ?? runControllerDestroyDefault)(
 				{ purge, systemConfig: options.systemConfig, zoneId: options.zone.id },
 				{
-					releaseZoneLeases: async (zoneId) => {
-						await releaseZoneLeases(zoneId);
-					},
+					releaseZoneLeases: async () => {},
 					stopGatewayZone: async () => await stop(),
 				},
 			),
@@ -1141,7 +1616,7 @@ export function createOpenClawZoneRuntime(
 			}
 			return lastError ? { lastError, lifecycleState: 'failed' } : { lifecycleState: 'stopped' };
 		},
-		refreshCredentials: async () =>
+		refreshCredentials: async (refreshOptions = {}) =>
 			await (async () => {
 				const operationId = createOperationId('credentials-refresh');
 				const operationTrigger = 'credentials-refresh';
@@ -1189,6 +1664,9 @@ export function createOpenClawZoneRuntime(
 				} catch (error) {
 					await failCredentialsRefreshSecretResolution(error);
 				}
+				if (refreshOptions.signal?.aborted) {
+					throw refreshOptions.signal.reason;
+				}
 				let preflightedRefreshStartOptions: GatewayZoneStartOptions | undefined;
 				return await (
 					options.runControllerCredentialsRefresh ?? runControllerCredentialsRefreshDefault
@@ -1204,22 +1682,28 @@ export function createOpenClawZoneRuntime(
 							} catch (error) {
 								await failCredentialsRefreshSecretResolution(error);
 							}
+							if (refreshOptions.signal?.aborted) {
+								throw refreshOptions.signal.reason;
+							}
 						},
 						restartGatewayZone: async () => {
+							if (refreshOptions.signal?.aborted) {
+								throw refreshOptions.signal.reason;
+							}
 							const currentLifecycleState = getLifecycleState();
 							if (
 								currentLifecycleState.kind === 'running' ||
 								currentLifecycleState.kind === 'running-degraded'
 							) {
 								await restartWithStartOptions(
-									{},
+									{ timeoutMs: refreshOptions.timeoutMs },
 									preflightedRefreshStartOptions ?? { secretResolver: refreshedSecretResolver },
 									{ operationId, operationTrigger },
 								);
 								return;
 							}
 							await coldStartWithStartOptions(
-								{},
+								{ timeoutMs: refreshOptions.timeoutMs },
 								preflightedRefreshStartOptions ?? { secretResolver: refreshedSecretResolver },
 								{ operationId, operationTrigger },
 							);
@@ -1227,6 +1711,33 @@ export function createOpenClawZoneRuntime(
 					},
 				);
 			})(),
+		requestControlSessionRecovery: async (request) => {
+			const currentState = getLifecycleState();
+			if (currentState.kind !== 'running' && currentState.kind !== 'running-degraded') {
+				return;
+			}
+			const currentGateway = currentState.gateway;
+			const currentSourceKey = currentGateway.controlSessionRecoverySourceKey;
+			const gatewayIdentity = currentGateway.vmOwnership.gatewayIdentity;
+			const processEpoch =
+				currentGateway.openClawProcessEpochOwner?.getCurrentBinding().material.processEpoch;
+			if (
+				currentSourceKey === undefined ||
+				gatewayIdentity === undefined ||
+				processEpoch === undefined ||
+				currentSourceKey.bootId !== request.sourceKey.bootId ||
+				currentSourceKey.gatewayVmId !== request.sourceKey.gatewayVmId ||
+				currentSourceKey.generationId !== request.sourceKey.generationId ||
+				currentSourceKey.zoneId !== request.sourceKey.zoneId
+			) {
+				return;
+			}
+			await processRecoveryCoordinatorRef.current?.requestRecovery({
+				gateway: gatewayIdentity,
+				kind: 'control-reconnect-exhausted',
+				processEpoch,
+			});
+		},
 		restart,
 		shutdown: stop,
 		start,

@@ -1,53 +1,19 @@
-import type { WorkerInternalControllerRequestOperation } from '@agent-vm/gateway-interface';
 import { execa } from 'execa';
 
 import type { RepoLocation } from '../../shared/repo-location.js';
-import {
-	WorkerControllerRequestPolicyTransportError,
-	fetchWorkerControllerWithPolicy,
-} from './controller-request-policy.js';
 
 export interface ControllerToolRepoSelection {
 	readonly repo: RepoLocation | null;
 	readonly error: string | null;
 }
 
-export type ControllerToolFailure =
-	| {
-			readonly type: 'controller-transport-error';
-			readonly success: false;
-			readonly artifact: string;
-	  }
-	| {
-			readonly type: 'controller-http-error';
-			readonly success: false;
-			readonly status: number;
-			readonly artifact: string;
-	  }
-	| {
-			readonly type: 'controller-parse-error';
-			readonly success: false;
-			readonly artifact: string;
-	  };
-
 export type CurrentBranchResult =
 	| { readonly ok: true; readonly branch: string | null }
 	| { readonly ok: false; readonly error: string };
 
-export function isControllerToolFailure(value: unknown): value is ControllerToolFailure {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		'type' in value &&
-		(value.type === 'controller-transport-error' ||
-			value.type === 'controller-http-error' ||
-			value.type === 'controller-parse-error') &&
-		'success' in value &&
-		value.success === false &&
-		'artifact' in value &&
-		typeof value.artifact === 'string'
-	);
-}
+export type CurrentHeadResult =
+	| { readonly ok: true; readonly head: string }
+	| { readonly ok: false; readonly error: string };
 
 export function buildSafeGitEnvironment(cwd: string): NodeJS.ProcessEnv {
 	const existingCount = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? '0', 10);
@@ -129,49 +95,35 @@ export async function currentBranch(cwd: string): Promise<CurrentBranchResult> {
 	return { ok: true, branch: branch.length > 0 ? branch : null };
 }
 
-export async function postControllerJson(options: {
-	readonly url: string;
-	readonly body: Record<string, unknown>;
-	readonly operation: WorkerInternalControllerRequestOperation;
-}): Promise<unknown> {
-	let response: Response;
-	try {
-		response = await fetchWorkerControllerWithPolicy({
-			input: options.url,
-			operation: options.operation,
-			init: {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(options.body),
-			},
-		});
-	} catch (error) {
-		const cause =
-			error instanceof WorkerControllerRequestPolicyTransportError && error.cause
-				? error.cause
-				: error;
+export async function currentHead(cwd: string): Promise<CurrentHeadResult> {
+	const result = await execa('git', ['rev-parse', 'HEAD'], {
+		cwd,
+		env: buildSafeGitEnvironment(cwd),
+		reject: false,
+		timeout: 10_000,
+	});
+	if (typeof result.exitCode !== 'number') {
 		return {
-			type: 'controller-transport-error',
-			success: false,
-			artifact: `Controller request failed before HTTP response: ${cause instanceof Error ? cause.message : String(cause)}`,
-		} satisfies ControllerToolFailure;
+			ok: false,
+			error: ['git rev-parse HEAD terminated without an exit code', result.stdout, result.stderr]
+				.filter((line) => line.trim().length > 0)
+				.join('\n'),
+		};
 	}
-	const text = await response.text();
-	if (!response.ok) {
+	if (result.exitCode !== 0) {
 		return {
-			type: 'controller-http-error',
-			success: false,
-			status: response.status,
-			artifact: `Controller request failed with HTTP ${String(response.status)}: ${text}`,
-		} satisfies ControllerToolFailure;
+			ok: false,
+			error: ['git rev-parse HEAD failed', result.stdout, result.stderr]
+				.filter((line) => line.trim().length > 0)
+				.join('\n'),
+		};
 	}
-	try {
-		return JSON.parse(text) as unknown;
-	} catch (error) {
+	const head = result.stdout.trim();
+	if (head.length === 0) {
 		return {
-			type: 'controller-parse-error',
-			success: false,
-			artifact: `Controller response parse failed: ${error instanceof Error ? error.message : String(error)}`,
-		} satisfies ControllerToolFailure;
+			ok: false,
+			error: 'git rev-parse HEAD returned an empty HEAD.',
+		};
 	}
+	return { ok: true, head };
 }

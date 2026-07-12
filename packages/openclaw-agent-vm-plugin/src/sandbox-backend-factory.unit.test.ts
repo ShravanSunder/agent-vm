@@ -5,7 +5,11 @@ import {
 } from '@agent-vm/gateway-interface';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ControllerLeaseRequestError, type LeaseClient } from './controller-lease-client.js';
+import {
+	ControllerLeaseRequestError,
+	type LeaseClient,
+	type OpenClawGondolinLeaseReacquireRequest,
+} from './lease-client-contract.js';
 import {
 	createGondolinSandboxBackendFactory,
 	createGondolinSandboxBackendManager,
@@ -124,7 +128,7 @@ function createControllerLeaseError(status: number): ControllerLeaseRequestError
 
 function createActiveUseLeaseClientMethods(): Pick<
 	LeaseClient,
-	'startActiveUse' | 'heartbeatActiveUse' | 'endActiveUse'
+	'startActiveUse' | 'heartbeatActiveUse' | 'endActiveUse' | 'reacquireLease'
 > {
 	return {
 		endActiveUse: vi.fn(async () => {}),
@@ -132,6 +136,7 @@ function createActiveUseLeaseClientMethods(): Pick<
 			expiresAt: 2_000,
 			heartbeatAfterMs: 1_000,
 		})),
+		reacquireLease: vi.fn(async (oldLeaseId) => createLeaseResponse(`${oldLeaseId}-reacquired`)),
 		startActiveUse: vi.fn(async (_leaseId, request) => ({
 			useId: request.useId,
 			expiresAt: 2_000,
@@ -313,10 +318,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 					...createActiveUseLeaseClientMethods(),
 					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
-					publishOpenClawRuntimeStatus,
 					releaseLease: async () => {},
 					requestLease,
 				}),
+				publishOpenClawRuntimeStatus,
 				runRemoteShellScript,
 			},
 		);
@@ -843,12 +848,11 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
-	it('drops a cached handle when the cached SSH probe fails before reuse', async () => {
-		let leaseCounter = 0;
-		const requestLease = vi.fn(async () => {
-			leaseCounter += 1;
-			return createLeaseResponse(`01890f00-0000-7000-8000-00000000000${String(leaseCounter)}`);
-		});
+	it('reacquires a cached handle when the cached SSH probe fails before reuse', async () => {
+		const oldLease = createLeaseResponse('01890f00-0000-7000-8000-000000000001');
+		const replacementLease = createLeaseResponse('01890f00-0000-7000-8000-000000000002');
+		const requestLease = vi.fn(async () => oldLease);
+		const reacquireLease = vi.fn(async () => replacementLease);
 		const runRemoteShellScript = vi
 			.fn()
 			.mockRejectedValueOnce(new Error('kex reset'))
@@ -867,6 +871,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				createLeaseClient: () => ({
 					...createActiveUseLeaseClientMethods(),
 					peekLease: async () => createLeasePeekResponse(),
+					reacquireLease,
 					releaseLease: async () => {},
 					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
 					requestLease,
@@ -879,7 +884,16 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const secondHandle = await factory(createFactoryParamsForAgent('beta'));
 
 		expect(secondHandle).not.toBe(firstHandle);
-		expect(requestLease).toHaveBeenCalledTimes(2);
+		expect(firstHandle.runtimeId).toBe(oldLease.leaseId);
+		expect(secondHandle.runtimeId).toBe(replacementLease.leaseId);
+		expect(requestLease).toHaveBeenCalledTimes(1);
+		expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, {
+			observedAtMs: expect.any(Number),
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				operation: 'probe',
+			},
+		});
 	});
 
 	it('drops a cached handle after an SSH command failure inside an operation', async () => {
@@ -916,10 +930,443 @@ describe('createGondolinSandboxBackendFactory', () => {
 		await expect(handle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/ssh hung/u);
 		await factory(createFactoryParamsForAgent('beta'));
 
-		expect(releaseLease).toHaveBeenCalledWith('01890f00-0000-7000-8000-000000000001', {
-			force: true,
-		});
+		expect(releaseLease).not.toHaveBeenCalled();
 		expect(requestLease).toHaveBeenCalledTimes(2);
+	});
+
+	it('reacquires from a sibling handle while the shared stale lease retains controller authority', async () => {
+		const oldLease = createLeaseResponse('sibling-old');
+		const replacementLease = createLeaseResponse('sibling-new');
+		let retiredLeaseId: string | undefined;
+		let retiredReacquireRequest:
+			| {
+					readonly observedAtMs: number;
+					readonly staleEvidence: {
+						readonly kind: 'tool-vm-ssh';
+						readonly operation: 'command';
+					};
+			  }
+			| undefined;
+		let oldLeaseAuthorityAvailable = true;
+		const requestLease = vi.fn(async () => oldLease);
+		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+			useId: request.useId,
+		}));
+		const reacquireLease = vi.fn(async (oldLeaseId: string) => {
+			expect(oldLeaseId).toBe(oldLease.leaseId);
+			expect(retiredLeaseId).toBe(oldLease.leaseId);
+			expect(oldLeaseAuthorityAvailable).toBe(true);
+			return replacementLease;
+		});
+		const releaseLease = vi.fn(async () => {
+			oldLeaseAuthorityAvailable = false;
+		});
+		const retainRetiredLeaseReacquireRequest = vi.fn(
+			(leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
+				retiredLeaseId = leaseId;
+				if (
+					reacquireRequest.staleEvidence.kind === 'tool-vm-ssh' &&
+					reacquireRequest.staleEvidence.operation === 'command'
+				) {
+					retiredReacquireRequest = {
+						observedAtMs: reacquireRequest.observedAtMs,
+						staleEvidence: { kind: 'tool-vm-ssh', operation: 'command' },
+					};
+				}
+				return true;
+			},
+		);
+		const runRemoteShellScript = vi
+			.fn()
+			.mockResolvedValueOnce({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('probe') })
+			.mockRejectedValueOnce(new Error('kex reset'))
+			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('ok') });
+		const leaseClient: LeaseClient = {
+			endActiveUse: vi.fn(async () => {}),
+			getRetiredLeaseReacquireRequest: (leaseId) =>
+				retiredLeaseId === leaseId ? retiredReacquireRequest : undefined,
+			heartbeatActiveUse: vi.fn(async () => ({
+				expiresAt: 2_000,
+				heartbeatAfterMs: 1_000,
+			})),
+			peekLease: async () => createLeasePeekResponse(oldLease.leaseId),
+			reacquireLease,
+			releaseLease,
+			renewLease: async () => oldLease,
+			requestLease,
+			retainRetiredLeaseReacquireRequest,
+			startActiveUse,
+		};
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => leaseClient,
+				runRemoteShellScript,
+			},
+		);
+
+		const firstHandle = await factory(createFactoryParamsForAgent('main'));
+		const secondHandle = await factory(createFactoryParamsForAgent('main'));
+
+		await expect(firstHandle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/kex reset/u);
+		await expect(secondHandle.runShellCommand({ script: 'pwd' })).resolves.toEqual({
+			code: 0,
+			stderr: Buffer.alloc(0),
+			stdout: Buffer.from('ok'),
+		});
+
+		expect(firstHandle.runtimeId).toBe(oldLease.leaseId);
+		expect(secondHandle.runtimeId).toBe(replacementLease.leaseId);
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, {
+			observedAtMs: expect.any(Number),
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				operation: 'command',
+			},
+		});
+		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
+			oldLease.leaseId,
+			replacementLease.leaseId,
+		]);
+		expect(runRemoteShellScript).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ ssh: oldLease.ssh }),
+		);
+		expect(runRemoteShellScript).toHaveBeenNthCalledWith(
+			3,
+			expect.objectContaining({ ssh: replacementLease.ssh }),
+		);
+	});
+
+	it('shares a local stale marker without pre-releasing authority for sibling handles', async () => {
+		const oldLease = createLeaseResponse('sibling-release-fails-old');
+		const replacementLease = createLeaseResponse('sibling-release-fails-new');
+		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
+		const requestLease = vi.fn(async () => oldLease);
+		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+			useId: request.useId,
+		}));
+		const reacquireLease = vi.fn(async (oldLeaseId: string) => {
+			expect(oldLeaseId).toBe(oldLease.leaseId);
+			expect(retainedReacquireRequest).toEqual({
+				observedAtMs: expect.any(Number),
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					operation: 'command',
+				},
+			});
+			return replacementLease;
+		});
+		const releaseLease = vi.fn(async () => {
+			throw new Error('controller release transport failed');
+		});
+		const runRemoteShellScript = vi
+			.fn()
+			.mockResolvedValueOnce({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('probe') })
+			.mockRejectedValueOnce(new Error('kex reset'))
+			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('ok') });
+		const leaseClient = {
+			endActiveUse: vi.fn(async () => {}),
+			getRetiredLeaseReacquireRequest: () => retainedReacquireRequest,
+			heartbeatActiveUse: vi.fn(async () => ({
+				expiresAt: 2_000,
+				heartbeatAfterMs: 1_000,
+			})),
+			peekLease: async () => createLeasePeekResponse(oldLease.leaseId),
+			reacquireLease,
+			releaseLease,
+			renewLease: async () => oldLease,
+			requestLease,
+			retainRetiredLeaseReacquireRequest: (_leaseId, reacquireRequest) => {
+				if (
+					reacquireRequest.staleEvidence.kind === 'tool-vm-ssh' &&
+					reacquireRequest.staleEvidence.operation === 'command'
+				) {
+					retainedReacquireRequest = {
+						observedAtMs: reacquireRequest.observedAtMs,
+						staleEvidence: reacquireRequest.staleEvidence,
+					};
+					return true;
+				}
+				return false;
+			},
+			startActiveUse,
+		} satisfies LeaseClient;
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => leaseClient,
+				runRemoteShellScript,
+			},
+		);
+
+		const firstHandle = await factory(createFactoryParamsForAgent('main'));
+		const secondHandle = await factory(createFactoryParamsForAgent('main'));
+
+		await expect(firstHandle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/kex reset/u);
+		await expect(secondHandle.runShellCommand({ script: 'pwd' })).resolves.toEqual({
+			code: 0,
+			stderr: Buffer.alloc(0),
+			stdout: Buffer.from('ok'),
+		});
+
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(reacquireLease).toHaveBeenCalledTimes(1);
+		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
+			oldLease.leaseId,
+			replacementLease.leaseId,
+		]);
+	});
+
+	it('reacquires a cached-probe lease before cleanup can delete its controller authority', async () => {
+		const oldLease = createLeaseResponse('cached-probe-old');
+		const replacementLease = createLeaseResponse('cached-probe-new');
+		const publishHealthEvent = vi.fn(async () => {});
+		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
+		let oldLeaseAuthorityAvailable = true;
+		const requestLease = vi.fn(async () => {
+			oldLeaseAuthorityAvailable = true;
+			return oldLease;
+		});
+		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+			useId: request.useId,
+		}));
+		const reacquireLease = vi.fn(async (oldLeaseId: string) => {
+			expect(oldLeaseId).toBe(oldLease.leaseId);
+			if (!oldLeaseAuthorityAvailable) {
+				throw new ControllerLeaseRequestError({
+					bodyText: JSON.stringify({
+						leaseRejectionReason: 'lease_authority_absent',
+						message: 'gateway control lease authority is absent',
+					}),
+					context: 'Gateway control lease_reacquire',
+					leaseRejectionReason: 'lease_authority_absent',
+					responseBody: {
+						leaseRejectionReason: 'lease_authority_absent',
+						message: 'gateway control lease authority is absent',
+					},
+					status: 404,
+				});
+			}
+			expect(retainedReacquireRequest).toEqual({
+				observedAtMs: expect.any(Number),
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					operation: 'probe',
+				},
+			});
+			return replacementLease;
+		});
+		const releaseLease = vi.fn(async () => {
+			oldLeaseAuthorityAvailable = false;
+		});
+		const retainRetiredLeaseReacquireRequest = vi.fn(
+			(_leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
+				retainedReacquireRequest = reacquireRequest;
+				return true;
+			},
+		);
+		const runRemoteShellScript = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('cached probe reset'))
+			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('ok') });
+		const leaseClient = {
+			endActiveUse: vi.fn(async () => {}),
+			getRetiredLeaseReacquireRequest: (leaseId) =>
+				leaseId === oldLease.leaseId ? retainedReacquireRequest : undefined,
+			heartbeatActiveUse: vi.fn(async () => ({
+				expiresAt: 2_000,
+				heartbeatAfterMs: 1_000,
+			})),
+			peekLease: async () => createLeasePeekResponse(oldLease.leaseId),
+			reacquireLease,
+			releaseLease,
+			renewLease: async () => oldLease,
+			requestLease,
+			retainRetiredLeaseReacquireRequest,
+			startActiveUse,
+		} satisfies LeaseClient;
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => leaseClient,
+				publishHealthEvent,
+				runRemoteShellScript,
+			},
+		);
+
+		const firstHandle = await factory(createFactoryParamsForAgent('main'));
+		await factory(createFactoryParamsForAgent('main'));
+		await expect(firstHandle.runShellCommand({ script: 'pwd' })).resolves.toEqual({
+			code: 0,
+			stderr: Buffer.alloc(0),
+			stdout: Buffer.from('ok'),
+		});
+
+		expect(retainRetiredLeaseReacquireRequest).toHaveBeenCalledWith(oldLease.leaseId, {
+			observedAtMs: expect.any(Number),
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				operation: 'probe',
+			},
+		});
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, {
+			observedAtMs: expect.any(Number),
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				operation: 'probe',
+			},
+		});
+		expect(publishHealthEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'main',
+				callerContextState: 'stale',
+				kind: 'tool-vm-ssh',
+				leaseId: oldLease.leaseId,
+				lifecycleEventRole: 'plugin_observation',
+				lifecycleTransition: 'current_to_stale',
+				oldLeaseId: oldLease.leaseId,
+				operation: 'probe',
+				result: 'failed',
+				transitionId: `lease_reacquire:${oldLease.leaseId}`,
+				zoneId: 'shravan',
+			}),
+		);
+		expect(requestLease).toHaveBeenCalledTimes(1);
+		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
+			replacementLease.leaseId,
+		]);
+	});
+
+	it('retains a cached-probe reacquire hint across direct reacquire failures without cleanup', async () => {
+		const oldLease = createLeaseResponse('cached-probe-retain-old');
+		const replacementLease = createLeaseResponse('cached-probe-retain-new');
+		let retainedReacquireRequest: OpenClawGondolinLeaseReacquireRequest | undefined;
+		let reacquireAttempt = 0;
+		const requestLease = vi.fn(async () => oldLease);
+		const startActiveUse = vi.fn(async (_leaseId: string, request) => ({
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+			useId: request.useId,
+		}));
+		const reacquireLease = vi.fn(async (oldLeaseId: string) => {
+			expect(oldLeaseId).toBe(oldLease.leaseId);
+			reacquireAttempt += 1;
+			if (reacquireAttempt === 1) {
+				throw new ControllerLeaseRequestError({
+					bodyText: JSON.stringify({ message: 'controller reacquire unavailable' }),
+					context: 'Gateway control lease_reacquire',
+					responseBody: { message: 'controller reacquire unavailable' },
+					status: 503,
+				});
+			}
+			return replacementLease;
+		});
+		const releaseLease = vi.fn(async () => {
+			throw new Error('controller release transport failed');
+		});
+		const retainRetiredLeaseReacquireRequest = vi.fn(
+			(_leaseId: string, reacquireRequest: OpenClawGondolinLeaseReacquireRequest) => {
+				retainedReacquireRequest = reacquireRequest;
+				return true;
+			},
+		);
+		const runRemoteShellScript = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('cached probe reset'))
+			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.from('ok') });
+		const leaseClient = {
+			endActiveUse: vi.fn(async () => {}),
+			getRetiredLeaseReacquireRequest: (leaseId: string) =>
+				leaseId === oldLease.leaseId ? retainedReacquireRequest : undefined,
+			heartbeatActiveUse: vi.fn(async () => ({
+				expiresAt: 2_000,
+				heartbeatAfterMs: 1_000,
+			})),
+			peekLease: async () => createLeasePeekResponse(oldLease.leaseId),
+			reacquireLease,
+			releaseLease,
+			renewLease: async () => oldLease,
+			requestLease,
+			retainRetiredLeaseReacquireRequest,
+			startActiveUse,
+		} satisfies LeaseClient;
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => leaseClient,
+				runRemoteShellScript,
+			},
+		);
+
+		const firstHandle = await factory(createFactoryParamsForAgent('main'));
+		await expect(factory(createFactoryParamsForAgent('main'))).rejects.toThrow(
+			'Gateway control lease_reacquire returned HTTP 503',
+		);
+		await expect(firstHandle.runShellCommand({ script: 'pwd' })).resolves.toEqual({
+			code: 0,
+			stderr: Buffer.alloc(0),
+			stdout: Buffer.from('ok'),
+		});
+
+		expect(retainRetiredLeaseReacquireRequest).toHaveBeenCalledWith(oldLease.leaseId, {
+			observedAtMs: expect.any(Number),
+			staleEvidence: {
+				kind: 'tool-vm-ssh',
+				operation: 'probe',
+			},
+		});
+		const retainCallOrder = retainRetiredLeaseReacquireRequest.mock.invocationCallOrder[0];
+		const firstReacquireCallOrder = reacquireLease.mock.invocationCallOrder[0];
+		if (retainCallOrder === undefined || firstReacquireCallOrder === undefined) {
+			throw new Error('expected retain and reacquire calls');
+		}
+		expect(retainCallOrder).toBeLessThan(firstReacquireCallOrder);
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(reacquireLease).toHaveBeenCalledTimes(2);
+		expect(startActiveUse.mock.calls.map(([leaseId]) => leaseId)).toEqual([
+			replacementLease.leaseId,
+		]);
 	});
 
 	it('refuses a cached agent lease when the agent workspace root changes', async () => {
@@ -1443,8 +1890,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('finalizeExec publishes Tool VM SSH finalize health', async () => {
-		const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true })));
-		vi.stubGlobal('fetch', fetchMock);
+		const publishHealthEvent = vi.fn(async () => {});
 		const factory = createGondolinSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
@@ -1463,6 +1909,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize-health')),
 				}),
+				publishHealthEvent,
 				runRemoteShellScript: vi.fn(),
 			},
 		);
@@ -1487,26 +1934,21 @@ describe('createGondolinSandboxBackendFactory', () => {
 			token: execSpec.finalizeToken,
 		});
 
-		const fetchCall = fetchMock.mock.calls[0];
-		expect(fetchCall?.[0]).toBe('http://controller.vm.host:18800/zones/shravan/health-events');
-		const init = fetchCall?.[1];
-		if (typeof init?.body !== 'string') {
-			throw new TypeError('Expected health publish request body to be a string.');
-		}
-		const event: unknown = JSON.parse(init.body);
-		expect(event).toMatchObject({
-			agentId: 'main',
-			kind: 'tool-vm-ssh',
-			leaseId: testToolVmLeaseId('lease-finalize-health'),
-			operation: 'finalize',
-			result: 'ok',
-			zoneId: 'shravan',
-		});
+		expect(publishHealthEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'main',
+				kind: 'tool-vm-ssh',
+				leaseId: testToolVmLeaseId('lease-finalize-health'),
+				operation: 'finalize',
+				result: 'ok',
+				sessionKeyDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+				zoneId: 'shravan',
+			}),
+		);
 	});
 
 	it('finalizeExec does not wait for Tool VM SSH finalize health publishing', async () => {
-		const fetchMock = vi.fn<typeof fetch>(async () => new Promise<Response>(() => {}));
-		vi.stubGlobal('fetch', fetchMock);
+		const publishHealthEvent = vi.fn(async () => new Promise<void>(() => {}));
 		const factory = createGondolinSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
@@ -1525,6 +1967,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize-health')),
 				}),
+				publishHealthEvent,
 				runRemoteShellScript: vi.fn(),
 			},
 		);
@@ -1550,9 +1993,12 @@ describe('createGondolinSandboxBackendFactory', () => {
 				token: execSpec.finalizeToken,
 			}),
 		).resolves.toBeUndefined();
-		expect(fetchMock).toHaveBeenCalledWith(
-			'http://controller.vm.host:18800/zones/shravan/health-events',
-			expect.any(Object),
+		expect(publishHealthEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: 'tool-vm-ssh',
+				operation: 'finalize',
+				zoneId: 'shravan',
+			}),
 		);
 	});
 

@@ -4,6 +4,28 @@ import { describe, expect, it } from 'vitest';
 import { mapHealthEventToTelemetry } from './health-event-telemetry.js';
 
 describe('mapHealthEventToTelemetry', () => {
+	it('exports bounded caller-context rejection attributes without identifiers', () => {
+		const event = {
+			kind: 'caller-context-rejection',
+			observedAtMs: 1_781_445_000_000,
+			operation: 'lease_renew',
+			reason: 'caller_context_stale',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		const telemetry = mapHealthEventToTelemetry(event);
+
+		expect(telemetry.log.attributes).toMatchObject({
+			'agent_vm.caller_context.operation': 'lease_renew',
+			'agent_vm.caller_context.rejection_reason': 'caller_context_stale',
+			'agent_vm.health.kind': 'caller-context-rejection',
+			'agent_vm.health.result': 'failed',
+			'agent_vm.zone.id': 'beta',
+		});
+		expect(JSON.stringify(telemetry)).not.toMatch(/leaseId|callerContextId|sessionId/u);
+	});
+
 	it('maps lease heartbeat events without exporting raw lease identifiers', () => {
 		const event = {
 			agentId: 'beta-agent-secret-canary',
@@ -58,11 +80,13 @@ describe('mapHealthEventToTelemetry', () => {
 
 	it('ignores non-string error codes defensively', () => {
 		const event = {
+			domain: 'gateway_control',
 			elapsedMs: 12,
 			errorCode: null,
-			kind: 'gateway-control-link',
+			kind: 'gateway-control-session',
 			observedAtMs: 1_781_445_000_000,
-			operation: 'controller-health',
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-beta',
 			result: 'failed',
 			zoneId: 'beta',
 		} as unknown as AgentVmHealthEvent;
@@ -71,9 +95,96 @@ describe('mapHealthEventToTelemetry', () => {
 
 		expect(telemetry.log.attributes).not.toHaveProperty('error.type');
 		expect(telemetry.log.attributes).toMatchObject({
-			'agent_vm.gateway.operation': 'controller-health',
-			'agent_vm.health.kind': 'gateway-control-link',
+			'agent_vm.gateway.operation': 'control-session-heartbeat',
+			'agent_vm.health.kind': 'gateway-control-session',
 			'agent_vm.health.result': 'failed',
 		});
+	});
+
+	it('maps health correlation into operator-visible log attributes only', () => {
+		const event = {
+			agentId: 'main',
+			causationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			correlationId: 'correlation-main',
+			elapsedMs: 17,
+			kind: 'tool-vm-ssh',
+			leaseId: 'lease-main',
+			observedAtMs: 1_781_445_000_000,
+			operation: 'probe',
+			requestId: 'request-main',
+			result: 'ok',
+			runId: 'run-main',
+			sessionKeyDigest: 'b'.repeat(64),
+			toolCallId: 'tool-call-main',
+			traceId: '0123456789abcdef0123456789abcdef',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		const telemetry = mapHealthEventToTelemetry(event);
+
+		expect(telemetry.log.attributes).toMatchObject({
+			'agent_vm.causation.id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			'agent_vm.correlation.id': 'correlation-main',
+			'agent_vm.request.id': 'request-main',
+			'agent_vm.run.id': 'run-main',
+			'agent_vm.session_key.digest': 'b'.repeat(64),
+			'agent_vm.tool_call.id': 'tool-call-main',
+			'agent_vm.trace.id': '0123456789abcdef0123456789abcdef',
+		});
+		expect(telemetry.metricSamples[0]?.attributes).not.toHaveProperty('agent_vm.trace.id');
+		expect(telemetry.metricSamples[0]?.attributes).not.toHaveProperty('agent_vm.correlation.id');
+	});
+
+	it('maps Tool VM lifecycle evidence without exporting raw lease or active-use ids', () => {
+		const event = {
+			activeUseId: 'active-use-secret-canary',
+			agentId: 'beta-agent-secret-canary',
+			callerContextState: 'stale',
+			correlationId: 'correlation-main',
+			elapsedMs: 25,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: 'current-lease-secret-canary',
+			leaseRejectionReason: 'caller_context_stale',
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 1_781_445_000_000,
+			oldLeaseId: 'old-lease-secret-canary',
+			operation: 'file-bridge',
+			replacementLeaseId: 'replacement-lease-secret-canary',
+			result: 'ok',
+			transitionId: 'transition-secret-canary',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		const telemetry = mapHealthEventToTelemetry(event);
+		const serialized = JSON.stringify(telemetry);
+
+		expect(telemetry.log.attributes).toMatchObject({
+			'agent_vm.correlation.id': 'correlation-main',
+			'agent_vm.health.kind': 'tool-vm-ssh',
+			'agent_vm.health.result': 'ok',
+			'agent_vm.lease.caller_context_state': 'stale',
+			'agent_vm.lease.rejection_reason': 'caller_context_stale',
+			'agent_vm.lease.lifecycle_event_role': 'controller_final',
+			'agent_vm.lease.lifecycle_transition': 'stale_to_reacquired',
+			'agent_vm.tool_vm.ssh.operation': 'file-bridge',
+			'error.type': 'ssh-command-failed',
+		});
+		expect(telemetry.log.attributes['agent_vm.lease.active_use_id_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(telemetry.log.attributes['agent_vm.lease.old_id_hash']).toMatch(/^[a-f0-9]{16}$/u);
+		expect(telemetry.log.attributes['agent_vm.lease.replacement_id_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(telemetry.log.attributes['agent_vm.lease.transition_id_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(serialized).not.toContain('active-use-secret-canary');
+		expect(serialized).not.toContain('old-lease-secret-canary');
+		expect(serialized).not.toContain('replacement-lease-secret-canary');
+		expect(serialized).not.toContain('current-lease-secret-canary');
+		expect(serialized).not.toContain('transition-secret-canary');
 	});
 });

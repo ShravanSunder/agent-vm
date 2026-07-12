@@ -7,6 +7,10 @@ import {
 	type TaskState,
 } from '../state/task-state.js';
 import {
+	createWorkerControlRuntimeEventPublisher,
+	type WorkerControlRuntimeEventPublisher,
+} from '../work-phase/controller-tools/worker-control-rpc-client.js';
+import {
 	buildTaskConfig,
 	createTaskEventRecorder,
 	formatTaskFailureReason,
@@ -56,17 +60,93 @@ interface TaskStatusWaiter {
 
 const defaultTaskStatusWaitTimeoutMs = 5_000;
 
+function runtimeObservationStateFor(
+	status: TaskStatus,
+): 'closed' | 'failed' | 'running' | undefined {
+	if (status === 'closed' || status === 'completed') {
+		return 'closed';
+	}
+	if (status === 'failed') {
+		return 'failed';
+	}
+	return 'running';
+}
+
 export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordinator> {
 	const workDir = deps.workDir ?? '/work';
 	const tasks = await hydrateTaskStates(deps.config.stateDir);
 	const closedTaskIds = new Set<string>();
 	const taskStatusWaiters = new Map<string, TaskStatusWaiter[]>();
 	const baseEventRecorder = createTaskEventRecorder(deps.config.stateDir, tasks, closedTaskIds);
+	const runtimeEventPublisher =
+		deps.workerControlService === undefined
+			? undefined
+			: createWorkerControlRuntimeEventPublisher(deps.workerControlService);
 	let activeTaskId: string | null = null;
+
+	function publishWorkerControlCapacitySnapshot(): void {
+		if (runtimeEventPublisher === undefined) {
+			return;
+		}
+		void runtimeEventPublisher
+			.emitCapacitySnapshot({
+				...(activeTaskId === null ? {} : { activeTaskId }),
+				observedAtMs: Date.now(),
+				state: activeTaskId === null ? 'idle' : 'running',
+			})
+			.catch((error: unknown) => {
+				const message = error instanceof Error ? error.message : String(error);
+				writeStderr(`[coordinator] Failed to publish Worker capacity snapshot: ${message}`);
+			});
+	}
+
+	function publishWorkerControlRuntimeEvents(taskId: string): void {
+		if (runtimeEventPublisher === undefined) {
+			return;
+		}
+		const taskState = tasks.get(taskId);
+		if (taskState === undefined) {
+			return;
+		}
+		void publishWorkerControlRuntimeEventsAsync(
+			runtimeEventPublisher,
+			taskId,
+			taskState.status,
+		).catch((error: unknown) => {
+			const message = error instanceof Error ? error.message : String(error);
+			writeStderr(`[coordinator] Failed to publish Worker runtime event: ${message}`);
+		});
+	}
+
+	async function publishWorkerControlRuntimeEventsAsync(
+		publisher: WorkerControlRuntimeEventPublisher,
+		taskId: string,
+		status: TaskStatus,
+	): Promise<void> {
+		const observedAtMs = Date.now();
+		await publisher.emitRuntimeObservation({
+			observedAtMs,
+			state: runtimeObservationStateFor(status),
+			task: { taskId },
+		});
+		await publisher.emitRuntimeStatus({
+			findings: [
+				{
+					id: `task-status:${taskId}`,
+					ok: status !== 'failed',
+					safeMessage: `Task ${taskId} status is ${status}.`,
+					severity: status === 'failed' ? 'error' : 'info',
+				},
+			],
+			observedAtMs,
+			statusKind: 'task_status',
+		});
+	}
 
 	function finishActiveTask(taskId: string): void {
 		if (activeTaskId === taskId) {
 			activeTaskId = null;
+			publishWorkerControlCapacitySnapshot();
 		}
 	}
 
@@ -119,6 +199,7 @@ export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordina
 		async emit(taskId: string, event: TaskEvent): Promise<void> {
 			await baseEventRecorder.emit(taskId, event);
 			notifyTaskStateChanged(taskId);
+			publishWorkerControlRuntimeEvents(taskId);
 		},
 		isClosed(taskId: string): boolean {
 			return baseEventRecorder.isClosed(taskId);
@@ -126,6 +207,7 @@ export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordina
 		async recordTaskFailure(taskId: string, reason: string): Promise<void> {
 			await baseEventRecorder.recordTaskFailure(taskId, reason);
 			notifyTaskStateChanged(taskId);
+			publishWorkerControlRuntimeEvents(taskId);
 		},
 	} satisfies TaskEventRecorder;
 
@@ -145,6 +227,7 @@ export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordina
 			});
 
 			activeTaskId = taskId;
+			publishWorkerControlCapacitySnapshot();
 			void runTask(taskId, deps, workDir, tasks, eventRecorder, () =>
 				finishActiveTask(taskId),
 			).catch(async (error) => {
@@ -215,7 +298,6 @@ export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordina
 
 			closedTaskIds.add(taskId);
 			await eventRecorder.emit(taskId, { event: 'task-closed' });
-			finishActiveTask(taskId);
 			return { status: 'closed' };
 		},
 	};

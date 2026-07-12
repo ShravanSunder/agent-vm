@@ -1,0 +1,72 @@
+{
+	"name": "@agent-vm/agent-portal-sdk",
+	"version": "0.0.114",
+	"description": "Portal-neutral Zod contracts and helpers for agent-facing capability surfaces.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/agent-portal-sdk"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./adapter-boundary": {
+			"types": "./dist/adapter-boundary/index.d.ts",
+			"import": "./dist/adapter-boundary/index.js"
+		},
+		"./approval-surface": {
+			"types": "./dist/approval-surface/index.d.ts",
+			"import": "./dist/approval-surface/index.js"
+		},
+		"./artifact-surface": {
+			"types": "./dist/artifact-surface/index.d.ts",
+			"import": "./dist/artifact-surface/index.js"
+		},
+		"./capability-description-surface": {
+			"types": "./dist/capability-description-surface/index.d.ts",
+			"import": "./dist/capability-description-surface/index.js"
+		},
+		"./portal-call-surface": {
+			"types": "./dist/portal-call-surface/index.d.ts",
+			"import": "./dist/portal-call-surface/index.js"
+		},
+		"./portal-event-surface": {
+			"types": "./dist/portal-event-surface/index.d.ts",
+			"import": "./dist/portal-event-surface/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"prepack": "pnpm -C ../.. build",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "pnpm test:unit",
+		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/agent-portal-sdk/src"
+	},
+	"dependencies": {
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.5"
+	}
+}

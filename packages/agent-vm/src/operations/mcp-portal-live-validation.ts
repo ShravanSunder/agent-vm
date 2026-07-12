@@ -8,7 +8,12 @@ import {
 	type ResolvedMcpPortalProfile,
 	type SecretValue,
 } from '@agent-vm/config-contracts';
-import { createUpstreamMcpClientRuntime, UpstreamMcpError } from '@agent-vm/mcp-portal';
+import {
+	assertJsonObject,
+	buildZodValidatorFromJsonSchema,
+	createUpstreamMcpClientRuntime,
+	UpstreamMcpError,
+} from '@agent-vm/mcp-portal';
 import { resolveUpstreamServers } from '@agent-vm/mcp-portal/core';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
@@ -52,6 +57,14 @@ function profileNamespaces(profile: ResolvedMcpPortalProfile): readonly string[]
 			...profile.approval.writeTools.map((tool) => tool.namespace),
 		]),
 	).toSorted();
+}
+
+function isControllerBackedToolPortalNamespace(zone: LoadedZoneConfig, namespace: string): boolean {
+	return (
+		namespace === 'controller_host_action' &&
+		zone.gateway.type === 'openclaw' &&
+		zone.toolPortal !== undefined
+	);
 }
 
 function selectorToolNames(selector: PortalToolSelector): readonly string[] {
@@ -109,6 +122,42 @@ function validationHintForError(error: unknown): string {
 	].join('; ');
 }
 
+function validateLiveToolSchemas(options: {
+	readonly namespace: string;
+	readonly tools: Awaited<
+		ReturnType<ReturnType<typeof createUpstreamMcpClientRuntime>['listTools']>
+	>;
+	readonly zoneId: string;
+}): readonly ConfigValidationCheck[] {
+	return options.tools.flatMap((tool) => {
+		try {
+			const inputSchema = assertJsonObject(
+				tool.inputSchema,
+				`${options.namespace}.${tool.name} inputSchema`,
+			);
+			const validator = buildZodValidatorFromJsonSchema(inputSchema);
+			if (validator.ok) {
+				return [];
+			}
+			return [
+				{
+					hint: `${options.namespace}.${tool.name} input schema uses unsupported JSON Schema feature '${validator.error.feature}' at ${validator.error.path.join('.') || '<root>'}: ${validator.error.message}`,
+					name: `mcp-live-tool-schema-${options.zoneId}-${options.namespace}-${tool.name}`,
+					ok: false,
+				} satisfies ConfigValidationCheck,
+			];
+		} catch (error) {
+			return [
+				{
+					hint: `${options.namespace}.${tool.name} input schema is not a supported JSON object: ${errorMessage(error)}`,
+					name: `mcp-live-tool-schema-${options.zoneId}-${options.namespace}-${tool.name}`,
+					ok: false,
+				} satisfies ConfigValidationCheck,
+			];
+		}
+	});
+}
+
 function zoneConfigFailure(zoneId: string, error: unknown): readonly ConfigValidationCheck[] {
 	return [
 		{
@@ -155,15 +204,22 @@ async function validateMcpPortalNamespace(props: {
 				hint: `${props.namespace} discovered ${String(tools.length)} tools.`,
 				name: `mcp-live-${props.zoneId}-${props.namespace}`,
 				ok: true,
+				status: 'available',
 			},
+			...validateLiveToolSchemas({
+				namespace: props.namespace,
+				tools,
+				zoneId: props.zoneId,
+			}),
 			...profileToolChecks,
 		];
 	} catch (error) {
 		return [
 			{
-				hint: validationHintForError(error),
+				hint: `${props.namespace} disabled/unavailable: ${validationHintForError(error)}`,
 				name: `mcp-live-${props.zoneId}-${props.namespace}`,
 				ok: false,
+				status: 'unavailable',
 			},
 		];
 	}
@@ -173,14 +229,14 @@ async function validateMcpPortalZone(
 	options: RunLiveMcpPortalValidationOptions,
 	zone: LoadedZoneConfig,
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
+	if (zone.gateway.type !== 'openclaw' || zone.toolPortal === undefined) {
 		return [];
 	}
 	let mcpConfig: Awaited<ReturnType<typeof loadMcpConfig>>;
 	let portalConfig: Awaited<ReturnType<typeof loadMcpPortalConfig>>;
 	let servers: Awaited<ReturnType<typeof resolveUpstreamServers>>;
 	try {
-		const configDir = resolveProjectCheckoutPath(options.systemConfig, zone.mcpPortal.configDir);
+		const configDir = resolveProjectCheckoutPath(options.systemConfig, zone.toolPortal.configDir);
 		[mcpConfig, portalConfig] = await Promise.all([
 			loadMcpConfig(path.join(configDir, 'mcp.config.jsonc')),
 			loadMcpPortalConfig(path.join(configDir, 'mcp-portal.config.jsonc')),
@@ -199,6 +255,9 @@ async function validateMcpPortalZone(
 		namespaceChecks = Object.entries(portalConfig.agents).flatMap(([agentId, agent]) => {
 			const profile = resolveMcpPortalProfile(portalConfig, agent.profile);
 			return profileNamespaces(profile).flatMap((namespace) => {
+				if (isControllerBackedToolPortalNamespace(zone, namespace)) {
+					return [];
+				}
 				referencedNamespaces.add(namespace);
 				if (serverNamespaces.has(namespace)) {
 					return [];

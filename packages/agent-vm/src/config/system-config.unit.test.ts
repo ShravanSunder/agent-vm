@@ -59,10 +59,12 @@ function configureFirstZoneAsWorker(config: ValidSystemConfigInput): ValidSystem
 		config: './shravan/worker.json',
 		stateDir: '../state/shravan',
 	};
+	delete zone.agents;
 	delete zone.defaultToolVmProfile;
 	delete zone.agentToolVmProfiles;
 	delete zone.agentSandboxSeeds;
 	delete zone.runtimeAuthHints;
+	delete zone.toolPortal;
 	zone.egressHosts = [];
 	zone.secrets = {};
 	return zone;
@@ -127,6 +129,7 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 						audience: 'gateway',
 					},
 				},
+				agents: [{ id: 'shravan' }],
 				egressHosts: [{ host: 'discord.com', audience: 'gateway' }],
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
@@ -298,10 +301,9 @@ describe('loadSystemConfig', () => {
 		const loadedConfig = await loadSystemConfig(configPath);
 
 		expect(resolveControllerHealthConfig(loadedConfig)).toEqual({
+			controlSessionDeathGraceMs: 600_000,
 			enabled: true,
 			eventHistoryLimit: 500,
-			gatewayControlLinkBackoffCeilingMs: 120_000,
-			gatewayControlLinkIntervalMs: 10_000,
 			gatewayServiceAutoRestart: {
 				channelProviderHealth: {
 					consecutiveFailureThreshold: 3,
@@ -328,8 +330,6 @@ describe('loadSystemConfig', () => {
 			health: {
 				enabled: false,
 				eventHistoryLimit: 25,
-				gatewayControlLinkBackoffCeilingMs: 90_000,
-				gatewayControlLinkIntervalMs: 15_000,
 				gatewayServiceAutoRestart: {
 					channelProviderHealth: {
 						consecutiveFailureThreshold: 2,
@@ -345,6 +345,7 @@ describe('loadSystemConfig', () => {
 					maxConsecutiveFailedRecoveries: 5,
 					restartTimeoutMs: 480_000,
 				},
+				controlSessionDeathGraceMs: 30_000,
 				gatewayServiceIntervalMs: 20_000,
 				staleAfterMs: 45_000,
 			},
@@ -353,10 +354,9 @@ describe('loadSystemConfig', () => {
 		const loadedConfig = parseSystemConfigInputForTest(config);
 
 		expect(resolveControllerHealthConfig(loadedConfig)).toEqual({
+			controlSessionDeathGraceMs: 30_000,
 			enabled: false,
 			eventHistoryLimit: 25,
-			gatewayControlLinkBackoffCeilingMs: 90_000,
-			gatewayControlLinkIntervalMs: 15_000,
 			gatewayServiceAutoRestart: {
 				channelProviderHealth: {
 					consecutiveFailureThreshold: 2,
@@ -406,18 +406,15 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/cooldownMs/u);
 	});
 
-	test('rejects controller health backoff ceilings below the base interval', () => {
+	test('rejects legacy controller health control-link settings', () => {
 		const config = createValidSystemConfigInput();
 		config.controller = {
 			health: {
-				gatewayControlLinkBackoffCeilingMs: 9_999,
 				gatewayControlLinkIntervalMs: 10_000,
 			},
 		};
 
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/gatewayControlLinkBackoffCeilingMs/u,
-		);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/gatewayControlLinkIntervalMs/u);
 	});
 
 	test('rejects unknown gateway ingress timeout keys', async () => {
@@ -578,11 +575,32 @@ describe('loadSystemConfig', () => {
 		expect(loadedZone.defaultToolVmProfile).toBe('standard');
 	});
 
-	test('loads OpenClaw zone agent records and MCP config directory references', async () => {
+	test('loads OpenClaw zone agent records and Tool Portal config directory references', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }];
+		config.zones[0].toolPortal = { configDir: './shravan' };
+		const configPath = await writeSystemConfigForTest('agent-vm-system-zone-agents-', config);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+		const loadedZone = loadedConfig.zones.at(0);
+		if (loadedZone === undefined) {
+			throw new Error('Expected first loaded zone.');
+		}
+
+		expect(loadedZone.agents).toEqual([{ id: 'shravan', toolVmProfile: 'standard' }]);
+		expect(loadedZone.toolPortal).toEqual({
+			configDir: path.join(path.dirname(configPath), 'shravan'),
+		});
+	});
+
+	test('loads same-zone multi-agent OpenClaw zones with declared per-agent policy', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }, { id: 'sun' }];
-		config.zones[0].mcpPortal = { configDir: './shravan' };
-		const configPath = await writeSystemConfigForTest('agent-vm-system-zone-agents-', config);
+		config.zones[0].agentToolVmProfiles = { sun: 'standard' };
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-multi-agent-openclaw-',
+			config,
+		);
 
 		const loadedConfig = await loadSystemConfig(configPath);
 		const loadedZone = loadedConfig.zones.at(0);
@@ -594,12 +612,10 @@ describe('loadSystemConfig', () => {
 			{ id: 'shravan', toolVmProfile: 'standard' },
 			{ id: 'sun' },
 		]);
-		expect(loadedZone.mcpPortal).toEqual({
-			configDir: path.join(path.dirname(configPath), 'shravan'),
-		});
+		expect(loadedZone.agentToolVmProfiles).toEqual({ sun: 'standard' });
 	});
 
-	test('rejects legacy OpenClaw zone mcp config keys', async () => {
+	test('rejects legacy OpenClaw zone tool portal config keys', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones[0].mcp = { configDir: './shravan' };
 		const configPath = await writeSystemConfigForTest('agent-vm-system-legacy-zone-mcp-', config);
@@ -615,7 +631,7 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/duplicate agent id 'shravan'/u);
 	});
 
-	test('rejects worker zones declaring agents or MCP Portal references', async () => {
+	test('rejects worker zones declaring agents or Tool Portal references', async () => {
 		const config = createValidSystemConfigInput();
 		const {
 			controlAuth: _controlAuth,
@@ -630,14 +646,14 @@ describe('loadSystemConfig', () => {
 				type: 'worker',
 				imageProfile: 'worker',
 			},
-			mcpPortal: { configDir: './worker' },
+			toolPortal: { configDir: './worker' },
 		};
 		delete config.zones[0].defaultToolVmProfile;
 		delete config.zones[0].agentToolVmProfiles;
 		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-agents-', config);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/must not declare agents or mcpPortal/u,
+			/must not declare agents or toolPortal/u,
 		);
 	});
 
@@ -856,7 +872,10 @@ describe('loadSystemConfig', () => {
 		input.zones[0].gateway.zoneGit = {
 			remote: {
 				repoUrl: 'ShravanSunder/sunfam-zone-files',
-				branch: 'main',
+				branch: 'agent/zone-files',
+				defaultBranch: 'trunk',
+				protectedBranches: ['trunk'],
+				protectedBranchPatterns: ['release/*'],
 			},
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-zone-git-', input);
@@ -870,12 +889,15 @@ describe('loadSystemConfig', () => {
 		expect(zone.gateway.zoneGit).toEqual({
 			remote: {
 				repoUrl: 'ShravanSunder/sunfam-zone-files',
-				branch: 'main',
+				branch: 'agent/zone-files',
+				defaultBranch: 'trunk',
+				protectedBranches: ['trunk'],
+				protectedBranchPatterns: ['release/*'],
 			},
 		});
 	});
 
-	test('defaults OpenClaw zone Git branch to main', async () => {
+	test('defaults OpenClaw zone Git branch to agent branch and protects main', async () => {
 		const input = createValidSystemConfigInput();
 		input.zones[0].gateway.zoneGit = {
 			remote: {
@@ -893,7 +915,32 @@ describe('loadSystemConfig', () => {
 			throw new Error('Expected fixture zone to be OpenClaw.');
 		}
 
-		expect(zone.gateway.zoneGit?.remote.branch).toBe('main');
+		expect(zone.gateway.zoneGit?.remote).toMatchObject({
+			branch: 'agent/zone-files',
+			defaultBranch: 'main',
+			protectedBranches: [],
+			protectedBranchPatterns: [],
+		});
+	});
+
+	test('rejects OpenClaw zone Git branch that matches trusted protected policy', async () => {
+		const input = createValidSystemConfigInput();
+		input.zones[0].gateway.zoneGit = {
+			remote: {
+				repoUrl: 'ShravanSunder/sunfam-zone-files',
+				branch: 'develop',
+				defaultBranch: 'main',
+				protectedBranches: ['develop'],
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-zone-git-protected-branch-',
+			input,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/zoneGit\.remote\.branch must be a non-protected branch/u,
+		);
 	});
 
 	test('loads config-backed zone secrets', async () => {
@@ -1816,7 +1863,7 @@ describe('loadSystemConfig', () => {
 	test('accepts all-agent access on Tool VM mediated secrets', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.agents = [{ id: 'sun' }];
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -1843,6 +1890,7 @@ describe('loadSystemConfig', () => {
 	test('rejects all-agent access on Tool VM mediated secrets without declared zone agents', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
+		delete zone.agents;
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -1859,7 +1907,7 @@ describe('loadSystemConfig', () => {
 	test('accepts per-agent access on Tool VM mediated secrets', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.agents = [{ id: 'sun' }];
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -1886,7 +1934,7 @@ describe('loadSystemConfig', () => {
 	test('accepts agent access on shared mediated secrets and scopes the Tool VM side', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		zone.agents = [{ id: 'sun' }, { id: 'mak' }];
+		zone.agents = [{ id: 'sun' }];
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'both' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -2364,6 +2412,24 @@ describe('loadSystemConfig', () => {
 
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(
 			/must declare agentToolVmProfiles/u,
+		);
+	});
+
+	test('requires OpenClaw zones to declare at least one trusted agent', () => {
+		const config = createValidSystemConfigInput();
+		delete config.zones[0].agents;
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/must declare at least one trusted agent/u,
+		);
+	});
+
+	test('rejects OpenClaw agentToolVmProfiles for undeclared agents', () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].agentToolVmProfiles = { admin: 'standard' };
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/agentToolVmProfiles\['admin'\] references undeclared agent 'admin'/u,
 		);
 	});
 
@@ -2865,7 +2931,7 @@ describe('loadSystemConfig', () => {
 		);
 	});
 
-	test('parses host and OpenClaw zone observability defaults', async () => {
+	test('parses host observability defaults without zone opt-in', async () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
@@ -2876,15 +2942,6 @@ describe('loadSystemConfig', () => {
 				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
 				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
 				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-			},
-		};
-		config.zones[0].observability = {
-			enabled: true,
-			openclaw: {
-				serviceName: 'agent-vm-openclaw-shravan',
-				traces: true,
-				metrics: true,
-				logs: true,
 			},
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-observability-', config);
@@ -2899,10 +2956,6 @@ describe('loadSystemConfig', () => {
 		) {
 			throw new Error('Expected host observability to be enabled.');
 		}
-		const loadedZone = loadedConfig.zones[0];
-		if (loadedZone?.observability?.enabled !== true) {
-			throw new Error('Expected zone observability to be enabled.');
-		}
 		expect(loadedConfig.host.observability).toMatchObject({
 			enabled: true,
 			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
@@ -2916,19 +2969,6 @@ describe('loadSystemConfig', () => {
 		expect(loadedHostObservability.dataDir).toBe(
 			path.join(path.dirname(configPath), '..', 'observability'),
 		);
-		expect(loadedZone.observability).toMatchObject({
-			enabled: true,
-			openclaw: {
-				serviceName: 'agent-vm-openclaw-shravan',
-				traces: true,
-				metrics: true,
-				logs: true,
-				sampleRate: 1,
-				flushIntervalMs: 10_000,
-				captureContent: { enabled: false },
-				diagnosticsFlags: [],
-			},
-		});
 	});
 
 	test('parses external host observability without managed Compose storage fields', async () => {
@@ -2940,12 +2980,6 @@ describe('loadSystemConfig', () => {
 				scrubbing: { responsibility: 'external-collector' },
 			},
 			mode: 'collector',
-		};
-		config.zones[0].observability = {
-			enabled: true,
-			openclaw: {
-				serviceName: 'agent-vm-openclaw-shravan',
-			},
 		};
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-observability-external-',
@@ -2969,6 +3003,36 @@ describe('loadSystemConfig', () => {
 		});
 		expect('dataDir' in loadedConfig.host.observability).toBe(false);
 		expect('retention' in loadedConfig.host.observability).toBe(false);
+	});
+
+	test('accepts enabled OpenClaw zone observability through mediated collector egress', async () => {
+		const config = createValidSystemConfigInput();
+		config.host.observability = {
+			enabled: true,
+			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
+			runner: 'docker-compose',
+			mode: 'collector',
+			dataDir: '../observability',
+			retention: {
+				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
+				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
+				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
+			},
+		};
+		config.zones[0].observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-zone-observability-hard-cutover-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(loadedConfig.zones[0]?.observability?.enabled).toBe(true);
 	});
 
 	test('rejects external host observability without an explicit scrubber contract', async () => {
@@ -3240,7 +3304,7 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OpenClaw/u);
 	});
 
-	test('rejects OpenClaw observability on custom image profiles without managed diagnostics package installation', async () => {
+	test('rejects OpenClaw observability for custom images without managed diagnostics install', async () => {
 		const config = createValidSystemConfigInput();
 		config.host.observability = {
 			enabled: true,
@@ -3287,7 +3351,9 @@ describe('loadSystemConfig', () => {
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/diagnostics-otel/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/requires OpenClaw gateway image profile 'openclaw' to use managed base 'openclaw-gateway'/u,
+		);
 	});
 
 	test.each([
@@ -3396,12 +3462,6 @@ describe('loadSystemConfig', () => {
 				...retentionPatch,
 			},
 		};
-		config.zones[0].observability = {
-			enabled: true,
-			openclaw: {
-				serviceName: 'agent-vm-openclaw-shravan',
-			},
-		};
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-observability-retention-unsupported-',
 			config,
@@ -3443,12 +3503,6 @@ describe('loadSystemConfig', () => {
 					logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
 					traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
 					...retentionPatch,
-				},
-			};
-			config.zones[0].observability = {
-				enabled: true,
-				openclaw: {
-					serviceName: 'agent-vm-openclaw-shravan',
 				},
 			};
 			const configPath = await writeSystemConfigForTest(

@@ -10,7 +10,7 @@ import {
 } from '../portal-access-policy.js';
 import { hashCallArguments, type ApprovalTokenCallDigest } from '../portal-auth/hmac-token.js';
 import { generateTypescriptCatalogArtifact } from '../portal-config/typescript-artifact.js';
-import type { PortalSession } from '../portal-session.js';
+import type { PortalDiscoveryFailure, PortalSession } from '../portal-session.js';
 import type { ToolSearchResult } from '../search-index.js';
 import { decodeToolRef } from '../tool-ref.js';
 import { createToolSummary, type ToolSchemaHint, type ToolSummary } from '../tool-summary.js';
@@ -38,6 +38,10 @@ export interface PortalBatchError {
 	readonly message: string;
 }
 
+export interface PortalSafeTransportDiagnostic {
+	readonly kind: string;
+}
+
 export interface PortalBatchDiagnostic {
 	readonly causeMessage?: string;
 	readonly elapsedMs?: number;
@@ -50,6 +54,20 @@ export interface PortalBatchDiagnostic {
 	readonly timeoutMs?: number;
 	readonly toolName?: string;
 	readonly transport?: unknown;
+}
+
+interface PortalSafeUpstreamMcpFailureDetails {
+	readonly attemptTransport?: string;
+	readonly causeMessage: string;
+	readonly elapsedMs: number;
+	readonly hint?: string;
+	readonly kind: 'upstream_mcp_failed';
+	readonly namespace: string;
+	readonly operation: string;
+	readonly phase: string;
+	readonly timeoutMs?: number;
+	readonly toolName?: string;
+	readonly transport: PortalSafeTransportDiagnostic;
 }
 
 export interface PortalBatchResult {
@@ -261,6 +279,59 @@ function messageFromError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function safeTransportDiagnosticFromUnknown(
+	transport: unknown,
+): PortalSafeTransportDiagnostic | undefined {
+	if (typeof transport !== 'object' || transport === null || Array.isArray(transport)) {
+		return undefined;
+	}
+	if (!('kind' in transport)) {
+		return undefined;
+	}
+	const kind = transport.kind;
+	return typeof kind === 'string' ? { kind } : undefined;
+}
+
+function safeUpstreamMcpFailureDetailsFromUnknown(
+	error: unknown,
+): PortalSafeUpstreamMcpFailureDetails | null {
+	const upstream = upstreamMcpFailureDetailsFromUnknown(error);
+	if (upstream === null) {
+		return null;
+	}
+	return {
+		...(upstream.attemptTransport === undefined
+			? {}
+			: { attemptTransport: upstream.attemptTransport }),
+		causeMessage: safeUpstreamMcpCauseMessage(),
+		elapsedMs: upstream.elapsedMs,
+		...(upstream.hint === undefined ? {} : { hint: upstream.hint }),
+		kind: upstream.kind,
+		namespace: upstream.namespace,
+		operation: upstream.operation,
+		phase: upstream.phase,
+		...(upstream.timeoutMs === undefined ? {} : { timeoutMs: upstream.timeoutMs }),
+		...(upstream.toolName === undefined ? {} : { toolName: upstream.toolName }),
+		transport: { kind: upstream.transport.kind },
+	};
+}
+
+function safeUpstreamMcpFailureMessage(upstream: PortalSafeUpstreamMcpFailureDetails): string {
+	const toolSuffix = upstream.toolName === undefined ? '' : ` ${upstream.toolName}`;
+	return `${upstream.namespace}: ${upstream.phase}${toolSuffix} failed`;
+}
+
+function safeUpstreamMcpCauseMessage(): string {
+	return 'Upstream MCP provider failed.';
+}
+
+function safeDiscoveryDiagnosticMessage(failure: PortalDiscoveryFailure): string {
+	if (failure.kind !== 'upstream_mcp_failed') {
+		return 'MCP provider discovery failed.';
+	}
+	return `${failure.namespace}: ${failure.phase ?? 'discovery'} failed`;
+}
+
 function approvalEvaluationForAllCalls(
 	calls: readonly PortalApprovalCall[],
 	decision: PortalApprovalCallDecision,
@@ -302,11 +373,25 @@ function itemOutput(props: {
 }
 
 function discoveryDiagnostics(session: PortalSession): readonly PortalBatchDiagnostic[] {
-	return session.catalog.discoveryFailures.map((failure) => ({
-		...failure,
-		kind:
-			failure.kind === 'upstream_mcp_failed' ? 'upstream_mcp_failed' : 'upstream_discovery_failed',
-	}));
+	return session.catalog.discoveryFailures.map((failure) => {
+		const safeTransport = safeTransportDiagnosticFromUnknown(failure.transport);
+		const isUpstreamMcpFailure = failure.kind === 'upstream_mcp_failed';
+		return {
+			...(failure.causeMessage === undefined || !isUpstreamMcpFailure
+				? {}
+				: { causeMessage: safeUpstreamMcpCauseMessage() }),
+			...(failure.elapsedMs === undefined ? {} : { elapsedMs: failure.elapsedMs }),
+			...(failure.hint === undefined ? {} : { hint: failure.hint }),
+			kind: isUpstreamMcpFailure ? 'upstream_mcp_failed' : 'upstream_discovery_failed',
+			message: safeDiscoveryDiagnosticMessage(failure),
+			namespace: failure.namespace,
+			...(failure.operation === undefined ? {} : { operation: failure.operation }),
+			...(failure.phase === undefined ? {} : { phase: failure.phase }),
+			...(failure.timeoutMs === undefined ? {} : { timeoutMs: failure.timeoutMs }),
+			...(failure.toolName === undefined ? {} : { toolName: failure.toolName }),
+			...(safeTransport === undefined ? {} : { transport: safeTransport }),
+		};
+	});
 }
 
 function portalBatchResult(
@@ -345,6 +430,27 @@ function findTool(session: PortalSession, selector: PortalToolSelector): PortalT
 			(tool) => tool.namespace === selector.namespace && tool.toolName === selector.toolName,
 		) ?? null
 	);
+}
+
+function discoveryFailureForNamespace(
+	session: PortalSession,
+	namespace: string,
+): PortalDiscoveryFailure | null {
+	return (
+		session.catalog.discoveryFailures.find((failure) => failure.namespace === namespace) ?? null
+	);
+}
+
+function unavailableNamespaceError(props: {
+	readonly failure: PortalDiscoveryFailure;
+	readonly selector: PortalToolSelector;
+}): Readonly<Record<string, unknown>> {
+	return {
+		kind: 'namespace_unavailable',
+		message: `MCP namespace "${props.selector.namespace}" is disabled/unavailable: ${props.failure.message}`,
+		namespace: props.selector.namespace,
+		toolName: props.selector.toolName,
+	};
 }
 
 function selectorsFromInput(
@@ -610,6 +716,16 @@ function preparePortalCall(
 ): PreparedPortalCall | PortalToolResult {
 	const tool = findTool(session, request);
 	if (!tool) {
+		const discoveryFailure = discoveryFailureForNamespace(session, request.namespace);
+		if (discoveryFailure !== null) {
+			return itemError({
+				error: unavailableNamespaceError({
+					failure: discoveryFailure,
+					selector: request,
+				}),
+				input: request,
+			});
+		}
 		return itemError({
 			error: {
 				kind: 'unknown_or_denied_tool',
@@ -661,11 +777,12 @@ async function executePreparedPortalCall(
 			},
 		});
 	} catch (error) {
-		const upstream = upstreamMcpFailureDetailsFromUnknown(error);
+		const upstream = safeUpstreamMcpFailureDetailsFromUnknown(error);
 		return itemError({
 			error: {
 				kind: 'upstream_call_failed',
-				message: messageFromError(error),
+				message:
+					upstream === null ? messageFromError(error) : safeUpstreamMcpFailureMessage(upstream),
 				namespace: call.tool.namespace,
 				toolName: call.tool.toolName,
 				...(upstream === null ? {} : { upstream }),

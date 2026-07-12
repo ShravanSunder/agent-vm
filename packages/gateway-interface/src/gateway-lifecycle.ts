@@ -1,6 +1,7 @@
 import type { MediatedSecretSpec, SecretResolver } from '@agent-vm/secret-management';
 
 import type { EgressHostConfig, VmAudience } from './audience.js';
+import type { GatewayControlPrivateEnvironmentName } from './gateway-control-private-environment.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';
@@ -187,11 +188,15 @@ export interface GatewayZoneConfig {
 	readonly id: string;
 	readonly agents?: readonly GatewayZoneAgentConfig[];
 	readonly gateway: GatewayZoneGatewayConfig;
-	readonly mcpPortal?: GatewayZoneMcpPortalConfig;
+	readonly toolPortal?: GatewayZoneMcpPortalConfig;
 	readonly runtimeMcpServers?: Readonly<Record<string, GatewayZoneMcpServerConfig>>;
 	readonly runtimeMediatedSecrets?: Readonly<Record<string, MediatedSecretSpec>>;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
+	readonly runtimePrivateEnvironment?: Readonly<
+		Partial<Record<GatewayControlPrivateEnvironmentName, string>>
+	>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+	readonly gitReadAllowlistRepos?: readonly string[];
 	readonly observability?: GatewayZoneObservabilityConfig;
 	readonly secrets: Readonly<Record<string, GatewaySecretConfig>>;
 	readonly egressHosts: readonly EgressHostConfig[];

@@ -1,0 +1,402 @@
+{
+	"close": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"reason": {
+				"type": "string",
+				"enum": [
+					"normal_shutdown",
+					"controller_restart",
+					"peer_restart",
+					"auth_failed",
+					"protocol_version_mismatch",
+					"domain_mismatch",
+					"generation_mismatch",
+					"controller_epoch_mismatch",
+					"duplicate_session",
+					"stale_session",
+					"sequence_gap",
+					"ack_timeout",
+					"command_timeout",
+					"resync_timeout",
+					"queue_overflow",
+					"message_too_large",
+					"schema_validation_failed",
+					"forbidden_bulk_message",
+					"transport_error"
+				]
+			},
+			"safeMessage": {
+				"type": "string",
+				"minLength": 1
+			},
+			"sessionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			}
+		},
+		"required": ["reason", "sessionId"],
+		"additionalProperties": false
+	},
+	"envelope": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"bootId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"commandId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"connectionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"createdAtMs": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"deliveryPolicy": {
+				"type": "string",
+				"enum": [
+					"latest_wins",
+					"droppable",
+					"acked_idempotent",
+					"critical_idempotent",
+					"append_only_observation",
+					"single_use_critical",
+					"forbidden_bulk"
+				]
+			},
+			"domain": {
+				"type": "string",
+				"pattern": "^[a-z][a-z0-9_]*$"
+			},
+			"expiresAtMs": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"idempotencyKey": {
+				"type": "string",
+				"minLength": 1
+			},
+			"kind": {
+				"type": "string",
+				"enum": ["command", "command_result", "event", "heartbeat"]
+			},
+			"messageId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"operation": {
+				"type": "string",
+				"minLength": 1
+			},
+			"peerId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"protocolVersion": {
+				"type": "number",
+				"const": 1
+			},
+			"sequence": {
+				"type": "integer",
+				"minimum": 0,
+				"maximum": 9007199254740991
+			},
+			"sessionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"zoneId": {
+				"type": "string",
+				"minLength": 1
+			}
+		},
+		"required": [
+			"bootId",
+			"connectionId",
+			"controllerEpoch",
+			"createdAtMs",
+			"deliveryPolicy",
+			"domain",
+			"kind",
+			"messageId",
+			"peerId",
+			"protocolVersion",
+			"sequence",
+			"sessionId",
+			"zoneId"
+		],
+		"additionalProperties": false
+	},
+	"handshakeCredential": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"audience": {
+				"type": "string",
+				"enum": ["gateway_control", "worker_control"]
+			},
+			"bootId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"credentialId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"expiresAtMs": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"generationId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"issuedAtMs": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"nonce": {
+				"type": "string",
+				"minLength": 16
+			},
+			"peerId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"protocolVersion": {
+				"type": "number",
+				"const": 1
+			},
+			"zoneId": {
+				"type": "string",
+				"minLength": 1
+			}
+		},
+		"required": [
+			"audience",
+			"bootId",
+			"controllerEpoch",
+			"credentialId",
+			"expiresAtMs",
+			"generationId",
+			"issuedAtMs",
+			"nonce",
+			"peerId",
+			"protocolVersion",
+			"zoneId"
+		],
+		"additionalProperties": false
+	},
+	"handshakeProof": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"audience": {
+				"type": "string",
+				"enum": ["gateway_control", "worker_control"]
+			},
+			"bootId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"credentialId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"expiresAtMs": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"generationId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"issuedAtMs": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"nonce": {
+				"type": "string",
+				"minLength": 16
+			},
+			"peerId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"protocolVersion": {
+				"type": "number",
+				"const": 1
+			},
+			"zoneId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"signature": {
+				"type": "string",
+				"minLength": 1
+			}
+		},
+		"required": [
+			"audience",
+			"bootId",
+			"controllerEpoch",
+			"credentialId",
+			"expiresAtMs",
+			"generationId",
+			"issuedAtMs",
+			"nonce",
+			"peerId",
+			"protocolVersion",
+			"zoneId",
+			"signature"
+		],
+		"additionalProperties": false
+	},
+	"readyRequestCredential": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"audience": {
+				"type": "string",
+				"enum": ["gateway_control", "worker_control"]
+			},
+			"bootId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"generationId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"issuedAtMs": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"peerId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"protocolVersion": {
+				"type": "number",
+				"const": 1
+			},
+			"requestId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"zoneId": {
+				"type": "string",
+				"minLength": 1
+			}
+		},
+		"required": [
+			"audience",
+			"bootId",
+			"controllerEpoch",
+			"generationId",
+			"issuedAtMs",
+			"peerId",
+			"protocolVersion",
+			"requestId",
+			"zoneId"
+		],
+		"additionalProperties": false
+	},
+	"readyRequestProof": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"audience": {
+				"type": "string",
+				"enum": ["gateway_control", "worker_control"]
+			},
+			"bootId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"generationId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"issuedAtMs": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"peerId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"protocolVersion": {
+				"type": "number",
+				"const": 1
+			},
+			"requestId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"zoneId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"signature": {
+				"type": "string",
+				"minLength": 1
+			}
+		},
+		"required": [
+			"audience",
+			"bootId",
+			"controllerEpoch",
+			"generationId",
+			"issuedAtMs",
+			"peerId",
+			"protocolVersion",
+			"requestId",
+			"zoneId",
+			"signature"
+		],
+		"additionalProperties": false
+	}
+}

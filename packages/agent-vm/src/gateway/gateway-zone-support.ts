@@ -6,13 +6,89 @@ import type {
 } from '@agent-vm/gateway-interface';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import type {
+	ControlSessionDispatcher,
+	ControlSessionFenceRegistry,
+	ConnectGatewayControlSessionOptions,
+	GatewayControlControllerHostActionOperations,
+	GatewayControlAttemptOutcome,
+	GatewayControlAttachmentGapTransition,
+	GatewayControlLeaseRpcOperations,
+	GatewayControlProcessAdmissionCoordinator,
+	GatewayControlReconnectExhaustedTransition,
+	GatewayDisposableControlSessionClient,
+	GatewayControlSessionMaterial,
+} from '../controller/control-session/index.js';
+import type { GatewayVmRecoverySourceKey } from '../controller/health/gateway-vm-recovery-policy.js';
+import type { HealthEventStore } from '../controller/health/health-event-store.js';
+import type { OpenClawRuntimeStatusStore } from '../controller/openclaw-runtime-status.js';
+import type { OpenClawProcessSupervisor } from '../controller/process-supervisor/openclaw-process-supervisor.js';
+import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
+import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import type { RunTaskFn } from '../shared/run-task.js';
+import type {
+	OpenClawGatewayProcessEpochOwner,
+	OpenClawProcessEpochLossBarrier,
+} from './openclaw-gateway-process-epoch-owner.js';
 
 export type GatewayZone = SystemConfig['zones'][number];
 
+export interface PendingGatewayVmCreationContainment {
+	contain(): Promise<void>;
+}
+
+export type GatewayControlSessionAttachmentGap = GatewayControlAttachmentGapTransition & {
+	readonly gateway: GatewayEpochIdentity;
+};
+
+export type GatewayControlSessionReconnectExhausted = GatewayControlReconnectExhaustedTransition & {
+	readonly gateway: GatewayEpochIdentity;
+};
+
+export interface GatewayControlSessionHeartbeat {
+	readonly gateway: GatewayEpochIdentity;
+	readonly observedAtMs: number;
+	readonly processEpoch: string;
+}
+
+export type GatewayControlSessionAttemptOutcome = GatewayControlAttemptOutcome & {
+	readonly gateway: GatewayEpochIdentity;
+	readonly processEpoch: string;
+};
+
 export interface StartGatewayZoneOptions {
+	readonly beginProcessEpochLoss?: (loss: {
+		readonly ambiguousAtMs: number;
+		readonly gateway: GatewayEpochIdentity;
+		readonly processEpoch: string;
+	}) => OpenClawProcessEpochLossBarrier;
+	readonly controlSession?: {
+		readonly controllerEpoch: string;
+	};
+	readonly createVmOwnership: (options: {
+		readonly controlIdentity?: {
+			readonly bootId: string;
+			readonly generationId: string;
+		};
+		readonly kind: 'gateway-epoch' | 'standalone';
+		readonly sessionLabel: string;
+		readonly zoneId: string;
+	}) => Promise<GatewayVmLifecycleAuthority>;
 	readonly environmentOverride?: Record<string, string>;
+	readonly gatewayControlControllerHostActions?: GatewayControlControllerHostActionOperations;
+	readonly gatewayControlLeaseRpc?: GatewayControlLeaseRpcOperations;
+	readonly gatewayControlProcessAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
+	readonly gitReadAllowlistRepos?: readonly string[];
+	readonly healthEventStore?: HealthEventStore;
+	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
 	readonly observabilityStartupCheck?: 'default' | 'skip';
+	readonly onPendingVmCreation?: (containment: PendingGatewayVmCreationContainment) => void;
+	readonly onControlSessionAttemptOutcome?: (outcome: GatewayControlSessionAttemptOutcome) => void;
+	readonly onControlSessionAttachmentGap?: (transition: GatewayControlSessionAttachmentGap) => void;
+	readonly onControlSessionHeartbeat?: (transition: GatewayControlSessionHeartbeat) => void;
+	readonly onControlSessionReconnectExhausted?: (
+		transition: GatewayControlSessionReconnectExhausted,
+	) => void;
 	readonly prebuiltImage?: import('@agent-vm/gondolin-adapter').BuildImageResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
@@ -26,16 +102,48 @@ export interface StartGatewayZoneOptions {
 	readonly zoneOverride?: GatewayZone;
 }
 
+export type GatewayZonePreflightOptions = Omit<StartGatewayZoneOptions, 'createVmOwnership'>;
+
 export interface GatewayZoneStartResult {
+	readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
+	readonly controlSessionRecoverySourceKey?: GatewayVmRecoverySourceKey | undefined;
 	readonly image: import('@agent-vm/gondolin-adapter').BuildImageResult;
 	readonly ingress: {
 		readonly host: string;
 		readonly port: number;
 	};
+	readonly openClawProcessSupervisor?: OpenClawProcessSupervisor | undefined;
+	readonly openClawProcessEpochOwner?: OpenClawGatewayProcessEpochOwner | undefined;
+	readonly processEpoch?: string | undefined;
 	readonly processSpec: GatewayProcessSpec;
+	readonly terminateVm: () => Promise<void>;
 	readonly vm: import('@agent-vm/gondolin-adapter').ManagedVm;
+	readonly vmOwnership: GatewayVmLifecycleAuthority;
 	readonly zone: GatewayZone;
 }
+
+export type GatewayControlSessionMaterialFactory = (options: {
+	readonly controllerEpoch: string;
+	readonly zoneId: string;
+}) => GatewayControlSessionMaterial;
+
+export type GatewayControlSessionConnector = (options: {
+	readonly dispatcher?: ControlSessionDispatcher;
+	readonly endpoint: {
+		readonly host: string;
+		readonly path: string;
+		readonly port: number;
+	};
+	readonly material: GatewayControlSessionMaterial;
+	readonly onAttemptOutcome?: ConnectGatewayControlSessionOptions['onAttemptOutcome'];
+	readonly onAttachmentGap?: (transition: GatewayControlAttachmentGapTransition) => void;
+	readonly onReconnectExhausted?: (transition: GatewayControlReconnectExhaustedTransition) => void;
+	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
+	readonly recordHealthEvent?: ConnectGatewayControlSessionOptions['recordHealthEvent'];
+	readonly resolveInboundStablePrincipal?: ConnectGatewayControlSessionOptions['resolveInboundStablePrincipal'];
+	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
+	readonly signal?: AbortSignal;
+}) => Promise<GatewayDisposableControlSessionClient>;
 
 export interface GatewayBuildImageOptions {
 	readonly buildConfig: unknown;
@@ -49,6 +157,7 @@ export interface GatewayManagedVmFactoryOptions {
 	readonly env?: Record<string, string>;
 	readonly imagePath: string;
 	readonly memory: string;
+	readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
 	readonly runtimeRootfsSize?: string;
 	readonly secrets: Record<
@@ -82,7 +191,7 @@ export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): Gat
 	return zone;
 }
 
-const observabilityCollectorHost = 'otel-collector.observability.vm.host';
+export const observabilityCollectorHost = 'otel-collector.observability.vm.host';
 const otlpGrpcPort = 4317;
 const otlpHttpPort = 4318;
 
@@ -168,6 +277,9 @@ export function mapSystemGatewayZoneToLifecycleZone(
 	return {
 		id: zone.id,
 		...(zone.agents === undefined ? {} : { agents: zone.agents }),
+		...(zone.gateway.type === 'openclaw' && zone.gateway.zoneGit !== undefined
+			? { gitReadAllowlistRepos: [zone.gateway.zoneGit.remote.repoUrl] }
+			: {}),
 		gateway:
 			zone.gateway.type === 'openclaw'
 				? {
@@ -187,7 +299,7 @@ export function mapSystemGatewayZoneToLifecycleZone(
 		secrets: zone.secrets,
 		egressHosts: zone.egressHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
-		...(zone.mcpPortal === undefined ? {} : { mcpPortal: zone.mcpPortal }),
+		...(zone.toolPortal === undefined ? {} : { toolPortal: zone.toolPortal }),
 		...(observability === undefined ? {} : { observability }),
 		...(zone.websocketUpgrades === undefined ? {} : { websocketUpgrades: zone.websocketUpgrades }),
 	};

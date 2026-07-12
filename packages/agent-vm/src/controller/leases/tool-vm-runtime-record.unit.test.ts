@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
@@ -24,6 +25,14 @@ import {
 const createdDirectories: string[] = [];
 const sampleLeaseId = '01890f00-0000-7000-8000-000000000000';
 const sampleRecordId = '01890f00-0000-7000-8000-000000000111';
+const gatewayIdentity = {
+	bootId: 'boot-a',
+	controllerEpoch: 'controller-epoch-a',
+	gatewayEpochId: 'gateway-epoch-a',
+	gatewayVmId: 'gateway-vm-instance-1',
+	generationId: 'generation-a',
+	zoneId: 'sunfam',
+} as const;
 
 afterEach(async () => {
 	const directoriesToDelete = createdDirectories.splice(0);
@@ -40,11 +49,12 @@ async function createStateDirectory(): Promise<string> {
 	return directoryPath;
 }
 
-function createVmInstanceStub(hostPid: number): ManagedVmInstance {
+function createVmInstanceStub(hostPid: number, vmId: string): ManagedVmInstance {
 	return {
 		close: async () => {},
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			close: async () => {},
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -54,8 +64,9 @@ function createVmInstanceStub(hostPid: number): ManagedVmInstance {
 		exec: () => createManagedExecProcessStub({ stdout: '' }),
 		fs: createManagedVmFsStub(),
 		getHostPid: () => hostPid,
-		id: 'vm-instance-stub',
+		id: vmId,
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
@@ -65,8 +76,10 @@ function createManagedVmStub(options: {
 }): ManagedVm {
 	return {
 		close: async () => {},
-		enableIngress: async () => ({ host: '127.0.0.1', port: 18_791 }),
+		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18_791 }),
 		enableSsh: async () => ({
+			close: async () => {},
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
 			command: 'ssh ...',
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -76,9 +89,10 @@ function createManagedVmStub(options: {
 		exec: () => createManagedExecProcessStub({ stdout: '' }),
 		fs: createManagedVmFsStub(),
 		getHostPid: () => options.hostPid,
-		getVmInstance: () => createVmInstanceStub(options.hostPid),
+		getVmInstance: () => createVmInstanceStub(options.hostPid, options.id),
 		id: options.id,
 		setIngressRoutes: () => {},
+		start: async () => {},
 	};
 }
 
@@ -88,10 +102,7 @@ function buildSampleRecord(overrides: Partial<ToolVmRuntimeRecord> = {}): ToolVm
 		configPath: '/etc/agent-vm/system.json',
 		controllerPort: 18_800,
 		createdAt: '2026-05-22T10:00:00.000Z',
-		gateway: {
-			sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
-			vmId: 'gateway-vm-instance-1',
-		},
+		gateway: gatewayIdentity,
 		leaseId: sampleLeaseId,
 		processIdentity: {
 			command: 'qemu-system-x86_64 -m 1G -smp 1 -kernel /vm-images/tool/kernel',
@@ -100,7 +111,7 @@ function buildSampleRecord(overrides: Partial<ToolVmRuntimeRecord> = {}): ToolVm
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		qemuPid: 48_282,
 		recordId: sampleRecordId,
-		schemaVersion: 1,
+		schemaVersion: 2,
 		sessionLabel: 'claw-tests-a1b2c3d4:sunfam:tool:0',
 		tcpSlot: 0,
 		vmId: 'tool-vm-instance-1',
@@ -116,6 +127,33 @@ function loadedRecords(
 }
 
 describe('tool-vm-runtime-record', () => {
+	it('rejects schema-v1 and unknown newer Tool VM runtime records', () => {
+		expect(() =>
+			toolVmRuntimeRecordSchema.parse({ ...buildSampleRecord(), schemaVersion: 1 }),
+		).toThrow(ZodError);
+		expect(() =>
+			toolVmRuntimeRecordSchema.parse({ ...buildSampleRecord(), schemaVersion: 3 }),
+		).toThrow(ZodError);
+	});
+
+	it('requires the exact parent Gateway epoch identity', () => {
+		const { gateway: _gateway, ...recordWithoutGatewayIdentity } = buildSampleRecord();
+
+		expect(() => toolVmRuntimeRecordSchema.parse(recordWithoutGatewayIdentity)).toThrow(ZodError);
+		expect(() =>
+			toolVmRuntimeRecordSchema.parse({
+				...buildSampleRecord(),
+				gateway: { ...gatewayIdentity, gatewayVmId: undefined },
+			}),
+		).toThrow(ZodError);
+		expect(() =>
+			toolVmRuntimeRecordSchema.parse({
+				...buildSampleRecord(),
+				gateway: { ...gatewayIdentity, zoneId: 'different-zone' },
+			}),
+		).toThrow(/must match the Tool VM runtime record zone/u);
+	});
+
 	it('stores agent, lease, vm, and pid identity but rejects scopeKey', () => {
 		const record = buildSampleRecord();
 
@@ -240,10 +278,7 @@ describe('tool-vm-runtime-record', () => {
 		const record = await buildToolVmRuntimeRecord({
 			agentId: 'beta',
 			controllerPort: 18_800,
-			gateway: {
-				sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
-				vmId: 'gateway-vm-instance-1',
-			},
+			gatewayIdentity,
 			leaseId: sampleLeaseId,
 			managedVm: createManagedVmStub({ hostPid: 48_282, id: 'tool-vm-instance-1' }),
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -258,16 +293,13 @@ describe('tool-vm-runtime-record', () => {
 			agentId: 'beta',
 			configPath: '/etc/agent-vm/system.json',
 			controllerPort: 18_800,
-			gateway: {
-				sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
-				vmId: 'gateway-vm-instance-1',
-			},
+			gateway: gatewayIdentity,
 			leaseId: sampleLeaseId,
 			processIdentity: stubIdentity,
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			qemuPid: 48_282,
 			recordId: sampleRecordId,
-			schemaVersion: 1,
+			schemaVersion: 2,
 			sessionLabel: 'claw-tests-a1b2c3d4:sunfam:tool:0',
 			tcpSlot: 0,
 			vmId: 'tool-vm-instance-1',
@@ -282,9 +314,7 @@ describe('tool-vm-runtime-record', () => {
 			buildToolVmRuntimeRecord({
 				agentId: 'beta',
 				controllerPort: 18_800,
-				gateway: {
-					sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
-				},
+				gatewayIdentity,
 				leaseId: sampleLeaseId,
 				managedVm: createManagedVmStub({ hostPid: 48_282, id: 'tool-vm-instance-1' }),
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -309,9 +339,7 @@ describe('tool-vm-runtime-record', () => {
 			buildToolVmRuntimeRecord({
 				agentId: 'beta',
 				controllerPort: 18_800,
-				gateway: {
-					sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
-				},
+				gatewayIdentity,
 				leaseId: sampleLeaseId,
 				managedVm,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -333,9 +361,7 @@ describe('tool-vm-runtime-record', () => {
 			buildToolVmRuntimeRecord({
 				agentId: 'beta',
 				controllerPort: 18_800,
-				gateway: {
-					sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
-				},
+				gatewayIdentity,
 				leaseId: sampleLeaseId,
 				managedVm,
 				projectNamespace: 'claw-tests-a1b2c3d4',

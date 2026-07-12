@@ -353,8 +353,8 @@ stateDiagram-v2
   |  The agent runs configured "finishing" actions:                     |
   |                                                                    |
   |    git-push (required before PR creation):                         |
-  |      Stage & commit -> call controller push-branches endpoint       |
-  |      Controller pushes branch from the host                         |
+  |      Stage & commit -> worker_control_rpc git_push intent           |
+  |      Controller validates the active task and pushes from the host   |
   |                                                                    |
   |    gh pr create:                                                   |
   |      Worker creates the PR after git-push succeeds                  |
@@ -549,14 +549,14 @@ For example, you might use a more capable (and expensive) model for planning, an
 
 ## MCP Tools: How the Agent Pushes Branches
 
-During the wrapup phase, the agent calls controller tools exposed inside the VM. The `git-push` tool calls the **controller's push-branches endpoint**; the actual git push happens on the host, not inside the VM. After that succeeds, the worker can run `gh pr create` from the shell. GitHub HTTP traffic is mediated by the controller proxy.
+During the wrapup phase, the agent calls controller tools exposed inside the VM. The `git-push` and `git-pull-default` tools send `worker_control_rpc` intents over the private control session; the actual git push or default-branch refresh happens on the host, not inside the VM. Task submit, state polling, and close still use the worker ingress HTTP API. After the push succeeds, the worker can run `gh pr create` from the shell. GitHub HTTP traffic is mediated by the controller proxy.
 
 ```
   Coordinator (wrapup phase)
         |
         |  Build tool definitions:
-        |    git-push         -> calls controller push-branches API
-        |    git-pull-default -> refreshes the protected/default branch
+        |    git-push         -> worker_control_rpc git_push intent
+        |    git-pull-default -> worker_control_rpc git_pull_default intent
         |
         v
   Start local MCP server
@@ -667,10 +667,10 @@ The worker exposes a simple REST API for the controller to interact with:
 **One task at a time**: Each VM runs exactly one task. This is by design — the VM is the isolation boundary for that task.
 
 Worker controller-tool calls that go back to the agent-vm controller, such as
-`worker-push-branches` and `worker-pull-default`, use the shared bounded
-controller request policy surface. They are long-timeout, non-retried unsafe
-mutations because Git push/pull can legitimately take time and duplicate
-requests are not automatically safe.
+`git-push` and `git-pull-default`, send `worker_control_rpc` intents over the
+private control session. They are long-timeout, idempotency-keyed mutations
+because Git push/pull can legitimately take time and duplicate requests are not
+automatically safe.
 
 ---
 
@@ -740,7 +740,7 @@ Here's a concrete trace of a successful task from start to finish:
                                                 LLM calls git-push:
                                                   Create branch agent/t-001
                                                   Stage & commit with co-author
-                                                  Call controller push-branches API
+                                                  Send worker_control_rpc git_push intent
                                                   Controller pushes branch
                                                 LLM runs gh pr create
                                                 Emit: wrapup-result (PR URL)
@@ -789,8 +789,8 @@ Quick reference for finding things in the code:
   |   |-- work-cycle.ts ......... Work agent + reviewer cycle
   |   |-- validation-tool.ts ..... Exposes configured checks to the agent
   |   |-- controller-tools/
-  |       |-- git-push-tool.ts ........ Calls controller push-branches API
-  |       |-- git-pull-default-tool.ts  Refreshes protected/default branch
+  |       |-- git-push-tool.ts ........ Sends worker_control_rpc git_push intent
+  |       |-- git-pull-default-tool.ts  Sends worker_control_rpc git_pull_default intent
   |
   |-- validation-runner/
   |   |-- verification-runner.ts . Runs test/lint commands safely

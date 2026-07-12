@@ -1,17 +1,15 @@
 import type { RepoLocation } from '../../shared/repo-location.js';
 import type { ToolDefinition } from '../../work-executor/executor-interface.js';
+import { currentBranch, currentHead, selectRepo } from './controller-tool-support.js';
 import {
-	currentBranch,
-	isControllerToolFailure,
-	postControllerJson,
-	selectRepo,
-} from './controller-tool-support.js';
+	WorkerControlRpcCommandError,
+	type WorkerControlControllerToolsClient,
+} from './worker-control-rpc-client.js';
 
 export interface CreateGitPushToolProps {
-	readonly controllerBaseUrl: string;
-	readonly zoneId: string;
 	readonly taskId: string;
 	readonly repos: readonly RepoLocation[];
+	readonly workerControlClient: WorkerControlControllerToolsClient;
 }
 
 export function createGitPushTool(props: CreateGitPushToolProps): ToolDefinition {
@@ -50,18 +48,33 @@ export function createGitPushTool(props: CreateGitPushToolProps): ToolDefinition
 					artifact: `Refusing to push: you are on the default branch "${selected.repo.baseBranch}". Create an agent/* branch first and move your commits to it.`,
 				};
 			}
-
-			const result = await postControllerJson({
-				url: `${props.controllerBaseUrl}/zones/${props.zoneId}/tasks/${props.taskId}/push-branches`,
-				operation: 'worker-push-branches',
-				body: {
-					branches: [{ repoUrl: selected.repo.repoUrl, branchName: branchResult.branch }],
-				},
-			});
-			if (isControllerToolFailure(result)) {
-				return { type: 'push', success: false, artifact: result.artifact };
+			const headResult = await currentHead(selected.repo.workPath);
+			if (!headResult.ok) {
+				return {
+					type: 'push',
+					success: false,
+					artifact: `Unable to read current git HEAD: ${headResult.error}`,
+				};
 			}
-			return { type: 'push', success: true, artifact: result };
+
+			try {
+				const result = await props.workerControlClient.gitPush({
+					branchName: branchResult.branch,
+					expectedHead: headResult.head,
+					repoUrl: selected.repo.repoUrl,
+					taskId: props.taskId,
+				});
+				return { type: 'push', success: true, artifact: result };
+			} catch (error) {
+				if (error instanceof WorkerControlRpcCommandError) {
+					return { type: 'push', success: false, artifact: error.message };
+				}
+				return {
+					type: 'push',
+					success: false,
+					artifact: `Worker control git_push failed: ${error instanceof Error ? error.message : String(error)}`,
+				};
+			}
 		},
 	};
 }

@@ -27,7 +27,10 @@ describe('resolveLeaseWorkMountDir', () => {
 		zoneFilesDir = path.join(tempDir, 'zone-files', 'shravan');
 		stateDir = path.join(tempDir, 'state', 'shravan');
 		await mkdir(path.join(zoneFilesDir, 'project'), { recursive: true });
-		await mkdir(path.join(stateDir, 'sandboxes', 'agent', 'work'), { recursive: true });
+		await mkdir(path.join(zoneFilesDir, 'agents', 'beta', 'project'), { recursive: true });
+		await mkdir(path.join(zoneFilesDir, 'agents', 'main'), { recursive: true });
+		await mkdir(path.join(stateDir, 'sandboxes', 'beta', 'work'), { recursive: true });
+		await mkdir(path.join(stateDir, 'sandboxes', 'main', 'work'), { recursive: true });
 		await mkdir(path.join(stateDir, 'workspace-beta'), { recursive: true });
 		zone = {
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
@@ -68,12 +71,40 @@ describe('resolveLeaseWorkMountDir', () => {
 			resolveLeaseWorkMountDir({
 				agentId: 'beta',
 				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/beta/work',
 				zone,
 			}),
 		).resolves.toEqual({
 			guestWorkdir: '/workspace',
-			hostWorkMountDir: await realpath(path.join(stateDir, 'sandboxes', 'agent', 'work')),
+			hostWorkMountDir: await realpath(path.join(stateDir, 'sandboxes', 'beta', 'work')),
+		});
+	});
+
+	it('rejects OpenClaw gateway sandbox paths for a different agent', async () => {
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'beta',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
+	it('rejects ambiguous OpenClaw gateway sandbox paths without an agent segment', async () => {
+		await mkdir(path.join(stateDir, 'sandboxes', 'work'), { recursive: true });
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'beta',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
 		});
 	});
 
@@ -154,18 +185,95 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/must name a child path under/u);
 	});
 
-	it('maps OpenClaw gateway /zone paths to host zoneFilesDir', async () => {
+	it('maps OpenClaw gateway agent-owned /zone paths to host zoneFilesDir', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
 				agentId: 'beta',
 				runtimeDir,
-				workMountDir: '/zone/project',
+				workMountDir: '/zone/agents/beta/project',
 				zone,
 			}),
 		).resolves.toEqual({
 			guestWorkdir: '/workspace',
-			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'project')),
+			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'agents', 'beta', 'project')),
 		});
+	});
+
+	it('rejects OpenClaw gateway /zone agent paths for a different agent', async () => {
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'beta',
+				runtimeDir,
+				workMountDir: '/zone/agents/main',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
+	it('rejects /zone agent symlinks that resolve into another agent workspace', async () => {
+		const linkPath = path.join(zoneFilesDir, 'agents', 'beta', 'main-link');
+		await symlink(path.join(zoneFilesDir, 'agents', 'main'), linkPath);
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'beta',
+				runtimeDir,
+				workMountDir: '/zone/agents/beta/main-link',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
+	it('rejects symlinked /zone agent roots that resolve into another agent workspace', async () => {
+		await mkdir(path.join(zoneFilesDir, 'agents', 'main', 'project'), { recursive: true });
+		const linkPath = path.join(zoneFilesDir, 'agents', 'link-agent');
+		await symlink(path.join(zoneFilesDir, 'agents', 'main'), linkPath);
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'link-agent',
+				runtimeDir,
+				workMountDir: '/zone/agents/link-agent/project',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
+	it('rejects symlinked sandbox roots that resolve into another agent workspace', async () => {
+		const linkPath = path.join(stateDir, 'sandboxes', 'link-agent');
+		await symlink(path.join(stateDir, 'sandboxes', 'main'), linkPath);
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'link-agent',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/link-agent/work',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
+	it('rejects symlinked state workspace roots that resolve into another agent workspace', async () => {
+		await mkdir(path.join(stateDir, 'workspace-beta'), { recursive: true });
+		const linkPath = path.join(stateDir, 'workspace-link-agent');
+		await symlink(path.join(stateDir, 'workspace-beta'), linkPath);
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'link-agent',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/state/workspace-link-agent',
+				zone,
+			}),
+		).rejects.toThrow(/not a symlink or non-directory root/u);
 	});
 
 	it('returns zone Git mount metadata for configured OpenClaw /zone leases', async () => {
@@ -179,7 +287,10 @@ describe('resolveLeaseWorkMountDir', () => {
 				zoneGit: {
 					remote: {
 						repoUrl: 'https://github.com/shravansunder/sunfam-zone-files.git',
-						branch: 'main',
+						branch: 'agent/zone-files',
+						defaultBranch: 'main',
+						protectedBranches: ['main'],
+						protectedBranchPatterns: ['release/*'],
 					},
 				},
 			},
@@ -189,12 +300,12 @@ describe('resolveLeaseWorkMountDir', () => {
 			resolveLeaseWorkMountDir({
 				agentId: 'beta',
 				runtimeDir,
-				workMountDir: '/zone/project',
+				workMountDir: '/zone/agents/beta/project',
 				zone: zoneWithZoneGit,
 			}),
 		).resolves.toEqual({
-			guestWorkdir: '/zone/project',
-			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'project')),
+			guestWorkdir: '/zone/agents/beta/project',
+			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'agents', 'beta', 'project')),
 			zoneGitMount: {
 				hostZoneFilesDir: zoneFilesDir,
 				hostZoneGitRoot: path.join(runtimeDir, 'zones', 'shravan', 'zone-git'),
@@ -223,7 +334,7 @@ describe('resolveLeaseWorkMountDir', () => {
 
 	it('rejects symlinks that resolve outside allowed roots', async () => {
 		const sensitiveDir = path.join(tempDir, 'sensitive');
-		const linkPath = path.join(stateDir, 'sandboxes', 'agent', 'ssh-link');
+		const linkPath = path.join(stateDir, 'sandboxes', 'beta', 'ssh-link');
 		await mkdir(sensitiveDir, { recursive: true });
 		await symlink(sensitiveDir, linkPath);
 
@@ -231,7 +342,7 @@ describe('resolveLeaseWorkMountDir', () => {
 			resolveLeaseWorkMountDir({
 				agentId: 'beta',
 				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/ssh-link',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/beta/ssh-link',
 				zone,
 			}),
 		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
@@ -356,7 +467,7 @@ describe('resolveLeaseWorkMountDir', () => {
 			resolveLeaseWorkMountDir({
 				agentId: 'beta',
 				runtimeDir,
-				workMountDir: '/zone/project',
+				workMountDir: '/zone/agents/beta/project',
 				zone: missingRootZone,
 			}),
 		).rejects.toThrow(/failed directory realpath check/u);

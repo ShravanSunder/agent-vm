@@ -1,9 +1,19 @@
 import { readFile } from 'node:fs/promises';
 
-import { createManagedVm } from '@agent-vm/gondolin-adapter';
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
-import { describe, it, expect, afterAll } from 'vitest';
+import { createManagedVm, type ManagedVm, type SshAccess } from '@agent-vm/gondolin-adapter';
+import { afterAll, describe, expect, it } from 'vitest';
 
+import {
+	terminateLiveManagedVm,
+	type ManagedVmProcessTarget,
+} from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import { currentE2eArchitecture } from './e2e-harness.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
@@ -25,16 +35,76 @@ import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
 const expectedGuestArchitecture = currentE2eArchitecture();
 
+async function startVmAndCaptureProcessTarget(vm: ManagedVm): Promise<ManagedVmProcessTarget> {
+	await vm.start();
+	const hostPid = vm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Started Gondolin VM '${vm.id}' did not expose a host PID.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(`Started Gondolin VM '${vm.id}' process identity could not be captured.`);
+	}
+	return { hostPid, processIdentity, vmId: vm.id };
+}
+
+async function terminateStartedVm(options: {
+	readonly context: string;
+	readonly processTarget: ManagedVmProcessTarget;
+	readonly sshAccess?: SshAccess;
+	readonly vm: ManagedVm;
+}): Promise<void> {
+	await options.sshAccess?.close();
+	await terminateLiveManagedVm({
+		contextLabel: options.context,
+		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		target: options.processTarget,
+		vm: options.vm,
+	});
+}
+
 describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 	let toolVm: ManagedVm | null = null;
 	let gatewayVm: ManagedVm | null = null;
+	let toolVmProcessTarget: ManagedVmProcessTarget | null = null;
+	let gatewayVmProcessTarget: ManagedVmProcessTarget | null = null;
+	let toolSshAccess: SshAccess | null = null;
 
 	afterAll(async () => {
-		if (gatewayVm) await gatewayVm.close().catch(() => {});
-		if (toolVm) await toolVm.close().catch(() => {});
+		const cleanupResults = await Promise.allSettled([
+			gatewayVm === null || gatewayVmProcessTarget === null
+				? Promise.resolve()
+				: terminateStartedVm({
+						context: 'gateway VM cleanup',
+						processTarget: gatewayVmProcessTarget,
+						vm: gatewayVm,
+					}),
+			toolVm === null || toolVmProcessTarget === null
+				? Promise.resolve()
+				: terminateStartedVm({
+						context: 'tool VM cleanup',
+						processTarget: toolVmProcessTarget,
+						...(toolSshAccess === null ? {} : { sshAccess: toolSshAccess }),
+						vm: toolVm,
+					}),
+		]);
+		const cleanupErrors: unknown[] = [];
+		for (const result of cleanupResults) {
+			if (result.status === 'rejected') {
+				cleanupErrors.push(result.reason as unknown);
+			}
+		}
+		if (cleanupErrors.length > 0) {
+			throw new AggregateError(cleanupErrors, 'cross-VM SSH E2E cleanup failed');
+		}
+		gatewayVm = null;
+		toolVm = null;
+		gatewayVmProcessTarget = null;
+		toolVmProcessTarget = null;
+		toolSshAccess = null;
 	});
 
-	it('should create tool VM, enable SSH, then SSH from gateway VM to tool VM', async () => {
+	it('pins exact Tool VM SSH identity and rejects an old key after same-slot replacement', async () => {
 		const t0 = Date.now();
 		const log = (msg: string): void => {
 			process.stdout.write(`[${String(Date.now() - t0).padStart(5)}ms] ${msg}\n`);
@@ -43,7 +113,6 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		// Step 1: Create tool VM and enable SSH on a specific port
 		const toolSshPort = 19100;
 		log('creating tool VM...');
-
 		toolVm = await createManagedVm({
 			imagePath: '',
 			memory: '512M',
@@ -53,14 +122,16 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 			secrets: {},
 			vfsMounts: {},
 		});
+		toolVmProcessTarget = await startVmAndCaptureProcessTarget(toolVm);
 		log('tool VM created');
 
-		const toolSsh = await toolVm.enableSsh({
+		toolSshAccess = await toolVm.enableSsh({
 			user: 'root',
 			listenHost: '127.0.0.1',
 			listenPort: toolSshPort,
 		});
-		log(`tool SSH enabled: port=${toolSsh.port} identity=${toolSsh.identityFile}`);
+		log(`tool SSH enabled: port=${toolSshAccess.port} identity=${toolSshAccess.identityFile}`);
+		const firstToolServerHostKey = toolSshAccess.serverHostKey;
 
 		// Write a marker file in the tool VM for verification
 		await toolVm.exec('echo tool_vm_marker > /tmp/marker.txt');
@@ -80,19 +151,23 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 				[`tool-0.vm.host:22`]: `127.0.0.1:${toolSshPort}`,
 			},
 		});
+		gatewayVmProcessTarget = await startVmAndCaptureProcessTarget(gatewayVm);
 		log('gateway VM created');
 
 		// Step 3: Install the tool VM's SSH identity inside the gateway VM
-		if (!toolSsh.identityFile) throw new Error('SSH identity file not available');
-		const identityPem = await readFile(toolSsh.identityFile, 'utf-8');
+		if (!toolSshAccess.identityFile) throw new Error('SSH identity file not available');
+		const identityPem = await readFile(toolSshAccess.identityFile, 'utf-8');
 
 		await gatewayVm.exec('mkdir -p /root/.ssh && chmod 700 /root/.ssh');
-		// Write identity via base64 to avoid escaping issues
+		// Write SSH material via base64 to avoid shell escaping ambiguity.
 		const b64Key = Buffer.from(identityPem).toString('base64');
+		const firstKnownHostsLine = `tool-0.vm.host ${toolSshAccess.serverHostKey.algorithm} ${toolSshAccess.serverHostKey.publicKeyBase64}\n`;
+		const firstKnownHostsBase64 = Buffer.from(firstKnownHostsLine).toString('base64');
 		await gatewayVm.exec(
-			`echo ${b64Key} | base64 -d > /root/.ssh/tool_key && chmod 600 /root/.ssh/tool_key`,
+			`echo ${b64Key} | base64 -d > /root/.ssh/tool_key && chmod 600 /root/.ssh/tool_key && ` +
+				`echo ${firstKnownHostsBase64} | base64 -d > /root/.ssh/known_hosts && chmod 600 /root/.ssh/known_hosts`,
 		);
-		log('SSH identity installed in gateway VM');
+		log('SSH client and exact server identity installed in gateway VM');
 
 		// Step 4: SSH from gateway VM to tool VM through tcp.hosts
 		log('SSHing from gateway to tool...');
@@ -100,8 +175,8 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		// answer is only present for SSRF compatibility and is not a raw TCP path.
 		const sshResult = await gatewayVm.exec(
 			'ssh -4 -p 22 -i /root/.ssh/tool_key ' +
-				'-o StrictHostKeyChecking=no ' +
-				'-o UserKnownHostsFile=/dev/null ' +
+				'-o StrictHostKeyChecking=yes ' +
+				'-o UserKnownHostsFile=/root/.ssh/known_hosts ' +
 				'-o BatchMode=yes ' +
 				'-o ConnectTimeout=10 ' +
 				'root@tool-0.vm.host ' +
@@ -118,7 +193,73 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		expect(sshResult.stdout).toContain('tool_vm_marker');
 		expect(sshResult.stdout).toContain(expectedGuestArchitecture);
 
-		// Step 5: Verify the two VMs are different (different exec channels)
+		// Step 5: Replace only the Tool VM on the same TCP slot. Install the new
+		// client credential but deliberately keep the old pinned server key.
+		if (toolVmProcessTarget === null) throw new Error('Tool VM process target is unavailable');
+		await terminateStartedVm({
+			context: 'first Tool VM replacement',
+			processTarget: toolVmProcessTarget,
+			sshAccess: toolSshAccess,
+			vm: toolVm,
+		});
+		toolVm = null;
+		toolVmProcessTarget = null;
+		toolSshAccess = null;
+		toolVm = await createManagedVm({
+			imagePath: '',
+			memory: '512M',
+			cpus: 1,
+			rootfsMode: 'cow',
+			allowedHosts: [],
+			secrets: {},
+			vfsMounts: {},
+		});
+		toolVmProcessTarget = await startVmAndCaptureProcessTarget(toolVm);
+		toolSshAccess = await toolVm.enableSsh({
+			user: 'root',
+			listenHost: '127.0.0.1',
+			listenPort: toolSshPort,
+		});
+		expect(toolSshAccess.serverHostKey).not.toEqual(firstToolServerHostKey);
+		if (!toolSshAccess.identityFile) {
+			throw new Error('Replacement SSH identity file not available');
+		}
+		const replacementIdentityPem = await readFile(toolSshAccess.identityFile, 'utf8');
+		const replacementIdentityBase64 = Buffer.from(replacementIdentityPem).toString('base64');
+		await gatewayVm.exec(
+			`echo ${replacementIdentityBase64} | base64 -d > /root/.ssh/tool_key && chmod 600 /root/.ssh/tool_key`,
+		);
+		await toolVm.exec('echo replacement_tool_vm_marker > /tmp/marker.txt');
+
+		const staleServerIdentityResult = await gatewayVm.exec(
+			'ssh -4 -p 22 -i /root/.ssh/tool_key ' +
+				'-o StrictHostKeyChecking=yes ' +
+				'-o UserKnownHostsFile=/root/.ssh/known_hosts ' +
+				'-o BatchMode=yes -o ConnectTimeout=10 ' +
+				'root@tool-0.vm.host true',
+		);
+		expect(staleServerIdentityResult.exitCode).not.toBe(0);
+		expect(staleServerIdentityResult.stderr).toMatch(
+			/host key verification failed|remote host identification has changed/iu,
+		);
+
+		// Step 6: Replace the pinned public identity and prove the new exact leaf.
+		const replacementKnownHostsLine = `tool-0.vm.host ${toolSshAccess.serverHostKey.algorithm} ${toolSshAccess.serverHostKey.publicKeyBase64}\n`;
+		const replacementKnownHostsBase64 = Buffer.from(replacementKnownHostsLine).toString('base64');
+		await gatewayVm.exec(
+			`echo ${replacementKnownHostsBase64} | base64 -d > /root/.ssh/known_hosts && chmod 600 /root/.ssh/known_hosts`,
+		);
+		const replacementSshResult = await gatewayVm.exec(
+			'ssh -4 -p 22 -i /root/.ssh/tool_key ' +
+				'-o StrictHostKeyChecking=yes ' +
+				'-o UserKnownHostsFile=/root/.ssh/known_hosts ' +
+				'-o BatchMode=yes -o ConnectTimeout=10 ' +
+				'root@tool-0.vm.host "cat /tmp/marker.txt"',
+		);
+		expect(replacementSshResult.exitCode).toBe(0);
+		expect(replacementSshResult.stdout).toContain('replacement_tool_vm_marker');
+
+		// Step 7: Verify the two live VMs are different (different exec channels)
 		const gwHostname = await gatewayVm.exec('cat /proc/sys/kernel/hostname');
 		const toolHostname = await toolVm.exec('cat /proc/sys/kernel/hostname');
 
@@ -131,5 +272,5 @@ describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () =>
 		expect(toolHostname.exitCode).toBe(0);
 
 		log('PASS: cross-VM SSH works through tcp.hosts');
-	}, 60_000);
+	}, 90_000);
 });

@@ -2,12 +2,12 @@ import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
 
 import {
 	isProcessAlive,
-	isManagedVmProcess,
-	killOrphanedManagedVmProcess,
+	terminateRecordedManagedVmHostProcess,
 	killProcess,
 	readProcessCommand,
 	readProcessIdentity,
 	sleep,
+	verifyRecordedManagedVmHostProcess,
 } from '../../shared/managed-vm-process.js';
 import {
 	readTcpListenPortOwner as defaultReadTcpListenPortOwner,
@@ -60,7 +60,7 @@ function validateToolVmRecordCleanupScope(options: {
 	return null;
 }
 
-async function killOrphanedToolVmProcess(
+async function terminateRecordedToolVmProcess(
 	runtimeRecord: ToolVmRuntimeRecord,
 	dependencies: Required<
 		Pick<
@@ -69,7 +69,7 @@ async function killOrphanedToolVmProcess(
 		>
 	>,
 ): Promise<number | null> {
-	return await killOrphanedManagedVmProcess({
+	return await terminateRecordedManagedVmHostProcess({
 		contextLabel: `Tool VM runtime record for lease '${runtimeRecord.leaseId}' (zone '${runtimeRecord.zoneId}', slot ${runtimeRecord.tcpSlot})`,
 		dependencies,
 		pid: runtimeRecord.qemuPid,
@@ -113,19 +113,10 @@ async function verifyToolVmPortOwnership(options: {
 	if (portOwner === null) {
 		return { kind: 'record-stale' };
 	}
-	if (portOwner.pid !== options.runtimeRecord.qemuPid) {
-		return {
-			kind: 'unproven',
-			warning: `Tool VM runtime record '${options.runtimeRecord.recordId}' port ${String(expectedPort)} is held by pid ${String(portOwner.pid)}, expected pid ${String(options.runtimeRecord.qemuPid)}.`,
-		};
-	}
-	if (!isManagedVmProcess(portOwner.command)) {
-		return {
-			kind: 'unproven',
-			warning: `Tool VM runtime record '${options.runtimeRecord.recordId}' port ${String(expectedPort)} is held by pid ${String(portOwner.pid)} but command is not a managed VM process: ${portOwner.command}.`,
-		};
-	}
-	return { kind: 'owned' };
+	return {
+		kind: 'unproven',
+		warning: `Tool VM runtime record '${options.runtimeRecord.recordId}' cannot reuse port ${String(expectedPort)} because it is held by pid ${String(portOwner.pid)} (${portOwner.command}). Stock Gondolin owns the Tool SSH listener in the controller process, not the VM runner.`,
+	};
 }
 
 export interface ToolVmRecoveryDependencies {
@@ -148,7 +139,7 @@ export interface ToolVmCleanupResult {
 	readonly warnings: readonly string[];
 }
 
-export async function cleanupOrphanedToolVmsIfPresent(
+export async function cleanupRecordedToolVmRuntimes(
 	options: {
 		readonly expectedConfigPath: string;
 		readonly expectedControllerPort: number;
@@ -253,9 +244,25 @@ export async function cleanupOrphanedToolVmsIfPresent(
 		cleanupReadyRuntimeRecords.push(provenRuntimeRecord);
 	}
 
+	// Cleanup is a tree-level fail-closed operation. Validate every recorded
+	// process before signaling any one of them so one ambiguous sibling cannot
+	// leave the persisted Tool VM set partially destroyed.
+	await Promise.all(
+		cleanupReadyRuntimeRecords.map(async ({ runtimeRecord }) => {
+			await verifyRecordedManagedVmHostProcess({
+				contextLabel: `Tool VM runtime record for lease '${runtimeRecord.leaseId}' (zone '${runtimeRecord.zoneId}', slot ${runtimeRecord.tcpSlot})`,
+				currentSignalLabel: 'SIGTERM',
+				pid: runtimeRecord.qemuPid,
+				readProcessCommand: killDependencies.readProcessCommand,
+				readProcessIdentity: killDependencies.readProcessIdentity,
+				recordedIdentity: runtimeRecord.processIdentity,
+			});
+		}),
+	);
+
 	const cleanupOutcomes = await Promise.all(
 		cleanupReadyRuntimeRecords.map(async ({ runtimeRecord }) => {
-			const killedPid = await killOrphanedToolVmProcess(runtimeRecord, killDependencies);
+			const killedPid = await terminateRecordedToolVmProcess(runtimeRecord, killDependencies);
 			try {
 				await deleteRecord(options.stateDir, runtimeRecord.recordId);
 			} catch (error) {
@@ -269,8 +276,8 @@ export async function cleanupOrphanedToolVmsIfPresent(
 			}
 			log(
 				killedPid === null
-					? `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming the orphaned process was already gone.`
-					: `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after terminating orphaned tool VM pid ${killedPid}.`,
+					? `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming the recorded process was already gone.`
+					: `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after terminating recorded tool VM pid ${killedPid}.`,
 			);
 			return {
 				cleanedCount: 1,

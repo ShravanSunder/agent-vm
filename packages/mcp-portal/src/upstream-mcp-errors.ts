@@ -70,8 +70,21 @@ export function transportSummaryFromServer(
 
 	return {
 		kind: attemptTransport === 'sse' ? 'sse' : 'streamable-http',
-		url: server.url,
+		url: sanitizeRemoteMcpUrlForDiagnostics(server.url),
 	};
+}
+
+export function sanitizeRemoteMcpUrlForDiagnostics(url: string): string {
+	try {
+		const parsedUrl = new URL(url);
+		parsedUrl.username = '';
+		parsedUrl.password = '';
+		parsedUrl.search = '';
+		parsedUrl.hash = '';
+		return parsedUrl.toString();
+	} catch {
+		return '<invalid-url>';
+	}
 }
 
 function hintForFailure(

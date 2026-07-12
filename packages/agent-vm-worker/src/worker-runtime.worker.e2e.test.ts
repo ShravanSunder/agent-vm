@@ -32,6 +32,8 @@ interface WorkerProcessOutput {
 	stdout: string;
 }
 
+class E2eTimeoutError extends Error {}
+
 function withTimeout<TValue>(
 	promise: Promise<TValue>,
 	timeoutMs: number,
@@ -39,7 +41,7 @@ function withTimeout<TValue>(
 ): Promise<TValue> {
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	const timeoutPromise = new Promise<never>((_resolve, reject) => {
-		timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+		timeout = setTimeout(() => reject(new E2eTimeoutError(message)), timeoutMs);
 	});
 	return Promise.race([promise, timeoutPromise]).finally(() => {
 		if (timeout !== undefined) {
@@ -215,50 +217,98 @@ async function readTaskState(
 }
 
 async function waitForTaskCompletion(options: {
+	readonly output: WorkerProcessOutput;
 	readonly port: number;
 	readonly stateDir: string;
 	readonly taskId: string;
 	readonly timeoutMs: number;
+	readonly workerProcess: ChildProcess;
 }): Promise<z.infer<typeof taskStateSchema>> {
 	const tasksDir = path.join(options.stateDir, 'tasks');
+	const taskLogPath = path.join(tasksDir, `${options.taskId}.jsonl`);
 	await fs.mkdir(tasksDir, { recursive: true });
-	const watcher = watch(tasksDir, { persistent: false });
+	await fs.appendFile(taskLogPath, '', 'utf8');
+	const taskLogWatcher = watch(taskLogPath, { persistent: false });
+	const workerExit = once(options.workerProcess, 'exit').then(() => 'worker-exit' as const);
 	const deadlineMs = Date.now() + options.timeoutMs;
 	let lastState: z.infer<typeof taskStateSchema> | null = null;
 	try {
 		while (true) {
-			const nextTaskEvent = watcher.next();
-			// oxlint-disable-next-line eslint/no-await-in-loop -- each pass reads current state before waiting for the next JSONL append event
+			const nextTaskLogChange = taskLogWatcher.next();
+			// oxlint-disable-next-line eslint/no-await-in-loop -- task completion advances on task log filesystem events and validates through the worker HTTP state endpoint
 			const body = await readTaskState(options.port, options.taskId);
 			lastState = body;
 			if (body !== null && (body.status === 'completed' || body.status === 'failed')) {
 				return body;
 			}
-			const remainingTimeoutMs = deadlineMs - Date.now();
-			if (remainingTimeoutMs <= 0) {
+			if (options.workerProcess.exitCode !== null) {
 				throw new Error(
-					`Task ${options.taskId} did not reach terminal state within ${String(
-						options.timeoutMs,
-					)}ms. Last state: ${JSON.stringify(lastState)}.`,
+					`Task ${options.taskId} did not reach terminal state before the worker process exited. Last state: ${JSON.stringify(
+						lastState,
+					)}.\nstdout:\n${options.output.stdout}\nstderr:\n${options.output.stderr}`,
 				);
 			}
-			// oxlint-disable-next-line eslint/no-await-in-loop -- task completion is driven by sequential JSONL append events
-			const nextResult = await withTimeout(
-				nextTaskEvent,
-				remainingTimeoutMs,
-				`Task ${options.taskId} did not emit state changes within ${String(
-					options.timeoutMs,
-				)}ms. Last state: ${JSON.stringify(lastState)}.`,
-			);
-			if (nextResult.done === true) {
-				throw new Error(
-					`Task state watcher ended before ${options.taskId} reached terminal state.`,
+			const remainingTimeoutMs = deadlineMs - Date.now();
+			if (remainingTimeoutMs <= 0) {
+				break;
+			}
+			let nextEvent: 'task-log-change' | 'task-log-closed' | 'worker-exit';
+			try {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- each iteration waits for the next task-log or worker-exit event before re-reading protocol state
+				nextEvent = await withTimeout(
+					Promise.race([
+						nextTaskLogChange.then((change) =>
+							change.done === true ? 'task-log-closed' : 'task-log-change',
+						),
+						workerExit,
+					]),
+					remainingTimeoutMs,
+					`Task ${options.taskId} did not emit another task log event within ${String(
+						remainingTimeoutMs,
+					)}ms.`,
 				);
+			} catch (error) {
+				if (error instanceof E2eTimeoutError) {
+					break;
+				}
+				throw error;
+			}
+			if (nextEvent === 'worker-exit') {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- process exit can race the terminal event append, so re-read the protocol state before failing
+				const exitState = await readTaskState(options.port, options.taskId);
+				lastState = exitState ?? lastState;
+				if (
+					exitState !== null &&
+					(exitState.status === 'completed' || exitState.status === 'failed')
+				) {
+					return exitState;
+				}
+				throw new Error(
+					`Task ${options.taskId} did not reach terminal state before the worker process exited. Last state: ${JSON.stringify(
+						lastState,
+					)}.\nstdout:\n${options.output.stdout}\nstderr:\n${options.output.stderr}`,
+				);
+			}
+			if (nextEvent === 'task-log-closed') {
+				break;
 			}
 		}
 	} finally {
-		await watcher.return?.();
+		void taskLogWatcher.return?.();
 	}
+	const finalState = await readTaskState(options.port, options.taskId);
+	lastState = finalState ?? lastState;
+	if (
+		finalState !== null &&
+		(finalState.status === 'completed' || finalState.status === 'failed')
+	) {
+		return finalState;
+	}
+	throw new Error(
+		`Task ${options.taskId} did not reach terminal state within ${String(
+			options.timeoutMs,
+		)}ms. Last state: ${JSON.stringify(lastState)}.`,
+	);
 }
 
 const createTaskResponseSchema = z.object({
@@ -387,10 +437,12 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 			expect(createResponse.status).toBe(201);
 			const createBody = createTaskResponseSchema.parse(await createResponse.json());
 			const finalState = await waitForTaskCompletion({
+				output: workerOutput,
 				port,
 				stateDir,
 				taskId: createBody.taskId,
 				timeoutMs: 300_000,
+				workerProcess,
 			});
 			if (finalState.status !== 'completed') {
 				throw new Error(`Worker-only smoke failed: ${JSON.stringify(finalState)}`);

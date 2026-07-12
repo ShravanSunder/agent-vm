@@ -1,56 +1,90 @@
 {
 	"id": "gondolin",
 	"name": "Gondolin VM Sandbox",
-	"description": "Sandbox backend powered by Gondolin micro-VMs with SSH-based command execution via controller lease API.",
+	"description": "Sandbox backend powered by Gondolin micro-VMs, Tool Portal tools, and private agent-vm control sessions.",
 	"cliBackends": ["gondolin"],
 	"activation": {
 		"onStartup": true
 	},
 	"contracts": {
-		"tools": ["zone_git_push"]
+		"tools": ["tool_portal_list", "tool_portal_search", "tool_portal_describe", "tool_portal_call"]
+	},
+	"toolMetadata": {
+		"tool_portal_list": {
+			"optional": true
+		},
+		"tool_portal_search": {
+			"optional": true
+		},
+		"tool_portal_describe": {
+			"optional": true
+		},
+		"tool_portal_call": {
+			"optional": true
+		}
 	},
 	"configSchema": {
 		"type": "object",
 		"additionalProperties": false,
 		"properties": {
-			"controllerUrl": {
-				"type": "string",
-				"minLength": 1
-			},
 			"zoneId": {
 				"type": "string",
 				"minLength": 1
 			},
-			"gatewayControlLinkMonitor": {
+			"controlSession": {
 				"type": "object",
 				"additionalProperties": false,
 				"properties": {
-					"baseIntervalMs": {
-						"type": "number",
-						"minimum": 1
+					"bootId": {
+						"type": "string",
+						"minLength": 1
 					},
-					"enabled": {
-						"type": "boolean"
+					"controllerEpoch": {
+						"type": "string",
+						"minLength": 1
 					},
-					"maxIntervalMs": {
-						"type": "number",
-						"minimum": 1
+					"generationId": {
+						"type": "string",
+						"minLength": 1
+					},
+					"peerId": {
+						"type": "string",
+						"minLength": 1
+					},
+					"processEpoch": {
+						"type": "string",
+						"minLength": 1
+					},
+					"verifierPublicKeyPem": {
+						"type": "string",
+						"minLength": 1
 					}
-				}
+				},
+				"required": [
+					"bootId",
+					"controllerEpoch",
+					"generationId",
+					"peerId",
+					"processEpoch",
+					"verifierPublicKeyPem"
+				]
 			},
 			"profileId": {
 				"type": "string",
 				"minLength": 1
 			},
-			"zoneGitToken": {
-				"type": "string",
-				"minLength": 1
-			},
-			"zoneGitTokenEnv": {
-				"type": "string",
-				"minLength": 1
+			"toolPortal": {
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"configDir": {
+						"type": "string",
+						"minLength": 1
+					}
+				},
+				"required": ["configDir"]
 			}
 		},
-		"required": ["controllerUrl", "zoneId"]
+		"required": ["zoneId"]
 	}
 }

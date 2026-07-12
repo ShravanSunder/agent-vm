@@ -3,11 +3,47 @@ import http, { type Server } from 'node:http';
 import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import {
+	terminateLiveManagedVm,
+	type ManagedVmProcessTarget,
+} from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const mediationHost = 'gondolin-mediation-test.vm.host';
 const mediationUpstreamHost = '127.0.0.1';
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
+
+async function startVmAndCaptureProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
+	await managedVm.start();
+	const hostPid = managedVm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' process identity.`);
+	}
+	return { hostPid, processIdentity, vmId: managedVm.id };
+}
+
+async function terminateVmRuntime(
+	runtime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null,
+): Promise<void> {
+	if (runtime === null) return;
+	await terminateLiveManagedVm({
+		contextLabel: 'Gondolin HTTP mediation VM cleanup',
+		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		target: runtime.target,
+		vm: runtime.managedVm,
+	});
+}
 
 async function createHeaderEchoServer(): Promise<{
 	readonly port: number;
@@ -70,21 +106,23 @@ function rewriteMediationHostToLoopback(
 }
 
 describeLiveVmIntegration('live e2e: real Gondolin HTTP mediation', () => {
-	let vm: ManagedVm | null = null;
+	let vmRuntime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null =
+		null;
 
 	afterAll(async () => {
-		if (vm) {
-			await vm.close();
-			vm = null;
-		}
+		await terminateVmRuntime(vmRuntime);
+		vmRuntime = null;
 	});
 
 	it('should support HTTP mediation with secret injection', async () => {
-		if (vm) await vm.close();
+		if (vmRuntime) {
+			await terminateVmRuntime(vmRuntime);
+			vmRuntime = null;
+		}
 		const headerEchoServer = await createHeaderEchoServer();
 
 		try {
-			vm = await createManagedVm({
+			const vm = await createManagedVm({
 				imagePath: '',
 				memory: '512M',
 				cpus: 1,
@@ -102,6 +140,7 @@ describeLiveVmIntegration('live e2e: real Gondolin HTTP mediation', () => {
 				},
 				vfsMounts: {},
 			});
+			vmRuntime = { managedVm: vm, target: await startVmAndCaptureProcess(vm) };
 
 			const envCheck = await vm.exec('echo $TEST_TOKEN');
 			expect(envCheck.stdout.trim()).not.toBe('real-secret-value-12345');

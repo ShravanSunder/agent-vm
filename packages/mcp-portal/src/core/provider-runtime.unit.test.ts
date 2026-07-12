@@ -13,6 +13,7 @@ describe('provider runtime resolution', () => {
 						namespace: 'linear',
 						secretPolicies: {},
 						transport: {
+							connectionTimeoutMs: 120_000,
 							headers: {
 								Authorization: { name: 'LINEAR_TOKEN', source: 'environment' },
 								'X-Vendor-Token': {
@@ -39,6 +40,7 @@ describe('provider runtime resolution', () => {
 						transport: {
 							args: ['serve'],
 							command: 'local-mcp',
+							connectionTimeoutMs: 45_000,
 							env: {
 								API_TOKEN: { name: 'LOCAL_TOKEN', source: 'environment' },
 							},
@@ -60,6 +62,7 @@ describe('provider runtime resolution', () => {
 
 		expect(resolved).toEqual([
 			{
+				connectionTimeoutMs: 120_000,
 				headers: {
 					Authorization: 'resolved:LINEAR_TOKEN',
 					'X-Vendor-Token': 'Token resolved:VENDOR_TOKEN',
@@ -72,6 +75,7 @@ describe('provider runtime resolution', () => {
 			{
 				args: ['serve'],
 				command: 'local-mcp',
+				connectionTimeoutMs: 45_000,
 				env: { API_TOKEN: 'resolved:LOCAL_TOKEN' },
 				namespace: 'local',
 				transport: 'stdio',

@@ -42,6 +42,7 @@ export function mapHealthEventToTelemetry(event: AgentVmHealthEvent): HealthEven
 		addSafeErrorCode(baseAttributes, event.errorCode);
 	}
 
+	addCorrelationAttributes(baseAttributes, event);
 	addKindSpecificAttributes(baseAttributes, event);
 
 	const metricSamples: HealthEventTelemetryMetricSample[] = [
@@ -69,11 +70,42 @@ export function mapHealthEventToTelemetry(event: AgentVmHealthEvent): HealthEven
 	};
 }
 
+function addCorrelationAttributes(
+	attributes: Record<string, TelemetryAttributeValue>,
+	event: AgentVmHealthEvent,
+): void {
+	if (event.traceId !== undefined) {
+		attributes['agent_vm.trace.id'] = event.traceId;
+	}
+	if (event.correlationId !== undefined) {
+		attributes['agent_vm.correlation.id'] = event.correlationId;
+	}
+	if (event.causationId !== undefined) {
+		attributes['agent_vm.causation.id'] = event.causationId;
+	}
+	if (event.requestId !== undefined) {
+		attributes['agent_vm.request.id'] = event.requestId;
+	}
+	if (event.runId !== undefined) {
+		attributes['agent_vm.run.id'] = event.runId;
+	}
+	if (event.sessionKeyDigest !== undefined) {
+		attributes['agent_vm.session_key.digest'] = event.sessionKeyDigest;
+	}
+	if (event.toolCallId !== undefined) {
+		attributes['agent_vm.tool_call.id'] = event.toolCallId;
+	}
+}
+
 function addKindSpecificAttributes(
 	attributes: Record<string, TelemetryAttributeValue>,
 	event: AgentVmHealthEvent,
 ): void {
 	switch (event.kind) {
+		case 'caller-context-rejection':
+			attributes['agent_vm.caller_context.operation'] = event.operation;
+			attributes['agent_vm.caller_context.rejection_reason'] = event.reason;
+			return;
 		case 'agent-channel-provider-health':
 			attributes['agent_vm.agent_channel.health'] = event.health;
 			attributes['agent_vm.agent_channel.provider_id_hash'] = stableTelemetryHash(
@@ -91,7 +123,7 @@ function addKindSpecificAttributes(
 			attributes['agent_vm.controller.attempt'] = event.attempt;
 			attributes['agent_vm.controller.max_attempts'] = event.maxAttempts;
 			return;
-		case 'gateway-control-link':
+		case 'gateway-control-session':
 			attributes['agent_vm.gateway.operation'] = event.operation;
 			return;
 		case 'gateway-plugin-health':
@@ -142,6 +174,32 @@ function addKindSpecificAttributes(
 			attributes['agent_vm.agent.id_hash'] = stableTelemetryHash(event.agentId);
 			attributes['agent_vm.lease.id_hash'] = stableTelemetryHash(event.leaseId);
 			attributes['agent_vm.tool_vm.ssh.operation'] = event.operation;
+			if (event.activeUseId !== undefined) {
+				attributes['agent_vm.lease.active_use_id_hash'] = stableTelemetryHash(event.activeUseId);
+			}
+			if (event.callerContextState !== undefined) {
+				attributes['agent_vm.lease.caller_context_state'] = event.callerContextState;
+			}
+			if (event.leaseRejectionReason !== undefined) {
+				attributes['agent_vm.lease.rejection_reason'] = event.leaseRejectionReason;
+			}
+			if (event.lifecycleEventRole !== undefined) {
+				attributes['agent_vm.lease.lifecycle_event_role'] = event.lifecycleEventRole;
+			}
+			if (event.lifecycleTransition !== undefined) {
+				attributes['agent_vm.lease.lifecycle_transition'] = event.lifecycleTransition;
+			}
+			if (event.oldLeaseId !== undefined) {
+				attributes['agent_vm.lease.old_id_hash'] = stableTelemetryHash(event.oldLeaseId);
+			}
+			if (event.replacementLeaseId !== undefined) {
+				attributes['agent_vm.lease.replacement_id_hash'] = stableTelemetryHash(
+					event.replacementLeaseId,
+				);
+			}
+			if (event.transitionId !== undefined) {
+				attributes['agent_vm.lease.transition_id_hash'] = stableTelemetryHash(event.transitionId);
+			}
 			return;
 		default:
 			assertNever(event);

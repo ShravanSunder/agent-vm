@@ -5,7 +5,16 @@ export * from './operations/config-validation.js';
 export * from './gateway/credential-manager.js';
 export * from './operations/destroy-zone.js';
 export * from './operations/doctor.js';
-export * from './gateway/gateway-zone-orchestrator.js';
+export {
+	preflightGatewayZoneStart,
+	resolveOpenClawProcessSupervisorStateMount,
+	startGatewayZone,
+	validateGatewayControlCallerContextRegistration,
+} from './gateway/gateway-zone-orchestrator.js';
+export type {
+	GatewayManagerDependencies,
+	GatewayZoneStartPreflightResult,
+} from './gateway/gateway-zone-orchestrator.js';
 export * from './controller/leases/idle-reaper.js';
 export * from './controller/leases/lease-idle-policy.js';
 export * from './controller/leases/lease-manager.js';

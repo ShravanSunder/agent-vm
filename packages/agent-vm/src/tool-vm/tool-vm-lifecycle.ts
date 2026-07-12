@@ -32,11 +32,22 @@ import {
 	type ZoneGitToolVmMount,
 } from '../controller/zone-git/zone-git-paths.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
+import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+	type ManagedVmKillDependencies,
+	type ProcessIdentity,
+} from '../shared/managed-vm-process.js';
 import { selectToolVmMediatedSecretNamesForAgent } from './tool-vm-secret-selection.js';
 
 const TOOL_VM_MEDIATED_ENV_PROFILE_PATH = '/etc/profile.d/agent-vm-mediated-env.sh';
 const TOOL_VM_MEDIATED_ENVIRONMENT_PATH = '/etc/environment';
 const TOOL_VM_MEDIATED_SSHD_CONFIG_PATH = '/etc/ssh/sshd_config';
+const TOOL_VM_SSH_HOST_KEY_RESET_COMMAND = 'rm -f /etc/ssh/ssh_host_*';
 const reservedToolVmMediatedSecretNames = new Set([
 	'BASH_ENV',
 	'HOME',
@@ -55,9 +66,15 @@ export interface ToolVmLifecycleDependencies {
 		readonly fullReset?: boolean;
 	}) => ReturnType<typeof buildGondolinImageDefault>;
 	readonly createManagedVm?: typeof createManagedVmFromCore;
+	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
 	readonly closePinnedRealFsRoot?: (root: PinnedRealFsRoot) => void;
 	readonly pinRealFsRoot?: (hostPath: string) => PinnedRealFsRoot;
 	readonly validateResolvedToolWorkMountDir?: typeof validateResolvedToolWorkMountDirDefault;
+}
+
+export interface UnstartedToolVmProvisioning {
+	readonly vm: ManagedVm;
+	prepareStartedVm(): Promise<void>;
 }
 
 async function configureZoneGitToolVm(toolVm: ManagedVm): Promise<void> {
@@ -67,6 +84,15 @@ async function configureZoneGitToolVm(toolVm: ManagedVm): Promise<void> {
 	if (result.exitCode !== 0) {
 		throw new Error(
 			`Failed to configure Tool VM Git safe.directory for ${OPENCLAW_ZONE_FILES_GUEST_ROOT}: ${result.stderr || result.stdout}`,
+		);
+	}
+}
+
+async function resetInheritedToolVmSshHostIdentity(toolVm: ManagedVm): Promise<void> {
+	const result = await toolVm.exec(TOOL_VM_SSH_HOST_KEY_RESET_COMMAND);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`Failed to remove inherited Tool VM SSH host identity: ${result.stderr || result.stdout}`,
 		);
 	}
 }
@@ -85,6 +111,12 @@ function assertShellEnvironmentName(secretName: string): void {
 		throw new Error(
 			`Tool VM mediated secret name '${secretName}' is reserved by agent-vm runtime bootstrap.`,
 		);
+	}
+}
+
+function assertToolVmMediatedSecretNames(mediatedSecrets: Record<string, unknown>): void {
+	for (const secretName of Object.keys(mediatedSecrets)) {
+		assertShellEnvironmentName(secretName);
 	}
 }
 
@@ -199,7 +231,7 @@ async function writeToolVmMediatedEnvBootstrap(
 	}
 }
 
-export async function createToolVm(
+export async function createUnstartedToolVm(
 	options: {
 		readonly agentId: string;
 		readonly cacheDir: string;
@@ -212,7 +244,7 @@ export async function createToolVm(
 		readonly secretResolver: SecretResolver;
 	},
 	dependencies: ToolVmLifecycleDependencies = {},
-): Promise<ManagedVm> {
+): Promise<UnstartedToolVmProvisioning> {
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const closePinnedRealFsRoot = dependencies.closePinnedRealFsRoot ?? closePinnedRealFsRootDefault;
@@ -278,6 +310,7 @@ export async function createToolVm(
 		pinnedRoots.push(pinnedRoot);
 		return pinnedRoot;
 	};
+	let pinnedRootsTransferredToManagedVm = false;
 	let toolVm: ManagedVm | undefined;
 	try {
 		let vfsMounts: Parameters<typeof createManagedVm>[0]['vfsMounts'];
@@ -330,6 +363,10 @@ export async function createToolVm(
 				},
 			};
 		}
+		// createManagedVm owns every pinned root in vfsMounts once invoked. It
+		// closes them on construction failure and through ManagedVm.close().
+		// The lifecycle retains ownership only for failures before this boundary.
+		pinnedRootsTransferredToManagedVm = true;
 		toolVm = await createManagedVm({
 			allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
 			cpus: options.profile.cpus,
@@ -354,23 +391,108 @@ export async function createToolVm(
 			secrets: mediatedSecrets,
 			vfsMounts,
 		});
-		await writeToolVmMediatedEnvBootstrap(toolVm, mediatedSecrets);
-		if (options.zoneGitMount) {
-			await configureZoneGitToolVm(toolVm);
-		}
-		return toolVm;
+		const createdToolVm = toolVm;
+		return {
+			async prepareStartedVm(): Promise<void> {
+				assertToolVmMediatedSecretNames(mediatedSecrets);
+				await resetInheritedToolVmSshHostIdentity(createdToolVm);
+				await writeToolVmMediatedEnvBootstrap(createdToolVm, mediatedSecrets);
+				if (options.zoneGitMount) {
+					await configureZoneGitToolVm(createdToolVm);
+				}
+			},
+			vm: createdToolVm,
+		};
 	} catch (error) {
+		let closeError: unknown;
 		if (toolVm) {
 			try {
 				await toolVm.close();
-			} catch (closeError) {
-				process.stderr.write(
-					`Failed to close Tool VM after create failure: ${closeError instanceof Error ? closeError.message : String(closeError)}\n`,
-				);
+			} catch (caughtCloseError) {
+				closeError = caughtCloseError;
 			}
 		}
-		for (const pinnedRoot of pinnedRoots) {
-			closePinnedRealFsRoot(pinnedRoot);
+		if (!pinnedRootsTransferredToManagedVm) {
+			for (const pinnedRoot of pinnedRoots) {
+				closePinnedRealFsRoot(pinnedRoot);
+			}
+		}
+		if (closeError !== undefined) {
+			const aggregateError = new AggregateError(
+				[error, closeError],
+				'Tool VM creation failed and cleanup also failed.',
+			);
+			aggregateError.cause = error;
+			throw aggregateError;
+		}
+		throw error;
+	}
+}
+
+export async function createToolVm(
+	options: Parameters<typeof createUnstartedToolVm>[0],
+	dependencies: ToolVmLifecycleDependencies = {},
+): Promise<ManagedVm> {
+	const provisioning = await createUnstartedToolVm(options, dependencies);
+	const { vm } = provisioning;
+	let processTarget:
+		| {
+				readonly hostPid: number;
+				readonly processIdentity: ProcessIdentity;
+				readonly vmId: string;
+		  }
+		| undefined;
+	try {
+		await vm.start();
+		const hostPid = vm.getHostPid();
+		if (hostPid !== null) {
+			const identityReader =
+				dependencies.managedVmKillDependencies?.readProcessIdentity ?? readProcessIdentity;
+			const processIdentity = await identityReader(hostPid);
+			if (processIdentity === null) {
+				throw new Error(
+					`Tool VM '${vm.id}' pid ${String(hostPid)} disappeared before process identity capture.`,
+				);
+			}
+			processTarget = { hostPid, processIdentity, vmId: vm.id };
+		}
+		await provisioning.prepareStartedVm();
+		return vm;
+	} catch (error) {
+		let cleanupError: unknown;
+		try {
+			if (processTarget === undefined) {
+				if (vm.getHostPid() !== null) {
+					throw new Error(
+						`Tool VM '${vm.id}' has a live runner without captured process identity; refusing stock close.`,
+						{ cause: error },
+					);
+				}
+				await vm.close();
+			} else {
+				await terminateLiveManagedVm({
+					contextLabel: `Tool VM '${vm.id}' creation rollback`,
+					dependencies: dependencies.managedVmKillDependencies ?? {
+						isProcessAlive,
+						killProcess,
+						readProcessCommand,
+						readProcessIdentity,
+						sleep,
+					},
+					target: processTarget,
+					vm,
+				});
+			}
+		} catch (caughtCleanupError) {
+			cleanupError = caughtCleanupError;
+		}
+		if (cleanupError !== undefined) {
+			const aggregateError = new AggregateError(
+				[error, cleanupError],
+				'Tool VM preparation failed and controller-managed cleanup also failed.',
+			);
+			aggregateError.cause = error;
+			throw aggregateError;
 		}
 		throw error;
 	}

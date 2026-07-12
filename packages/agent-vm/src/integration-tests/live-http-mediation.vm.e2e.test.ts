@@ -3,12 +3,36 @@ import http, { type Server } from 'node:http';
 import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import {
+	terminateLiveManagedVm,
+	type ManagedVmProcessTarget,
+} from '../shared/controller-managed-vm-termination.js';
+import {
+	isProcessAlive,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const TEST_SECRET_VALUE = 'agent-vm-http-mediation-test-secret';
 const mediationHost = 'mediation-test.vm.host';
 const mediationUpstreamHost = '127.0.0.1';
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
+
+async function startVmAndCaptureProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
+	await managedVm.start();
+	const hostPid = managedVm.getHostPid();
+	if (hostPid === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' to expose its host pid.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(`Expected started VM '${managedVm.id}' process identity.`);
+	}
+	return { hostPid, processIdentity, vmId: managedVm.id };
+}
 
 async function createHeaderEchoServer(): Promise<{
 	readonly port: number;
@@ -40,6 +64,31 @@ async function createHeaderEchoServer(): Promise<{
 	return { port: address.port, server };
 }
 
+async function closeServer(server: Server | null): Promise<void> {
+	if (server === null) return;
+	await new Promise<void>((resolve, reject) => {
+		server.close((error) => {
+			if (error) {
+				reject(error);
+				return;
+			}
+			resolve();
+		});
+	});
+}
+
+async function terminateVmRuntime(
+	runtime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null,
+): Promise<void> {
+	if (runtime === null) return;
+	await terminateLiveManagedVm({
+		contextLabel: 'HTTP mediation VM cleanup',
+		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		target: runtime.target,
+		vm: runtime.managedVm,
+	});
+}
+
 function rewriteMediationHostToLoopback(
 	port: number,
 ): (request: Request) => Promise<Request | void> {
@@ -60,12 +109,13 @@ function rewriteMediationHostToLoopback(
 
 describeLiveVmIntegration('live HTTP mediation', () => {
 	let echoServer: Server | null = null;
-	let vm: ManagedVm | null = null;
+	let vmRuntime: { readonly managedVm: ManagedVm; readonly target: ManagedVmProcessTarget } | null =
+		null;
 
 	beforeAll(async () => {
 		const headerEchoServer = await createHeaderEchoServer();
 		echoServer = headerEchoServer.server;
-		vm = await createManagedVm({
+		const vm = await createManagedVm({
 			imagePath: '',
 			memory: '512M',
 			cpus: 1,
@@ -84,29 +134,29 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 			vfsMounts: {},
 			sessionLabel: 'agent-vm-live-http-mediation-test',
 		});
+		vmRuntime = { managedVm: vm, target: await startVmAndCaptureProcess(vm) };
 	}, 60_000);
 
 	afterAll(async () => {
-		if (vm) {
-			await vm.close();
-			vm = null;
-		}
-		await new Promise<void>((resolve, reject) => {
-			if (echoServer === null) {
-				resolve();
-				return;
+		const cleanupResults = await Promise.allSettled([
+			terminateVmRuntime(vmRuntime),
+			closeServer(echoServer),
+		]);
+		const cleanupErrors: unknown[] = [];
+		for (const result of cleanupResults) {
+			if (result.status === 'rejected') {
+				cleanupErrors.push(result.reason as unknown);
 			}
-			echoServer.close((error) => {
-				if (error) {
-					reject(error);
-					return;
-				}
-				resolve();
-			});
-		});
+		}
+		if (cleanupErrors.length > 0) {
+			throw new AggregateError(cleanupErrors, 'HTTP mediation E2E cleanup failed');
+		}
+		vmRuntime = null;
+		echoServer = null;
 	});
 
 	it('keeps the real secret out of the VM env and injects it for an allowed host', async () => {
+		const vm = vmRuntime?.managedVm;
 		if (!vm) throw new Error('VM was not initialized.');
 
 		const envCheck = await vm.exec('printf "%s" "$TEST_TOKEN"');
@@ -127,6 +177,7 @@ describeLiveVmIntegration('live HTTP mediation', () => {
 	}, 30_000);
 
 	it('blocks requests to hosts outside the allowlist', async () => {
+		const vm = vmRuntime?.managedVm;
 		if (!vm) throw new Error('VM was not initialized.');
 
 		const curlResult = await vm.exec(

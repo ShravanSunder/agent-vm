@@ -56,6 +56,7 @@ interface ObservabilityHealthPorts {
 
 interface CreateSmokeDeploymentOptions extends ObservabilityHealthPorts {
 	readonly stackMode?: 'external' | 'managed';
+	readonly zoneObservability?: boolean;
 }
 
 async function createHealthServer(): Promise<HealthServer> {
@@ -245,6 +246,7 @@ async function createSmokeDeployment(
 		zones: [
 			{
 				id: 'sunfam',
+				agents: [{ id: 'sunfam' }],
 				gateway: {
 					type: 'openclaw',
 					imageProfile: 'openclaw',
@@ -270,16 +272,20 @@ async function createSmokeDeployment(
 				egressHosts: [{ host: 'example.com', audience: 'gateway' }],
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
-				observability: {
-					enabled: true,
-					openclaw: {
-						serviceName: 'agent-vm-openclaw-sunfam',
-						traces: true,
-						metrics: true,
-						logs: true,
-						diagnosticsFlags: ['gateway.lifecycle'],
-					},
-				},
+				...(options.zoneObservability === true
+					? {
+							observability: {
+								enabled: true,
+								openclaw: {
+									serviceName: 'agent-vm-openclaw-sunfam',
+									traces: true,
+									metrics: true,
+									logs: true,
+									diagnosticsFlags: ['gateway.lifecycle'],
+								},
+							},
+						}
+					: {}),
 			},
 		],
 		toolVmProfiles: {
@@ -341,7 +347,7 @@ async function readOptionalText(filePath: string): Promise<string> {
 }
 
 describe('smoke: agent-vm build observability CLI', () => {
-	it('prepares configured observability through the built CLI without leaking canaries', async () => {
+	it('skips managed host observability when no zone telemetry path is accepted without leaking canaries', async () => {
 		const healthServers = await createHealthServers(4);
 		const [collectorHealth, metrics, logs, traces] = healthServers;
 		if (!collectorHealth || !metrics || !logs || !traces) {
@@ -357,7 +363,55 @@ describe('smoke: agent-vm build observability CLI', () => {
 
 			const output = await runBuiltAgentVmBuild(deployment);
 
-			expect(output).toContain('observability stack ready');
+			expect(output).toContain('no OpenClaw zone opted in');
+			const dockerCalls = await readOptionalText(deployment.dockerCallLogPath);
+			expect(dockerCalls).not.toContain('compose --project-name agent-vm-observability-cli-smoke');
+			expect(dockerCalls).not.toContain('up -d --wait');
+			const observabilityRuntimeDir = path.join(
+				deployment.runtimeDir,
+				'observability',
+				'observability-cli-smoke',
+			);
+			const composeYaml = await readOptionalText(
+				path.join(observabilityRuntimeDir, 'docker-compose.observability.yml'),
+			);
+			const collectorYaml = await readOptionalText(
+				path.join(observabilityRuntimeDir, 'otel-collector-config.yaml'),
+			);
+			const renderedArtifacts = `${output}\n${dockerCalls}\n${composeYaml}\n${collectorYaml}`;
+			for (const canary of [
+				canarySecretValue,
+				canaryAuthorizationHeader,
+				canaryPromptText,
+				canaryToolPayload,
+				canaryCredentialedUrl,
+			]) {
+				expect(renderedArtifacts).not.toContain(canary);
+			}
+		} finally {
+			await closeHealthServers(healthServers);
+		}
+	});
+
+	it('prepares host observability when an OpenClaw zone opts in', async () => {
+		const healthServers = await createHealthServers(4);
+		const [collectorHealth, metrics, logs, traces] = healthServers;
+		if (!collectorHealth || !metrics || !logs || !traces) {
+			throw new Error('Expected four observability health servers.');
+		}
+		try {
+			const deployment = await createSmokeDeployment({
+				collectorHealth: collectorHealth.port,
+				logs: logs.port,
+				metrics: metrics.port,
+				traces: traces.port,
+				zoneObservability: true,
+			});
+
+			const output = await runBuiltAgentVmBuild(deployment);
+
+			expect(output).toContain('Observability stack');
+			expect(output).toContain('Host observability stack ready');
 			const dockerCalls = await readOptionalText(deployment.dockerCallLogPath);
 			expect(dockerCalls).toContain('compose --project-name agent-vm-observability-cli-smoke');
 			expect(dockerCalls).toContain('up -d --wait');
@@ -366,15 +420,13 @@ describe('smoke: agent-vm build observability CLI', () => {
 				'observability',
 				'observability-cli-smoke',
 			);
-			const composeYaml = await fs.readFile(
+			const composeYaml = await readOptionalText(
 				path.join(observabilityRuntimeDir, 'docker-compose.observability.yml'),
-				'utf8',
 			);
-			const collectorYaml = await fs.readFile(
+			const collectorYaml = await readOptionalText(
 				path.join(observabilityRuntimeDir, 'otel-collector-config.yaml'),
-				'utf8',
 			);
-			const renderedArtifacts = `${composeYaml}\n${collectorYaml}`;
+			const renderedArtifacts = `${output}\n${dockerCalls}\n${composeYaml}\n${collectorYaml}`;
 			for (const canary of [
 				canarySecretValue,
 				canaryAuthorizationHeader,

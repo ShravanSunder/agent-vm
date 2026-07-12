@@ -34,9 +34,17 @@ const openClawPluginApprovalSession = {
 
 function createSystemConfig(
 	openClawConfigPath: string,
-	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
+	authProfilesByAgent: Record<
+		string,
+		| { readonly ref: string; readonly source: '1password' }
+		| { readonly source: 'config'; readonly value: string }
+	> = {},
 	mcpConfigDir?: string,
 	stateDir = './state/shravan',
+	authLogin?: {
+		readonly defaultAgent?: string;
+		readonly providers: Record<string, { readonly profileIds: string[] }>;
+	},
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -90,9 +98,11 @@ function createSystemConfig(
 						stateDir,
 						zoneFilesDir: './zone-files/shravan',
 						authProfilesByAgent,
+						...(authLogin === undefined ? {} : { authLogin }),
 					},
 					id: 'shravan',
-					...(mcpConfigDir === undefined ? {} : { mcpPortal: { configDir: mcpConfigDir } }),
+					agents: [{ id: 'sun' }],
+					...(mcpConfigDir === undefined ? {} : { toolPortal: { configDir: mcpConfigDir } }),
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							audience: 'gateway',
@@ -151,17 +161,15 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 					],
 					plugins: {
-						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						allow: ['gondolin', 'memory-core'],
 						entries: {
 							gondolin: { enabled: true },
 							'memory-core': { enabled: true },
-							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 						},
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
 								'/pnpm/global/5/node_modules/@openclaw',
-								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
 						slots: { memory: 'memory-core' },
@@ -172,53 +180,6 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(checks.every((check) => check.ok)).toBe(true);
-	});
-
-	it('flags managed MCP Portal deployments without plugin approval session forwarding', () => {
-		const checks = buildOpenClawDeploymentDoctorChecks([
-			{
-				configuredAuthProfileAgentIds: ['sun'],
-				runtimeMaterializesPortalEndpoints: true,
-				zoneId: 'shravan',
-				config: {
-					agents: {
-						defaults: {
-							model: { primary: 'openai-codex/gpt-5.5' },
-							sandbox: openClawToolVmSandbox,
-							workspace: '/zone/agents/default',
-						},
-						list: [{ id: 'sun' }],
-					},
-					session: {
-						dmScope: 'per-channel-peer',
-					},
-					plugins: {
-						allow: ['gondolin', 'memory-core', 'mcp-portal'],
-						entries: {
-							gondolin: { enabled: true },
-							'memory-core': { enabled: true },
-							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
-						},
-						load: {
-							paths: [
-								'/home/openclaw/.openclaw/extensions/gondolin',
-								'/pnpm/global/5/node_modules/@openclaw',
-								'/home/openclaw/.openclaw/extensions/mcp-portal',
-							],
-						},
-						slots: { memory: 'memory-core' },
-					},
-					tools: openClawSandboxPluginTools,
-				},
-			},
-		]);
-
-		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-plugin-approvals-shravan'),
-		).toMatchObject({
-			ok: false,
-			hint: 'Set approvals.plugin.enabled=true and approvals.plugin.mode="session" so MCP Portal tools that require approval can return prompts to the originating chat.',
-		});
 	});
 
 	it('flags OpenAI provider configs that do not pin the default model to OpenClaw runtime', () => {
@@ -243,17 +204,15 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 					},
 					plugins: {
-						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						allow: ['gondolin', 'memory-core'],
 						entries: {
 							gondolin: { enabled: true },
 							'memory-core': { enabled: true },
-							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 						},
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
 								'/pnpm/global/5/node_modules/@openclaw',
-								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
 						slots: { memory: 'memory-core' },
@@ -337,14 +296,13 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(checks.map((check) => check.name)).not.toContain(
-			'openclaw-mcp-portal-load-path-shravan',
-		);
-		expect(checks.map((check) => check.name)).not.toContain('openclaw-mcp-portal-allowed-shravan');
-		expect(checks.map((check) => check.name)).not.toContain(
-			'openclaw-mcp-portal-prompt-injection-shravan',
+			'openclaw-tool-portal-gondolin-plugin-shravan',
 		);
 		expect(checks.map((check) => check.name)).not.toContain(
-			'openclaw-mcp-portal-agent-endpoints-shravan',
+			'openclaw-tool-portal-no-mcp-plugin-shravan',
+		);
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-tool-portal-agent-endpoints-shravan',
 		);
 		expect(checks.every((check) => check.ok)).toBe(true);
 	});
@@ -389,18 +347,16 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 					],
 					plugins: {
-						allow: ['gondolin', 'memory-core', 'discord', 'mcp-portal'],
+						allow: ['gondolin', 'memory-core', 'discord'],
 						entries: {
 							discord: { enabled: true },
 							gondolin: { enabled: true },
 							'memory-core': { enabled: true },
-							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 						},
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
 								'/pnpm/global/5/node_modules/@openclaw',
-								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
 						slots: { memory: 'memory-core' },
@@ -517,10 +473,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+			checks.find((check) => check.name === 'openclaw-tool-portal-agent-endpoints-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.',
+			hint: 'Set zones[].toolPortal.configDir so agent-vm materializes Tool Portal native tools through the Gondolin OpenClaw plugin.',
 		});
 	});
 
@@ -539,17 +495,15 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					approvals: openClawPluginApprovalSession,
 					plugins: {
-						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						allow: ['gondolin', 'memory-core'],
 						entries: {
 							gondolin: { enabled: true },
 							'memory-core': { enabled: true },
-							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 						},
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
 								'/pnpm/global/5/node_modules/@openclaw',
-								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
 						slots: { memory: 'memory-core' },
@@ -570,7 +524,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-sandbox-plugin-tools-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or mcp-portal / mcp_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.',
+			hint: 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or tool-portal / tool_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.',
 		});
 	});
 
@@ -589,11 +543,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					approvals: openClawPluginApprovalSession,
 					plugins: {
-						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						allow: ['gondolin', 'memory-core'],
 						entries: {
 							gondolin: { enabled: true },
 							'memory-core': { enabled: true },
-							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 						},
 					},
 					tools: {
@@ -645,7 +598,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+			checks.find((check) => check.name === 'openclaw-tool-portal-agent-endpoints-shravan'),
 		).toMatchObject({ ok: false });
 	});
 
@@ -683,7 +636,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+			checks.find((check) => check.name === 'openclaw-tool-portal-agent-endpoints-shravan'),
 		).toMatchObject({ ok: false });
 	});
 
@@ -726,7 +679,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+			checks.find((check) => check.name === 'openclaw-tool-portal-agent-endpoints-shravan'),
 		).toMatchObject({ ok: false });
 	});
 
@@ -747,14 +700,14 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+			checks.find((check) => check.name === 'openclaw-tool-portal-agent-endpoints-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'No agents are configured for this OpenClaw zone. Add at least one agent under zones[].agents and openclaw.json agents.list before MCP Portal endpoint readiness can pass.',
+			hint: 'No agents are configured for this OpenClaw zone. Add at least one agent under zones[].agents and openclaw.json agents.list before Tool Portal native tool readiness can pass.',
 		});
 	});
 
-	it('accepts native MCP Portal when runtime materialization is configured', () => {
+	it('accepts native Tool Portal when runtime materialization is configured', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				configuredAuthProfileAgentIds: ['sun'],
@@ -771,17 +724,15 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					approvals: openClawPluginApprovalSession,
 					plugins: {
-						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						allow: ['gondolin', 'memory-core'],
 						entries: {
 							gondolin: { enabled: true },
 							'memory-core': { enabled: true },
-							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 						},
 						load: {
 							paths: [
 								'/home/openclaw/.openclaw/extensions/gondolin',
 								'/pnpm/global/5/node_modules/@openclaw',
-								'/home/openclaw/.openclaw/extensions/mcp-portal',
 							],
 						},
 						slots: { memory: 'memory-core' },
@@ -836,10 +787,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-config-source-shravan'),
+			checks.find((check) => check.name === 'openclaw-tool-portal-no-mcp-plugin-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir.',
+			hint: 'Remove the old mcp-portal plugin load path, allow entry, and plugin entry; managed OpenClaw exposes tool_portal_* through gondolin.',
 		});
 	});
 
@@ -917,7 +868,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Run agent-vm auth openclaw openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+			hint: 'Run agent-vm auth openclaw login openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
 		});
 	});
 
@@ -1044,7 +995,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-default'),
 			).toMatchObject({
 				ok: false,
-				hint: 'Run agent-vm auth openclaw openai --zone shravan for the default OpenClaw auth profile.',
+				hint: 'Run agent-vm auth openclaw login openai --zone shravan for the default OpenClaw auth profile.',
 			});
 		}
 	});
@@ -1077,8 +1028,51 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Run agent-vm auth openclaw openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+			hint: 'Run agent-vm auth openclaw login openai --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
 		});
+	});
+
+	it('checks only the configured OpenClaw auth login default agent for shared provider auth', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthLoginDefaultAgentId: 'main',
+				configuredAuthProfileAgentIds: ['main'],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'main' }, { id: 'shravan' }, { id: 'alevtina' }, { id: 'ember' }],
+					},
+					models: {
+						providers: {
+							openai: {
+								agentRuntime: { id: 'openclaw' },
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-main'),
+		).toMatchObject({
+			ok: true,
+			hint: 'OpenClaw auth profile configured for agent main',
+		});
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-agent-auth-profile-shravan-shravan',
+		);
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-agent-auth-profile-shravan-alevtina',
+		);
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-agent-auth-profile-shravan-ember',
+		);
 	});
 
 	it('does not emit auth profile checks for Codex harness defaults when agents.list is missing or empty', () => {
@@ -1129,16 +1123,15 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				},
 				approvals: openClawPluginApprovalSession,
 				plugins: {
-					allow: ['memory-core', 'mcp-portal'],
+					allow: ['gondolin', 'memory-core'],
 					entries: {
+						gondolin: { enabled: true },
 						'memory-core': { enabled: true },
-						'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 					},
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
 							'/pnpm/global/5/node_modules/@openclaw',
-							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},
 					slots: { memory: 'memory-core' },
@@ -1216,7 +1209,68 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 		}
 	});
 
-	it('accepts native MCP Portal when mcp-portal config is present', async () => {
+	it('threads authLogin.defaultAgent into shared OpenClaw provider auth checks', async () => {
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
+		await mkdir(configDirectory, { recursive: true });
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						model: { primary: 'openai/gpt-5.5' },
+						sandbox: openClawToolVmSandbox,
+						workspace: '/zone/agents/default',
+					},
+					list: [{ id: 'main' }, { id: 'shravan' }, { id: 'alevtina' }, { id: 'ember' }],
+				},
+				models: {
+					providers: {
+						openai: {
+							agentRuntime: { id: 'openclaw' },
+						},
+					},
+				},
+			}),
+			'utf8',
+		);
+
+		try {
+			const checks = await collectOpenClawDeploymentDoctorChecks(
+				createSystemConfig(
+					openClawConfigPath,
+					{ main: { source: 'config', value: '{"profiles":[]}' } },
+					undefined,
+					path.join(temporaryDirectory, 'state', 'shravan'),
+					{
+						defaultAgent: 'main',
+						providers: { openai: { profileIds: ['openai-codex:main@example.com'] } },
+					},
+				),
+			);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-main'),
+			).toMatchObject({
+				ok: true,
+				hint: 'OpenClaw auth profile configured for agent main',
+			});
+			expect(checks.map((check) => check.name)).not.toContain(
+				'openclaw-agent-auth-profile-shravan-shravan',
+			);
+			expect(checks.map((check) => check.name)).not.toContain(
+				'openclaw-agent-auth-profile-shravan-alevtina',
+			);
+			expect(checks.map((check) => check.name)).not.toContain(
+				'openclaw-agent-auth-profile-shravan-ember',
+			);
+		} finally {
+			await rm(temporaryDirectory, { force: true, recursive: true });
+		}
+	});
+
+	it('accepts native Tool Portal when mcp-portal config is present', async () => {
 		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
 		const configDirectory = path.join(temporaryDirectory, 'config');
 		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
@@ -1242,16 +1296,15 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				},
 				approvals: openClawPluginApprovalSession,
 				plugins: {
-					allow: ['memory-core', 'mcp-portal'],
+					allow: ['gondolin', 'memory-core'],
 					entries: {
+						gondolin: { enabled: true },
 						'memory-core': { enabled: true },
-						'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 					},
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
 							'/pnpm/global/5/node_modules/@openclaw',
-							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},
 					slots: { memory: 'memory-core' },
@@ -1298,16 +1351,15 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				},
 				approvals: openClawPluginApprovalSession,
 				plugins: {
-					allow: ['memory-core', 'mcp-portal'],
+					allow: ['gondolin', 'memory-core'],
 					entries: {
+						gondolin: { enabled: true },
 						'memory-core': { enabled: true },
-						'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 					},
 					load: {
 						paths: [
 							'/home/openclaw/.openclaw/extensions/gondolin',
 							'/pnpm/global/5/node_modules/@openclaw',
-							'/home/openclaw/.openclaw/extensions/mcp-portal',
 						],
 					},
 					slots: { memory: 'memory-core' },
@@ -1323,10 +1375,10 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 			);
 
 			expect(
-				checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+				checks.find((check) => check.name === 'openclaw-tool-portal-agent-endpoints-shravan'),
 			).toMatchObject({
 				ok: true,
-				hint: 'agent-vm registers native MCP Portal tools through the OpenClaw plugin; do not configure mcp.servers portal endpoints.',
+				hint: 'agent-vm registers Tool Portal native tools through the Gondolin OpenClaw plugin; do not configure mcp.servers portal endpoints.',
 			});
 			expect(checks.every((check) => check.ok)).toBe(true);
 		} finally {

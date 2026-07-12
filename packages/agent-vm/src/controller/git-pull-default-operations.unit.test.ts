@@ -19,6 +19,12 @@ const activeTask: ActiveWorkerTask = {
 		{
 			repoUrl: 'https://github.com/acme/widgets.git',
 			baseBranch: 'main',
+			pushPolicy: {
+				kind: 'trusted_config',
+				defaultBranch: 'main',
+				protectedBranches: [],
+				protectedBranchPatterns: [],
+			},
 			hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
 			vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 		},

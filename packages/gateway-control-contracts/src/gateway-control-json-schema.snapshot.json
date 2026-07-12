@@ -1,0 +1,3741 @@
+{
+	"domain": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "string",
+		"const": "gateway_control"
+	},
+	"hello": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"attachmentGeneration": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"domain": {
+				"type": "string",
+				"const": "gateway_control"
+			},
+			"gatewayEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"peerId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"processEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"protocolVersion": {
+				"type": "number",
+				"const": 1
+			}
+		},
+		"required": [
+			"attachmentGeneration",
+			"controllerEpoch",
+			"domain",
+			"gatewayEpoch",
+			"peerId",
+			"processEpoch",
+			"protocolVersion"
+		],
+		"additionalProperties": false
+	},
+	"helloResponse": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"attachmentGeneration": {
+				"type": "integer",
+				"exclusiveMinimum": 0,
+				"maximum": 9007199254740991
+			},
+			"connectionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"outcome": {
+				"type": "string",
+				"enum": ["accepted", "rejected", "generation_mismatch", "stale_attachment"]
+			},
+			"sessionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			}
+		},
+		"required": ["attachmentGeneration", "connectionId", "controllerEpoch", "outcome", "sessionId"],
+		"additionalProperties": false
+	},
+	"message": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"anyOf": [
+			{
+				"type": "object",
+				"properties": {
+					"kind": {
+						"type": "string",
+						"const": "heartbeat"
+					},
+					"operation": {
+						"not": {}
+					},
+					"payload": {
+						"type": "object",
+						"properties": {
+							"elapsedMs": {
+								"type": "integer",
+								"minimum": 0,
+								"maximum": 9007199254740991
+							},
+							"observedAtMs": {
+								"type": "integer",
+								"exclusiveMinimum": 0,
+								"maximum": 9007199254740991
+							}
+						},
+						"required": ["observedAtMs"],
+						"additionalProperties": false
+					}
+				},
+				"required": ["kind", "payload"],
+				"additionalProperties": false
+			},
+			{
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "control_ping"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "caller_context_register"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"adapterEvidence": {
+										"type": "object",
+										"properties": {
+											"agentAuthority": {
+												"type": "object",
+												"properties": {
+													"algorithm": {
+														"type": "string",
+														"const": "hmac-sha256"
+													},
+													"digest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"keyId": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["algorithm", "digest", "keyId"],
+												"additionalProperties": false
+											},
+											"agentId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"agentWorkspaceDir": {
+												"type": "string",
+												"minLength": 1
+											},
+											"proof": {
+												"type": "object",
+												"properties": {
+													"algorithm": {
+														"type": "string",
+														"const": "hmac-sha256"
+													},
+													"digest": {
+														"type": "string",
+														"minLength": 32
+													}
+												},
+												"required": ["algorithm", "digest"],
+												"additionalProperties": false
+											},
+											"purpose": {
+												"type": "string",
+												"enum": ["tool_vm_lease", "tool_portal_controller_host_action"]
+											},
+											"sessionKey": {
+												"type": "string",
+												"minLength": 1
+											},
+											"workMountDir": {
+												"type": "string",
+												"minLength": 1
+											},
+											"zoneId": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": [
+											"agentAuthority",
+											"agentId",
+											"agentWorkspaceDir",
+											"proof",
+											"sessionKey",
+											"workMountDir",
+											"zoneId"
+										],
+										"additionalProperties": false
+									},
+									"correlation": {
+										"type": "object",
+										"properties": {
+											"causationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"correlationId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"requestId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"runId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"sessionKeyDigest": {
+												"type": "string",
+												"minLength": 32
+											},
+											"toolCallId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"traceId": {
+												"type": "string",
+												"pattern": "^[0-9a-f]{32}$"
+											},
+											"capability": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string",
+														"minLength": 1
+													},
+													"namespace": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["name", "namespace"],
+												"additionalProperties": false
+											}
+										},
+										"additionalProperties": false
+									}
+								},
+								"required": ["adapterEvidence"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_create"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"correlation": {
+										"type": "object",
+										"properties": {
+											"causationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"correlationId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"requestId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"runId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"sessionKeyDigest": {
+												"type": "string",
+												"minLength": 32
+											},
+											"toolCallId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"traceId": {
+												"type": "string",
+												"pattern": "^[0-9a-f]{32}$"
+											},
+											"capability": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string",
+														"minLength": 1
+													},
+													"namespace": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["name", "namespace"],
+												"additionalProperties": false
+											}
+										},
+										"additionalProperties": false
+									},
+									"gatewayWorkspaceDir": {
+										"type": "string",
+										"minLength": 1
+									},
+									"idleTtlHintMs": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									}
+								},
+								"required": ["callerContext"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_get"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"leaseId": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": ["callerContext", "leaseId"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_peek"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"leaseId": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": ["callerContext", "leaseId"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_reacquire"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"correlation": {
+										"type": "object",
+										"properties": {
+											"causationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"correlationId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"requestId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"runId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"sessionKeyDigest": {
+												"type": "string",
+												"minLength": 32
+											},
+											"toolCallId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"traceId": {
+												"type": "string",
+												"pattern": "^[0-9a-f]{32}$"
+											},
+											"capability": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string",
+														"minLength": 1
+													},
+													"namespace": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["name", "namespace"],
+												"additionalProperties": false
+											}
+										},
+										"additionalProperties": false
+									},
+									"idleTtlHintMs": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"oldLeaseId": {
+										"type": "string",
+										"minLength": 1
+									},
+									"staleEvidence": {
+										"oneOf": [
+											{
+												"type": "object",
+												"properties": {
+													"errorCode": {
+														"type": "string",
+														"minLength": 1
+													},
+													"kind": {
+														"type": "string",
+														"const": "tool-vm-ssh"
+													},
+													"observedAtMs": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"operation": {
+														"type": "string",
+														"enum": ["command", "file-bridge", "finalize", "probe"]
+													}
+												},
+												"required": ["kind", "observedAtMs", "operation"],
+												"additionalProperties": false
+											},
+											{
+												"type": "object",
+												"properties": {
+													"kind": {
+														"type": "string",
+														"const": "caller-context"
+													},
+													"observedAtMs": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"reason": {
+														"type": "string",
+														"enum": [
+															"absent",
+															"stale",
+															"session_mismatch",
+															"lease_authority_absent"
+														]
+													}
+												},
+												"required": ["kind", "observedAtMs"],
+												"additionalProperties": false
+											},
+											{
+												"type": "object",
+												"properties": {
+													"kind": {
+														"type": "string",
+														"const": "lease-manager"
+													},
+													"observedAtMs": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"reason": {
+														"type": "string",
+														"enum": ["expired", "released", "force_released", "generation_stale"]
+													}
+												},
+												"required": ["kind", "observedAtMs"],
+												"additionalProperties": false
+											}
+										]
+									}
+								},
+								"required": ["callerContext", "oldLeaseId", "staleEvidence"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_renew"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"leaseId": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": ["callerContext", "leaseId"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_release"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"leaseId": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": ["callerContext", "leaseId"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_use_start"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"correlation": {
+										"type": "object",
+										"properties": {
+											"causationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"correlationId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"requestId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"runId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"sessionKeyDigest": {
+												"type": "string",
+												"minLength": 32
+											},
+											"toolCallId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"traceId": {
+												"type": "string",
+												"pattern": "^[0-9a-f]{32}$"
+											},
+											"capability": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string",
+														"minLength": 1
+													},
+													"namespace": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["name", "namespace"],
+												"additionalProperties": false
+											}
+										},
+										"additionalProperties": false
+									},
+									"leaseId": {
+										"type": "string",
+										"minLength": 1
+									},
+									"useId": {
+										"type": "string",
+										"format": "uuid",
+										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+									}
+								},
+								"required": ["callerContext", "leaseId", "useId"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_use_heartbeat"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"leaseId": {
+										"type": "string",
+										"minLength": 1
+									},
+									"observedAtMs": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"useId": {
+										"type": "string",
+										"format": "uuid",
+										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+									}
+								},
+								"required": ["callerContext", "leaseId", "useId"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "lease_use_end"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"leaseId": {
+										"type": "string",
+										"minLength": 1
+									},
+									"reason": {
+										"type": "string",
+										"enum": ["completed", "failed", "cancelled", "timed_out"]
+									},
+									"useId": {
+										"type": "string",
+										"format": "uuid",
+										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+									}
+								},
+								"required": ["callerContext", "leaseId", "reason", "useId"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_controller_host_action"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"actionId": {
+												"type": "string",
+												"const": "zone_git_push"
+											},
+											"callerContext": {
+												"type": "object",
+												"properties": {
+													"callerContextId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													}
+												},
+												"required": ["callerContextId"],
+												"additionalProperties": false
+											},
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													},
+													"capability": {
+														"type": "object",
+														"properties": {
+															"name": {
+																"type": "string",
+																"minLength": 1
+															},
+															"namespace": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["name", "namespace"],
+														"additionalProperties": false
+													}
+												},
+												"additionalProperties": false
+											},
+											"expectedHead": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": ["actionId", "callerContext", "correlation", "expectedHead"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"actionId": {
+												"type": "string",
+												"const": "controller_host_probe"
+											},
+											"callerContext": {
+												"type": "object",
+												"properties": {
+													"callerContextId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													}
+												},
+												"required": ["callerContextId"],
+												"additionalProperties": false
+											},
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													},
+													"capability": {
+														"type": "object",
+														"properties": {
+															"name": {
+																"type": "string",
+																"minLength": 1
+															},
+															"namespace": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["name", "namespace"],
+														"additionalProperties": false
+													}
+												},
+												"additionalProperties": false
+											}
+										},
+										"required": ["actionId", "callerContext", "correlation"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "operation_cancel"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"initiatedBy": {
+												"type": "string",
+												"const": "gateway"
+											},
+											"reason": {
+												"type": "string",
+												"enum": ["caller_cancelled", "gateway_shutdown", "operation_failed"]
+											}
+										},
+										"required": ["activeOperationId", "initiatedBy", "reason"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"initiatedBy": {
+												"type": "string",
+												"const": "controller"
+											},
+											"reason": {
+												"type": "string",
+												"enum": ["controller_recovery", "operator_cancelled", "timeout"]
+											}
+										},
+										"required": ["activeOperationId", "initiatedBy", "reason"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "recovery_command"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"action": {
+												"type": "string",
+												"const": "refresh_runtime_status"
+											}
+										},
+										"required": ["action"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"action": {
+												"type": "string",
+												"const": "restart_control_service"
+											}
+										},
+										"required": ["action"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"action": {
+												"type": "string",
+												"const": "close_stale_session"
+											},
+											"targetSessionId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["action", "targetSessionId"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					}
+				]
+			},
+			{
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "event"
+							},
+							"operation": {
+								"type": "string",
+								"const": "health_event"
+							},
+							"payload": {
+								"anyOf": [
+									{
+										"type": "object",
+										"properties": {
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													}
+												},
+												"additionalProperties": false
+											},
+											"observedAtMs": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"result": {
+												"type": "string",
+												"enum": ["ok", "failed", "timeout", "degraded"]
+											},
+											"channelProviderId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"eventKind": {
+												"type": "string",
+												"const": "agent-channel-provider-health"
+											},
+											"providerRuntimeHealth": {
+												"type": "string",
+												"enum": [
+													"healthy",
+													"transitioning",
+													"unhealthy_recoverable",
+													"unhealthy_unrecoverable"
+												]
+											},
+											"safeDetails": {
+												"type": "object",
+												"propertyNames": {
+													"type": "string"
+												},
+												"additionalProperties": {
+													"type": "string"
+												}
+											}
+										},
+										"required": [
+											"observedAtMs",
+											"result",
+											"channelProviderId",
+											"eventKind",
+											"providerRuntimeHealth"
+										],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													}
+												},
+												"additionalProperties": false
+											},
+											"observedAtMs": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"result": {
+												"type": "string",
+												"enum": ["ok", "failed", "timeout", "degraded"]
+											},
+											"attempt": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"elapsedMs": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"errorCode": {
+												"type": "string",
+												"minLength": 1
+											},
+											"eventKind": {
+												"type": "string",
+												"const": "controller-request"
+											},
+											"maxAttempts": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"operation": {
+												"type": "string",
+												"enum": [
+													"zone-git-push",
+													"lease-create",
+													"lease-get",
+													"lease-peek",
+													"lease-release",
+													"lease-use-start",
+													"lease-use-end"
+												]
+											},
+											"statusCode": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											}
+										},
+										"required": [
+											"observedAtMs",
+											"result",
+											"attempt",
+											"elapsedMs",
+											"eventKind",
+											"maxAttempts",
+											"operation"
+										],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													}
+												},
+												"additionalProperties": false
+											},
+											"observedAtMs": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"result": {
+												"type": "string",
+												"enum": ["ok", "failed", "timeout", "degraded"]
+											},
+											"elapsedMs": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"eventKind": {
+												"type": "string",
+												"const": "gateway-control-session"
+											},
+											"operation": {
+												"type": "string",
+												"enum": [
+													"control-session-hello",
+													"control-session-heartbeat",
+													"control-session-disconnect",
+													"control-session-reconnect"
+												]
+											},
+											"safeDetails": {
+												"type": "object",
+												"properties": {
+													"peerId": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["peerId"],
+												"additionalProperties": {
+													"type": "string"
+												}
+											}
+										},
+										"required": [
+											"observedAtMs",
+											"result",
+											"elapsedMs",
+											"eventKind",
+											"operation",
+											"safeDetails"
+										],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													}
+												},
+												"additionalProperties": false
+											},
+											"observedAtMs": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"result": {
+												"type": "string",
+												"enum": ["ok", "failed", "timeout", "degraded"]
+											},
+											"eventKind": {
+												"type": "string",
+												"const": "gateway-plugin-health"
+											}
+										},
+										"required": ["observedAtMs", "result", "eventKind"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													}
+												},
+												"additionalProperties": false
+											},
+											"observedAtMs": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"result": {
+												"type": "string",
+												"enum": ["ok", "failed", "timeout", "degraded"]
+											},
+											"agentId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"elapsedMs": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"errorCode": {
+												"type": "string",
+												"minLength": 1
+											},
+											"eventKind": {
+												"type": "string",
+												"const": "tool-vm-ssh"
+											},
+											"leaseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"operation": {
+												"type": "string",
+												"enum": ["command", "file-bridge", "finalize", "probe"]
+											}
+										},
+										"required": [
+											"observedAtMs",
+											"result",
+											"agentId",
+											"elapsedMs",
+											"eventKind",
+											"leaseId",
+											"operation"
+										],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"correlation": {
+												"type": "object",
+												"properties": {
+													"causationId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"correlationId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"requestId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"runId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"sessionKeyDigest": {
+														"type": "string",
+														"minLength": 32
+													},
+													"toolCallId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"traceId": {
+														"type": "string",
+														"pattern": "^[0-9a-f]{32}$"
+													}
+												},
+												"additionalProperties": false
+											},
+											"observedAtMs": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											},
+											"result": {
+												"type": "string",
+												"enum": ["ok", "failed", "timeout", "degraded"]
+											},
+											"agentId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"elapsedMs": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"errorCode": {
+												"type": "string",
+												"minLength": 1
+											},
+											"eventKind": {
+												"type": "string",
+												"const": "tool-vm-ssh"
+											},
+											"leaseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"operation": {
+												"type": "string",
+												"enum": ["command", "file-bridge", "finalize", "probe"]
+											},
+											"activeUseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"callerContextState": {
+												"type": "string",
+												"enum": ["ok", "absent", "stale", "session_mismatch", "not_applicable"]
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"caller_context_absent",
+													"caller_context_session_mismatch",
+													"caller_context_stale",
+													"lease_absent",
+													"lease_authority_absent",
+													"lease_force_released",
+													"lease_generation_stale",
+													"lease_reacquire_required",
+													"lease_releasing",
+													"lease_retired",
+													"lease_use_tombstoned",
+													"ownership_denied",
+													"runtime_not_ready"
+												]
+											},
+											"lifecycleEventRole": {
+												"type": "string",
+												"const": "plugin_observation"
+											},
+											"lifecycleTransition": {
+												"type": "string",
+												"enum": [
+													"current_to_stale",
+													"current_to_retired",
+													"deprecated_to_reacquired",
+													"deprecated_to_retired",
+													"stale_to_reacquired",
+													"stale_to_retired",
+													"retired_rejected"
+												]
+											},
+											"oldLeaseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"replacementLeaseId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"transitionId": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": [
+											"observedAtMs",
+											"result",
+											"agentId",
+											"elapsedMs",
+											"eventKind",
+											"leaseId",
+											"operation",
+											"lifecycleEventRole",
+											"lifecycleTransition",
+											"oldLeaseId",
+											"transitionId"
+										],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "event"
+							},
+							"operation": {
+								"type": "string",
+								"const": "runtime_status"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"findings": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"minLength": 1
+												},
+												"ok": {
+													"type": "boolean"
+												},
+												"safeMessage": {
+													"type": "string",
+													"minLength": 1
+												},
+												"severity": {
+													"type": "string",
+													"enum": ["info", "warning", "error"]
+												}
+											},
+											"required": ["id", "ok"],
+											"additionalProperties": false
+										}
+									},
+									"observedAtMs": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"providerRuntimeHealth": {
+										"type": "string",
+										"enum": [
+											"healthy",
+											"transitioning",
+											"unhealthy_recoverable",
+											"unhealthy_unrecoverable"
+										]
+									},
+									"statusKind": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": ["findings", "observedAtMs", "statusKind"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					}
+				]
+			},
+			{
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "control_ping"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "caller_context_register"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"type": "object",
+												"properties": {
+													"callerContextId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"admissionPrincipal": {
+														"type": "string",
+														"pattern": "^[a-f0-9]{64}$"
+													}
+												},
+												"required": ["callerContextId", "admissionPrincipal"],
+												"additionalProperties": false
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "callerContext", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"enum": [
+									"lease_create",
+									"lease_get",
+									"lease_peek",
+									"lease_reacquire",
+									"lease_renew",
+									"lease_release"
+								]
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"type": "object",
+												"properties": {
+													"agentId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"activeUseId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"expiresAtMs": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"idleTtlMs": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"leaseId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"ssh": {
+														"type": "object",
+														"properties": {
+															"host": {
+																"type": "string",
+																"minLength": 1
+															},
+															"identityPem": {
+																"type": "string",
+																"minLength": 1
+															},
+															"knownHostsLine": {
+																"minLength": 1,
+																"type": "string"
+															},
+															"port": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 9007199254740991
+															},
+															"user": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["host", "port", "user"],
+														"additionalProperties": false
+													},
+													"state": {
+														"type": "string",
+														"enum": ["idle", "active", "expired", "released"]
+													},
+													"tcpSlot": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"transport": {
+														"type": "string",
+														"const": "ssh-sandbox"
+													},
+													"workdir": {
+														"type": "string",
+														"minLength": 1
+													},
+													"zoneId": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": [
+													"agentId",
+													"idleTtlMs",
+													"leaseId",
+													"state",
+													"tcpSlot",
+													"transport",
+													"workdir",
+													"zoneId"
+												],
+												"additionalProperties": false
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "lease", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"caller_context_absent",
+													"caller_context_session_mismatch",
+													"caller_context_stale",
+													"lease_absent",
+													"lease_authority_absent",
+													"lease_force_released",
+													"lease_generation_stale",
+													"lease_reacquire_required",
+													"lease_releasing",
+													"lease_retired",
+													"lease_use_tombstoned",
+													"ownership_denied",
+													"runtime_not_ready"
+												]
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "rejected"
+											}
+										},
+										"required": ["responseToMessageId", "leaseRejectionReason", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"caller_context_absent",
+													"caller_context_session_mismatch",
+													"caller_context_stale",
+													"lease_absent",
+													"lease_authority_absent",
+													"lease_force_released",
+													"lease_generation_stale",
+													"lease_reacquire_required",
+													"lease_releasing",
+													"lease_retired",
+													"lease_use_tombstoned",
+													"ownership_denied",
+													"runtime_not_ready"
+												]
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"enum": ["lease_use_start", "lease_use_heartbeat", "lease_use_end"]
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"type": "object",
+												"properties": {
+													"expiresAt": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"heartbeatAfterMs": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"leaseId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"state": {
+														"type": "string",
+														"enum": ["active", "ended", "expired"]
+													},
+													"useId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													}
+												},
+												"required": ["leaseId", "state", "useId"],
+												"additionalProperties": false
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "leaseUse", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"caller_context_absent",
+													"caller_context_session_mismatch",
+													"caller_context_stale",
+													"lease_absent",
+													"lease_authority_absent",
+													"lease_force_released",
+													"lease_generation_stale",
+													"lease_reacquire_required",
+													"lease_releasing",
+													"lease_retired",
+													"lease_use_tombstoned",
+													"ownership_denied",
+													"runtime_not_ready"
+												]
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "rejected"
+											}
+										},
+										"required": ["responseToMessageId", "leaseRejectionReason", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"type": "string",
+												"enum": [
+													"caller_context_absent",
+													"caller_context_session_mismatch",
+													"caller_context_stale",
+													"lease_absent",
+													"lease_authority_absent",
+													"lease_force_released",
+													"lease_generation_stale",
+													"lease_reacquire_required",
+													"lease_releasing",
+													"lease_retired",
+													"lease_use_tombstoned",
+													"ownership_denied",
+													"runtime_not_ready"
+												]
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_controller_host_action"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "zone_git_push"
+															},
+															"result": {
+																"type": "object",
+																"properties": {
+																	"branch": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"localHead": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"pushedCommits": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"sha": {
+																					"type": "string",
+																					"minLength": 1
+																				},
+																				"subject": {
+																					"type": "string"
+																				}
+																			},
+																			"required": ["sha", "subject"],
+																			"additionalProperties": false
+																		}
+																	},
+																	"remoteHead": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": ["branch", "localHead", "pushedCommits", "remoteHead"],
+																"additionalProperties": false
+															}
+														},
+														"required": ["actionId", "result"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "controller_host_probe"
+															},
+															"result": {
+																"type": "object",
+																"properties": {
+																	"entryNames": {
+																		"maxItems": 64,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"probeKind": {
+																		"type": "string",
+																		"const": "controller_cache_dir_listing"
+																	}
+																},
+																"required": ["entryNames", "probeKind"],
+																"additionalProperties": false
+															}
+														},
+														"required": ["actionId", "result"],
+														"additionalProperties": false
+													}
+												]
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "controllerHostAction", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "operation_cancel"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "activeOperationId", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "recovery_command"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"controllerHostAction": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					}
+				]
+			}
+		]
+	},
+	"operation": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "string",
+		"enum": [
+			"control_ping",
+			"caller_context_register",
+			"lease_create",
+			"lease_get",
+			"lease_peek",
+			"lease_reacquire",
+			"lease_renew",
+			"lease_release",
+			"lease_use_start",
+			"lease_use_heartbeat",
+			"lease_use_end",
+			"health_event",
+			"runtime_status",
+			"tool_portal_controller_host_action",
+			"operation_cancel",
+			"recovery_command"
+		]
+	}
+}

@@ -112,12 +112,6 @@ describe('managed image release', () => {
 		);
 		expect(openClawPackageSpec).toBe(`openclaw@${managedOpenClawVersion}`);
 		const expectedOpenClawPackageSpec = openClawPackageSpec ?? '';
-		const pluginPackageJson = JSON.parse(
-			await fs.readFile(
-				new URL('../../../openclaw-mcp-portal-plugin/package.json', import.meta.url),
-				'utf8',
-			),
-		) as { readonly devDependencies?: Record<string, string> };
 		const gettingStartedGuide = await fs.readFile(
 			new URL('../../../../docs/getting-started/openclaw-guide.md', import.meta.url),
 			'utf8',
@@ -131,7 +125,6 @@ describe('managed image release', () => {
 			'utf8',
 		);
 
-		expect(pluginPackageJson.devDependencies?.openclaw).toBe(managedOpenClawVersion);
 		expect(gettingStartedGuide).toContain(`pnpm add -D ${expectedOpenClawPackageSpec}`);
 		expect(validateAndDoctorReference).toContain(`pnpm add -D ${expectedOpenClawPackageSpec}`);
 		expect(manualTemplates).toContain('Do not restate the managed default package set');
@@ -258,8 +251,8 @@ describe('managed image release', () => {
 			'RUN pnpm config set global-dir /pnpm/global && pnpm config set global-bin-dir /pnpm',
 		);
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@');
-		expect(generatedDockerfile).toContain('"@agent-vm/openclaw-mcp-portal-plugin@');
-		expect(generatedDockerfile).toContain('"@agent-vm/mcp-portal@');
+		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-mcp-portal-plugin');
+		expect(generatedDockerfile).not.toContain('@agent-vm/mcp-portal');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.5.7"');
 		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
 		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.5.7"');
@@ -268,8 +261,9 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).toContain('/opt/openclaw-sdk/sandbox.js');
 		expect(generatedDockerfile).toContain('package_root="$(pnpm root -g)"');
 		expect(generatedDockerfile).toContain(
-			'ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" /home/openclaw/.openclaw/extensions/mcp-portal',
+			'ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
 		);
+		expect(generatedDockerfile).not.toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
 		expect(generatedDockerfile).not.toContain('portal-server.js');
 		expect(generatedDockerfile).not.toContain('@openclaw/discord@2026.5.2');
 		expect(result.plan).toMatchObject({
@@ -279,12 +273,6 @@ describe('managed image release', () => {
 			},
 			dockerfilePath: path.join(outputDirectory, 'Dockerfile'),
 			openClawAgentVmPluginPackage: {
-				source: 'installed-package',
-			},
-			openClawMcpPortalPluginPackage: {
-				source: 'installed-package',
-			},
-			mcpPortalPackage: {
 				source: 'installed-package',
 			},
 			openClawPackages: [

@@ -27,6 +27,10 @@ import {
 	type WorkerTaskControllerRequestInput,
 } from '../config/resource-contracts/index.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import {
+	deleteGatewayRuntimeRecord,
+	loadGatewayRuntimeRecord,
+} from '../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type {
 	GatewayManagedVmFactoryOptions,
@@ -41,14 +45,93 @@ import {
 } from '../resources/repo-resource-provider-runner.js';
 import { compileResourceOverlay } from '../resources/resource-compiler.js';
 import { resolveTaskResources } from '../resources/resource-resolver.js';
+import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
+import {
+	buildWorkerControlEndpoint,
+	buildWorkerControlEnvironment,
+	connectWorkerControlSession as connectWorkerControlSessionDefault,
+	createControlSessionDispatcher,
+	createControlSessionFenceRegistry,
+	createWorkerControlDomainHandler,
+	createWorkerControlSessionMaterial,
+	recordControlSessionDisconnected,
+	recordControlSessionReconnected,
+	classifyControlSessionDeathGrace,
+	type ControlSessionDeathGraceState,
+	type ControlSessionClient,
+	type WorkerControlRpcOperations,
+} from './control-session/index.js';
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
 	buildResolvedRuntimeResources,
 	buildRuntimeInstructions,
 } from './runtime-instructions-builder.js';
 import { buildTaskConfigFromPreparedInput } from './task-config-builder.js';
+import type { GatewayVmLifecycleAuthority } from './vm-ownership/gateway-vm-lifecycle-authority.js';
+import type {
+	GatewayEpochIdentity,
+	GatewayEpochSeed,
+} from './vm-ownership/vm-ownership-contracts.js';
+
+type WorkerTaskZoneConfig = LoadedSystemConfig['zones'][number];
+
+const workerPackageTarballsEnv = 'AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON';
+
+function createStandaloneWorkerVmLifecycleAuthority(options: {
+	readonly controllerEpoch: string;
+	readonly taskId: string;
+	readonly zoneId: string;
+}): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: `worker-task-${options.taskId}`,
+		controllerEpoch: options.controllerEpoch,
+		gatewayEpochId: crypto.randomUUID(),
+		generationId: crypto.randomUUID(),
+		zoneId: options.zoneId,
+	} satisfies GatewayEpochSeed;
+	let gatewayIdentity: GatewayEpochIdentity | undefined;
+	let destroyed = false;
+
+	return {
+		gatewaySeed,
+		get gatewayIdentity(): GatewayEpochIdentity | undefined {
+			return gatewayIdentity === undefined ? undefined : structuredClone(gatewayIdentity);
+		},
+		attachGatewayVm(gatewayVmId): GatewayEpochIdentity {
+			if (gatewayIdentity !== undefined) {
+				throw new Error(`Worker task '${options.taskId}' VM lifecycle is already attached.`);
+			}
+			gatewayIdentity = { ...gatewaySeed, gatewayVmId };
+			return structuredClone(gatewayIdentity);
+		},
+		async containPendingCreate(containmentOptions): Promise<void> {
+			const unstartedVm = await containmentOptions.pendingCreate;
+			await containmentOptions.closeLateCreatedVm(unstartedVm);
+		},
+		async destroyLive(destroyWorkerVm): Promise<void> {
+			if (gatewayIdentity === undefined) {
+				throw new Error(`Worker task '${options.taskId}' VM lifecycle is not attached.`);
+			}
+			if (destroyed) {
+				return;
+			}
+			await destroyWorkerVm();
+			destroyed = true;
+		},
+	};
+}
+
+const workerPackageTarballSchema = z
+	.object({
+		packageName: z.string().min(1),
+		sourcePath: z.string().min(1),
+	})
+	.strict();
+
+const workerPackageTarballsSchema = z.array(workerPackageTarballSchema).min(1);
+type WorkerPackageTarball = z.infer<typeof workerPackageTarballSchema>;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -243,6 +326,58 @@ async function copyLocalWorkerTarballIfConfigured(stateDir: string): Promise<voi
 	await fs.copyFile(localWorkerTarballPath, path.join(stateDir, 'agent-vm-worker.tgz'));
 }
 
+function localWorkerPackageDependencyName(packageName: string): string {
+	return packageName.startsWith('@') ? packageName : `@agent-vm/${packageName}`;
+}
+
+function parseWorkerPackageTarballsEnv(rawTarballs: string): readonly WorkerPackageTarball[] {
+	const parsedJson: unknown = JSON.parse(rawTarballs);
+	return workerPackageTarballsSchema.parse(parsedJson);
+}
+
+function renderWorkerPackageTarballsManifest(tarballs: readonly WorkerPackageTarball[]): string {
+	const dependencies: Record<string, string> = {};
+	for (const tarball of tarballs) {
+		dependencies[localWorkerPackageDependencyName(tarball.packageName)] =
+			`file:/state/agent-vm-worker-packages/${path.basename(tarball.sourcePath)}`;
+	}
+	return `${JSON.stringify(
+		{
+			private: true,
+			dependencies,
+			pnpm: {
+				overrides: dependencies,
+			},
+		},
+		null,
+		2,
+	)}\n`;
+}
+
+async function copyLocalWorkerPackageTarballsIfConfigured(stateDir: string): Promise<void> {
+	const rawTarballs = process.env[workerPackageTarballsEnv];
+	if (rawTarballs === undefined || rawTarballs.length === 0) {
+		return;
+	}
+
+	const tarballs = parseWorkerPackageTarballsEnv(rawTarballs);
+	const packageDirectory = path.join(stateDir, 'agent-vm-worker-packages');
+	await fs.mkdir(packageDirectory, { recursive: true });
+	await Promise.all(
+		tarballs.map(async (tarball) => {
+			await fs.copyFile(
+				tarball.sourcePath,
+				path.join(packageDirectory, path.basename(tarball.sourcePath)),
+			);
+		}),
+	);
+	await fs.writeFile(
+		path.join(packageDirectory, 'package.json'),
+		renderWorkerPackageTarballsManifest(tarballs),
+		'utf8',
+	);
+}
+
 async function writeAgentRuntimeFiles(
 	agentVmDir: string,
 	files: Readonly<Record<string, string>>,
@@ -284,6 +419,14 @@ export interface PreStartResult {
 		readonly repoId: string;
 		readonly repoUrl: string;
 		readonly baseBranch: string;
+		readonly pushPolicy:
+			| {
+					readonly kind: 'trusted_config';
+					readonly defaultBranch: string;
+					readonly protectedBranches: readonly string[];
+					readonly protectedBranchPatterns: readonly string[];
+			  }
+			| { readonly kind: 'missing' };
 		readonly gitDirPath: string;
 		readonly hostGitDir: string;
 		readonly hostMetadataPath: string;
@@ -308,6 +451,42 @@ function deriveRepoDirectoryName(repoUrl: string, usedNames: Set<string>): strin
 	}
 	usedNames.add(candidate);
 	return candidate;
+}
+
+function normalizeWorkerRepoPolicyUrl(repoUrl: string): string {
+	try {
+		const parsedUrl = new URL(repoUrl);
+		parsedUrl.protocol = parsedUrl.protocol.toLowerCase();
+		parsedUrl.hostname = parsedUrl.hostname.toLowerCase();
+		parsedUrl.hash = '';
+		parsedUrl.search = '';
+		parsedUrl.pathname = parsedUrl.pathname.replace(/\/+$/u, '').replace(/\.git$/u, '');
+		return parsedUrl.toString();
+	} catch {
+		return repoUrl.replace(/\/+$/u, '').replace(/\.git$/u, '');
+	}
+}
+
+function trustedWorkerRepoPushPolicyFor(options: {
+	readonly repoUrl: string;
+	readonly zoneConfig: WorkerTaskZoneConfig;
+}): PreStartResult['repos'][number]['pushPolicy'] {
+	if (options.zoneConfig.gateway.type !== 'worker') {
+		return { kind: 'missing' };
+	}
+	const normalizedRepoUrl = normalizeWorkerRepoPolicyUrl(options.repoUrl);
+	const policy = options.zoneConfig.gateway.repoPushPolicies?.find(
+		(candidate) => normalizeWorkerRepoPolicyUrl(candidate.repoUrl) === normalizedRepoUrl,
+	);
+	if (policy === undefined) {
+		return { kind: 'missing' };
+	}
+	return {
+		kind: 'trusted_config',
+		defaultBranch: policy.defaultBranch,
+		protectedBranches: policy.protectedBranches,
+		protectedBranchPatterns: policy.protectedBranchPatterns,
+	};
 }
 
 export interface WorkerTaskResult {
@@ -337,6 +516,7 @@ export async function preStartGateway(
 		await fs.mkdir(stateDir, { recursive: true });
 		await fs.mkdir(agentVmDir, { recursive: true });
 		await copyLocalWorkerTarballIfConfigured(stateDir);
+		await copyLocalWorkerPackageTarballsIfConfigured(stateDir);
 
 		const gitdirsRoot = path.join(taskRuntimeRoot, 'gitdirs');
 		const metadataRoot = path.join(taskRuntimeRoot, 'repo-metadata');
@@ -424,6 +604,10 @@ export async function preStartGateway(
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
+					pushPolicy: trustedWorkerRepoPushPolicyFor({
+						repoUrl: repo.repoUrl,
+						zoneConfig,
+					}),
 					gitDirPath: repo.gitDirPath,
 					hostGitDir: repo.hostGitDir,
 					hostMetadataPath: repo.hostMetadataPath,
@@ -450,6 +634,7 @@ export async function preStartGateway(
 			readonly repoId: string;
 			readonly repoUrl: string;
 			readonly baseBranch: string;
+			readonly pushPolicy: PreStartResult['repos'][number]['pushPolicy'];
 			readonly gitDirPath: string;
 			readonly hostGitDir: string;
 			readonly hostMetadataPath: string;
@@ -719,8 +904,15 @@ export interface PrepareWorkerTaskOptions {
 }
 
 export interface ExecuteWorkerTaskOptions {
+	readonly controllerEpoch: string;
 	readonly secretResolver: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
+	readonly controlSession?: {
+		readonly controllerEpoch: string;
+		readonly operations: WorkerControlRpcOperations;
+	};
+	readonly connectWorkerControlSession?: typeof connectWorkerControlSessionDefault;
+	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
 	readonly timeoutMs?: number;
@@ -743,6 +935,37 @@ const defaultWorkerTaskPollClock: WorkerTaskPollClock = {
 		await new Promise((resolve) => setTimeout(resolve, durationMs));
 	},
 };
+
+function classifyWorkerControlSessionHealth(options: {
+	readonly controlSession: ControlSessionClient | undefined;
+	readonly deathGraceState: ControlSessionDeathGraceState;
+	readonly nowMs: number;
+	readonly taskId: string;
+}): ControlSessionDeathGraceState {
+	if (options.controlSession === undefined) {
+		return options.deathGraceState;
+	}
+	const diagnostics = options.controlSession.getDiagnostics();
+	if (diagnostics.ready) {
+		return recordControlSessionReconnected({
+			previousState: options.deathGraceState,
+		});
+	}
+	const disconnectedState = recordControlSessionDisconnected({
+		nowMs: options.nowMs,
+		previousState: options.deathGraceState,
+	});
+	const classification = classifyControlSessionDeathGrace({
+		nowMs: options.nowMs,
+		state: disconnectedState,
+	});
+	if (classification.kind === 'recovery_due') {
+		throw new Error(
+			`Worker control session for task ${options.taskId} exceeded death grace after ${String(classification.elapsedMs)}ms; worker VM recovery is required.`,
+		);
+	}
+	return disconnectedState;
+}
 
 export async function prepareWorkerTask(
 	options: PrepareWorkerTaskOptions,
@@ -800,6 +1023,7 @@ export async function prepareWorkerTask(
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
+				pushPolicy: repo.pushPolicy,
 				hostGitDir: createHostGitDir(repo.hostGitDir),
 				vmWorkPath: createVmWorkPath(repo.workPath),
 			})),
@@ -833,22 +1057,96 @@ export async function executeWorkerTask(
 	options: ExecuteWorkerTaskOptions,
 ): Promise<WorkerTaskResult> {
 	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+	let controlSession: ControlSessionClient | undefined;
+	let workerControlDeathGraceState: ControlSessionDeathGraceState = { kind: 'connected' };
 	let result: WorkerTaskResult | undefined;
 	let primaryError: Error | undefined;
+	const workerControlMaterial =
+		options.controlSession === undefined
+			? undefined
+			: createWorkerControlSessionMaterial({
+					controllerEpoch: options.controlSession.controllerEpoch,
+					taskId: prepared.taskId,
+					zoneId: prepared.zoneId,
+				});
 
 	try {
-		gateway = await startGatewayZone({
-			environmentOverride: prepared.preStartResult.environment,
-			secretResolver: options.secretResolver,
-			systemConfig: options.systemConfig,
-			tcpHostsOverride: prepared.preStartResult.tcpHosts,
-			vfsMountsOverride: prepared.preStartResult.vfsMounts,
-			zoneId: prepared.zoneId,
-			zoneOverride: prepared.taskZoneConfig,
-		});
+		gateway = await startGatewayZone(
+			{
+				createVmOwnership: async (ownershipOptions): Promise<GatewayVmLifecycleAuthority> => {
+					if (ownershipOptions.kind !== 'standalone') {
+						throw new Error(
+							`Worker task '${prepared.taskId}' cannot create Gateway-epoch ownership.`,
+						);
+					}
+					return createStandaloneWorkerVmLifecycleAuthority({
+						controllerEpoch: options.controllerEpoch,
+						taskId: prepared.taskId,
+						zoneId: ownershipOptions.zoneId,
+					});
+				},
+				environmentOverride: {
+					...prepared.preStartResult.environment,
+					...(workerControlMaterial === undefined
+						? {}
+						: buildWorkerControlEnvironment(workerControlMaterial)),
+				},
+				secretResolver: options.secretResolver,
+				gitReadAllowlistRepos: prepared.preStartResult.repos.map((repo) => repo.repoUrl),
+				systemConfig: options.systemConfig,
+				tcpHostsOverride: prepared.preStartResult.tcpHosts,
+				vfsMountsOverride: prepared.preStartResult.vfsMounts,
+				zoneId: prepared.zoneId,
+				zoneOverride: prepared.taskZoneConfig,
+			},
+			options.managedVmKillDependencies === undefined
+				? {}
+				: { managedVmKillDependencies: options.managedVmKillDependencies },
+		);
 		await options.onWorkerTaskIngress?.(prepared.zoneId, prepared.taskId, gateway.ingress);
 
 		const baseUrl = `http://${gateway.ingress.host}:${gateway.ingress.port}`;
+		if (workerControlMaterial !== undefined && options.controlSession !== undefined) {
+			const sessionFenceRegistry = createControlSessionFenceRegistry();
+			const dispatcher = createControlSessionDispatcher({ sessionFenceRegistry });
+			dispatcher.register(
+				'worker_control',
+				createWorkerControlDomainHandler({
+					authenticatedTask: { taskId: prepared.taskId },
+					observations: {
+						onCapacitySnapshot: async () => {},
+						onRuntimeObservation: async (payload) => {
+							await prepared.recordEvent({
+								event: 'worker-control-runtime-observation',
+								...(payload.correlation === undefined ? {} : { correlation: payload.correlation }),
+								observedAtMs: payload.observedAtMs,
+								...(payload.sessionState === undefined
+									? {}
+									: { sessionState: payload.sessionState }),
+								...(payload.state === undefined ? {} : { state: payload.state }),
+							});
+						},
+						onRuntimeStatus: async (payload) => {
+							await prepared.recordEvent({
+								event: 'worker-control-runtime-status',
+								findings: payload.findings,
+								observedAtMs: payload.observedAtMs,
+								statusKind: payload.statusKind,
+							});
+						},
+					},
+					operations: options.controlSession.operations,
+				}),
+			);
+			controlSession = await (
+				options.connectWorkerControlSession ?? connectWorkerControlSessionDefault
+			)({
+				dispatcher,
+				endpoint: buildWorkerControlEndpoint(gateway.ingress),
+				material: workerControlMaterial,
+				sessionFenceRegistry,
+			});
+		}
 		await fetchJson(`${baseUrl}/tasks`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
@@ -916,6 +1214,12 @@ export async function executeWorkerTask(
 				};
 				break;
 			}
+			workerControlDeathGraceState = classifyWorkerControlSessionHealth({
+				controlSession,
+				deathGraceState: workerControlDeathGraceState,
+				nowMs: pollClock.now(),
+				taskId: prepared.taskId,
+			});
 			// The sleep is part of the serial poll loop and cannot be parallelized.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			await pollClock.sleep(pollIntervalMs);
@@ -929,27 +1233,55 @@ export async function executeWorkerTask(
 	}
 
 	const cleanupErrors: Error[] = [];
+	let vmDestructionComplete = gateway === undefined;
 	try {
-		await gateway?.vm.close();
+		controlSession?.close();
 	} catch (error) {
 		cleanupErrors.push(toError(error));
 	}
 	try {
-		await postStopGateway(
-			prepared.taskId,
-			prepared.zone,
-			prepared.preStartResult.startedResourceProviders,
-			{
-				runtimeDir: options.systemConfig.runtimeDir,
-			},
-		);
+		if (gateway) {
+			try {
+				const runtimeRecord = await loadGatewayRuntimeRecord(
+					prepared.taskZoneConfig.gateway.stateDir,
+				);
+				if (runtimeRecord === null && gateway.vm.getHostPid() !== null) {
+					throw new Error(
+						`Worker VM '${gateway.vm.id}' has a live runner but no runtime record; refusing unverified cleanup.`,
+					);
+				}
+				await gateway.vmOwnership.destroyLive(gateway.terminateVm);
+				if (runtimeRecord !== null) {
+					await deleteGatewayRuntimeRecord(prepared.taskZoneConfig.gateway.stateDir);
+				}
+				vmDestructionComplete = true;
+			} catch (error) {
+				throw new Error(`Worker VM '${gateway.vm.id}' cleanup did not prove exact destruction`, {
+					cause: error,
+				});
+			}
+		}
 	} catch (error) {
 		cleanupErrors.push(toError(error));
 	}
-	try {
-		await options.onTaskFinished?.(prepared.zoneId, prepared.taskId);
-	} catch (error) {
-		cleanupErrors.push(toError(error));
+	if (vmDestructionComplete) {
+		try {
+			await postStopGateway(
+				prepared.taskId,
+				prepared.zone,
+				prepared.preStartResult.startedResourceProviders,
+				{
+					runtimeDir: options.systemConfig.runtimeDir,
+				},
+			);
+		} catch (error) {
+			cleanupErrors.push(toError(error));
+		}
+		try {
+			await options.onTaskFinished?.(prepared.zoneId, prepared.taskId);
+		} catch (error) {
+			cleanupErrors.push(toError(error));
+		}
 	}
 
 	if (primaryError) {

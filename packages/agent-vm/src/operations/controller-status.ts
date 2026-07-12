@@ -1,10 +1,12 @@
 import type { SystemConfig } from '../config/system-config.js';
+import type { HealthEventEvidenceDiagnostics } from '../controller/health/health-event-store.js';
 import type {
 	GatewayDiagnosisSnapshot,
 	GatewayLifecycleErrorCode,
 	GatewaySelectedZoneReadiness,
 	GatewayToolVmLeaseState,
 } from '../controller/zone-runtimes/gateway-zone-state-machine.js';
+import type { ControllerTelemetryDiagnostics } from '../observability/controller-telemetry.js';
 
 export type ControllerZoneLifecycleState = 'running' | 'failed' | 'stopped';
 export type ControllerZoneDiagnosisStatus = Readonly<GatewayDiagnosisSnapshot>;
@@ -50,8 +52,14 @@ export interface ControllerZoneStatusSummary {
 
 export interface ControllerStatusSummary {
 	readonly controllerPort: number;
+	readonly observability?: ControllerObservabilityStatus | undefined;
 	readonly toolVmProfiles: string[];
 	readonly zones: ControllerZoneStatusSummary[];
+}
+
+export interface ControllerObservabilityStatus {
+	readonly evidence: HealthEventEvidenceDiagnostics;
+	readonly telemetry?: ControllerTelemetryDiagnostics | undefined;
 }
 
 function buildZoneStatus(
@@ -147,9 +155,11 @@ function classifyStatusRecoveryBlocker(
 export function buildControllerStatus(
 	systemConfig: SystemConfig,
 	runtimeStatus: ControllerRuntimeStatus = {},
+	observabilityStatus?: ControllerObservabilityStatus,
 ): ControllerStatusSummary {
 	return {
 		controllerPort: systemConfig.host.controllerPort,
+		...(observabilityStatus === undefined ? {} : { observability: observabilityStatus }),
 		toolVmProfiles: Object.keys(systemConfig.toolVmProfiles),
 		zones: systemConfig.zones.map((zone) => buildZoneStatus(zone, runtimeStatus)),
 	};

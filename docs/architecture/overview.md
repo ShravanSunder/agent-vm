@@ -65,17 +65,43 @@ The controller calls `gondolin-adapter` to create VMs. It passes a `GatewayVmSpe
 
 ### Controller ↔ Worker (Agent Worker Gateway)
 
-The controller POSTs a task to the worker's HTTP API inside the VM, then polls until complete. The worker calls back to the controller's `push-branches` endpoint via MCP tool to trigger host-side git push. After that succeeds, the worker can run `gh pr create`; GitHub HTTP traffic is mediated by the controller proxy.
+The controller POSTs a task to the worker's HTTP API inside the VM, then polls until complete. Worker controller tools send `worker_control_rpc` git intents over the private control session; the controller performs host-side git push or default-branch refresh from trusted state. After the push succeeds, the worker can run `gh pr create`; GitHub HTTP traffic is mediated by the controller proxy.
 
 → Full gateway: [agent-worker-gateway.md](agent-worker-gateway.md)
 → Controller-side lifecycle: [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md)
 
 ### Controller ↔ OpenClaw (OpenClaw Gateway)
 
-The gateway VM runs long-term. When the agent needs tool execution, it requests a lease from the controller's HTTP API. The controller boots a tool VM and returns SSH access details.
+The gateway VM runs long-term. When the agent needs tool execution, the managed
+Gondolin plugin asks the controller for a Tool VM capability over the private
+Socket.IO control session exposed through Gondolin ingress. The controller boots
+a tool VM and returns SSH access details to the plugin; the VM does not call the
+controller's public HTTP lease routes.
 
 → Full gateway: [openclaw-gateway.md](openclaw-gateway.md)
 → Lease manager: [subsystems/controller.md](../subsystems/controller.md#lease-manager)
+
+### Capability Portals
+
+Agent-facing capability calls are separate from VM execution. Tool Portal is the
+managed OpenClaw capability facade and exposes the native
+`tool_portal_list/search/describe/call` surface. MCP Portal is the MCP-specific
+provider backend for Tool Portal and also remains available through the separate
+`mcp-portal mcp-proxy serve` adapter for external MCP clients.
+
+Tool Portal is the cross-backend contract layer for capabilities that may come
+from MCP providers, controller-owned host actions, or Tool VM runner-backed
+execution. It uses portal-neutral Zod v4 contracts from
+`@agent-vm/agent-portal-sdk` and composes MCP-backed capabilities through
+`@agent-vm/mcp-portal/mcp-provider-backend`. Managed OpenClaw does not reuse the
+standalone model-visible `mcp_portal_*` tool names.
+
+Today, Tool Portal is the managed OpenClaw model-visible portal surface and the
+package-level composition layer for backends. MCP Portal remains the MCP
+provider/runtime backend instead of a second policy
+authority.
+
+→ Deep dive: [subsystems/mcp-portal.md](../subsystems/mcp-portal.md)
 
 ### Secrets Flow
 
@@ -168,63 +194,76 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Eleven workspace packages compose the system. Dependencies flow downward.
+Seventeen workspace packages compose the system. Dependencies flow downward.
 
 ```
-                @earendil-works/gondolin
-                (external SDK — QEMU micro-VMs,
-                 VFS, HTTP mediation, image builds)
-                          |
-                          v
-                gondolin-adapter
-                (VM adapter, secret resolver,
-                 image build pipeline, VFS helpers)
-                          |
-          +---------------+---------------+
-          |                               |
-          v                               v
-  gateway-interface             openclaw-agent-vm-plugin
-  (GatewayLifecycle contract,   (OpenClaw sandbox backend,
-   VmSpec, ProcessSpec,          lease client, SSH/file bridge)
-   splitResolvedSecrets)
-          |
-     +----+----+
-     |         |
-     v         v
-  openclaw-  worker-
-  gateway    gateway
-  (OpenClaw  (Worker
-   lifecycle) lifecycle)
-     |         |
-     +----+----+
-          |
-          v
-      agent-vm
-      (CLI + Controller runtime,
-       HTTP API :18800, lease manager,
-       gateway orchestrator,
-       worker task runner,
-       git push from host)
-          |
-          | (imports workerConfigSchema)
-          v
-    agent-vm-worker
-    (Runs INSIDE the VM.
-     6-phase pipeline, coordinator,
-     executors, event sourcing,
-     MCP tools, HTTP API :18789)
+  @earendil-works/gondolin
+        |
+        v
+  gondolin-adapter
+        |
+        v
+  gateway-interface --------------+
+        |                          |
+        v                          v
+  openclaw-gateway          worker-gateway
+        |                          |
+        +------------+-------------+
+                     |
+                     v
+                 agent-vm
+                     |
+                     v
+              agent-vm-worker
+
+  control-protocol-contracts
+        |
+        +--> gateway-control-contracts
+        |          |
+        |          v
+        |     openclaw-agent-vm-plugin
+        |          |
+        |          v
+        |       agent-vm
+        |
+        +--> worker-control-contracts
+                   |
+                   v
+              agent-vm-worker
+
+  agent-portal-sdk ---> mcp-portal
+            |              |
+            |              v
+            +---------> tool-portal
+                            ^
+                            |
+             controller-execution-contracts
+
+  config-contracts and secret-management provide shared contracts used by the
+  controller, gateways, MCP Portal, Tool Portal, and plugins.
+
+  openclaw-agent-vm-plugin bridges OpenClaw sandbox execution to controller
+  leases and SSH/file access for named Tool VMs.
 ```
 
 | Package | Responsibility |
 |---------|----------------|
-| **secrets** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
+| **secret-management** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
+| **config-contracts** | Zod-owned configuration contracts and generated schema sources for system, worker, MCP Portal, and Tool Portal config. |
+| **control-protocol-contracts** | Shared Socket.IO control-session envelope, identity, fencing, delivery, sequencing, close reason, and ack/result Zod contracts. |
+| **gateway-control-contracts** | Gateway-domain control RPC Zod contracts for gateway readiness, lease intent/observation, health, recovery, and controller-host-action requests. |
+| **worker-control-contracts** | Worker-domain control RPC Zod contracts for worker readiness, task lifecycle observations, runtime status, and controller-backed git operations. |
 | **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
 | **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
 | **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
-| **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, TCP to controller only, no auth, no `prepareHostState`. |
-| **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
-| **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and controller tools such as `git-push` and `git-pull-default`. |
-| **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox system. Registers Gondolin VMs as an OpenClaw sandbox backend. File bridge + shell execution via SSH into tool VMs. |
+| **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, private control-session ingress wiring, no auth, no `prepareHostState`. |
+| **agent-portal-sdk** | Portal-neutral Zod v4 contracts for list/search/describe/call results, capability descriptions, approvals, artifacts, diagnostics, and adapter envelopes. |
+| **mcp-portal** | MCP-specific capability facade, upstream MCP client runtime, scoped catalog/search, schema validation, approval evaluation, external MCP proxy, and MCP provider backend for Tool Portal composition. |
+| **tool-portal** | Cross-backend capability portal contracts, CLI allowance validation, and in-process entrypoint that dispatches MCP-backed capabilities through the MCP Portal backend and controller-owned host actions. |
+| **controller-execution-contracts** | Zod contracts for controller dispatch, controller host-action, and Tool VM runner boundaries. |
+| **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), Socket.IO control-session clients, lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
+| **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and control-session-backed controller tools such as `git-push` and `git-pull-default`. |
+| **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox and Tool Portal systems. Registers Gondolin VMs as an OpenClaw sandbox backend, registers Tool Portal native tools, and uses the private gateway control session for controller-owned operations. |
 
 ---
 
@@ -255,16 +294,13 @@ process-wide active zone.
 
 ### HTTP API (Hono on :18800)
 
-The controller exposes a REST API. Routes are split across two modules: core lease routes in `controller-http-routes.ts` and zone operation routes in `controller-zone-operation-routes.ts`.
+The controller exposes a REST API. Routes are split across core health routes,
+private control-session owned lease handling, and zone operation routes in
+`controller-zone-operation-routes.ts`.
 
 | Method | Path | Purpose | Mode |
 |--------|------|---------|------|
 | `GET` | `/health` | Controller liveness check | Both |
-| `POST` | `/lease` | Acquire a tool VM lease (agent, zone, profile) | OpenClaw |
-| `GET` | `/lease/:leaseId` | Keep a lease alive and return agent-facing SSH access | OpenClaw |
-| `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | OpenClaw |
-| `GET` | `/leases` | List all active leases | OpenClaw |
-| `DELETE` | `/lease/:leaseId` | Release a tool VM lease | OpenClaw |
 | `GET` | `/controller-status` | Controller operational status | OpenClaw |
 | `GET` | `/zones/:zoneId/health` | Live gateway health probe | OpenClaw |
 | `GET` | `/zones/:zoneId/logs` | Fetch gateway VM logs | OpenClaw |
@@ -275,7 +311,6 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 | `POST` | `/zones/:zoneId/execute-command` | Execute a shell command in the gateway VM; requires zone admin token when adminAccess is configured | OpenClaw |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
-| `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push task branches to remote | Worker |
 | `POST` | `/stop-controller` | Graceful shutdown: release leases, stop gateway, close server | Both |
 
 ### Key Subsystems
@@ -289,7 +324,7 @@ with `lastUsedAt` older than its resolved TTL is automatically released. The
 policy uses the single `leaseIdleTtl.defaultMs` value, bounded request overrides,
 and the default 100 minute fallback.
 
-**Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by the push-branches endpoint to verify a task is still active before allowing branch pushes.
+**Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by controller-owned worker control operations to verify a task is still active before allowing branch pushes.
 
 ---
 
@@ -338,8 +373,8 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
 |---------|------|--------|
 | **authConfig** | Present: `openclaw models auth login` | Absent: no interactive auth |
 | **VFS mounts** | config, cache, state, zone files | state + task gitdirs; `/work/repos` is rootfs/COW |
-| **Environment** | `OPENCLAW_*` vars, `HOME=/home/openclaw` | `CONTROLLER_BASE_URL`, `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
-| **TCP hosts** | Controller + all tool VM slots | Controller only |
+| **Environment** | `OPENCLAW_*` vars, `HOME=/home/openclaw` | `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
+| **TCP hosts** | Tool VM SSH slots only | No controller raw TCP control mapping |
 | **Bootstrap** | Write shell/admin profiles, configure bashrc, write runtime secret env files | Conditionally install worker tarball from `/state/` |
 | **Start command** | Source runtime secrets, then run `openclaw gateway --port 18789` | `agent-vm-worker serve --port 18789 --config ...` |
 | **Readiness check** | HTTP GET `:18789/readyz` | HTTP GET `:18789/health` |
@@ -363,7 +398,7 @@ Gondolin (`@earendil-works/gondolin`) provides QEMU micro-VMs with sub-second bo
 | **VFS mounts** | `RealFSProvider` (read/write), `ReadonlyProvider`, `MemoryProvider`, `ShadowProvider` (deny/tmpfs overlays) |
 | **Rootfs modes** | `readonly` (immutable), `memory` (RAM-backed, ephemeral), `cow` (copy-on-write, persists within session) |
 | **HTTP mediation** | `createHttpHooks` intercepts outbound HTTP, injects secrets into request headers by host match |
-| **Synthetic DNS** | Maps virtual hostnames (e.g., `controller.vm.host:18800`) to real TCP endpoints |
+| **Synthetic DNS** | Maps selected virtual hostnames such as `tool-0.vm.host:22` to real TCP endpoints |
 | **Ingress** | Routes external HTTP traffic into the VM at a specified guest port |
 | **SSH** | On-demand SSH access into the VM for debugging |
 | **Image build** | `buildAssets()` converts a build config into a VM image: `rootfs.ext4`, `initramfs.cpio.lz4`, `vmlinuz-virt` |
@@ -372,7 +407,7 @@ Gondolin (`@earendil-works/gondolin`) provides QEMU micro-VMs with sub-second bo
 
 The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
 
-- **`createManagedVm(options)`** -- assembles VFS mounts, creates HTTP hooks, boots the VM, returns a `ManagedVm` handle (`exec`, `enableSsh`, `enableIngress`, `close`).
+- **`createManagedVm(options)`** -- assembles VFS mounts and HTTP hooks, then returns an unstarted `ManagedVm` handle (`start`, `exec`, `enableSsh`, `enableIngress`, `close`).
 - **`buildImage(options)`** -- fingerprint-cached image builds (SHA-256 of build config + runtime build version tag + fingerprint input).
 - **`SecretResolver` / `resolveServiceAccountToken`** -- resolve `SecretRef` values from 1Password, environment variables, or inline config values.
 
@@ -394,27 +429,28 @@ The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
 
 `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM, regardless of type. It coordinates the lifecycle, image builder, and Gondolin adapter.
 
+Before successor admission, controller startup performs record-based cleanup from schema-v2 Gateway and Tool VM runtime records; controller restart never adopts an existing VM. `startGatewayZone` then owns the new Gateway epoch and its exact runner identity. See [OpenClaw Gateway](openclaw-gateway.md), [Controller](../subsystems/controller.md), and [Gondolin VM Layer](../subsystems/gondolin-vm-layer.md) for the subsystem contracts.
+
 ```
   startGatewayZone(options)
     |
-    |-- 1. Clean orphaned gateway    cleanupOrphanedGatewayIfPresent()
-    |-- 2. Load lifecycle            loadGatewayLifecycle(type) -> GatewayLifecycle
-    |-- 3. Resolve zone secrets      resolveZoneSecrets() -> Record<string, string>
-    |-- 4. Build gateway image       buildGatewayImage() -> { imagePath, fingerprint }
-    |-- 5. Create host directories   mkdir stateDir, cacheDir, zoneFilesDir
-    |-- 6. Prepare host state        lifecycle.prepareHostState() [optional]
-    |-- 7. Build VM spec             lifecycle.buildVmSpec() -> GatewayVmSpec
-    |-- 8. Build process spec        lifecycle.buildProcessSpec() -> GatewayProcessSpec
-    |-- 9. Create managed VM         createManagedVm(vmSpec) -> ManagedVm
-    |-- 10. Bootstrap                vm.exec(processSpec.bootstrapCommand)
-    |-- 11. Start process            vm.exec(processSpec.startCommand)
-    |-- 12. Wait for service health  poll serviceHealthCheck ?? healthCheck (HTTP 2xx or exit 0)
-    |-- 13. Set ingress routes       vm.setIngressRoutes([{ port, prefix: '/' }])
-    |-- 14. Enable ingress           vm.enableIngress({ listenPort, bufferResponseBody: false, ...zone.gateway.ingress })
-    |-- 15. Write runtime record     writeGatewayRuntimeRecord() for crash recovery
+    |-- 1. Resolve startup inputs     lifecycle, config, secrets, image, host state
+    |-- 2. Allocate Gateway epoch     controller-owned identity seed
+    |-- 3. Construct VM handle        createManagedVm(vmSpec) -> unstarted ManagedVm
+    |-- 4. Attach VM identity         gateway epoch seed + vm.id
+    |-- 5. Start VM                   vm.start()
+    |-- 6. Capture runner identity    exact host PID + process identity
+    |-- 7. Persist runtime record     schema v2, before guest bootstrap or publication
+    |-- 8. Start Gateway service      bootstrap, process start, service-health proof
+    |-- 9. Publish ingress            configure routes, enable ingress, enrich runtime record
+    |-- 10. Establish control link    connect control session and publish started result
     |
     v
-  Returns { vm, ingress, processSpec, image, zone }
+  Returns controller-owned runtime handles, including terminateVm
+
+  startup failure
+    -> exact-terminate the captured runner through controller-managed termination
+    -> close the stock Gondolin handle directly only when no runner exists
 ```
 
 ---
@@ -432,15 +468,25 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
        |      |-- /home/openclaw/.openclaw/state/   (host: stateDir, realfs)
        |      |-- /zone/         (host: zoneFilesDir, realfs)
        |      |
-       |      |-- Talks to Controller via controller.vm.host:18800
-       |      |-- Requests tool VM leases for code execution
+       |      |-- Serves private control session via Gondolin ingress
+       |      |-- Requests tool VM leases through gateway_control_rpc
        |
        |-- Tool VM 0 (on-demand via lease, tool-0.vm.host:22)
        |-- Tool VM 1 (on-demand via lease, tool-1.vm.host:22)
        |-- ...up to tcpPool.size
 ```
 
-The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a lease-owned `/workspace` mount for non-zone-git RealFS work. The lease `workMountDir` is a gateway path under a concrete child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the controller resolves it to the host directory backing the Tool VM lease workdir. `/work` stays VM-local rootfs/COW scratch. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. WebSocket channels use Gondolin's HTTP upgrade bridge and `websocketUpgrades` policy.
+The gateway VM boots at controller startup and stays running. Tool VMs are
+created on demand via the private gateway control session -- each gets a TCP
+slot, SSH access, and a lease-owned `/workspace` mount for non-zone-git RealFS
+work. The lease `workMountDir` is a gateway path under a concrete child of
+`/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the controller resolves
+it to the host directory backing the Tool VM lease workdir. `/work` stays
+VM-local rootfs/COW scratch. Auth profiles and the effective OpenClaw config are
+written to the host-side state directory before the VM boots via
+`prepareHostState()`. The gateway reaches tool VMs via synthetic DNS
+(`tool-{n}.vm.host:22`). Gateway/controller control traffic uses Socket.IO over
+Gondolin's HTTP upgrade bridge.
 
 ---
 
@@ -456,14 +502,14 @@ flowchart TB
     host["controller host prep"]
     vm["boot Worker VM"]
     worker["run 6-phase pipeline"]
-    callback["POST /push-branches"]
+    rpc["worker_control_rpc git intent"]
     finalize["host push + teardown"]
 
     api --> host
     host --> vm
     vm --> worker
-    worker --> callback
-    callback --> finalize
+    worker --> rpc
+    rpc --> finalize
 ```
 
 ### Controller-Side Lifecycle
@@ -521,7 +567,7 @@ For the worker pipeline internals (what happens inside the VM after step 3), see
 
 ## Secrets Flow
 
-Secrets are resolved on the host and delivered to VMs through two channels. Host-only secrets (e.g., `githubToken` for push-branches) never enter any VM.
+Secrets are resolved on the host and delivered to VMs through two channels. Host-only secrets (e.g., `githubToken` for controller-owned git push) never enter any VM.
 
 ```
   system.jsonc
@@ -546,7 +592,7 @@ Secrets are resolved on the host and delivered to VMs through two channels. Host
     |
     +---> resolveControllerGithubToken()
             HOST-ONLY: never enters any VM
-            Used by push-branches to push task branches from the host
+            Used by controller-owned git operations from the host
 ```
 
 ```mermaid

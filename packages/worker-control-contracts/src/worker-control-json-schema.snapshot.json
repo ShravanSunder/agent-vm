@@ -1,0 +1,1910 @@
+{
+	"domain": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "string",
+		"const": "worker_control"
+	},
+	"hello": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"bootId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"domain": {
+				"type": "string",
+				"const": "worker_control"
+			},
+			"lastSeenControllerSequence": {
+				"type": "integer",
+				"minimum": 0,
+				"maximum": 9007199254740991
+			},
+			"lastSeenPeerSequence": {
+				"type": "integer",
+				"minimum": 0,
+				"maximum": 9007199254740991
+			},
+			"peerId": {
+				"type": "string",
+				"minLength": 1
+			},
+			"previousSessionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"protocolVersion": {
+				"type": "number",
+				"const": 1
+			}
+		},
+		"required": ["bootId", "controllerEpoch", "domain", "peerId", "protocolVersion"],
+		"additionalProperties": false
+	},
+	"helloResponse": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"connectionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			},
+			"controllerEpoch": {
+				"type": "string",
+				"minLength": 1
+			},
+			"outcome": {
+				"type": "string",
+				"enum": ["accepted", "rejected", "resync_required", "generation_mismatch"]
+			},
+			"sessionId": {
+				"type": "string",
+				"format": "uuid",
+				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+			}
+		},
+		"required": ["connectionId", "controllerEpoch", "outcome", "sessionId"],
+		"additionalProperties": false
+	},
+	"message": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"anyOf": [
+			{
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "control_ping"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "git_push"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"branchName": {
+										"type": "string",
+										"minLength": 1
+									},
+									"command": {
+										"type": "object",
+										"properties": {
+											"commandId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"idempotencyKey": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": ["commandId", "idempotencyKey"],
+										"additionalProperties": false
+									},
+									"expectedHead": {
+										"type": "string",
+										"minLength": 1
+									},
+									"repoUrl": {
+										"type": "string",
+										"minLength": 1
+									},
+									"task": {
+										"type": "object",
+										"properties": {
+											"taskGeneration": {
+												"type": "string",
+												"minLength": 1
+											},
+											"taskId": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": ["taskId"],
+										"additionalProperties": false
+									}
+								},
+								"required": ["branchName", "command", "repoUrl", "task"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "git_pull_default"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"command": {
+										"type": "object",
+										"properties": {
+											"commandId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"idempotencyKey": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": ["commandId", "idempotencyKey"],
+										"additionalProperties": false
+									},
+									"currentBranch": {
+										"type": "string",
+										"minLength": 1
+									},
+									"currentHead": {
+										"type": "string",
+										"minLength": 1
+									},
+									"repoUrl": {
+										"type": "string",
+										"minLength": 1
+									},
+									"task": {
+										"type": "object",
+										"properties": {
+											"taskGeneration": {
+												"type": "string",
+												"minLength": 1
+											},
+											"taskId": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": ["taskId"],
+										"additionalProperties": false
+									},
+									"worktreeDirty": {
+										"type": "boolean"
+									}
+								},
+								"required": ["command", "repoUrl", "task"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "operation_cancel"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"initiatedBy": {
+												"type": "string",
+												"const": "worker"
+											},
+											"reason": {
+												"type": "string",
+												"enum": ["caller_cancelled", "worker_shutdown", "operation_failed"]
+											}
+										},
+										"required": ["activeOperationId", "initiatedBy", "reason"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"initiatedBy": {
+												"type": "string",
+												"const": "controller"
+											},
+											"reason": {
+												"type": "string",
+												"enum": ["controller_recovery", "operator_cancelled", "timeout"]
+											}
+										},
+										"required": ["activeOperationId", "initiatedBy", "reason"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "recovery_command"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"action": {
+												"type": "string",
+												"const": "refresh_runtime_status"
+											}
+										},
+										"required": ["action"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"action": {
+												"type": "string",
+												"const": "restart_control_service"
+											}
+										},
+										"required": ["action"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"action": {
+												"type": "string",
+												"const": "close_stale_session"
+											},
+											"targetSessionId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["action", "targetSessionId"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					}
+				]
+			},
+			{
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "event"
+							},
+							"operation": {
+								"type": "string",
+								"const": "worker_capacity_snapshot"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"activeTaskId": {
+										"type": "string",
+										"minLength": 1
+									},
+									"observedAtMs": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"state": {
+										"type": "string",
+										"enum": ["idle", "running", "closing", "draining"]
+									}
+								},
+								"required": ["observedAtMs", "state"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "event"
+							},
+							"operation": {
+								"type": "string",
+								"const": "worker_runtime_status"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"findings": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"minLength": 1
+												},
+												"ok": {
+													"type": "boolean"
+												},
+												"safeMessage": {
+													"type": "string",
+													"minLength": 1
+												},
+												"severity": {
+													"type": "string",
+													"enum": ["info", "warning", "error"]
+												}
+											},
+											"required": ["id", "ok"],
+											"additionalProperties": false
+										}
+									},
+									"observedAtMs": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"statusKind": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": ["findings", "observedAtMs", "statusKind"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "event"
+							},
+							"operation": {
+								"type": "string",
+								"const": "worker_runtime_observation"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"correlation": {
+										"type": "object",
+										"properties": {
+											"causationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"correlationId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"requestId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"runId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"sessionKeyDigest": {
+												"type": "string",
+												"minLength": 32
+											},
+											"toolCallId": {
+												"type": "string",
+												"minLength": 1
+											},
+											"traceId": {
+												"type": "string",
+												"pattern": "^[0-9a-f]{32}$"
+											}
+										},
+										"additionalProperties": false
+									},
+									"observedAtMs": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 9007199254740991
+									},
+									"sessionState": {
+										"type": "string",
+										"enum": [
+											"unknown",
+											"connecting",
+											"ready",
+											"reconnecting",
+											"stale",
+											"rejected",
+											"generation_mismatch",
+											"failed",
+											"closed"
+										]
+									},
+									"state": {
+										"type": "string",
+										"enum": ["running", "closing", "closed", "failed"]
+									},
+									"task": {
+										"type": "object",
+										"properties": {
+											"taskGeneration": {
+												"type": "string",
+												"minLength": 1
+											},
+											"taskId": {
+												"type": "string",
+												"minLength": 1
+											}
+										},
+										"required": ["taskId"],
+										"additionalProperties": false
+									}
+								},
+								"required": ["observedAtMs", "task"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					}
+				]
+			},
+			{
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "control_ping"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "git_push"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"type": "object",
+												"properties": {
+													"results": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"branch": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"commitsOnBranch": {
+																	"type": "array",
+																	"items": {
+																		"type": "object",
+																		"properties": {
+																			"author": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"date": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"sha": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"subject": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["sha", "subject"],
+																		"additionalProperties": false
+																	}
+																},
+																"defaultBranch": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"divergence": {
+																	"type": "object",
+																	"properties": {
+																		"aheadOfDefault": {
+																			"type": "integer",
+																			"minimum": 0,
+																			"maximum": 9007199254740991
+																		},
+																		"behindDefault": {
+																			"type": "integer",
+																			"minimum": 0,
+																			"maximum": 9007199254740991
+																		}
+																	},
+																	"required": ["aheadOfDefault", "behindDefault"],
+																	"additionalProperties": false
+																},
+																"error": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"localHead": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"pushedInThisCall": {
+																	"type": "array",
+																	"items": {
+																		"type": "object",
+																		"properties": {
+																			"author": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"date": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"sha": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"subject": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["sha", "subject"],
+																		"additionalProperties": false
+																	}
+																},
+																"remoteAlreadyHadBranch": {
+																	"type": "boolean"
+																},
+																"remoteBranchHead": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"remoteDefaultHead": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"repoUrl": {
+																	"type": "string",
+																	"minLength": 1
+																},
+																"success": {
+																	"type": "boolean"
+																}
+															},
+															"required": ["branch", "repoUrl", "success"],
+															"additionalProperties": false
+														}
+													}
+												},
+												"required": ["results"],
+												"additionalProperties": false
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "gitPush", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "git_pull_default"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"commitsSinceForkPoint": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"author": {
+																			"type": "string"
+																		},
+																		"date": {
+																			"type": "string"
+																		},
+																		"sha": {
+																			"type": "string",
+																			"minLength": 1
+																		},
+																		"subject": {
+																			"type": "string"
+																		}
+																	},
+																	"required": ["sha", "subject"],
+																	"additionalProperties": false
+																}
+															},
+															"currentBranch": {
+																"anyOf": [
+																	{
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	{
+																		"type": "null"
+																	}
+																]
+															},
+															"currentBranchSync": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"branch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"localHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"reason": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"remoteHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"status": {
+																				"type": "string",
+																				"enum": ["ahead", "dirty-worktree", "diverged"]
+																			},
+																			"upstreamTrackingRef": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"branch",
+																			"localHead",
+																			"remoteHead",
+																			"status",
+																			"upstreamTrackingRef"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"branch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"localHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"remoteHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"status": {
+																				"type": "string",
+																				"enum": ["default-branch", "fast-forwarded", "up-to-date"]
+																			},
+																			"upstreamTrackingRef": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"reason": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"branch",
+																			"localHead",
+																			"remoteHead",
+																			"status",
+																			"upstreamTrackingRef"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"branch": {
+																				"type": "null"
+																			},
+																			"localHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"reason": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"status": {
+																				"type": "string",
+																				"const": "detached"
+																			},
+																			"upstreamTrackingRef": {
+																				"type": "null"
+																			}
+																		},
+																		"required": [
+																			"branch",
+																			"localHead",
+																			"reason",
+																			"status",
+																			"upstreamTrackingRef"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"branch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"localHead": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"reason": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"status": {
+																				"type": "string",
+																				"const": "no-upstream"
+																			},
+																			"upstreamTrackingRef": {
+																				"type": "null"
+																			}
+																		},
+																		"required": [
+																			"branch",
+																			"reason",
+																			"status",
+																			"upstreamTrackingRef"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"defaultBranch": {
+																"type": "string",
+																"minLength": 1
+															},
+															"divergence": {
+																"type": "object",
+																"properties": {
+																	"aheadOfDefault": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"behindDefault": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"forkPoint": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": ["aheadOfDefault", "behindDefault", "forkPoint"],
+																"additionalProperties": false
+															},
+															"fetchedCommits": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"author": {
+																			"type": "string"
+																		},
+																		"date": {
+																			"type": "string"
+																		},
+																		"sha": {
+																			"type": "string",
+																			"minLength": 1
+																		},
+																		"subject": {
+																			"type": "string"
+																		}
+																	},
+																	"required": ["sha", "subject"],
+																	"additionalProperties": false
+																}
+															},
+															"kind": {
+																"type": "string",
+																"const": "advanced"
+															},
+															"localDefaultHead": {
+																"type": "string",
+																"minLength": 1
+															},
+															"message": {
+																"type": "string",
+																"minLength": 1
+															},
+															"remoteDefaultHead": {
+																"type": "string",
+																"minLength": 1
+															},
+															"repoUrl": {
+																"type": "string",
+																"minLength": 1
+															},
+															"success": {
+																"type": "boolean",
+																"const": true
+															}
+														},
+														"required": [
+															"commitsSinceForkPoint",
+															"defaultBranch",
+															"divergence",
+															"fetchedCommits",
+															"kind",
+															"localDefaultHead",
+															"message",
+															"remoteDefaultHead",
+															"repoUrl",
+															"success"
+														],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"defaultBranch": {
+																"type": "string",
+																"minLength": 1
+															},
+															"error": {
+																"type": "string",
+																"minLength": 1
+															},
+															"kind": {
+																"type": "string",
+																"const": "refused-not-fast-forward"
+															},
+															"message": {
+																"type": "string",
+																"minLength": 1
+															},
+															"remoteDefaultHead": {
+																"type": "string",
+																"minLength": 1
+															},
+															"repoUrl": {
+																"type": "string",
+																"minLength": 1
+															},
+															"success": {
+																"type": "boolean",
+																"const": false
+															}
+														},
+														"required": [
+															"defaultBranch",
+															"error",
+															"kind",
+															"message",
+															"remoteDefaultHead",
+															"repoUrl",
+															"success"
+														],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"error": {
+																"type": "string",
+																"minLength": 1
+															},
+															"kind": {
+																"type": "string",
+																"const": "failed"
+															},
+															"message": {
+																"type": "string",
+																"minLength": 1
+															},
+															"repoUrl": {
+																"type": "string",
+																"minLength": 1
+															},
+															"success": {
+																"type": "boolean",
+																"const": false
+															}
+														},
+														"required": ["error", "kind", "message", "repoUrl", "success"],
+														"additionalProperties": false
+													}
+												]
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "gitPullDefault", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "operation_cancel"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "activeOperationId", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "recovery_command"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"git": {
+												"not": {}
+											},
+											"gitPullDefault": {
+												"not": {}
+											},
+											"gitPush": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"accepted",
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					}
+				]
+			}
+		]
+	},
+	"operation": {
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "string",
+		"enum": [
+			"control_ping",
+			"worker_capacity_snapshot",
+			"worker_runtime_status",
+			"worker_runtime_observation",
+			"git_push",
+			"git_pull_default",
+			"operation_cancel",
+			"recovery_command"
+		]
+	}
+}

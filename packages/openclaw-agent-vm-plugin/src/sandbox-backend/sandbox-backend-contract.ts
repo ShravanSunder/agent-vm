@@ -1,6 +1,6 @@
-import type { ToolVmSshLease } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent, ToolVmSshLease } from '@agent-vm/gateway-interface';
 
-import type { LeaseClient } from '../controller-lease-client.js';
+import type { LeaseClient, OpenClawRuntimeStatusReport } from '../lease-client-contract.js';
 
 export interface OpenClawFsBridgeLeaseContext {
 	readonly remoteAgentWorkspaceDir: string;
@@ -81,7 +81,9 @@ export interface CreateBackendDependencies {
 	readonly createFsBridgeBuilder?: (
 		leaseContext: OpenClawFsBridgeLeaseContext,
 	) => (params: { readonly sandbox: unknown }) => OpenClawSandboxFsBridge;
-	readonly createLeaseClient?: (options: { readonly controllerUrl: string }) => LeaseClient;
+	readonly createLeaseClient: (options: { readonly controllerUrl: string }) => LeaseClient;
+	readonly publishHealthEvent?: (event: AgentVmHealthEvent) => Promise<void>;
+	readonly publishOpenClawRuntimeStatus?: (report: OpenClawRuntimeStatusReport) => Promise<void>;
 	readonly runRemoteShellScript: (params: {
 		readonly allowFailure?: boolean;
 		readonly script: string;

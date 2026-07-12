@@ -170,6 +170,11 @@ Task input is capped at 20 repos. Repos still start together within that
 bounded request shape; the cap keeps parallel setup from becoming unbounded
 host fan-out.
 
+Worker task requests are not a trusted source for protected branch policy.
+Controller-owned push safety for worker repos is configured in the worker
+zone's `gateway.repoPushPolicies` entries in `system.jsonc`; if no trusted
+policy matches a requested repo URL, controller push fails closed.
+
 ## Compose rules
 
 Compose service names are repo-local. Two repos can both define a service named

@@ -54,7 +54,7 @@ export function isVmSshEndpoint(value: unknown): value is VmSshEndpoint {
 		record !== undefined &&
 		typeof Reflect.get(record, 'host') === 'string' &&
 		isNonEmptyString(Reflect.get(record, 'identityPem')) &&
-		typeof Reflect.get(record, 'knownHostsLine') === 'string' &&
+		isNonEmptyString(Reflect.get(record, 'knownHostsLine')) &&
 		typeof Reflect.get(record, 'port') === 'number' &&
 		typeof Reflect.get(record, 'user') === 'string'
 	);

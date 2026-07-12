@@ -29,10 +29,6 @@ export type ToolVmLeaseReleaseRequestDecision =
 	| { readonly kind: 'skip-recently-used' }
 	| { readonly kind: 'blocked-active-use' };
 
-export type ToolVmLeaseCloseOutcome =
-	| { readonly kind: 'release-tcp-and-delete-record' }
-	| { readonly kind: 'quarantine-tcp-and-preserve-record' };
-
 export function isToolVmLeaseIdleExpired(input: ToolVmLeaseTimingInput): boolean {
 	return input.lastUsedAt + input.effectiveIdleTtlMs < input.nowMs;
 }
@@ -63,12 +59,4 @@ export function classifyToolVmLeaseReleaseRequest(
 		return { kind: 'blocked-active-use' };
 	}
 	return { kind: 'release' };
-}
-
-export function classifyToolVmLeaseCloseOutcome(input: {
-	readonly closeSucceeded: boolean;
-}): ToolVmLeaseCloseOutcome {
-	return input.closeSucceeded
-		? { kind: 'release-tcp-and-delete-record' }
-		: { kind: 'quarantine-tcp-and-preserve-record' };
 }

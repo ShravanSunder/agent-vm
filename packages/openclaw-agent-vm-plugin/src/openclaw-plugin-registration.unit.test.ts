@@ -1,16 +1,93 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
-import { describe, expect, it, vi } from 'vitest';
+import {
+	createGatewayControlAdmissionExecutor,
+	type GatewayControlRpcMessage,
+} from '@agent-vm/gateway-control-contracts';
+import {
+	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+} from '@agent-vm/gateway-interface';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+	AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV,
+	createGatewayControlAdmissionPressureE2eActuator,
+	registerGatewayControlAdmissionPressureE2eActuator,
+} from './gateway-control-service/gateway-control-admission-pressure-e2e-testing.js';
+import type { GatewayControlAcceptedSession } from './gateway-control-service/gateway-control-service-contracts.js';
+import e2ePlugin from './openclaw-plugin-registration.e2e.js';
 import defaultPlugin, {
 	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 	createBackendDeps,
 	type SshHelpers,
 } from './openclaw-plugin-registration.js';
-import type { OpenClawSandboxFsBridge } from './sandbox-backend-factory.js';
+import type { OpenClawHttpRouteRegistration } from './openclaw-sandbox-sdk-contract.js';
+import type {
+	OpenClawSandboxBackendHandle,
+	OpenClawSandboxFsBridge,
+} from './sandbox-backend-factory.js';
+import {
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
+	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
+	registerToolVmWriteReadE2eRoute,
+	testExports as toolVmWriteReadE2eToolTestExports,
+} from './tool-vm-write-read-e2e-tool.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+const TOOL_PORTAL_NATIVE_TOOL_NAMES = [
+	'tool_portal_list',
+	'tool_portal_search',
+	'tool_portal_describe',
+	'tool_portal_call',
+] as const;
+
+function createControlSessionPluginConfig(): {
+	readonly bootId: string;
+	readonly controllerEpoch: string;
+	readonly generationId: string;
+	readonly peerId: string;
+	readonly processEpoch: string;
+	readonly verifierPublicKeyPem: string;
+} {
+	const { publicKey } = generateKeyPairSync('ed25519');
+	return {
+		bootId: 'gateway-boot-a',
+		controllerEpoch: 'controller-epoch-a',
+		generationId: 'gateway-generation-a',
+		peerId: 'gateway-zone-a',
+		processEpoch: 'process-epoch-a',
+		verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
+	};
+}
+
+beforeEach(() => {
+	vi.stubEnv(
+		GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+		'test-caller-context-proof-key-with-enough-length',
+	);
+	vi.stubEnv(
+		GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+		JSON.stringify({
+			main: 'test-main-agent-authority-key-with-enough-length',
+			second: 'test-second-agent-authority-key-with-enough-length',
+		}),
+	);
+	vi.stubEnv(
+		AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+		JSON.stringify([{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:test-session' }]),
+	);
+});
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
@@ -41,18 +118,229 @@ function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	};
 }
 
+function registeredRoute(
+	registerHttpRoute: ReturnType<typeof vi.fn>,
+	pathname: string,
+): OpenClawHttpRouteRegistration | undefined {
+	return registerHttpRoute.mock.calls
+		.map((call) => call[0] as OpenClawHttpRouteRegistration)
+		.find((candidate) => candidate.path === pathname);
+}
+
+function expectRegisteredRoute(
+	registerHttpRoute: ReturnType<typeof vi.fn>,
+	pathname: string,
+): OpenClawHttpRouteRegistration {
+	const route = registeredRoute(registerHttpRoute, pathname);
+	if (route === undefined) {
+		throw new Error(`Expected route ${pathname} to be registered.`);
+	}
+	return route;
+}
+
+interface CapturedHttpResponse {
+	readonly bodyText: string;
+	readonly headers: Readonly<Record<string, string>>;
+	readonly statusCode: number;
+}
+
+async function invokeRegisteredRoute(options: {
+	readonly bodyText: string;
+	readonly headers?: Readonly<Record<string, string>>;
+	readonly route: OpenClawHttpRouteRegistration;
+}): Promise<CapturedHttpResponse> {
+	const responseHeaders: Record<string, string> = {};
+	let statusCode = 200;
+	let bodyText = '';
+	const request = Readable.from([Buffer.from(options.bodyText, 'utf8')]) as Readable & {
+		headers: Readonly<Record<string, string>>;
+	};
+	request.headers = options.headers ?? {};
+	const response = {
+		get statusCode(): number {
+			return statusCode;
+		},
+		set statusCode(value: number) {
+			statusCode = value;
+		},
+		end: (chunk?: string | Buffer): void => {
+			bodyText = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : (chunk ?? '');
+		},
+		setHeader: (name: string, value: number | string | readonly string[]): void => {
+			responseHeaders[name.toLowerCase()] = Array.isArray(value) ? value.join(', ') : String(value);
+		},
+	};
+	await options.route.handler(
+		request as unknown as Parameters<OpenClawHttpRouteRegistration['handler']>[0],
+		response as Parameters<OpenClawHttpRouteRegistration['handler']>[1],
+	);
+	return {
+		bodyText,
+		headers: responseHeaders,
+		statusCode,
+	};
+}
+
+function createToolVmWriteReadProbeBody(options?: {
+	readonly agentId?: string;
+	readonly filePath?: string;
+	readonly marker?: string;
+	readonly scenario?: 'active-operation-containment' | 'stale-reacquire' | 'write-read';
+	readonly secondFilePath?: string;
+	readonly secondMarker?: string;
+	readonly sentinelFilePath?: string;
+	readonly sessionKey?: string;
+}): string {
+	return JSON.stringify({
+		agentId: options?.agentId ?? 'beta',
+		filePath: options?.filePath ?? '.agent-vm/proof.txt',
+		marker: options?.marker ?? 'probe-marker',
+		...(options?.scenario === undefined ? {} : { scenario: options.scenario }),
+		...(options?.secondFilePath === undefined ? {} : { secondFilePath: options.secondFilePath }),
+		...(options?.secondMarker === undefined ? {} : { secondMarker: options.secondMarker }),
+		...(options?.sentinelFilePath === undefined
+			? {}
+			: { sentinelFilePath: options.sentinelFilePath }),
+		sessionKey: options?.sessionKey ?? 'agent:beta:tool-vm-write-read:test-session',
+	});
+}
+
+function createToolVmWriteReadProbeHeaders(bodyText: string): Readonly<Record<string, string>> {
+	return {
+		[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER]:
+			toolVmWriteReadE2eToolTestExports.signToolVmWriteReadE2eRouteBody(
+				bodyText,
+				'test-tool-vm-write-read-proof-key',
+			),
+	};
+}
+
+function createControlAdmissionPressureBody(
+	action: 'hold' | 'release' | 'snapshot' | 'submitBatch',
+	fields: Readonly<Record<string, unknown>> = {},
+): string {
+	return JSON.stringify({
+		action,
+		agentId: 'beta',
+		attachmentGeneration: 7,
+		scenario: 'control-admission-pressure',
+		sessionKey: 'agent:beta:tool-vm-write-read:test-session',
+		...fields,
+	});
+}
+
+function registerControlAdmissionPressureTestActuator(options?: {
+	readonly acceptedAttachmentGeneration?: number;
+	readonly getAcceptedSession?: () => GatewayControlAcceptedSession | undefined;
+}): () => void {
+	const acceptedSession = {
+		attachmentGeneration: options?.acceptedAttachmentGeneration ?? 7,
+		bootId: 'process-a',
+		connectionId: 'connection-a',
+		controllerEpoch: 'controller-a',
+		gatewayEpoch: 'gateway-a',
+		generationId: 'gateway-a',
+		peerId: 'peer-a',
+		processEpoch: 'process-a',
+		sessionId: 'session-a',
+		zoneId: 'zone-a',
+	} satisfies GatewayControlAcceptedSession;
+	const ingress = createGatewayControlAdmissionExecutor<GatewayControlRpcMessage>();
+	const egress = createGatewayControlAdmissionExecutor<GatewayControlRpcMessage>();
+	return registerGatewayControlAdmissionPressureE2eActuator(
+		createGatewayControlAdmissionPressureE2eActuator({
+			getAcceptedSession: options?.getAcceptedSession ?? (() => acceptedSession),
+			getEgress: () => egress,
+			getIngress: () => ingress,
+		}),
+	);
+}
+
+function createMockToolVmWriteReadBackend(options?: {
+	readonly buildExecSpec?: OpenClawSandboxBackendHandle['buildExecSpec'];
+	readonly finalizeExec?: OpenClawSandboxBackendHandle['finalizeExec'];
+	readonly runShellCommand?: OpenClawSandboxBackendHandle['runShellCommand'];
+	readonly runtimeId?: () => string;
+}): OpenClawSandboxBackendHandle {
+	return {
+		buildExecSpec:
+			options?.buildExecSpec ??
+			vi.fn(async () => ({
+				argv: ['sh', '-lc', 'true'],
+				env: {},
+				finalizeToken: { kind: 'mock-finalize-token' },
+				stdinMode: 'pipe-closed' as const,
+			})),
+		...(options?.finalizeExec === undefined ? {} : { finalizeExec: options.finalizeExec }),
+		id: 'mock-tool-vm-backend',
+		runShellCommand:
+			options?.runShellCommand ??
+			vi.fn(async () => ({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('probe-marker'),
+			})),
+		get runtimeId() {
+			return options?.runtimeId?.() ?? 'mock-runtime';
+		},
+		get runtimeLabel() {
+			return options?.runtimeId?.() ?? 'mock-runtime';
+		},
+		workdir: '/workspace',
+	};
+}
+
 describe('createGondolinPlugin', () => {
 	it('marks the plugin for gateway startup activation', async () => {
 		const manifestPath = path.resolve(import.meta.dirname, '..', 'openclaw.plugin.json');
 		const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
 			readonly activation?: { readonly onStartup?: boolean };
 			readonly cliBackends?: readonly string[];
+			readonly configSchema?: {
+				readonly properties?: Record<
+					string,
+					{
+						readonly additionalProperties?: boolean;
+						readonly required?: readonly string[];
+						readonly type?: string;
+					}
+				>;
+				readonly required?: readonly string[];
+			};
 			readonly contracts?: { readonly tools?: readonly string[] };
+			readonly toolMetadata?: Record<string, { readonly optional?: boolean }>;
 		};
 
 		expect(manifest.activation?.onStartup).toBe(true);
 		expect(manifest.cliBackends).toContain('gondolin');
-		expect(manifest.contracts?.tools).toContain('zone_git_push');
+		expect(manifest.contracts?.tools ?? []).not.toContain('zone_git_push');
+		expect(manifest.contracts?.tools).toEqual(TOOL_PORTAL_NATIVE_TOOL_NAMES);
+		expect(manifest.toolMetadata).toEqual(
+			Object.fromEntries(
+				TOOL_PORTAL_NATIVE_TOOL_NAMES.map((toolName) => [toolName, { optional: true }]),
+			),
+		);
+		expect(manifest.configSchema?.required).toEqual(['zoneId']);
+		expect(manifest.configSchema?.properties).not.toHaveProperty('controllerUrl');
+		expect(manifest.configSchema?.properties).not.toHaveProperty('gatewayControlLinkMonitor');
+		expect(manifest.configSchema?.properties).not.toHaveProperty('gatewayControlSessionMonitor');
+		expect(manifest.configSchema?.properties?.toolPortal).toMatchObject({
+			additionalProperties: false,
+			required: ['configDir'],
+			type: 'object',
+		});
+		expect(manifest.configSchema?.properties?.controlSession).toMatchObject({
+			additionalProperties: false,
+			required: [
+				'bootId',
+				'controllerEpoch',
+				'generationId',
+				'peerId',
+				'processEpoch',
+				'verifierPublicKeyPem',
+			],
+			type: 'object',
+		});
 	});
 
 	it('exports a default plugin descriptor with the gondolin id', () => {
@@ -70,52 +358,46 @@ describe('createGondolinPlugin', () => {
 		}).not.toThrow();
 	});
 
-	it('registers the zone_git_push tool from plugin config when available', () => {
+	it('does not register the old direct zone_git_push model tool', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerTool = vi.fn();
 
 		try {
 			defaultPlugin.register({
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
+				registerHttpRoute: vi.fn(),
 				registerTool,
 				registrationMode: 'full',
 			});
 
-			expect(registerTool).toHaveBeenCalledWith(
-				expect.objectContaining({
-					name: 'zone_git_push',
-					parameters: expect.objectContaining({ type: 'object' }),
-				}),
-				{ name: 'zone_git_push', optional: true },
+			expect(registerTool).not.toHaveBeenCalledWith(
+				expect.objectContaining({ name: 'zone_git_push' }),
+				expect.anything(),
 			);
 		} finally {
 			stderrWrite.mockRestore();
 		}
 	});
 
-	it('registers zone_git_push during OpenClaw tool discovery without loading the sandbox SDK', () => {
+	it('does not expose zone_git_push during OpenClaw tool discovery', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerTool = vi.fn();
 
 		try {
 			defaultPlugin.register({
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
 					zoneId: 'shravan',
 				},
 				registerTool,
 				registrationMode: 'tool-discovery',
 			});
 
-			expect(registerTool).toHaveBeenCalledWith(
-				expect.objectContaining({
-					name: 'zone_git_push',
-					parameters: expect.objectContaining({ type: 'object' }),
-				}),
-				{ name: 'zone_git_push', optional: true },
+			expect(registerTool).not.toHaveBeenCalledWith(
+				expect.objectContaining({ name: 'zone_git_push' }),
+				expect.anything(),
 			);
 			expect(stderrWrite).not.toHaveBeenCalled();
 		} finally {
@@ -123,7 +405,945 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
-	it('publishes Tool VM runtime status from OpenClaw runtime config during full registration', async () => {
+	it('registers Tool Portal native tools during OpenClaw tool discovery', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerTool = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					toolPortal: {
+						configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+					},
+					zoneId: 'shravan',
+				},
+				registerTool,
+				registrationMode: 'tool-discovery',
+			});
+
+			expect(registerTool).toHaveBeenCalledWith(expect.any(Function), {
+				names: TOOL_PORTAL_NATIVE_TOOL_NAMES,
+				optional: true,
+			});
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers private gateway control readiness and upgrade routes when control session config is present', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerHttpRoute = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute,
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+
+			expect(registerHttpRoute).toHaveBeenCalledWith(
+				expect.objectContaining({
+					auth: 'plugin',
+					match: 'exact',
+					path: '/__agent-vm/ready',
+				}),
+			);
+			expect(registerHttpRoute).toHaveBeenCalledWith(
+				expect.objectContaining({
+					auth: 'plugin',
+					handleUpgrade: expect.any(Function),
+					match: 'exact',
+					path: '/__agent-vm/gateway-control',
+				}),
+			);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('reuses the gateway control service across repeated full registration for the same identity', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const controlSession = createControlSessionPluginConfig();
+		const firstRegisterHttpRoute = vi.fn();
+		const secondRegisterHttpRoute = vi.fn();
+		const pluginConfig = {
+			controlSession,
+			zoneId: 'shravan',
+		};
+
+		try {
+			defaultPlugin.register({
+				pluginConfig,
+				registerHttpRoute: firstRegisterHttpRoute,
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+			defaultPlugin.register({
+				pluginConfig,
+				registerHttpRoute: secondRegisterHttpRoute,
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+
+			expect(expectRegisteredRoute(firstRegisterHttpRoute, '/__agent-vm/ready').handler).toBe(
+				expectRegisteredRoute(secondRegisterHttpRoute, '/__agent-vm/ready').handler,
+			);
+			expect(
+				expectRegisteredRoute(firstRegisterHttpRoute, '/__agent-vm/gateway-control').handleUpgrade,
+			).toBe(
+				expectRegisteredRoute(secondRegisterHttpRoute, '/__agent-vm/gateway-control').handleUpgrade,
+			);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers Tool Portal native model tools instead of MCP Portal model tools', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerTool = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					toolPortal: {
+						configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+					},
+					zoneId: 'shravan',
+				},
+				registerHttpRoute: vi.fn(),
+				registerTool,
+				registrationMode: 'full',
+			});
+
+			expect(registerTool).toHaveBeenCalledWith(expect.any(Function), {
+				names: TOOL_PORTAL_NATIVE_TOOL_NAMES,
+				optional: true,
+			});
+			const toolFactory = registerTool.mock.calls.find(
+				(call) => typeof call[0] === 'function',
+			)?.[0];
+			if (typeof toolFactory !== 'function') {
+				throw new Error('Expected a Tool Portal native tool factory registration.');
+			}
+			const factory = toolFactory as (context: {
+				readonly agentId: string;
+			}) => readonly { readonly name: string }[];
+			const tools = factory({ agentId: 'shravan' });
+			expect(tools.map((tool) => tool.name)).toEqual([
+				'tool_portal_list',
+				'tool_portal_search',
+				'tool_portal_describe',
+				'tool_portal_call',
+			]);
+			expect(JSON.stringify(tools)).not.toContain('mcp_portal_');
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers the private e2e Tool VM write/read route during full plugin registration when env opt-in is set', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerHttpRoute = vi.fn();
+		const registerTool = vi.fn();
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute,
+				registerTool,
+				registrationMode: 'full',
+			});
+
+			expect(
+				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			).toBeDefined();
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('does not register the private e2e Tool VM write/read route without env opt-in', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerHttpRoute = vi.fn();
+		const registerTool = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute,
+				registerTool,
+				registrationMode: 'full',
+			});
+
+			expect(
+				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			).toBeUndefined();
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers the private Tool VM write/read route through the e2e plugin entrypoint', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerHttpRoute = vi.fn();
+		const registerTool = vi.fn();
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		try {
+			e2ePlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute,
+				registerTool,
+				registrationMode: 'full',
+			});
+
+			expect(
+				registeredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			).toBeDefined();
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('rejects the private e2e Tool VM write/read route without a proof signature', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText: createToolVmWriteReadProbeBody(),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(401);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: { message: 'tool-vm-write-read-e2e: missing proof signature.' },
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('authenticates the signed route before looking up or actuating control admission pressure', async () => {
+		const registerHttpRoute = vi.fn();
+		const getAcceptedSession = vi.fn(() => undefined);
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		const unregister = registerControlAdmissionPressureTestActuator({ getAcceptedSession });
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+		});
+
+		try {
+			const response = await invokeRegisteredRoute({
+				bodyText: createControlAdmissionPressureBody('snapshot'),
+				route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			});
+
+			expect(response.statusCode).toBe(401);
+			expect(getAcceptedSession).not.toHaveBeenCalled();
+		} finally {
+			unregister();
+		}
+	});
+
+	it('fences a signed control admission action to the exact attachment generation', async () => {
+		const registerHttpRoute = vi.fn();
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		const unregister = registerControlAdmissionPressureTestActuator({
+			acceptedAttachmentGeneration: 8,
+		});
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+		});
+		const bodyText = createControlAdmissionPressureBody('snapshot');
+
+		try {
+			const response = await invokeRegisteredRoute({
+				bodyText,
+				headers: createToolVmWriteReadProbeHeaders(bodyText),
+				route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			});
+
+			expect(response.statusCode).toBe(409);
+			expect(JSON.parse(response.bodyText)).toMatchObject({
+				error: { message: expect.stringContaining('generation is stale') },
+				ok: false,
+			});
+		} finally {
+			unregister();
+		}
+	});
+
+	it('rejects a signed control admission batch above the hard route bound', async () => {
+		const registerHttpRoute = vi.fn();
+		const getAcceptedSession = vi.fn(() => undefined);
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		const unregister = registerControlAdmissionPressureTestActuator({ getAcceptedSession });
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+		});
+		const bodyText = createControlAdmissionPressureBody('submitBatch', {
+			batchSize: 81,
+			byteLength: 1,
+			coalesceKeyPrefix: 'bounded-pressure',
+			direction: 'ingress',
+			messageClass: 'diagnostic',
+		});
+
+		try {
+			const response = await invokeRegisteredRoute({
+				bodyText,
+				headers: createToolVmWriteReadProbeHeaders(bodyText),
+				route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+			});
+
+			expect(response.statusCode).toBe(400);
+			expect(getAcceptedSession).not.toHaveBeenCalled();
+		} finally {
+			unregister();
+		}
+	});
+
+	it('dispatches signed snapshot, hold, bounded batch, and release admission actions', async () => {
+		const registerHttpRoute = vi.fn();
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		const unregister = registerControlAdmissionPressureTestActuator();
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+		});
+		const route = expectRegisteredRoute(
+			registerHttpRoute,
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
+		);
+		const invokeAction = async (
+			action: 'hold' | 'release' | 'snapshot' | 'submitBatch',
+			fields: Readonly<Record<string, unknown>> = {},
+		): Promise<
+			ReturnType<typeof invokeRegisteredRoute> extends Promise<infer TResult> ? TResult : never
+		> => {
+			const bodyText = createControlAdmissionPressureBody(action, fields);
+			return await invokeRegisteredRoute({
+				bodyText,
+				headers: createToolVmWriteReadProbeHeaders(bodyText),
+				route,
+			});
+		};
+
+		try {
+			const snapshot = await invokeAction('snapshot');
+			const hold = await invokeAction('hold', {
+				direction: 'ingress',
+				messageClass: 'diagnostic',
+			});
+			const holdId = (JSON.parse(hold.bodyText) as { details: { holdId: string } }).details.holdId;
+			const batch = await invokeAction('submitBatch', {
+				batchSize: 2,
+				byteLength: 1,
+				coalesceKeyPrefix: 'route-pressure',
+				direction: 'egress',
+				messageClass: 'liveness',
+			});
+			const release = await invokeAction('release', { holdId });
+
+			expect([snapshot, hold, batch, release].map((response) => response.statusCode)).toEqual([
+				200, 200, 200, 200,
+			]);
+			expect(JSON.parse(snapshot.bodyText)).toMatchObject({
+				details: { acceptedAttachmentGeneration: 7 },
+				ok: true,
+			});
+			expect(JSON.parse(batch.bodyText)).toMatchObject({
+				details: { admissions: [{ status: 'admitted' }, { status: 'admitted' }] },
+				ok: true,
+			});
+			expect(JSON.parse(release.bodyText)).toMatchObject({
+				details: { released: true },
+				ok: true,
+			});
+		} finally {
+			unregister();
+		}
+	});
+
+	it('rejects the private e2e Tool VM write/read route when body agent does not match the session key', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			agentId: 'main',
+			sessionKey: 'agent:beta:tool-vm-write-read:test-session',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(403);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: { message: 'tool-vm-write-read-e2e: body agentId does not match sessionKey agent.' },
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('rejects the private e2e Tool VM write/read route when the body selects a foreign signed identity', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			agentId: 'main',
+			sessionKey: 'agent:main:tool-vm-write-read:test-session',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(403);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message:
+					'tool-vm-write-read-e2e: request identity does not match the configured probe identity set.',
+			},
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['malformed JSON', '{', /identity set.*JSON/iu],
+		['an empty set', '[]', /identity set.*between 1 and 4/iu],
+		[
+			'an oversized set',
+			JSON.stringify(
+				Array.from({ length: 5 }, (_, index) => ({
+					agentId: `agent-${String(index)}`,
+					sessionKey: `agent:agent-${String(index)}:tool-vm-write-read:test`,
+				})),
+			),
+			/identity set.*between 1 and 4/iu,
+		],
+		[
+			'duplicate tuples',
+			JSON.stringify([
+				{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:test' },
+				{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:test' },
+			]),
+			/identity set.*duplicate/iu,
+		],
+		[
+			'an agent/session mismatch',
+			JSON.stringify([{ agentId: 'main', sessionKey: 'agent:beta:tool-vm-write-read:test' }]),
+			/configured.*session key.*agent id/iu,
+		],
+	] as const)('rejects configured probe identities with %s', (_label, configuredValue, message) => {
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV, configuredValue);
+
+		expect(() =>
+			registerToolVmWriteReadE2eRoute({
+				api: { registerHttpRoute: vi.fn() },
+				factoryProvider: async () => vi.fn(async () => createMockToolVmWriteReadBackend()),
+			}),
+		).toThrow(message);
+	});
+
+	it('accepts either of two configured signed identity tuples', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		vi.stubEnv(
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+			JSON.stringify([
+				{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:beta-session' },
+				{ agentId: 'main', sessionKey: 'agent:main:tool-vm-write-read:main-session' },
+			]),
+		);
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			agentId: 'main',
+			sessionKey: 'agent:main:tool-vm-write-read:main-session',
+		});
+
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(200);
+		expect(backendFactory).toHaveBeenCalledOnce();
+	});
+
+	it('rejects a signed body identity outside the configured tuple set', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+		vi.stubEnv(
+			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+			JSON.stringify([
+				{ agentId: 'beta', sessionKey: 'agent:beta:tool-vm-write-read:beta-session' },
+				{ agentId: 'main', sessionKey: 'agent:main:tool-vm-write-read:main-session' },
+			]),
+		);
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			agentId: 'foreign',
+			sessionKey: 'agent:foreign:tool-vm-write-read:foreign-session',
+		});
+
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(403);
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('rejects the private e2e Tool VM write/read route for unsafe proof paths', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '../outside.txt',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(400);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: { message: 'tool-vm-write-read-e2e: filePath must stay under .agent-vm/.' },
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('runs the private e2e Tool VM write/read route with a signed same-agent proof', async () => {
+		const registerHttpRoute = vi.fn();
+		const runShellCommand = vi.fn(async () => ({
+			code: 0,
+			stderr: Buffer.from(''),
+			stdout: Buffer.from('probe-marker'),
+		}));
+		const backend = createMockToolVmWriteReadBackend({ runShellCommand });
+		const backendFactory = vi.fn(async () => backend);
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody();
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode, response.bodyText).toBe(200);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			details: {
+				agentId: 'beta',
+				filePath: '.agent-vm/proof.txt',
+				marker: 'probe-marker',
+				readBack: 'probe-marker',
+				sessionKey: 'agent:beta:tool-vm-write-read:test-session',
+			},
+			ok: true,
+		});
+		expect(backendFactory).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentWorkspaceDir: '/zone/agents/beta',
+				scopeKey: 'agent:beta:tool-vm-write-read:test-session',
+				sessionKey: 'agent:beta:tool-vm-write-read:test-session',
+			}),
+		);
+		expect(runShellCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				script: expect.stringContaining("proof_file='.agent-vm/proof.txt'"),
+			}),
+		);
+	});
+
+	it('rejects unsafe active-operation containment sentinel paths before acquiring a backend', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			scenario: 'active-operation-containment',
+			sentinelFilePath: '../outside-sentinel.txt',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(400);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message: 'tool-vm-write-read-e2e: sentinelFilePath must stay under .agent-vm/.',
+			},
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('rejects unbounded active-operation markers before acquiring a backend', async () => {
+		const registerHttpRoute = vi.fn();
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend());
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			marker: 'marker-with-a-newline\nnot-a-single-token',
+			scenario: 'active-operation-containment',
+			sentinelFilePath: '.agent-vm/active-operation-committed.txt',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(400);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message: 'tool-vm-write-read-e2e: active-operation marker must be a bounded token.',
+			},
+			ok: false,
+		});
+		expect(backendFactory).not.toHaveBeenCalled();
+	});
+
+	it('orders active-operation marker commit before sentinel publication and blocking', async () => {
+		const registerHttpRoute = vi.fn();
+		const runShellCommand = vi
+			.fn()
+			.mockRejectedValue(new Error('Connection to tool-1.vm.host closed by remote host.'));
+		const backendFactory = vi.fn(async () => createMockToolVmWriteReadBackend({ runShellCommand }));
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '.agent-vm/active-operation.txt',
+			marker: 'active-operation-marker-1',
+			scenario: 'active-operation-containment',
+			sentinelFilePath: '.agent-vm/active-operation-committed.txt',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(503);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message: 'tool-vm-write-read-e2e: active operation lost its Tool VM connection.',
+			},
+			ok: false,
+		});
+		const script = runShellCommand.mock.calls[0]?.[0].script as string;
+		expect(script).toContain("proof_file='/workspace/.agent-vm/active-operation.txt'");
+		expect(script).toContain("sentinel_file='/workspace/.agent-vm/active-operation-committed.txt'");
+		const replayGuardIndex = script.indexOf('grep -Fqx');
+		const markerAppendIndex = script.indexOf('>>"$proof_file"');
+		const markerSyncIndex = script.indexOf('sync "$proof_file"');
+		const sentinelPublishIndex = script.indexOf('mv "$sentinel_temp_file" "$sentinel_file"');
+		const sentinelSyncIndex = script.indexOf('sync "$sentinel_file"');
+		const blockingIndex = script.indexOf('while :; do');
+		expect(replayGuardIndex).toBeGreaterThanOrEqual(0);
+		expect(markerAppendIndex).toBeGreaterThan(replayGuardIndex);
+		expect(markerSyncIndex).toBeGreaterThan(markerAppendIndex);
+		expect(sentinelPublishIndex).toBeGreaterThan(markerSyncIndex);
+		expect(sentinelSyncIndex).toBeGreaterThan(sentinelPublishIndex);
+		expect(blockingIndex).toBeGreaterThan(sentinelSyncIndex);
+		expect(script.match(/>>"\$proof_file"/gu)).toHaveLength(1);
+	});
+
+	it('runs the private e2e route stale-reacquire scenario by resetting Tool VM SSH on one backend handle', async () => {
+		const registerHttpRoute = vi.fn();
+		let runtimeId = 'lease-old';
+		const runShellCommand = vi
+			.fn()
+			.mockResolvedValueOnce({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('first-marker'),
+			})
+			.mockRejectedValueOnce(
+				new Error('kex_exchange_identification: read: Connection reset by peer'),
+			)
+			.mockImplementationOnce(async () => {
+				runtimeId = 'lease-new';
+				return {
+					code: 0,
+					stderr: Buffer.from(''),
+					stdout: Buffer.from('second-marker'),
+				};
+			});
+		const finalizeExec = vi.fn(async () => {});
+		const buildExecSpec = vi.fn(async () => ({
+			argv: ['sh', '-lc', 'sleep 60'],
+			env: {},
+			finalizeToken: { kind: 'mock-finalize-token' },
+			stdinMode: 'pipe-closed' as const,
+		}));
+		const backend = createMockToolVmWriteReadBackend({
+			buildExecSpec,
+			finalizeExec,
+			runShellCommand,
+			runtimeId: () => runtimeId,
+		});
+		const backendFactory = vi.fn(async () => backend);
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '.agent-vm/proof-first.txt',
+			marker: 'first-marker',
+			scenario: 'stale-reacquire',
+			secondFilePath: '.agent-vm/proof-second.txt',
+			secondMarker: 'second-marker',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode, response.bodyText).toBe(200);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			details: {
+				agentId: 'beta',
+				first: {
+					filePath: '.agent-vm/proof-first.txt',
+					marker: 'first-marker',
+					readBack: 'first-marker',
+				},
+				newRuntimeId: 'lease-new',
+				oldRuntimeId: 'lease-old',
+				scenario: 'stale-reacquire',
+				second: {
+					filePath: '.agent-vm/proof-second.txt',
+					marker: 'second-marker',
+					readBack: 'second-marker',
+				},
+				staleTrigger: 'ssh-command-reset',
+				status: 'ok',
+			},
+			ok: true,
+		});
+		expect(backendFactory).toHaveBeenCalledTimes(1);
+		expect(runShellCommand).toHaveBeenCalledTimes(3);
+		expect(runShellCommand.mock.calls[1]?.[0]).toEqual(
+			expect.objectContaining({
+				script: expect.stringContaining('agent-vm-e2e-resetting-tool-vm-sshd'),
+			}),
+		);
+		expect(buildExecSpec).not.toHaveBeenCalled();
+		expect(finalizeExec).not.toHaveBeenCalled();
+	});
+
+	it('accepts remote-host-closed SSH reset evidence in the stale-reacquire e2e route', async () => {
+		const registerHttpRoute = vi.fn();
+		let runtimeId = 'lease-old';
+		const runShellCommand = vi
+			.fn()
+			.mockResolvedValueOnce({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('first-marker'),
+			})
+			.mockRejectedValueOnce(
+				new Error(
+					"Warning: Permanently added 'tool-1.vm.host' (ED25519) to the list of known hosts.\r\nagent-vm-e2e-resetting-tool-vm-sshd\nConnection to tool-1.vm.host closed by remote host.",
+				),
+			)
+			.mockImplementationOnce(async () => {
+				runtimeId = 'lease-new';
+				return {
+					code: 0,
+					stderr: Buffer.from(''),
+					stdout: Buffer.from('second-marker'),
+				};
+			});
+		const backend = createMockToolVmWriteReadBackend({
+			runShellCommand,
+			runtimeId: () => runtimeId,
+		});
+		const backendFactory = vi.fn(async () => backend);
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '.agent-vm/proof-first.txt',
+			marker: 'first-marker',
+			scenario: 'stale-reacquire',
+			secondFilePath: '.agent-vm/proof-second.txt',
+			secondMarker: 'second-marker',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode, response.bodyText).toBe(200);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			details: {
+				newRuntimeId: 'lease-new',
+				oldRuntimeId: 'lease-old',
+				scenario: 'stale-reacquire',
+				second: {
+					readBack: 'second-marker',
+				},
+				status: 'ok',
+			},
+			ok: true,
+		});
+		expect(runShellCommand).toHaveBeenCalledTimes(3);
+	});
+
+	it('rejects stale-reacquire when the SSH reset script reports no sshd ancestor', async () => {
+		const registerHttpRoute = vi.fn();
+		const runShellCommand = vi
+			.fn()
+			.mockResolvedValueOnce({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('first-marker'),
+			})
+			.mockRejectedValueOnce(
+				new Error('agent-vm-e2e-resetting-tool-vm-sshd: no sshd ancestor found'),
+			)
+			.mockResolvedValueOnce({
+				code: 0,
+				stderr: Buffer.from(''),
+				stdout: Buffer.from('second-marker'),
+			});
+		const backend = createMockToolVmWriteReadBackend({
+			runShellCommand,
+		});
+		const backendFactory = vi.fn(async () => backend);
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV, 'test-tool-vm-write-read-proof-key');
+
+		registerToolVmWriteReadE2eRoute({
+			api: { registerHttpRoute },
+			factoryProvider: async () => backendFactory,
+		});
+		const bodyText = createToolVmWriteReadProbeBody({
+			filePath: '.agent-vm/proof-first.txt',
+			marker: 'first-marker',
+			scenario: 'stale-reacquire',
+			secondFilePath: '.agent-vm/proof-second.txt',
+			secondMarker: 'second-marker',
+		});
+		const response = await invokeRegisteredRoute({
+			bodyText,
+			headers: createToolVmWriteReadProbeHeaders(bodyText),
+			route: expectRegisteredRoute(registerHttpRoute, AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH),
+		});
+
+		expect(response.statusCode).toBe(500);
+		expect(JSON.parse(response.bodyText)).toMatchObject({
+			error: {
+				message: 'agent-vm-e2e-resetting-tool-vm-sshd: no sshd ancestor found',
+			},
+			ok: false,
+		});
+		expect(runShellCommand).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not publish Tool VM runtime status through controller HTTP during full registration', async () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const fetchSpy = vi
 			.spyOn(globalThis, 'fetch')
@@ -145,40 +1365,23 @@ describe('createGondolinPlugin', () => {
 					},
 				},
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
+				registerHttpRoute: vi.fn(),
 				registerTool: vi.fn(),
 				registrationMode: 'full',
 			});
 
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledWith(
-					'http://controller.vm.host:18800/zones/shravan/openclaw-runtime-status',
-					expect.objectContaining({
-						method: 'POST',
-					}),
-				);
-			});
-			const requestInit = fetchSpy.mock.calls[0]?.[1];
-			if (typeof requestInit?.body !== 'string') {
-				throw new TypeError('Expected runtime status request body to be a string.');
-			}
-			const body = JSON.parse(requestInit.body) as {
-				readonly findings: readonly { readonly ok: boolean }[];
-				readonly pluginId: string;
-				readonly zoneId: string;
-			};
-			expect(body.pluginId).toBe('gondolin');
-			expect(body.zoneId).toBe('shravan');
-			expect(body.findings.every((finding) => finding.ok)).toBe(true);
+			await Promise.resolve();
+			expect(fetchSpy).not.toHaveBeenCalled();
 		} finally {
 			fetchSpy.mockRestore();
 			stderrWrite.mockRestore();
 		}
 	});
 
-	it('retries Tool VM runtime status publishing while the controller becomes ready', async () => {
+	it('does not retry Tool VM runtime status through controller HTTP while the controller becomes ready', async () => {
 		vi.useFakeTimers();
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const fetchSpy = vi
@@ -204,20 +1407,16 @@ describe('createGondolinPlugin', () => {
 					},
 				},
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
+				registerHttpRoute: vi.fn(),
 				registerTool: vi.fn(),
 				registrationMode: 'full',
 			});
 
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledTimes(1);
-			});
 			await vi.advanceTimersByTimeAsync(1_000);
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledTimes(2);
-			});
+			expect(fetchSpy).not.toHaveBeenCalled();
 			expect(stderrWrite).not.toHaveBeenCalledWith(
 				expect.stringContaining('failed to publish OpenClaw runtime status'),
 			);
@@ -228,7 +1427,7 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
-	it('does not wrap runtime status publishing in a second retry loop', async () => {
+	it('does not keep a controller HTTP runtime-status retry loop alive', async () => {
 		vi.useFakeTimers();
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const fetchSpy = vi
@@ -253,22 +1452,17 @@ describe('createGondolinPlugin', () => {
 					},
 				},
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
+				registerHttpRoute: vi.fn(),
 				registerTool: vi.fn(),
 				registrationMode: 'full',
 			});
 
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledTimes(1);
-			});
 			await vi.advanceTimersByTimeAsync(29_000);
-			await vi.waitFor(() => {
-				expect(fetchSpy).toHaveBeenCalledTimes(30);
-			});
 			await vi.advanceTimersByTimeAsync(1_000);
-			expect(fetchSpy).toHaveBeenCalledTimes(30);
+			expect(fetchSpy).not.toHaveBeenCalled();
 		} finally {
 			fetchSpy.mockRestore();
 			stderrWrite.mockRestore();
@@ -280,7 +1474,7 @@ describe('createGondolinPlugin', () => {
 		expect(() =>
 			defaultPlugin.register({
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
+					controlSession: createControlSessionPluginConfig(),
 					zoneId: 'shravan',
 				},
 				registrationMode: 'full',
@@ -288,62 +1482,64 @@ describe('createGondolinPlugin', () => {
 		).toThrow('Gondolin full registration requires OpenClaw registerTool.');
 	});
 
-	it('resolves zone_git_push token from the configured environment variable', async () => {
-		const previousToken = process.env.AGENT_VM_ZONE_GIT_TOKEN;
-		process.env.AGENT_VM_ZONE_GIT_TOKEN = 'runtime-push-token';
-		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-		let registeredTool:
-			| Parameters<NonNullable<Parameters<typeof defaultPlugin.register>[0]['registerTool']>>[0]
-			| undefined;
-
-		try {
+	it('fails full registration without control session config instead of falling back to raw lease HTTP', () => {
+		expect(() =>
 			defaultPlugin.register({
 				pluginConfig: {
-					controllerUrl: 'http://controller.vm.host:18800',
-					zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 					zoneId: 'shravan',
 				},
-				registerTool: (tool) => {
-					registeredTool = tool;
-				},
-				registrationMode: 'tool-discovery',
-			});
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			}),
+		).toThrow('Gondolin full registration requires controlSession.');
+	});
 
-			if (!registeredTool) {
-				throw new Error('Expected zone_git_push tool to be registered.');
-			}
-			const fetchSpy = vi
-				.spyOn(globalThis, 'fetch')
-				.mockResolvedValue(new Response(JSON.stringify({ success: true })));
-			try {
-				await registeredTool.execute('tool-call-1', { expectedHead: 'abc123' });
-				expect(fetchSpy).toHaveBeenCalledWith(
-					'http://controller.vm.host:18800/zones/shravan/zone-git/push',
-					expect.objectContaining({
-						headers: {
-							'content-type': 'application/json',
-							'x-agent-vm-zone-git-token': 'runtime-push-token',
-						},
-					}),
-				);
-			} finally {
-				fetchSpy.mockRestore();
-			}
+	it('fails full registration when the private caller-context proof key env is absent', () => {
+		vi.unstubAllEnvs();
+
+		expect(() =>
+			defaultPlugin.register({
+				pluginConfig: {
+					controlSession: createControlSessionPluginConfig(),
+					zoneId: 'shravan',
+				},
+				registerHttpRoute: vi.fn(),
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			}),
+		).toThrow(
+			`Gondolin full registration requires ${GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV}.`,
+		);
+	});
+
+	it('rejects legacy zone_git_push token config during tool discovery', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerTool = vi.fn();
+
+		try {
+			expect(() =>
+				defaultPlugin.register({
+					pluginConfig: {
+						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+						zoneId: 'shravan',
+					},
+					registerTool,
+					registrationMode: 'tool-discovery',
+				}),
+			).toThrow('Gondolin plugin config no longer accepts zone git token fields.');
+			expect(registerTool).not.toHaveBeenCalled();
 		} finally {
 			stderrWrite.mockRestore();
-			if (previousToken === undefined) {
-				delete process.env.AGENT_VM_ZONE_GIT_TOKEN;
-			} else {
-				process.env.AGENT_VM_ZONE_GIT_TOKEN = previousToken;
-			}
 		}
 	});
 });
 
 describe('createBackendDeps', () => {
-	it('delegates buildExecSpec to SSH helpers', async () => {
+	it('binds exec sessions to the exact lease host key with strict checking', async () => {
 		const ssh = createMockSshHelpers();
 		const deps = createBackendDeps(ssh);
+		const leaseKnownHostsLine =
+			'tool-0.vm.host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexecLeaseHostKey';
 
 		const execSpec = await deps.buildExecSpec({
 			command: 'ls -la',
@@ -351,7 +1547,7 @@ describe('createBackendDeps', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine: leaseKnownHostsLine,
 				port: 22,
 				user: 'sandbox',
 			},
@@ -361,11 +1557,18 @@ describe('createBackendDeps', () => {
 
 		expect(ssh.createSshSandboxSessionFromSettings).toHaveBeenCalledWith(
 			expect.objectContaining({
-				target: 'sandbox@tool-0.vm.host:22',
 				identityData: 'pem',
-				strictHostKeyChecking: false,
+				knownHostsData: leaseKnownHostsLine,
+				strictHostKeyChecking: true,
+				target: 'sandbox@tool-0.vm.host:22',
 				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 			}),
+		);
+		expect(ssh.createSshSandboxSessionFromSettings).not.toHaveBeenCalledWith(
+			expect.objectContaining({ knownHostsData: '' }),
+		);
+		expect(ssh.createSshSandboxSessionFromSettings).not.toHaveBeenCalledWith(
+			expect.objectContaining({ strictHostKeyChecking: false }),
 		);
 		expect(ssh.buildExecRemoteCommand).toHaveBeenCalledWith({
 			command: 'ls -la',
@@ -397,7 +1600,8 @@ describe('createBackendDeps', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine:
+					'tool-0.vm.host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIfinalizeDisposeHostKey',
 				port: 22,
 				user: 'sandbox',
 			},
@@ -422,7 +1626,8 @@ describe('createBackendDeps', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine:
+					'tool-0.vm.host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIfinalizeWithoutDisposeHostKey',
 				port: 22,
 				user: 'sandbox',
 			},
@@ -435,7 +1640,7 @@ describe('createBackendDeps', () => {
 		await token.dispose();
 	});
 
-	it('delegates runRemoteShellScript to SSH helpers', async () => {
+	it('binds filesystem shell sessions to the exact lease host key with strict checking', async () => {
 		const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
 		const ssh = createMockSshHelpers({
 			buildRemoteCommand: vi.fn(() => '/bin/sh -c pwd gondolin-sandbox-fs'),
@@ -448,12 +1653,14 @@ describe('createBackendDeps', () => {
 		});
 
 		const deps = createBackendDeps(ssh);
+		const leaseKnownHostsLine =
+			'tool-0.vm.host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIfilesystemLeaseHostKey';
 		const result = await deps.runRemoteShellScript({
 			script: 'pwd',
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine: leaseKnownHostsLine,
 				port: 22,
 				user: 'sandbox',
 			},
@@ -461,6 +1668,21 @@ describe('createBackendDeps', () => {
 
 		expect(result.code).toBe(0);
 		expect(result.stdout.toString()).toBe('/work\n');
+		expect(ssh.createSshSandboxSessionFromSettings).toHaveBeenCalledWith(
+			expect.objectContaining({
+				identityData: 'pem',
+				knownHostsData: leaseKnownHostsLine,
+				strictHostKeyChecking: true,
+				target: 'sandbox@tool-0.vm.host:22',
+				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
+			}),
+		);
+		expect(ssh.createSshSandboxSessionFromSettings).not.toHaveBeenCalledWith(
+			expect.objectContaining({ knownHostsData: '' }),
+		);
+		expect(ssh.createSshSandboxSessionFromSettings).not.toHaveBeenCalledWith(
+			expect.objectContaining({ strictHostKeyChecking: false }),
+		);
 		expect(ssh.buildRemoteCommand).toHaveBeenCalledWith([
 			'/bin/sh',
 			'-c',

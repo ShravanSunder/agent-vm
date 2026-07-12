@@ -39,9 +39,11 @@ interface OpenClawAuthTarget {
 }
 
 const openClawGondolinPluginLoadPath = '/home/openclaw/.openclaw/extensions/gondolin';
+const openClawDeprecatedMcpPortalPluginLoadPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const openClawManagedPackageLoadPath = '/pnpm/global/5/node_modules/@openclaw';
 
 export interface OpenClawDeploymentDoctorTarget {
+	readonly configuredAuthLoginDefaultAgentId?: string | undefined;
 	readonly configuredAuthProfileAgentIds?: readonly string[];
 	readonly configuredCodexHarnessAuthAgentIds?: readonly string[];
 	readonly codexHarnessAuthReadErrors?: readonly CodexHarnessAuthReadError[];
@@ -71,51 +73,18 @@ function hasEnabledEntry(
 	return isObjectRecord(entry) && entry.enabled === true;
 }
 
-function entryAllowsPromptInjection(
-	entries: Record<string, unknown> | undefined,
-	pluginName: string,
-): boolean {
-	const entry = entries?.[pluginName];
-	if (!isObjectRecord(entry)) {
-		return false;
-	}
-	const hooks = entry.hooks;
-	return isObjectRecord(hooks) && hooks.allowPromptInjection === true;
-}
-
-function hasOnlyRuntimePortalPluginConfig(entries: Record<string, unknown> | undefined): boolean {
-	const entry = entries?.['mcp-portal'];
-	if (!isObjectRecord(entry)) {
-		return true;
-	}
-	const config = entry.config;
-	if (config === undefined) {
-		return true;
-	}
-	if (!isObjectRecord(config)) {
-		return false;
-	}
-	const runtimeKeys = new Set(['configDir']);
-	return Object.keys(config).every((key) => runtimeKeys.has(key));
-}
-
-function hasMcpPortalPlugin(config: OpenClawDeploymentConfig): boolean {
+function hasDeprecatedMcpPortalPlugin(config: OpenClawDeploymentConfig): boolean {
 	return (
 		includesString(config.plugins?.allow, 'mcp-portal') ||
 		hasEnabledEntry(config.plugins?.entries, 'mcp-portal')
 	);
 }
 
-function hasPluginApprovalSessionRoute(config: OpenClawDeploymentConfig): boolean {
-	const approvals = config.approvals;
-	if (!isObjectRecord(approvals)) {
-		return false;
-	}
-	const pluginApprovals = approvals.plugin;
-	if (!isObjectRecord(pluginApprovals)) {
-		return false;
-	}
-	return pluginApprovals.enabled === true && pluginApprovals.mode === 'session';
+function hasDeprecatedMcpPortalPluginIdentity(config: OpenClawDeploymentConfig): boolean {
+	return (
+		hasDeprecatedMcpPortalPlugin(config) ||
+		includesString(config.plugins?.load?.paths, openClawDeprecatedMcpPortalPluginLoadPath)
+	);
 }
 
 function resolveOpenClawModelName(model: unknown): string | undefined {
@@ -278,6 +247,34 @@ function collectOpenClawAuthTargets(
 	return [];
 }
 
+function collapseOpenClawProviderAuthTargetsToDefaultAgent(props: {
+	readonly authTargets: readonly OpenClawAuthTarget[];
+	readonly defaultAgentId: string | undefined;
+}): readonly OpenClawAuthTarget[] {
+	if (props.defaultAgentId === undefined) {
+		return props.authTargets;
+	}
+	const providerTargets = props.authTargets.filter(
+		(authTarget) => authTarget.kind === 'openclaw-provider',
+	);
+	if (providerTargets.length === 0) {
+		return props.authTargets;
+	}
+	const codexHarnessTargets = props.authTargets.filter(
+		(authTarget) => authTarget.kind === 'codex-harness',
+	);
+	const collapsedProviderTargets = new Map<string, OpenClawAuthTarget>();
+	for (const authTarget of providerTargets) {
+		collapsedProviderTargets.set(authTarget.provider, {
+			agentId: props.defaultAgentId,
+			kind: 'openclaw-provider',
+			provider: authTarget.provider,
+			targetId: props.defaultAgentId,
+		});
+	}
+	return [...codexHarnessTargets, ...collapsedProviderTargets.values()];
+}
+
 function collectConfiguredOpenAiModelNames(config: OpenClawDeploymentConfig): readonly string[] {
 	const modelNames = new Set<string>();
 	const defaultModelName = resolveOpenClawModelName(config.agents?.defaults?.model);
@@ -346,11 +343,11 @@ function buildPortalEndpointConfigurationHint(props: {
 	readonly runtimeMaterializesPortalEndpoints: boolean;
 }): string {
 	if (props.configuredAgentIds.length === 0) {
-		return 'No agents are configured for this OpenClaw zone. Add at least one agent under zones[].agents and openclaw.json agents.list before MCP Portal endpoint readiness can pass.';
+		return 'No agents are configured for this OpenClaw zone. Add at least one agent under zones[].agents and openclaw.json agents.list before Tool Portal native tool readiness can pass.';
 	}
 	return props.runtimeMaterializesPortalEndpoints
-		? 'agent-vm registers native MCP Portal tools through the OpenClaw plugin; do not configure mcp.servers portal endpoints.'
-		: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.';
+		? 'agent-vm registers Tool Portal native tools through the Gondolin OpenClaw plugin; do not configure mcp.servers portal endpoints.'
+		: 'Set zones[].toolPortal.configDir so agent-vm materializes Tool Portal native tools through the Gondolin OpenClaw plugin.';
 }
 
 function buildAgentAuthProfileChecks(
@@ -360,7 +357,11 @@ function buildAgentAuthProfileChecks(
 	const configuredCodexHarnessAuthAgentIds = new Set(
 		target.configuredCodexHarnessAuthAgentIds ?? [],
 	);
-	return collectOpenClawAuthTargets(target.config).map((authTarget) => {
+	const authTargets = collapseOpenClawProviderAuthTargetsToDefaultAgent({
+		authTargets: collectOpenClawAuthTargets(target.config),
+		defaultAgentId: target.configuredAuthLoginDefaultAgentId,
+	});
+	return authTargets.map((authTarget) => {
 		const hasAuthProfile =
 			authTarget.agentId !== undefined && configuredAuthProfileAgentIds.has(authTarget.agentId);
 		const hasCodexHarnessAuth =
@@ -377,8 +378,8 @@ function buildAgentAuthProfileChecks(
 					? `Codex harness auth.json present for agent ${authTarget.agentId}`
 					: authTarget.kind === 'openclaw-provider'
 						? authTarget.agentId === undefined
-							? `Run agent-vm auth openclaw ${authTarget.provider} --zone ${target.zoneId} for the default OpenClaw auth profile.`
-							: `Run agent-vm auth openclaw ${authTarget.provider} --zone ${target.zoneId} --agent ${authTarget.agentId} or configure gateway.authProfilesByAgent.${authTarget.agentId}.`
+							? `Run agent-vm auth openclaw login ${authTarget.provider} --zone ${target.zoneId} for the default OpenClaw auth profile.`
+							: `Run agent-vm auth openclaw login ${authTarget.provider} --zone ${target.zoneId} --agent ${authTarget.agentId} or configure gateway.authProfilesByAgent.${authTarget.agentId}.`
 						: `Run agent-vm auth codex-harness --zone ${target.zoneId} --agent ${authTarget.agentId} or configure gateway.authProfilesByAgent.${authTarget.agentId}.`,
 		} satisfies DoctorCheck;
 	});
@@ -404,12 +405,22 @@ function buildRequirementChecks(target: OpenClawDeploymentDoctorTarget): readonl
 					config: target.config,
 					...(target.configPath ? { configPath: target.configPath } : {}),
 					kind: 'readable',
+					...(target.runtimeMaterializesPortalEndpoints === undefined
+						? {}
+						: {
+								runtimeMaterializesPortalEndpoints: target.runtimeMaterializesPortalEndpoints,
+							}),
 					zoneId: target.zoneId,
 				}
 			: {
 					...(target.configPath ? { configPath: target.configPath } : {}),
 					configReadError: target.configReadError,
 					kind: 'unreadable',
+					...(target.runtimeMaterializesPortalEndpoints === undefined
+						? {}
+						: {
+								runtimeMaterializesPortalEndpoints: target.runtimeMaterializesPortalEndpoints,
+							}),
 					zoneId: target.zoneId,
 				};
 	return evaluateOpenClawDeploymentRequirements(requirementTarget).map(
@@ -436,41 +447,26 @@ export function buildOpenClawDeploymentDoctorChecks(
 			includesString(config.plugins?.allow, 'memory-core') ||
 			hasEnabledEntry(config.plugins?.entries, 'memory-core');
 		const configuredAgentIds = collectConfiguredAgentIds(config);
-		const shouldCheckMcpPortal =
+		const shouldCheckToolPortal =
 			target.runtimeMaterializesPortalEndpoints === true ||
-			hasMcpPortalPlugin(config) ||
+			hasDeprecatedMcpPortalPluginIdentity(config) ||
 			hasPortalServers(config);
-		const mcpPortalChecks = shouldCheckMcpPortal
+		const toolPortalChecks = shouldCheckToolPortal
 			? [
 					{
-						name: `openclaw-mcp-portal-load-path-${target.zoneId}`,
-						ok: includesString(pluginLoadPaths, '/home/openclaw/.openclaw/extensions/mcp-portal'),
-						hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/mcp-portal.',
-					},
-					{
-						name: `openclaw-mcp-portal-allowed-${target.zoneId}`,
+						name: `openclaw-tool-portal-gondolin-plugin-${target.zoneId}`,
 						ok:
-							includesString(config.plugins?.allow, 'mcp-portal') &&
-							hasEnabledEntry(config.plugins?.entries, 'mcp-portal'),
-						hint: 'Allow and enable the mcp-portal plugin.',
+							includesString(config.plugins?.allow, 'gondolin') &&
+							hasEnabledEntry(config.plugins?.entries, 'gondolin'),
+						hint: 'Allow and enable the gondolin plugin; Tool Portal native tools are registered by that plugin.',
 					},
 					{
-						name: `openclaw-mcp-portal-prompt-injection-${target.zoneId}`,
-						ok: entryAllowsPromptInjection(config.plugins?.entries, 'mcp-portal'),
-						hint: 'Set plugins.entries.mcp-portal.hooks.allowPromptInjection=true.',
+						name: `openclaw-tool-portal-no-mcp-plugin-${target.zoneId}`,
+						ok: !hasDeprecatedMcpPortalPluginIdentity(config),
+						hint: 'Remove the old mcp-portal plugin load path, allow entry, and plugin entry; managed OpenClaw exposes tool_portal_* through gondolin.',
 					},
 					{
-						name: `openclaw-mcp-portal-config-source-${target.zoneId}`,
-						ok: hasOnlyRuntimePortalPluginConfig(config.plugins?.entries),
-						hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir.',
-					},
-					{
-						name: `openclaw-mcp-portal-plugin-approvals-${target.zoneId}`,
-						ok: hasPluginApprovalSessionRoute(config),
-						hint: 'Set approvals.plugin.enabled=true and approvals.plugin.mode="session" so MCP Portal tools that require approval can return prompts to the originating chat.',
-					},
-					{
-						name: `openclaw-mcp-portal-agent-endpoints-${target.zoneId}`,
+						name: `openclaw-tool-portal-agent-endpoints-${target.zoneId}`,
 						ok: hasValidPortalEndpointConfiguration({
 							config,
 							configuredAgentIds,
@@ -495,7 +491,7 @@ export function buildOpenClawDeploymentDoctorChecks(
 				]),
 				hint: `Add plugins.load.paths for ${openClawGondolinPluginLoadPath} and ${openClawManagedPackageLoadPath}.`,
 			},
-			...mcpPortalChecks,
+			...toolPortalChecks,
 			{
 				name: `openclaw-memory-slot-${target.zoneId}`,
 				ok: !hasMemoryCore || config.plugins?.slots?.memory === 'memory-core',
@@ -582,11 +578,12 @@ export async function collectOpenClawDeploymentDoctorChecks(
 					? {
 							config: target.config,
 							codexHarnessAuthReadErrors: codexHarnessAuthScan.readErrors,
+							configuredAuthLoginDefaultAgentId: zone?.gateway.authLogin?.defaultAgent,
 							configuredCodexHarnessAuthAgentIds: codexHarnessAuthScan.agentIds,
 							configuredAuthProfileAgentIds:
 								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
 							configPath: target.configPath,
-							runtimeMaterializesPortalEndpoints: zone?.mcpPortal !== undefined,
+							runtimeMaterializesPortalEndpoints: zone?.toolPortal !== undefined,
 							zoneId: target.zoneId,
 						}
 					: {
@@ -597,7 +594,7 @@ export async function collectOpenClawDeploymentDoctorChecks(
 								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
 							configPath: target.configPath,
 							configReadError: target.configReadError,
-							runtimeMaterializesPortalEndpoints: zone?.mcpPortal !== undefined,
+							runtimeMaterializesPortalEndpoints: zone?.toolPortal !== undefined,
 							zoneId: target.zoneId,
 						};
 			return baseTarget;

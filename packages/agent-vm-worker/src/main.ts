@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 
+import { Server as HttpServer } from 'node:http';
+
 import { serve } from '@hono/node-server';
 import { command, number, option, optional, runSafely, string, subcommands } from 'cmd-ts';
 
 import { loadWorkerConfig, resolvePhaseExecutor } from './config/worker-config.js';
-import { createCoordinator } from './coordinator/coordinator.js';
+import { createWorkerControlApplicationMessageHandler } from './control-session/worker-control-application-handler.js';
+import { attachWorkerControlUpgradeHandler } from './control-session/worker-control-http-server.js';
+import {
+	createWorkerControlService,
+	createWorkerControlServiceOptionsFromEnvironment,
+} from './control-session/worker-control-service.js';
+import { createCoordinator, type Coordinator } from './coordinator/coordinator.js';
 import { createApp } from './server.js';
 
 function writeStdout(message: string): void {
@@ -51,7 +59,27 @@ const serveCommand = command({
 		const config = args.stateDir ? { ...baseConfig, stateDir: args.stateDir } : baseConfig;
 		const workDir = process.env.WORK_DIR ?? '/work';
 		const startTime = Date.now();
-		const coordinator = await createCoordinator({ config, workDir });
+		const workerControlOptions = createWorkerControlServiceOptionsFromEnvironment();
+		const coordinatorRef: { current?: Coordinator | undefined } = {};
+		function requireCoordinator(): Coordinator {
+			if (coordinatorRef.current === undefined) {
+				throw new Error('Worker coordinator is not initialized.');
+			}
+			return coordinatorRef.current;
+		}
+		const workerControlService =
+			workerControlOptions === undefined
+				? undefined
+				: createWorkerControlService({
+						...workerControlOptions,
+						applicationMessageHandler: createWorkerControlApplicationMessageHandler(),
+					});
+		coordinatorRef.current = await createCoordinator({
+			config,
+			workDir,
+			...(workerControlService === undefined ? {} : { workerControlService }),
+		});
+		const coordinator = requireCoordinator();
 		const defaultExecutor = resolvePhaseExecutor(config, {});
 
 		const app = createApp({
@@ -69,9 +97,10 @@ const serveCommand = command({
 				provider: defaultExecutor.provider,
 				model: defaultExecutor.model,
 			}),
+			workerControlService,
 		});
 
-		serve(
+		const server = serve(
 			{
 				fetch: app.fetch,
 				port: args.port,
@@ -80,6 +109,9 @@ const serveCommand = command({
 				writeStdout(`[agent-vm-worker] Server listening on http://localhost:${info.port}`);
 			},
 		);
+		if (server instanceof HttpServer) {
+			attachWorkerControlUpgradeHandler({ server, workerControlService });
+		}
 	},
 });
 

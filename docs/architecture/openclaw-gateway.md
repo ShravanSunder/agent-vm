@@ -89,17 +89,21 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
 ```
 
 The gateway stays alive until `controller stop`, `controller destroy`, process
-exit, or automatic gateway VM recovery. Recovery has two infrastructure actions:
-restart a known running gateway VM, or cold-start a failed/stopped gateway when
-current ownership checks prove it is safe. For running-gateway recovery, the
-controller force releases that zone's Tool VM leases, restarts the gateway VM,
-verifies the VM id changed, and records a `gateway-recovery` health event. For
-cold-start recovery, the controller verifies that the old record/port state is
-safe before creating a new gateway. The default trigger is 10 consecutive
-degraded observations with a 61 minute per-zone cooldown. After 3 consecutive
-failed automatic recovery attempts, the controller records
-`gateway-recovery-suspended` and pauses auto-recovery for that zone until the
-failed-recovery reset window expires.
+exit, or automatic Gateway VM recovery. A dead control session while the Gateway
+service remains live first requests bounded same-Gateway OpenClaw process
+recovery. That replaces only the OpenClaw process and disposable control session,
+preserving the Gateway VM and healthy Tool VMs. Gateway VM recovery is outward
+escalation after process recovery is exhausted or Gateway service/lifecycle
+evidence requires replacement. It has two infrastructure actions: restart a
+known running Gateway VM, or cold-start a failed/stopped Gateway when current
+ownership checks prove it is safe. For running-Gateway recovery, the controller
+force releases that zone's Tool VM leases, restarts the Gateway VM, verifies the
+VM id changed, and records a `gateway-recovery` health event. For cold-start
+recovery, the controller verifies that the old record/port state is safe before
+creating a new Gateway. The default Gateway-recovery budget has a 61 minute
+per-zone cooldown. After 3 consecutive failed automatic recovery attempts, the
+controller records `gateway-recovery-suspended` and pauses auto-recovery for
+that zone until the failed-recovery reset window expires.
 
 OpenClaw/provider details stay below the plugin boundary. The plugin may publish
 generic `agent-channel-provider-health` events with redacted details such as a
@@ -160,7 +164,10 @@ up. The host-side config field is `zoneFilesDir`; there is no static
 
 ## Tool VM Leases
 
-When the agent needs to execute code, OpenClaw requests a tool VM lease through the controller's HTTP API.
+When the agent needs to execute code, OpenClaw requests a Tool VM capability
+from the managed Gondolin plugin. The controller owns lease authority and talks
+to the gateway plugin over the private Socket.IO control session exposed through
+Gondolin ingress.
 
 ### Lease Lifecycle
 
@@ -168,10 +175,8 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
   OpenClaw agent: "I need to run this code"
        |
        v
-  POST /lease {
-    zoneId,
-    agentId,
-    sessionKey,
+  plugin emits gateway_control_rpc lease_create {
+    opaque caller context,
     profileId,
     agentWorkspaceDir,
     workMountDir: "/zone/..."
@@ -186,17 +191,17 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        |  3. Probe existing VM; evict stale leases
        |  4. tcpPool.allocate() → slot 0 (port 19000)
        |  5. createManagedVm() → boot tool VM
-       |  6. vm.enableSsh() → SSH access ready
+       |  6. vm.enableSsh() → client credential + exact server identity
        |  7. Store lease record
        v
-  Response: { leaseId, ssh: { host, port: 19000, user, identityFile } }
+  Response: { leaseId, ssh: { host, user, identityPem, knownHostsLine } }
        |
        v
   Gateway uses SSH directly to execute code in tool VM
        |
-       |-- POST /lease/:leaseId/uses before command or file-bridge script
-       |-- POST /lease/:leaseId/uses/:useId/heartbeat while it runs
-       |-- DELETE /lease/:leaseId/uses/:useId when it finishes
+       |-- gateway_control_rpc lease_use_start before command or file-bridge script
+       |-- gateway_control_rpc lease_use_heartbeat while it runs
+       |-- gateway_control_rpc lease_use_end when it finishes
        |
   v  (lease idle TTL; default 100 minutes)
   Idle reaper: releaseLease()
@@ -219,21 +224,33 @@ controller probes the VM; dead leases are evicted and replaced. This means an
 agent's Tool VM persists across multiple tool calls, channels, sessions, or
 subagents without silently crossing work mount or profile boundaries.
 
-Cached handles renew the idle lease with `POST /lease/:leaseId/renew`; health
-snapshots call this `lease-renew`. `GET` lease routes are read-only; they do
-not update `lastUsedAt`. In-flight commands and file-bridge operations are
-tracked separately as active uses; health snapshots call
-`POST /lease/:leaseId/uses/:useId/heartbeat` a `lease-heartbeat`. Successful
-lease-heartbeats and lease-renews both keep lease state alive, but they
-diagnose different boundaries. A lease-heartbeat means an active operation is
-still alive. A lease-renew means an idle cached lease is being reused. This
-distinction matters when debugging controller-link timeouts versus stale Tool
-VM SSH state. Because active uses are tracked separately, a
+Cached handles renew the idle lease over `gateway_control_rpc`; health snapshots
+call this `lease-renew`. Operator-visible lease summaries come from controller
+status and health snapshot routes, not from a public lease-list route.
+VM-facing lease mutation/read routes are not part of the managed control path.
+In-flight commands and file-bridge operations are tracked separately as active
+uses; health snapshots call active-use heartbeat a `lease-heartbeat`.
+Successful lease-heartbeats and lease-renews both keep lease state alive, but
+they diagnose different boundaries. A lease-heartbeat means an active operation
+is still alive. A lease-renew means an idle cached lease is being reused. This
+distinction matters when debugging control-session timeouts versus stale Tool VM
+SSH state. Because active uses are tracked separately, a
 long-running SSH command keeps the Tool VM protected from idle reap without
 making the controller a stdout/stderr data proxy. If a plugin misses its final
 cleanup callback, plugin heartbeats stop after a finite safety cap (12 hours by
 default); the controller then marks the use stale after the heartbeat window and
 the normal idle reaper can release the lease later.
+
+If a cached handle observes stale Tool VM SSH evidence such as a reset
+file-bridge, failed command, finalize timeout, or dead lease caller context, the
+old binding is retired before any later shell, file, exec, heartbeat, or
+finalize work can start. The plugin asks the controller for a replacement with
+private `gateway_control_rpc lease_reacquire`; the controller re-resolves the
+current caller context, old-lease authority, session fence, workspace,
+work-mount, profile, and agent ownership before returning new SSH material.
+The old lease id is correlation only, not authority. A successful reacquire
+returns a different replacement lease id, and a denied reacquire makes the
+handle terminal for new work instead of falling back to the old SSH path.
 
 The shared agent-vm lease type exposes only an SSH capability: lease id,
 workdir, TCP slot, and endpoint/key material. The OpenClaw filesystem bridge is
@@ -242,11 +259,25 @@ OpenClaw's sandbox file API into remote shell scripts over that SSH lease. The
 controller does not expose a generic filesystem RPC for Tool VMs and does not
 proxy command stdout/stderr.
 
-The controller first checks the zone's `agentToolVmProfiles[agentId]` mapping.
-If no agent-specific mapping exists, it falls back to the zone's
-`defaultToolVmProfile`. This lets one OpenClaw zone serve multiple agents with
-different Tool VM images while keeping the gateway and durable `/zone` namespace
-shared.
+Every live Tool VM gets a unique ephemeral Ed25519 SSH server key. Gondolin
+forces `sshd` to use that key and returns only its public identity. The
+controller binds it to the Gateway-visible `tool-<slot>.vm.host` alias and
+includes that exact `known_hosts` line in the private lease capability.
+OpenClaw supplies the line to both command and filesystem SSH sessions with
+strict host-key checking enabled. Missing or malformed server identity fails
+lease delivery closed; neither path uses TOFU or a permissive host-key fallback.
+
+During the Socket.IO control-plane hard cutover, managed OpenClaw zones may
+declare multiple trusted agents in the same gateway zone. Caller-context
+registration accepts only declared agents and binds the declared `agentId` to the
+session key, agent workspace, translated work mount, session key digest, and
+control-session identity before issuing a caller context. The managed OpenClaw
+plugin signs caller-context evidence with the controller-generated
+`callerContextProofKey`; the controller rejects invalid proofs before accepting
+the evidence. The controller checks the zone's `agentToolVmProfiles[agentId]`
+mapping first and falls back to `defaultToolVmProfile`; cross-agent workspace,
+work-mount, session-key, or proof evidence fails closed instead of collapsing the
+zone to one agent.
 
 For Tool VM-mediated service tokens, the controller filters zone secrets by the
 requesting declared `agentId` and each secret's `agentAccess` before resolving
@@ -282,13 +313,17 @@ For implementation details, see [subsystems/controller.md](../subsystems/control
 
 ---
 
-## MCP Portal Native Tools
+## Tool Portal Native Tools
 
-Managed OpenClaw gateway images install the MCP Portal plugin and the
-`@agent-vm/mcp-portal` package. The plugin registers native OpenClaw tools for
-`mcp_portal_list`, `mcp_portal_search`, `mcp_portal_describe`, and
-`mcp_portal_call`. Those tools call `@agent-vm/mcp-portal/core` directly inside
-the gateway VM.
+Managed OpenClaw gateway images install the Gondolin plugin and Tool Portal
+packages. The plugin registers native OpenClaw tools for `tool_portal_list`,
+`tool_portal_search`, `tool_portal_describe`, and `tool_portal_call`.
+
+Tool Portal is the managed model-visible capability surface. MCP Portal remains
+the MCP-specific provider backend for MCP-backed capabilities and the standalone
+MCP proxy surface for deployments that explicitly choose it outside managed
+OpenClaw. Managed OpenClaw must not expose a second native `mcp_portal_*` model
+tool surface for the same capabilities.
 
 At gateway startup, agent-vm materializes effective MCP Portal configs under the
 gateway cache directory and points the plugin at that effective config
@@ -438,9 +473,10 @@ Wildcard destination authority still belongs in `egressHosts` (`*.discord.gg`,
 upgrade URLs for the gateway or Tool VM audience, and every upgrade host must
 also be declared in `egressHosts`.
 
-Raw `tcpHosts` remain internal plumbing for controller communication, Tool VM
-SSH slots, and explicit host services such as observability collector routes.
-They are not a deployment-level WebSocket escape hatch.
+Raw `tcpHosts` remain internal plumbing for Tool VM SSH slots and explicit host
+services such as resource endpoints. Managed gateway/controller control uses
+Gondolin ingress plus the private Socket.IO control session, not raw controller
+callbacks. Raw `tcpHosts` are not a deployment-level WebSocket escape hatch.
 
 ---
 

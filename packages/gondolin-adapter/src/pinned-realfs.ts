@@ -16,6 +16,8 @@ export interface CreatePinnedRealFsProviderOptions {
 	readonly createRealFsProvider: (hostPath: string) => VirtualProvider;
 }
 
+const terminallyClosedPinnedRoots = new WeakSet<PinnedRealFsRoot>();
+
 function formatRootIdentity(root: PinnedRealFsRoot): string {
 	return `${root.device}:${root.inode}`;
 }
@@ -60,7 +62,11 @@ export function pinRealFsRoot(hostPath: string): PinnedRealFsRoot {
 }
 
 export function closePinnedRealFsRoot(root: PinnedRealFsRoot): void {
+	if (terminallyClosedPinnedRoots.has(root)) {
+		return;
+	}
 	fs.closeSync(root.fd);
+	terminallyClosedPinnedRoots.add(root);
 }
 
 export function assertPinnedRealFsRoot(root: PinnedRealFsRoot): void {

@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 import type { Attributes } from '@opentelemetry/api';
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
@@ -10,8 +12,13 @@ import { BasicTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trac
 
 import type {
 	ControllerTelemetryDriver,
+	ControllerTelemetryDriverDiagnostics,
 	ControllerTelemetryDriverOptions,
 	ControllerTelemetryLogRecord,
+	ControllerTelemetryMetricRecord,
+	ControllerTelemetrySignalAdmissionDiagnostics,
+	ControllerTelemetrySignalKind,
+	ControllerTelemetrySpanRecord,
 } from './controller-telemetry.js';
 import type { TelemetryAttributes } from './health-event-telemetry.js';
 
@@ -62,10 +69,33 @@ interface OtelTracerProviderLike {
 }
 
 export interface OtelControllerTelemetryProviderFactoryOptions {
+	readonly admissionLimits: OtelControllerTelemetryAdmissionLimits;
 	readonly logsUrl: string;
 	readonly metricsUrl: string;
 	readonly resourceAttributes: TelemetryAttributes;
 	readonly tracesUrl: string;
+}
+
+export interface OtelControllerTelemetryAdmissionLimits {
+	readonly maxExportBatchRecords: number;
+	readonly maxQueuedRecordsPerSignal: number;
+	readonly maxRecordBytes: number;
+}
+
+export const defaultOtelControllerTelemetryAdmissionLimits = {
+	maxExportBatchRecords: 64,
+	maxQueuedRecordsPerSignal: 256,
+	maxRecordBytes: 64 * 1_024,
+} as const satisfies OtelControllerTelemetryAdmissionLimits;
+
+const controllerTelemetryAdmissionFlushIntervalMs = 1_000;
+
+interface MutableSignalAdmissionState {
+	currentPayloadBytes: number;
+	currentRecords: number;
+	highWaterPayloadBytes: number;
+	highWaterRecords: number;
+	saturationDroppedRecords: number;
 }
 
 export type OtelControllerTelemetryProviderFactory = (
@@ -81,12 +111,15 @@ const instrumentationName = 'agent-vm-controller';
 export function createOtelControllerTelemetryDriver(
 	options: ControllerTelemetryDriverOptions,
 	providerFactory: OtelControllerTelemetryProviderFactory = createDefaultOtelProviders,
+	admissionOverrides?: Partial<OtelControllerTelemetryAdmissionLimits>,
 ): ControllerTelemetryDriver {
+	const admissionLimits = resolveOtelAdmissionLimits(admissionOverrides);
 	const serviceVersion =
 		typeof options.resourceAttributes['service.version'] === 'string'
 			? options.resourceAttributes['service.version']
 			: '0.0.0';
 	const providers = providerFactory({
+		admissionLimits,
 		logsUrl: joinEndpointPath(options.endpoint, '/v1/logs'),
 		metricsUrl: joinEndpointPath(options.endpoint, '/v1/metrics'),
 		resourceAttributes: options.resourceAttributes,
@@ -97,12 +130,136 @@ export function createOtelControllerTelemetryDriver(
 	const tracer = providers.tracerProvider.getTracer(instrumentationName, serviceVersion);
 	const counters = new Map<string, OtelCounterLike>();
 	const histograms = new Map<string, OtelHistogramLike>();
+	let admittedRecords = 0;
+	let droppedOversizedRecords = 0;
+	let providerOperationFailures = 0;
+	const signalAdmission = {
+		logs: createSignalAdmissionState(),
+		metrics: createSignalAdmissionState(),
+		traces: createSignalAdmissionState(),
+	} satisfies Record<ControllerTelemetrySignalKind, MutableSignalAdmissionState>;
+	let scheduledAdmissionFlush: ReturnType<typeof setTimeout> | undefined;
+	let activeAdmissionFlush: Promise<void> | undefined;
+	let shutdownStarted = false;
+	const admitRecord = (
+		signalKind: ControllerTelemetrySignalKind,
+		record:
+			| ControllerTelemetryLogRecord
+			| ControllerTelemetryMetricRecord
+			| ControllerTelemetrySpanRecord,
+	): boolean => {
+		let recordBytes: number;
+		try {
+			recordBytes = Buffer.byteLength(JSON.stringify(record), 'utf8');
+		} catch {
+			droppedOversizedRecords += 1;
+			return false;
+		}
+		if (recordBytes > admissionLimits.maxRecordBytes) {
+			droppedOversizedRecords += 1;
+			return false;
+		}
+		const signalState = signalAdmission[signalKind];
+		const maxSignalPayloadBytes =
+			admissionLimits.maxQueuedRecordsPerSignal * admissionLimits.maxRecordBytes;
+		if (
+			signalState.currentRecords >= admissionLimits.maxQueuedRecordsPerSignal ||
+			signalState.currentPayloadBytes + recordBytes > maxSignalPayloadBytes
+		) {
+			signalState.saturationDroppedRecords += 1;
+			return false;
+		}
+		admittedRecords += 1;
+		signalState.currentPayloadBytes += recordBytes;
+		signalState.currentRecords += 1;
+		signalState.highWaterPayloadBytes = Math.max(
+			signalState.highWaterPayloadBytes,
+			signalState.currentPayloadBytes,
+		);
+		signalState.highWaterRecords = Math.max(
+			signalState.highWaterRecords,
+			signalState.currentRecords,
+		);
+		return true;
+	};
+	const getDiagnostics = (): ControllerTelemetryDriverDiagnostics => ({
+		admittedRecords,
+		derivedMaxAdmittedPayloadBytesPerSignal:
+			admissionLimits.maxQueuedRecordsPerSignal * admissionLimits.maxRecordBytes,
+		droppedOversizedRecords,
+		maxQueuedRecordsPerSignal: admissionLimits.maxQueuedRecordsPerSignal,
+		maxRecordBytes: admissionLimits.maxRecordBytes,
+		providerOperationFailures,
+		signals: {
+			logs: snapshotSignalAdmission(signalAdmission.logs),
+			metrics: snapshotSignalAdmission(signalAdmission.metrics),
+			traces: snapshotSignalAdmission(signalAdmission.traces),
+		},
+	});
+	const scheduleAdmissionFlush = (): void => {
+		if (
+			shutdownStarted ||
+			scheduledAdmissionFlush !== undefined ||
+			activeAdmissionFlush !== undefined
+		) {
+			return;
+		}
+		scheduledAdmissionFlush = setTimeout(() => {
+			scheduledAdmissionFlush = undefined;
+			void flushAdmittedSignals();
+		}, controllerTelemetryAdmissionFlushIntervalMs);
+		scheduledAdmissionFlush.unref?.();
+	};
+	const flushAdmittedSignals = (): Promise<void> => {
+		if (activeAdmissionFlush !== undefined) {
+			return activeAdmissionFlush;
+		}
+		if (scheduledAdmissionFlush !== undefined) {
+			clearTimeout(scheduledAdmissionFlush);
+			scheduledAdmissionFlush = undefined;
+		}
+		const admissionSnapshot = snapshotAllSignalAdmission(signalAdmission);
+		const flush = settleTelemetryProviderOperations([
+			{ operation: () => providers.loggerProvider.forceFlush(), signalKind: 'logs' },
+			{ operation: () => providers.meterProvider.forceFlush(), signalKind: 'metrics' },
+			{ operation: () => providers.tracerProvider.forceFlush(), signalKind: 'traces' },
+		]).then((results) => {
+			for (const result of results) {
+				if (result.status === 'fulfilled') {
+					releaseFlushedAdmission(
+						signalAdmission[result.signalKind],
+						admissionSnapshot[result.signalKind],
+					);
+				} else {
+					providerOperationFailures += 1;
+				}
+			}
+		});
+		activeAdmissionFlush = flush;
+		void flush.finally(() => {
+			if (activeAdmissionFlush === flush) {
+				activeAdmissionFlush = undefined;
+			}
+			if (hasPendingSignalAdmission(signalAdmission)) {
+				scheduleAdmissionFlush();
+			}
+		});
+		return flush;
+	};
 
 	return {
 		emitLog: (record) => {
+			if (!admitRecord('logs', record)) {
+				return;
+			}
+			scheduleAdmissionFlush();
 			logger.emit(record);
 		},
 		emitMetric: (record) => {
+			if (!admitRecord('metrics', record)) {
+				return;
+			}
+			scheduleAdmissionFlush();
 			if (record.name.endsWith('_total')) {
 				getOrCreateCounter(counters, meter, record.name).add(record.value, record.attributes);
 				return;
@@ -110,6 +267,10 @@ export function createOtelControllerTelemetryDriver(
 			getOrCreateHistogram(histograms, meter, record.name).record(record.value, record.attributes);
 		},
 		emitSpan: (record) => {
+			if (!admitRecord('traces', record)) {
+				return;
+			}
+			scheduleAdmissionFlush();
 			const span = tracer.startSpan(record.name, {
 				attributes: record.attributes,
 				startTime: record.observedAtMs,
@@ -117,14 +278,16 @@ export function createOtelControllerTelemetryDriver(
 			span.end(record.observedAtMs);
 		},
 		forceFlush: async () => {
-			await settleTelemetryProviderOperations([
-				() => providers.loggerProvider.forceFlush(),
-				() => providers.meterProvider.forceFlush(),
-				() => providers.tracerProvider.forceFlush(),
-			]);
+			await flushAdmittedSignals();
 		},
+		getDiagnostics,
 		shutdown: async () => {
-			await settleTelemetryProviderOperations([
+			shutdownStarted = true;
+			if (scheduledAdmissionFlush !== undefined) {
+				clearTimeout(scheduledAdmissionFlush);
+				scheduledAdmissionFlush = undefined;
+			}
+			providerOperationFailures += await countFailedTelemetryProviderOperations([
 				() => providers.loggerProvider.shutdown(),
 				() => providers.meterProvider.shutdown(),
 				() => providers.tracerProvider.shutdown(),
@@ -133,10 +296,75 @@ export function createOtelControllerTelemetryDriver(
 	};
 }
 
+interface TelemetryProviderOperation {
+	readonly operation: () => Promise<void>;
+	readonly signalKind: ControllerTelemetrySignalKind;
+}
+
+type TelemetryProviderOperationResult =
+	| { readonly signalKind: ControllerTelemetrySignalKind; readonly status: 'fulfilled' }
+	| { readonly signalKind: ControllerTelemetrySignalKind; readonly status: 'rejected' };
+
 async function settleTelemetryProviderOperations(
+	operations: readonly TelemetryProviderOperation[],
+): Promise<readonly TelemetryProviderOperationResult[]> {
+	return await Promise.all(
+		operations.map(async ({ operation, signalKind }) => {
+			try {
+				await operation();
+				return { signalKind, status: 'fulfilled' } as const;
+			} catch {
+				return { signalKind, status: 'rejected' } as const;
+			}
+		}),
+	);
+}
+
+async function countFailedTelemetryProviderOperations(
 	operations: readonly (() => Promise<void>)[],
-): Promise<void> {
-	await Promise.allSettled(operations.map(async (operation) => await operation()));
+): Promise<number> {
+	const results = await Promise.allSettled(operations.map(async (operation) => await operation()));
+	return results.filter((result) => result.status === 'rejected').length;
+}
+
+function createSignalAdmissionState(): MutableSignalAdmissionState {
+	return {
+		currentPayloadBytes: 0,
+		currentRecords: 0,
+		highWaterPayloadBytes: 0,
+		highWaterRecords: 0,
+		saturationDroppedRecords: 0,
+	};
+}
+
+function snapshotSignalAdmission(
+	state: MutableSignalAdmissionState,
+): ControllerTelemetrySignalAdmissionDiagnostics {
+	return { ...state };
+}
+
+function snapshotAllSignalAdmission(
+	states: Record<ControllerTelemetrySignalKind, MutableSignalAdmissionState>,
+): Record<ControllerTelemetrySignalKind, ControllerTelemetrySignalAdmissionDiagnostics> {
+	return {
+		logs: snapshotSignalAdmission(states.logs),
+		metrics: snapshotSignalAdmission(states.metrics),
+		traces: snapshotSignalAdmission(states.traces),
+	};
+}
+
+function releaseFlushedAdmission(
+	state: MutableSignalAdmissionState,
+	flushed: ControllerTelemetrySignalAdmissionDiagnostics,
+): void {
+	state.currentPayloadBytes = Math.max(0, state.currentPayloadBytes - flushed.currentPayloadBytes);
+	state.currentRecords = Math.max(0, state.currentRecords - flushed.currentRecords);
+}
+
+function hasPendingSignalAdmission(
+	states: Record<ControllerTelemetrySignalKind, MutableSignalAdmissionState>,
+): boolean {
+	return Object.values(states).some((state) => state.currentRecords > 0);
 }
 
 function createDefaultOtelProviders(
@@ -147,6 +375,8 @@ function createDefaultOtelProviders(
 		processors: [
 			new BatchLogRecordProcessor(new OTLPLogExporter({ url: options.logsUrl }), {
 				exportTimeoutMillis: 5_000,
+				maxExportBatchSize: options.admissionLimits.maxExportBatchRecords,
+				maxQueueSize: options.admissionLimits.maxQueuedRecordsPerSignal,
 				scheduledDelayMillis: 1_000,
 			}),
 		],
@@ -166,6 +396,8 @@ function createDefaultOtelProviders(
 		spanProcessors: [
 			new BatchSpanProcessor(new OTLPTraceExporter({ url: options.tracesUrl }), {
 				exportTimeoutMillis: 5_000,
+				maxExportBatchSize: options.admissionLimits.maxExportBatchRecords,
+				maxQueueSize: options.admissionLimits.maxQueuedRecordsPerSignal,
 				scheduledDelayMillis: 1_000,
 			}),
 		],
@@ -243,6 +475,21 @@ function createDefaultOtelProviders(
 			},
 		},
 	};
+}
+
+function resolveOtelAdmissionLimits(
+	overrides: Partial<OtelControllerTelemetryAdmissionLimits> | undefined,
+): OtelControllerTelemetryAdmissionLimits {
+	const limits = { ...defaultOtelControllerTelemetryAdmissionLimits, ...overrides };
+	for (const [name, value] of Object.entries(limits)) {
+		if (!Number.isSafeInteger(value) || value <= 0) {
+			throw new Error(`Controller OTLP admission ${name} must be a positive safe integer.`);
+		}
+	}
+	if (limits.maxExportBatchRecords > limits.maxQueuedRecordsPerSignal) {
+		throw new Error('Controller OTLP export batch cannot exceed its signal queue capacity.');
+	}
+	return limits;
 }
 
 function getOrCreateCounter(

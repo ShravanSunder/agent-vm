@@ -33,13 +33,11 @@ host
   observability
 
 controller
-  health
-    enabled
-    gatewayServiceIntervalMs
-    gatewayControlLinkIntervalMs
-    gatewayControlLinkBackoffCeilingMs
-    staleAfterMs
-    eventHistoryLimit
+	  health
+	    enabled
+	    gatewayServiceIntervalMs
+	    staleAfterMs
+	    eventHistoryLimit
 
 cacheDir
 
@@ -60,7 +58,7 @@ zones[]
   runtimeAuthHints
   egressHosts
   websocketUpgrades
-  mcpPortal
+  toolPortal
   defaultToolVmProfile
   agentToolVmProfiles
   agentSandboxSeeds
@@ -128,8 +126,12 @@ When enabled, `stack.mode` decides stack ownership:
   telemetry scrubbing with
   `stack.scrubbing.responsibility: "external-collector"`.
 
-Each OpenClaw zone still needs `zones[].observability.enabled=true` before the
-build and runtime path use the collector.
+Per-zone OpenClaw observability is supported during the Socket.IO control-plane
+hard cutover through Gondolin HTTP mediation. The old collector path depended on
+raw Gondolin `tcpHosts` and must not be restored. Enabled OpenClaw zones send
+OTLP HTTP/protobuf to a synthetic collector host that the controller rewrites to
+the configured loopback collector port. Tool VM SSH remains the only raw TCP
+exception in the managed gateway VM spec.
 
 The controller does not start Docker Compose during controller startup. Docker
 startup belongs to `agent-vm build` when `prepareOnBuild` is true. A one-off
@@ -246,10 +248,8 @@ the defaults.
 | --- | --- | --- |
 | `enabled` | `true` | Enables periodic health monitors. Health routes remain available when disabled. |
 | `gatewayServiceIntervalMs` | `10000` | Host-side interval for the agent-vm controller to probe each running gateway-service through the gateway VM service liveness check. |
-| `gatewayControlLinkIntervalMs` | `10000` | In-VM interval for the OpenClaw Gondolin plugin to call the agent-vm controller `GET /health` endpoint. |
-| `gatewayControlLinkBackoffCeilingMs` | `120000` | Maximum backoff interval for repeated gateway-to-controller failures. Must be at least `gatewayControlLinkIntervalMs`. |
-| `gatewayServiceAutoRestart.enabled` | `true` | Enables automatic restart for a running OpenClaw gateway VM after repeated gateway-service or gateway-control-link health failures. |
-| `gatewayServiceAutoRestart.consecutiveFailureThreshold` | `10` | Consecutive degraded observations required before restart. A healthy observation resets that boundary's counter. |
+| `gatewayServiceAutoRestart.enabled` | `true` | Enables bounded recovery from repeated gateway-service or gateway control-session degradation. Dead control with a live Gateway service first requests same-Gateway OpenClaw process recovery; Gateway VM restart is outward escalation. |
+| `gatewayServiceAutoRestart.consecutiveFailureThreshold` | `10` | Consecutive degraded observations required before the relevant recovery boundary is eligible. A healthy observation resets that boundary's counter. |
 | `gatewayServiceAutoRestart.cooldownMs` | `3660000` | Minimum time between automatic restart attempts for one zone. This is 61 minutes by default. |
 | `gatewayServiceAutoRestart.maxConsecutiveFailedRecoveries` | `3` | Failed automatic restart attempts allowed before the controller suspends further auto-recovery for that zone. |
 | `gatewayServiceAutoRestart.failedRecoveryResetMs` | `86400000` | Suspension reset window after the latest failed recovery attempt. This is 24 hours by default. |
@@ -291,12 +291,10 @@ Example:
 ```jsonc
 {
   "controller": {
-    "health": {
-      "enabled": true,
-      "gatewayServiceIntervalMs": 10000,
-      "gatewayControlLinkIntervalMs": 10000,
-      "gatewayControlLinkBackoffCeilingMs": 120000,
-      "gatewayServiceAutoRestart": {
+	    "health": {
+	      "enabled": true,
+	      "gatewayServiceIntervalMs": 10000,
+	      "gatewayServiceAutoRestart": {
         "enabled": true,
         "consecutiveFailureThreshold": 10,
         "cooldownMs": 3660000,
@@ -419,8 +417,10 @@ Managed OpenClaw image profiles install known extracted channel packages, such
 as `@openclaw/discord`, from the OpenClaw channel config.
 
 New OpenClaw scaffolds set `approvals.plugin.enabled=true` with
-`approvals.plugin.mode="session"` so plugin approval prompts, including MCP
-Portal approvals, have an origin-session route by default. Exec approval
+`approvals.plugin.mode="session"` for OpenClaw-owned plugin approval prompts.
+Managed Tool Portal capabilities under `calls.requiresApproval` are rejected in
+this cutover; use `calls.withoutApproval` for callable managed OpenClaw
+capabilities until a Tool Portal approval bridge exists. Exec approval
 forwarding and channel-native approver user IDs remain deployment-owned.
 
 ## gateway.ingress
@@ -455,16 +455,22 @@ guest HTTP services require explicit Gondolin ingress routes from non-root path
 prefixes to guest ports. Raw TCP services belong in `tcpHosts`, not HTTP
 ingress.
 
-## OpenClaw MCP Portal Defaults
+## OpenClaw Tool Portal Defaults
 
-Managed OpenClaw gateway images install `@agent-vm/openclaw-mcp-portal-plugin`
-and `@agent-vm/mcp-portal`. New OpenClaw scaffolds allow and enable the
-`mcp-portal` plugin, set
-`plugins.entries.mcp-portal.hooks.allowPromptInjection=true`, add
-`/home/openclaw/.openclaw/extensions/mcp-portal` to `plugins.load.paths`, and
-configure the plugin with the gateway MCP config directory. The scaffold also
-sets `approvals.plugin.mode="session"` so tools under
-`calls.requiresApproval` can return prompts to the originating chat.
+Managed OpenClaw gateway images install `@agent-vm/openclaw-agent-vm-plugin`,
+which registers the `gondolin` plugin. The `gondolin` plugin owns the managed
+Tool Portal native tools:
+
+- `tool_portal_list`
+- `tool_portal_search`
+- `tool_portal_describe`
+- `tool_portal_call`
+
+New OpenClaw scaffolds allow and enable `gondolin` and do not enable a separate
+`mcp-portal` plugin. Managed OpenClaw rejects `calls.requiresApproval` during
+effective config materialization in this cutover; use `calls.withoutApproval`
+for callable managed OpenClaw capabilities until a Tool Portal approval bridge
+exists.
 
 When `agents.list` is configured, agent-vm scaffolds sibling MCP config files in
 `config/gateways/<zone>/`:
@@ -474,25 +480,33 @@ When `agents.list` is configured, agent-vm scaffolds sibling MCP config files in
   policies, and optional external `/mcp-proxy` auth.
 
 Managed OpenClaw does not generate OpenClaw MCP server entries for MCP Portal.
-The plugin registers the four native portal tools directly and calls
-`@agent-vm/mcp-portal/core` in the gateway VM with OpenClaw's trusted
-`ctx.agentId`. Operator-authored upstream MCP servers live in
-`mcp.config.jsonc`; agent-vm materializes an effective gateway config that turns
-configured 1Password secrets into runtime environment references or
-runtime-mediated bindings before gateway boot.
+The `gondolin` plugin registers the four Tool Portal native tools directly and
+calls Tool Portal in-process with MCP providers as an internal backend.
+Operator-authored upstream MCP servers live in `mcp.config.jsonc`; agent-vm
+materializes an effective Tool Portal gateway config that turns configured
+1Password secrets into runtime environment references or runtime-mediated
+bindings before gateway boot.
 
-`zones[].mcpPortal.configDir` points at the directory containing those two
+`zones[].toolPortal.configDir` points at the directory containing those two
 authored files. In managed OpenClaw mode, `externalAuth` and `mcpProxy` are
 stripped from the gateway effective config; they are only used by the external
 `mcp-portal mcp-proxy serve` adapter.
+
+The package-level `tool-portal.config.jsonc` schema exists for cross-backend
+capability policy. Managed OpenClaw currently projects the authored
+`mcp.config.jsonc` and `mcp-portal.config.jsonc` MCP-provider policy into a
+generated Tool Portal effective config; MCP Portal remains the backend policy
+owner for upstream MCP providers and standalone `mcp-proxy` use.
 
 Important fields in `mcp-portal.config.jsonc`:
 
 - `agents.<agentId>.profile` selects a profile.
 - `agents.<agentId>.credentialVersion` revokes previously printed external
   `/mcp-proxy` bearer credentials for that agent.
-- `agents.<agentId>.hmacKey` is used for OpenClaw approval-token verification
-  and is stripped before managed gateway config enters the VM.
+- `agents.<agentId>.hmacKey` is for standalone/external MCP Portal approval
+  token flows. Managed OpenClaw rejects `calls.requiresApproval` in this
+  cutover, so `hmacKey` is not used by the managed Tool Portal projection and is
+  stripped before managed gateway config enters the VM.
 - `externalAuth.masterKey` is required only for external `/mcp-proxy` bearer
   auth and client-config generation.
 - `mcpProxy.server.host`, `mcpProxy.server.port`, and
@@ -502,8 +516,10 @@ Important fields in `mcp-portal.config.jsonc`:
   `calls.requiresApproval`. `tools.allow` is `*` for every discovered tool or an
   explicit list of visible tool names; `tools.deny` removes tools from the
   catalog. Call selectors use the same shape and decide whether a visible tool
-  runs directly or requires approval. Visible tools outside both call selectors
-  are blocked at execution time.
+  runs directly or requires approval. Managed OpenClaw currently rejects
+  `calls.requiresApproval` in the generated effective config, so managed
+  callable tools must be listed under `calls.withoutApproval`. Visible tools
+  outside both call selectors are blocked at execution time.
   A profile is a complete policy. Profiles do not inherit from or merge with
   other profiles; assign an agent to the profile you want it to use.
 
@@ -511,6 +527,9 @@ Important fields in `mcp.config.jsonc` provider entries:
 
 - `transport.kind` may be `streamable-http`, `sse`, or `stdio`.
 - Remote provider `transport.url` must use `http` or `https`.
+- `transport.connectionTimeoutMs` optionally overrides the provider connection,
+  `tools/list`, and call timeout budget when a real upstream MCP provider is
+  slower than the default 12000 ms budget.
 - Stdio providers must declare `transport.networkAccess`.
 - `transport.networkAccess: "declared"` requires non-empty
   `transport.requiredEgressHosts`.
@@ -595,10 +614,13 @@ DeepWiki, Tavily, 1Password, or real upstream MCP credentials; credentialed
 upstream providers belong in an explicit deployment e2e outside the default
 local suite.
 
-`agent-vm init --type openclaw --openclaw-agents sun,shravan,alevtina` scaffolds
-`agents.list` entries with `/zone/agents/<id>` workspaces. It deliberately does
-not scaffold channel bindings or Discord guild allowlists because those are
-deployment-owned IDs.
+During the Socket.IO control-plane hard cutover,
+`agent-vm init --type openclaw --openclaw-agents sun,shravan` scaffolds managed
+OpenClaw agents with `/zone/agents/<id>` workspaces. Managed OpenClaw zones may
+declare multiple trusted agents in `zones[].agents` when OpenClaw `agents.list`,
+Tool Portal/MCP Portal bindings, per-agent auth/profile files, and Tool VM
+profile policy stay aligned. The scaffold deliberately does not create channel
+bindings or Discord guild allowlists because those are deployment-owned IDs.
 
 OpenClaw `web_fetch` in Gondolin deployments needs fake-IP SSRF policy for
 mediated DNS and proxy-style environments:
@@ -669,7 +691,7 @@ The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
 provider by itself; it prevents sandbox tool policy from hiding web tools after
 the deployment adds a provider, keeps OpenClaw's `message_tool_only` group reply
 mode usable by exposing the explicit channel reply tool, and exposes optional
-plugin-owned tools such as MCP Portal's `mcp_portal_*` tools to sandboxed
+plugin-owned tools such as Tool Portal's `tool_portal_*` tools to sandboxed
 agents.
 
 OpenClaw Tool VMs mount their validated lease work mount at `/workspace`.
@@ -731,11 +753,11 @@ Example non-default OpenClaw runtime package pin:
 
 ```jsonc
 {
-  "schemaVersion": 1,
-  "packageOverrides": {
-    "openclaw": [
-      "@openclaw/discord@2026.5.20"
-    ],
+	"schemaVersion": 1,
+	"packageOverrides": {
+		"openclaw": [
+			"@openclaw/discord@2026.6.8"
+		],
     "pnpm": {
       "undici": "8.5.0"
     }
@@ -763,7 +785,15 @@ Each zone selects one gateway image profile and one gateway behavior config:
     "port": 18791,
     "config": "./gateways/coding-agent/worker.jsonc",
     "imageProfile": "worker",
-    "stateDir": "../state/coding-agent"
+    "stateDir": "../state/coding-agent",
+    "repoPushPolicies": [
+      {
+        "repoUrl": "https://github.com/example/example-repo.git",
+        "defaultBranch": "main",
+        "protectedBranches": ["release"],
+        "protectedBranchPatterns": ["hotfix/*"]
+      }
+    ]
   },
   "resources": {
     "allowRepoResources": false
@@ -794,6 +824,12 @@ Each zone selects one gateway image profile and one gateway behavior config:
   ]
 }
 ```
+
+For worker gateways, `gateway.repoPushPolicies` is the controller-trusted
+source for host-token branch push safety. Worker task requests name repos and
+base branches to prepare; they do not define protected branch policy. If a
+worker task repo has no matching `repoPushPolicies[].repoUrl`, controller-owned
+push for that repo fails closed before Git I/O.
 
 Worker zones do not declare Tool VM profile fields. OpenClaw zones must declare
 `defaultToolVmProfile` and `agentToolVmProfiles`, even when the agent mapping is
@@ -832,11 +868,9 @@ files:
       "shravan": { "source": "environment", "envVar": "SHRAVAN_AUTH_PROFILES" }
     }
   },
+  "agents": [{ "id": "shravan" }],
   "defaultToolVmProfile": "standard",
-  "agentToolVmProfiles": {
-    "shravan": "tools-dev",
-    "alevtina": "tools-light"
-  },
+  "agentToolVmProfiles": {},
   "agentSandboxSeeds": {
     "shravan": [
       {
@@ -850,23 +884,24 @@ files:
 ```
 
 New OpenClaw scaffolds set `agents.defaults.workspace` to
-`/zone/agents/default`. This keeps the default agent's authored workspace files
+`/zone/agents/default`. This keeps authored agent workspace files
 under `zoneFilesDir` while leaving `/zone` itself available for shared
-zone-level notes and reference material. Multi-agent deployments should set
-explicit `agents.list[].workspace` values such as `/zone/agents/shravan` and
-`/zone/agents/sun`; otherwise OpenClaw derives non-default agent workspaces
-under the fallback path.
+zone-level notes and reference material. During the Socket.IO control-plane hard
+cutover, same-zone multi-agent OpenClaw remains supported through declared-agent
+parity and controller-vetted caller context. Use separate zones only when
+gateway lifecycle, channel, secret, or zone-files isolation matters more than
+sharing the gateway VM.
 
 `agentToolVmProfiles` values must reference entries in top-level `toolVmProfiles`.
 Unmapped agents use the zone fallback `defaultToolVmProfile`.
 
 ## zones[].observability
 
-`zones[].observability` opts an OpenClaw zone into host observability. It is
-supported only for OpenClaw gateways in this version and requires
-`host.observability.enabled=true`.
+`zones[].observability` opts an OpenClaw zone into OpenTelemetry export through
+the host collector. During the Socket.IO control-plane hard cutover, OpenClaw
+diagnostics use mediated OTLP HTTP instead of raw collector `tcpHosts`.
 
-Example:
+Accepted shape:
 
 ```jsonc
 {
@@ -893,7 +928,7 @@ Example:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | required | `true` opts the zone into host observability. |
+| `enabled` | required | `true` enables mediated OpenClaw OTLP HTTP export. Requires `host.observability.enabled=true`. |
 | `openclaw.serviceName` | required | OpenTelemetry service name for OpenClaw signals. |
 | `openclaw.logs` | `true` | Enables OpenClaw log export to the host collector. |
 | `openclaw.metrics` | `true` | Enables OpenClaw metric export to the host collector. |
@@ -903,20 +938,22 @@ Example:
 | `openclaw.captureContent.enabled` | `false` | Must remain false. Content capture is not supported. |
 | `openclaw.diagnosticsFlags` | `[]` | Narrow OpenClaw debug categories to enable. Broad or content-capturing flags are rejected. |
 
-For observability-enabled zones, agent-vm owns the effective OpenClaw
-diagnostics config and points it at the host collector through a synthetic
-Gondolin `tcpHosts` mapping. Do not inject `OPENCLAW_DIAGNOSTICS` through
-`gateway.rawEnvSecrets`. Authored OpenClaw `logging.redactSensitive` must stay
-enabled; disabling forms such as `false`, `off`, `disabled`, and `0` are
-rejected.
+The old raw collector `tcpHosts` implementation is intentionally not available
+for managed OpenClaw zones in this cutover. Do not inject
+`OPENCLAW_DIAGNOSTICS` through `gateway.rawEnvSecrets` to recreate it. Authored
+OpenClaw `logging.redactSensitive` must stay enabled; disabling forms such as
+`false`, `off`, `disabled`, and `0` are rejected.
 
 `gateway.authProfilesByAgent` writes OpenClaw auth profiles to
 `<stateDir>/agents/<agentId>/agent/auth-profiles.json` before the gateway VM
-boots. There is no shared per-agent fallback; configure each agent that needs an
-auth profile. `gateway.authProfilesRef` and `gateway.authProfilesByAgent`
-support `environment`, `1password`, and `config` sources. Inline `config`
-values here are plaintext OpenClaw auth profiles and should be limited to local
-or test deployments.
+boots. Configure per-agent entries only when agents intentionally keep separate
+OpenClaw auth stores. For the shared OpenClaw provider auth model, configure
+`gateway.authLogin.defaultAgent` and refresh the configured provider profiles
+for that agent; doctor validates that shared auth owner instead of requiring
+duplicate auth material for every OpenClaw agent. `gateway.authProfilesRef` and
+`gateway.authProfilesByAgent` support `environment`, `1password`, and `config`
+sources. Inline `config` values here are plaintext OpenClaw auth profiles and
+should be limited to local or test deployments.
 
 `gateway.authLogin` is separate from auth material. It stores only the operator
 profile ids used by `agent-vm auth openclaw login <provider>`:
@@ -953,9 +990,9 @@ referenced secret must exist in `zone.secrets` with `injection: "env"` and
 `gateway.rawEnvSecrets` is the explicit escape hatch for other OpenClaw secrets
 that must reach the gateway VM as raw environment variables. Other provider or
 service tokens should use `http-mediation` unless the integration cannot work
-with HTTP mediation, such as a non-HTTP or websocket credential flow. Generated
-runtime env secrets also need to be named here when a feature requires them, for
-example `AGENT_VM_ZONE_GIT_TOKEN`.
+with HTTP mediation, such as a non-HTTP or websocket credential flow. The
+managed zone-git push path is controller-owned through Tool Portal host actions;
+do not add a zone-git push token to the gateway VM.
 
 `zones[].gateway.runtimeRootfsSize` optionally requests a minimum runtime root
 disk size for the gateway VM, using Gondolin `rootfs.size`. The base image is

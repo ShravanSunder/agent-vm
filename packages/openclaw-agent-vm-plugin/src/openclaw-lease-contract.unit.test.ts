@@ -5,12 +5,13 @@ import {
 } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LeaseClient, OpenClawGondolinLeaseRequest } from './controller-lease-client.js';
+import type { LeaseClient, OpenClawGondolinLeaseRequest } from './lease-client-contract.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 const openClawToolVmWorkspaceMount = '/workspace';
 
 interface CapturedLeaseClientCalls {
+	readonly reacquireLeaseIds: string[];
 	readonly renewLeaseIds: string[];
 	readonly requestedLeases: OpenClawGondolinLeaseRequest[];
 }
@@ -73,6 +74,19 @@ function createSmokeLeaseClient(calls: CapturedLeaseClientCalls): LeaseClient {
 			}
 			return createLeasePeekResponse(lease);
 		}),
+		reacquireLease: vi.fn(async (oldLeaseId, _request) => {
+			calls.reacquireLeaseIds.push(oldLeaseId);
+			const oldLease = leasesById.get(oldLeaseId);
+			if (!oldLease) {
+				throw new Error(`Unknown lease ${oldLeaseId}`);
+			}
+			const replacementLease = createLeaseResponse({
+				agentId: oldLease.agentId,
+				leaseIndex: calls.requestedLeases.length + calls.reacquireLeaseIds.length,
+			});
+			leasesById.set(replacementLease.leaseId, replacementLease);
+			return replacementLease;
+		}),
 		releaseLease: vi.fn(async () => {}),
 		renewLease: vi.fn(async (leaseId) => {
 			calls.renewLeaseIds.push(leaseId);
@@ -121,8 +135,39 @@ function createOpenClawSandboxParams(options: {
 }
 
 describe('OpenClaw agent-vm lease contract', () => {
+	it('requires the lease client contract to expose stale lease reacquisition', async () => {
+		const calls: CapturedLeaseClientCalls = {
+			reacquireLeaseIds: [],
+			renewLeaseIds: [],
+			requestedLeases: [],
+		};
+		const leaseClient = createSmokeLeaseClient(calls);
+		const initialLease = await leaseClient.requestLease({
+			agentId: 'beta',
+			agentWorkspaceDir: '/zone/agents/beta',
+			profileId: 'standard',
+			sessionKey: 'agent:beta:discord:channel:123',
+			workMountDir: '/zone/agents/beta',
+			zoneId: 'shravan',
+		});
+
+		const replacementLease = await leaseClient.reacquireLease(initialLease.leaseId, {
+			idleTtlMs: 120_000,
+			observedAtMs: 2_000,
+			staleEvidence: {
+				errorCode: 'ssh-command-failed',
+				kind: 'tool-vm-ssh',
+				operation: 'file-bridge',
+			},
+		});
+
+		expect(calls.reacquireLeaseIds).toEqual([initialLease.leaseId]);
+		expect(replacementLease.leaseId).not.toBe(initialLease.leaseId);
+	});
+
 	it('discards OpenClaw scope input and keys Tool VM leases by zone and agent', async () => {
 		const calls: CapturedLeaseClientCalls = {
+			reacquireLeaseIds: [],
 			renewLeaseIds: [],
 			requestedLeases: [],
 		};
@@ -205,6 +250,7 @@ describe('OpenClaw agent-vm lease contract', () => {
 
 	it('normalizes Tool VM guest cwd aliases without forking the agent lease', async () => {
 		const calls: CapturedLeaseClientCalls = {
+			reacquireLeaseIds: [],
 			renewLeaseIds: [],
 			requestedLeases: [],
 		};

@@ -3,16 +3,23 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import { writeGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
+import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
+import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
 import {
+	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
+import type { ControlSessionClient, WorkerControlRpcOperations } from './control-session/index.js';
 import type { WorkerTaskInput } from './worker-task-runner.js';
 import type { WorkerTaskPollClock } from './worker-task-runner.js';
 
@@ -53,6 +60,9 @@ const completedTaskStateSchema = z.object({
 const closedTaskStateSchema = z.object({
 	status: z.literal('closed'),
 });
+
+const workerControllerEpoch = 'worker-controller-epoch-test';
+const workerVmId = 'worker-vm-1';
 
 function buildWorkerConfigInput(): Record<string, unknown> {
 	return {
@@ -154,6 +164,7 @@ const systemConfig = {
 				port: 18791,
 				config: '',
 				stateDir: '',
+				repoPushPolicies: [],
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -177,6 +188,8 @@ const systemConfig = {
 
 async function executePreparedWorkerTaskForTest(options: {
 	readonly input: WorkerTaskInput;
+	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
+	readonly onTaskFinished?: (zoneId: string, taskId: string) => Promise<void>;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
 	readonly secretResolver: { resolve: () => Promise<string>; resolveAll: () => Promise<{}> };
@@ -195,6 +208,11 @@ async function executePreparedWorkerTaskForTest(options: {
 		zoneId: options.zoneId,
 	});
 	return await executeWorkerTask(prepared, {
+		...(options.onTaskFinished ? { onTaskFinished: options.onTaskFinished } : {}),
+		controllerEpoch: workerControllerEpoch,
+		...(options.managedVmKillDependencies === undefined
+			? {}
+			: { managedVmKillDependencies: options.managedVmKillDependencies }),
 		secretResolver: options.secretResolver,
 		systemConfig: options.systemConfig,
 		pollClock: options.pollClock ?? createInstantPollClock(),
@@ -213,10 +231,73 @@ function createInstantPollClock(): WorkerTaskPollClock {
 	};
 }
 
+interface WorkerControlSessionClientStub {
+	readonly client: ControlSessionClient;
+	readonly closeMock: Mock<() => void>;
+}
+
+function createWorkerControlSessionClientStub(options: {
+	readonly connectedStates: readonly boolean[];
+	readonly readyStates?: readonly boolean[];
+}): WorkerControlSessionClientStub {
+	let diagnosticsIndex = 0;
+	const closeMock = vi.fn();
+	return {
+		client: {
+			ready: Promise.resolve({
+				connectionId: '55555555-5555-4555-8555-555555555555',
+				controllerEpoch: 'worker-epoch-a',
+				outcome: 'accepted',
+				sessionId: '33333333-3333-4333-8333-333333333333',
+			}),
+			close: closeMock,
+			emitApplicationMessage: vi.fn(async () => ({ received: true })),
+			getDiagnostics: vi.fn(() => {
+				const connected =
+					options.connectedStates[Math.min(diagnosticsIndex, options.connectedStates.length - 1)];
+				const ready =
+					options.readyStates?.[Math.min(diagnosticsIndex, options.readyStates.length - 1)] ??
+					connected;
+				diagnosticsIndex += 1;
+				return {
+					accepted: ready ?? false,
+					connected: connected ?? false,
+					endpointPath: '/__agent-vm/worker-control',
+					helloCount: ready ? 1 : 0,
+					ready: ready ?? false,
+				};
+			}),
+		},
+		closeMock,
+	};
+}
+
+const pullDefaultForTaskStub: WorkerControlRpcOperations['pullDefaultForTask'] = async () => {
+	return {
+		error: 'not used',
+		kind: 'failed',
+		message: 'not used',
+		repoUrl: 'https://github.com/org/repo.git',
+		success: false,
+	};
+};
+
+const pushTaskBranchesStub: WorkerControlRpcOperations['pushTaskBranches'] = async () => ({
+	results: [],
+});
+
+function createWorkerControlOperationsStub(): WorkerControlRpcOperations {
+	return {
+		pullDefaultForTask: pullDefaultForTaskStub,
+		pushTaskBranches: pushTaskBranchesStub,
+	};
+}
+
 describe('worker-task-runner', () => {
 	let tempDir: string;
 	let managedVm: ManagedVm;
 	let managedVmCloseMock: Mock<() => Promise<void>>;
+	let managedVmStartMock: Mock<() => Promise<void>>;
 
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runner-'));
@@ -248,38 +329,62 @@ describe('worker-task-runner', () => {
 			throw new Error(`Unexpected fetch ${url}`);
 		}) as typeof fetch;
 
-		managedVmCloseMock = vi.fn(async (): Promise<void> => {});
+		managedVmCloseMock = vi.fn(async () => {});
+		managedVmStartMock = vi.fn(async () => {});
 		managedVm = {
-			id: 'worker-vm-1',
+			id: workerVmId,
 			close: async () => await managedVmCloseMock(),
-			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222, user: 'root' })),
+			enableIngress: vi.fn(async () => ({
+				close: vi.fn(async () => {}),
+				host: '127.0.0.1',
+				port: 18791,
+			})),
+			enableSsh: vi.fn(async () => ({
+				close: async () => {},
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				host: '127.0.0.1',
+				port: 2222,
+				user: 'root',
+			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
 			getHostPid: () => null,
 			getVmInstance: vi.fn(),
+			start: async () => await managedVmStartMock(),
 		};
 
-		startGatewayZoneMock.mockResolvedValue({
-			image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
-			ingress: { host: '127.0.0.1', port: 18791 },
-			processSpec: {
-				bootstrapCommand: 'true',
-				startCommand:
-					'agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state',
-				healthCheck: { type: 'http', port: 18789, path: '/health' },
-				guestListenPort: 18789,
-				logPath: '/tmp/worker.log',
-			},
-			vm: managedVm,
-			zone,
+		startGatewayZoneMock.mockImplementation(async (startOptions: StartGatewayZoneOptions) => {
+			const vmOwnership = await startOptions.createVmOwnership({
+				kind: 'standalone',
+				sessionLabel: 'worker-task-session',
+				zoneId: zone.id,
+			});
+			vmOwnership.attachGatewayVm(managedVm.id);
+			await managedVm.start();
+			return {
+				image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: {
+					bootstrapCommand: 'true',
+					startCommand:
+						'agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state',
+					healthCheck: { type: 'http', port: 18789, path: '/health' },
+					guestListenPort: 18789,
+					logPath: '/tmp/worker.log',
+				},
+				terminateVm: async () => await managedVm.close(),
+				vm: managedVm,
+				vmOwnership,
+				zone,
+			};
 		});
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 	});
 
 	afterEach(() => {
 		delete process.env.AGENT_VM_WORKER_TARBALL_PATH;
+		delete process.env.AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON;
 		vi.resetModules();
 		startGatewayZoneMock.mockReset();
 		startRepoResourceProvidersMock.mockReset();
@@ -332,7 +437,147 @@ describe('worker-task-runner', () => {
 					DATABASE_URL: 'postgres://postgres.local:5432/app',
 				},
 			}),
+			expect.any(Object),
 		);
+		expect(managedVmStartMock).toHaveBeenCalledOnce();
+		expect(managedVmCloseMock).toHaveBeenCalledOnce();
+	});
+
+	it('creates standalone Worker VM lifecycle authority without reservation state', async () => {
+		// Arrange / Act
+		await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-shared-ownership-root',
+				prompt: 'verify shared ownership root',
+				repos: [],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+		const startOptions = startGatewayZoneMock.mock.calls[0]?.[0] as
+			| StartGatewayZoneOptions
+			| undefined;
+		if (startOptions === undefined) {
+			throw new Error('Worker task did not invoke gateway startup.');
+		}
+		const vmOwnership = await startOptions.createVmOwnership({
+			kind: 'standalone',
+			sessionLabel: 'worker-standalone-lifecycle',
+			zoneId: 'shravan',
+		});
+
+		// Assert
+		expect(vmOwnership.gatewaySeed).toMatchObject({
+			controllerEpoch: workerControllerEpoch,
+			zoneId: 'shravan',
+		});
+		expect(vmOwnership.gatewayIdentity).toBeUndefined();
+		expect(vmOwnership).not.toHaveProperty('ownershipReservation');
+		expect(vmOwnership).not.toHaveProperty('destroyDetached');
+		expect(vmOwnership.attachGatewayVm('worker-vm-independent')).toMatchObject({
+			gatewayVmId: 'worker-vm-independent',
+			zoneId: 'shravan',
+		});
+	});
+
+	it('terminates the exact recorded Worker VM runner before stock close', async () => {
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const processIdentity = {
+			command: 'qemu-system-aarch64 -name worker-vm-1',
+			lstart: 'Sat Jul 11 17:00:00 2026',
+		};
+		const orderedEvents: string[] = [];
+		let runnerAttached = true;
+		managedVm = {
+			...managedVm,
+			getHostPid: () => (runnerAttached ? 48_282 : null),
+		};
+		managedVmCloseMock.mockImplementation(async () => {
+			orderedEvents.push('stock-close');
+		});
+		const managedVmKillDependencies = {
+			isProcessAlive: () => runnerAttached,
+			killProcess: (pid: number, signal: NodeJS.Signals) => {
+				orderedEvents.push(`${String(signal)}:${String(pid)}`);
+				runnerAttached = false;
+			},
+			readProcessCommand: async () => processIdentity.command,
+			readProcessIdentity: async () => processIdentity,
+			sleep: async () => {},
+		} satisfies ManagedVmKillDependencies;
+		startGatewayZoneMock.mockImplementationOnce(async (startOptions: StartGatewayZoneOptions) => {
+			const vmOwnership = await startOptions.createVmOwnership({
+				kind: 'standalone',
+				sessionLabel: 'worker-task-session',
+				zoneId: zone.id,
+			});
+			const gatewayIdentity = vmOwnership.attachGatewayVm(managedVm.id);
+			await managedVm.start();
+			const workerStateDirectory = startOptions.zoneOverride?.gateway.stateDir;
+			if (workerStateDirectory === undefined) {
+				throw new Error('Worker task startup did not provide its state directory.');
+			}
+			await writeGatewayRuntimeRecord(workerStateDirectory, {
+				configPath: systemConfig.systemConfigPath,
+				controllerPort: systemConfig.host.controllerPort,
+				createdAt: '2026-07-11T17:00:00.000Z',
+				gateway: gatewayIdentity,
+				gatewayType: 'worker',
+				guestListenPort: 18_789,
+				ingressPort: 18_791,
+				processIdentity,
+				projectNamespace: systemConfig.host.projectNamespace,
+				qemuPid: 48_282,
+				schemaVersion: 2,
+				sessionLabel: `${systemConfig.host.projectNamespace}:${zone.id}:gateway`,
+				vmId: managedVm.id,
+				zoneId: zone.id,
+			});
+			return {
+				image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
+				ingress: { host: '127.0.0.1', port: 18_791 },
+				processSpec: {
+					bootstrapCommand: 'true',
+					startCommand: 'agent-vm-worker serve',
+					healthCheck: { type: 'http', port: 18_789, path: '/health' },
+					guestListenPort: 18_789,
+					logPath: '/tmp/worker.log',
+				},
+				terminateVm: async () => {
+					await terminateLiveManagedVm({
+						dependencies: managedVmKillDependencies,
+						target: {
+							hostPid: 48_282,
+							processIdentity,
+							vmId: managedVm.id,
+						},
+						vm: managedVm,
+					});
+				},
+				vm: managedVm,
+				vmOwnership,
+				zone,
+			};
+		});
+		await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-exact-worker-cleanup',
+				prompt: 'prove exact Worker cleanup',
+				repos: [],
+				context: {},
+			},
+			managedVmKillDependencies,
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: zone.id,
+		});
+
+		expect(orderedEvents).toEqual(['SIGTERM:48282', 'stock-close']);
 	});
 
 	it('writes effective worker config into per-task state during pre-start', async () => {
@@ -448,7 +693,24 @@ describe('worker-task-runner', () => {
 
 	it('clones repos into named work directories and merges primary repo config', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
-		const zone = systemConfig.zones[0];
+		const baseZone = systemConfig.zones[0];
+		const zone =
+			baseZone?.gateway.type === 'worker'
+				? {
+						...baseZone,
+						gateway: {
+							...baseZone.gateway,
+							repoPushPolicies: [
+								{
+									repoUrl: 'https://github.com/org/frontend.git',
+									defaultBranch: 'main',
+									protectedBranches: ['release'],
+									protectedBranchPatterns: ['hotfix/*'],
+								},
+							],
+						},
+					}
+				: baseZone;
 		if (!zone) {
 			throw new Error('Expected zone config.');
 		}
@@ -471,7 +733,7 @@ describe('worker-task-runner', () => {
 				requestTaskId: 'request-task-1',
 				prompt: 'cross repo task',
 				repos: [
-					{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' },
+					{ repoUrl: 'https://github.com/org/frontend', baseBranch: 'main' },
 					{ repoUrl: 'https://github.com/org/backend.git', baseBranch: 'develop' },
 				],
 				context: {},
@@ -489,7 +751,7 @@ describe('worker-task-runner', () => {
 				'--bare',
 				'--branch',
 				'main',
-				'https://github.com/org/frontend.git',
+				'https://github.com/org/frontend',
 				path.join(result.taskRuntimeRoot, 'gitdirs', 'frontend.git'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
@@ -511,8 +773,14 @@ describe('worker-task-runner', () => {
 		expect(result.repos).toEqual([
 			{
 				repoId: 'frontend',
-				repoUrl: 'https://github.com/org/frontend.git',
+				repoUrl: 'https://github.com/org/frontend',
 				baseBranch: 'main',
+				pushPolicy: {
+					kind: 'trusted_config',
+					defaultBranch: 'main',
+					protectedBranches: ['release'],
+					protectedBranchPatterns: ['hotfix/*'],
+				},
 				gitDirPath: '/gitdirs/frontend.git',
 				hostGitDir: path.join(result.taskRuntimeRoot, 'gitdirs', 'frontend.git'),
 				hostMetadataPath: path.join(result.taskRuntimeRoot, 'repo-metadata', 'frontend'),
@@ -522,6 +790,7 @@ describe('worker-task-runner', () => {
 				repoId: 'backend',
 				repoUrl: 'https://github.com/org/backend.git',
 				baseBranch: 'develop',
+				pushPolicy: { kind: 'missing' },
 				gitDirPath: '/gitdirs/backend.git',
 				hostGitDir: path.join(result.taskRuntimeRoot, 'gitdirs', 'backend.git'),
 				hostMetadataPath: path.join(result.taskRuntimeRoot, 'repo-metadata', 'backend'),
@@ -1299,6 +1568,88 @@ describe('worker-task-runner', () => {
 		).resolves.toBe('local worker tarball bytes');
 	});
 
+	it('copies configured local worker package tarballs and writes a local package manifest', async () => {
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const localWorkerTarballPath = path.join(tempDir, 'agent-vm-worker-local.tgz');
+		const localControlProtocolTarballPath = path.join(
+			tempDir,
+			'agent-vm-control-protocol-contracts-local.tgz',
+		);
+		const localWorkerControlTarballPath = path.join(
+			tempDir,
+			'agent-vm-worker-control-contracts-local.tgz',
+		);
+		const localGatewayInterfaceTarballPath = path.join(
+			tempDir,
+			'agent-vm-gateway-interface-local.tgz',
+		);
+		const localGondolinAdapterTarballPath = path.join(
+			tempDir,
+			'agent-vm-gondolin-adapter-local.tgz',
+		);
+		const localSecretManagementTarballPath = path.join(
+			tempDir,
+			'agent-vm-secret-management-local.tgz',
+		);
+		await Promise.all([
+			fs.writeFile(localWorkerTarballPath, 'local worker tarball bytes'),
+			fs.writeFile(localControlProtocolTarballPath, 'local control protocol tarball bytes'),
+			fs.writeFile(localWorkerControlTarballPath, 'local worker control tarball bytes'),
+			fs.writeFile(localGatewayInterfaceTarballPath, 'local gateway interface tarball bytes'),
+			fs.writeFile(localGondolinAdapterTarballPath, 'local gondolin adapter tarball bytes'),
+			fs.writeFile(localSecretManagementTarballPath, 'local secret management tarball bytes'),
+		]);
+		process.env.AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON = JSON.stringify([
+			{ packageName: 'agent-vm-worker', sourcePath: localWorkerTarballPath },
+			{ packageName: 'control-protocol-contracts', sourcePath: localControlProtocolTarballPath },
+			{ packageName: 'gateway-interface', sourcePath: localGatewayInterfaceTarballPath },
+			{ packageName: 'gondolin-adapter', sourcePath: localGondolinAdapterTarballPath },
+			{ packageName: 'secret-management', sourcePath: localSecretManagementTarballPath },
+			{ packageName: 'worker-control-contracts', sourcePath: localWorkerControlTarballPath },
+		]);
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		const result = await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [],
+				context: {},
+			},
+			zone,
+		);
+
+		const packageDirectory = path.join(result.stateDir, 'agent-vm-worker-packages');
+		const packageJson = z
+			.object({
+				dependencies: z.record(z.string(), z.string()),
+				pnpm: z.object({
+					overrides: z.record(z.string(), z.string()),
+				}),
+			})
+			.parse(JSON.parse(await fs.readFile(path.join(packageDirectory, 'package.json'), 'utf8')));
+		expect(packageJson.dependencies).toEqual({
+			'@agent-vm/agent-vm-worker': 'file:/state/agent-vm-worker-packages/agent-vm-worker-local.tgz',
+			'@agent-vm/control-protocol-contracts':
+				'file:/state/agent-vm-worker-packages/agent-vm-control-protocol-contracts-local.tgz',
+			'@agent-vm/gateway-interface':
+				'file:/state/agent-vm-worker-packages/agent-vm-gateway-interface-local.tgz',
+			'@agent-vm/gondolin-adapter':
+				'file:/state/agent-vm-worker-packages/agent-vm-gondolin-adapter-local.tgz',
+			'@agent-vm/secret-management':
+				'file:/state/agent-vm-worker-packages/agent-vm-secret-management-local.tgz',
+			'@agent-vm/worker-control-contracts':
+				'file:/state/agent-vm-worker-packages/agent-vm-worker-control-contracts-local.tgz',
+		});
+		expect(packageJson.pnpm?.overrides).toEqual(packageJson.dependencies);
+		await expect(
+			fs.readFile(path.join(packageDirectory, 'agent-vm-worker-local.tgz'), 'utf8'),
+		).resolves.toBe('local worker tarball bytes');
+	});
+
 	it('retries transient poll failures before giving up', async () => {
 		let pollCount = 0;
 		let submittedBody: unknown;
@@ -1421,6 +1772,7 @@ describe('worker-task-runner', () => {
 		});
 
 		const result = await executeWorkerTask(prepared, {
+			controllerEpoch: workerControllerEpoch,
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
 		});
@@ -1502,6 +1854,168 @@ describe('worker-task-runner', () => {
 		expect(closedTaskStateSchema.parse(result.finalState).status).toBe('closed');
 	});
 
+	it('keeps an active worker task alive when worker control reconnects within death grace', async () => {
+		const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+		let pollCount = 0;
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				pollCount += 1;
+				const status = pollCount >= 3 ? 'completed' : 'running';
+				return new Response(JSON.stringify({ status, taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+		const controlSessionClient = createWorkerControlSessionClientStub({
+			connectedStates: [false, true],
+		});
+		const connectWorkerControlSession = vi.fn(async () => controlSessionClient.client);
+		const prepared = await prepareWorkerTask({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		const result = await executeWorkerTask(prepared, {
+			connectWorkerControlSession,
+			controllerEpoch: workerControllerEpoch,
+			controlSession: {
+				controllerEpoch: 'worker-epoch-a',
+				operations: createWorkerControlOperationsStub(),
+			},
+			pollClock: createInstantPollClock(),
+			pollIntervalMs: 1,
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+		});
+
+		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
+		expect(completedTaskStateSchema.parse(result.finalState).status).toBe('completed');
+		expect(controlSessionClient.closeMock).toHaveBeenCalledOnce();
+	});
+
+	it('requires worker VM recovery when worker control stays disconnected beyond death grace', async () => {
+		const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'running', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+		const controlSessionClient = createWorkerControlSessionClientStub({
+			connectedStates: [false],
+		});
+		const connectWorkerControlSession = vi.fn(async () => controlSessionClient.client);
+		const prepared = await prepareWorkerTask({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			executeWorkerTask(prepared, {
+				connectWorkerControlSession,
+				controllerEpoch: workerControllerEpoch,
+				controlSession: {
+					controllerEpoch: 'worker-epoch-a',
+					operations: createWorkerControlOperationsStub(),
+				},
+				pollClock: createInstantPollClock(),
+				pollIntervalMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				timeoutMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace * 2,
+			}),
+		).rejects.toThrow(/exceeded death grace/u);
+		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
+		expect(controlSessionClient.closeMock).toHaveBeenCalledOnce();
+	});
+
+	it('requires worker VM recovery when worker control reconnects transport without accepted hello', async () => {
+		const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'running', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+		const controlSessionClient = createWorkerControlSessionClientStub({
+			connectedStates: [true],
+			readyStates: [false],
+		});
+		const connectWorkerControlSession = vi.fn(async () => controlSessionClient.client);
+		const prepared = await prepareWorkerTask({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			executeWorkerTask(prepared, {
+				connectWorkerControlSession,
+				controllerEpoch: workerControllerEpoch,
+				controlSession: {
+					controllerEpoch: 'worker-epoch-a',
+					operations: createWorkerControlOperationsStub(),
+				},
+				pollClock: createInstantPollClock(),
+				pollIntervalMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				timeoutMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace * 2,
+			}),
+		).rejects.toThrow(/exceeded death grace/u);
+		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
+		expect(controlSessionClient.closeMock).toHaveBeenCalledOnce();
+	});
+
 	it('includes worker HTTP response bodies in task submission failures', async () => {
 		globalThis.fetch = vi.fn(async () => {
 			return new Response('worker rejected task payload', {
@@ -1565,7 +2079,7 @@ describe('worker-task-runner', () => {
 		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
-	it('aggregates the primary task failure when shutdown hooks also fail', async () => {
+	it('preserves task resources when primary failure is followed by unproven VM destruction', async () => {
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url =
 				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -1609,11 +2123,37 @@ describe('worker-task-runner', () => {
 		expect(aggregateError.message).toMatch(/cleanup also failed/u);
 		expect(aggregateError.errors).toEqual([
 			expect.objectContaining({ message: expect.stringMatching(/Worker task timed out/u) }),
-			expect.objectContaining({ message: 'vm close failed' }),
-			expect.objectContaining({ message: 'compose cleanup failed' }),
+			expect.objectContaining({
+				cause: expect.objectContaining({ message: 'vm close failed' }),
+				message: expect.stringMatching(/did not prove exact destruction/u),
+			}),
 		]);
 		expect(managedVmCloseMock).toHaveBeenCalled();
-		expect(stopRepoResourceProvidersMock).toHaveBeenCalled();
+		expect(stopRepoResourceProvidersMock).not.toHaveBeenCalled();
+	});
+
+	it('reports Worker VM cleanup failure when stock close rejects', async () => {
+		managedVmCloseMock.mockRejectedValueOnce(new Error('stock close failed'));
+		const onTaskFinished = vi.fn(async () => {});
+
+		await expect(
+			executePreparedWorkerTaskForTest({
+				input: {
+					requestTaskId: 'request-task-incomplete-worker-close',
+					prompt: 'fix login',
+					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+					context: {},
+				},
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				zoneId: 'shravan',
+				onTaskFinished,
+			}),
+		).rejects.toThrow(/did not prove exact destruction/u);
+
+		expect(managedVmCloseMock).toHaveBeenCalledOnce();
+		expect(onTaskFinished).not.toHaveBeenCalled();
+		expect(stopRepoResourceProvidersMock).not.toHaveBeenCalled();
 	});
 
 	it('aggregates provider, resource-directory, and runtime cleanup failures after shutdown', async () => {

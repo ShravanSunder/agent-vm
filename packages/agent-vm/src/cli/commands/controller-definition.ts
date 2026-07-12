@@ -1,14 +1,13 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
 import path from 'node:path';
 
-import { command, flag, positional, string, subcommands } from 'cmd-ts';
+import { command, flag, subcommands } from 'cmd-ts';
 
 import { readPreparedGondolinImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerOfflineCleanup } from '../../operations/controller-offline-cleanup.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
-import { runLeaseCommand } from '../lease-commands.js';
 import { createRunTask } from '../run-task.js';
 import { runSshCommand } from '../ssh-commands.js';
 import {
@@ -151,7 +150,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 			}),
 			cleanup: command({
 				name: 'cleanup',
-				description: 'Clean up recorded gateway VM processes without contacting the controller',
+				description: 'Reconcile exact VM ownership without contacting the controller',
 				args: {
 					config: createConfigOption(),
 					force: flag({
@@ -171,18 +170,6 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 						zoneId: selectedZone.id,
 					});
 					io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-					const cleanupWarnings: string[] = [];
-					for (const cleanupResult of result.results) {
-						if (cleanupResult.cleanupWarning !== undefined) {
-							cleanupWarnings.push(cleanupResult.cleanupWarning);
-						}
-						cleanupWarnings.push(...cleanupResult.toolVmCleanup.warnings);
-					}
-					if (cleanupWarnings.length > 0) {
-						throw new Error(
-							`Controller cleanup completed with warnings: ${cleanupWarnings.join('; ')}`,
-						);
-					}
 				},
 			}),
 			status: createControllerOperationSubcommand(io, dependencies, {
@@ -286,67 +273,6 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 								restArguments: appendZoneArgument(['refresh'], selectedZone.id),
 								subcommand: 'credentials',
 								systemConfig,
-							});
-						},
-					}),
-				},
-			}),
-			lease: subcommands({
-				name: 'lease',
-				description: 'Manage tool VM leases',
-				cmds: {
-					list: command({
-						name: 'list',
-						description: 'List active leases',
-						args: {
-							config: createConfigOption(),
-						},
-						handler: async ({ config }) => {
-							await runLeaseCommand({
-								dependencies,
-								io,
-								restArguments: ['list'],
-								systemConfig: await loadSystemConfigFromOption(config, dependencies),
-							});
-						},
-					}),
-					peek: command({
-						name: 'peek',
-						description: 'Inspect a lease without extending its idle timer',
-						args: {
-							config: createConfigOption(),
-							leaseId: positional({
-								displayName: 'lease-id',
-								type: string,
-								description: 'Lease identifier to inspect',
-							}),
-						},
-						handler: async ({ config, leaseId }) => {
-							await runLeaseCommand({
-								dependencies,
-								io,
-								restArguments: ['peek', leaseId],
-								systemConfig: await loadSystemConfigFromOption(config, dependencies),
-							});
-						},
-					}),
-					release: command({
-						name: 'release',
-						description: 'Release a lease',
-						args: {
-							config: createConfigOption(),
-							leaseId: positional({
-								displayName: 'lease-id',
-								type: string,
-								description: 'Lease identifier to release',
-							}),
-						},
-						handler: async ({ config, leaseId }) => {
-							await runLeaseCommand({
-								dependencies,
-								io,
-								restArguments: ['release', leaseId],
-								systemConfig: await loadSystemConfigFromOption(config, dependencies),
 							});
 						},
 					}),

@@ -95,11 +95,12 @@ describe('zone-git-operations', () => {
 		const runtimeDir = path.join(rootPath, 'runtime');
 		const zoneFilesDir = path.join(rootPath, 'zone-files', 'sunfam');
 		const remoteUrl = path.join(rootPath, 'remote.git');
+		const branch = 'agent/zone-files';
 		await mkdir(zoneFilesDir, { recursive: true });
 		await writeFile(path.join(zoneFilesDir, 'AGENTS.md'), 'initial\n');
 		await execa('git', ['init', '--bare', remoteUrl]);
 		await ensureZoneGitRepository({
-			branch: 'main',
+			branch,
 			remoteUrl,
 			runtimeDir,
 			zoneFilesDir,
@@ -109,7 +110,7 @@ describe('zone-git-operations', () => {
 		await configureGitUser({ gitDir, workTree: zoneFilesDir });
 
 		const dirtyStatus = await getZoneGitStatus({
-			branch: 'main',
+			branch,
 			remoteUrl,
 			runtimeDir,
 			zoneFilesDir,
@@ -131,7 +132,7 @@ describe('zone-git-operations', () => {
 		});
 
 		const aheadStatus = await getZoneGitStatus({
-			branch: 'main',
+			branch,
 			remoteUrl,
 			runtimeDir,
 			zoneFilesDir,
@@ -148,7 +149,7 @@ describe('zone-git-operations', () => {
 		});
 
 		const pushResult = await pushZoneGit({
-			branch: 'main',
+			branch,
 			expectedHead: localHead,
 			remoteUrl,
 			runtimeDir,
@@ -157,7 +158,7 @@ describe('zone-git-operations', () => {
 		});
 
 		expect(pushResult).toMatchObject({
-			branch: 'main',
+			branch,
 			localHead,
 			remoteHead: localHead,
 		});
@@ -168,12 +169,14 @@ describe('zone-git-operations', () => {
 			},
 		]);
 		expect(
-			(await execa('git', ['--git-dir', remoteUrl, 'rev-parse', 'refs/heads/main'])).stdout.trim(),
+			(
+				await execa('git', ['--git-dir', remoteUrl, 'rev-parse', `refs/heads/${branch}`])
+			).stdout.trim(),
 		).toBe(localHead);
 
 		await expect(
 			getZoneGitStatus({
-				branch: 'main',
+				branch,
 				remoteUrl,
 				runtimeDir,
 				zoneFilesDir,
@@ -183,6 +186,86 @@ describe('zone-git-operations', () => {
 			aheadOfRemote: 0,
 			remoteHead: localHead,
 		});
+	});
+
+	it('refuses controller pushes to protected branch names', async () => {
+		const rootPath = await createTemporaryDirectory();
+		const runtimeDir = path.join(rootPath, 'runtime');
+		const zoneFilesDir = path.join(rootPath, 'zone-files', 'sunfam');
+		const remoteUrl = path.join(rootPath, 'remote.git');
+		await mkdir(zoneFilesDir, { recursive: true });
+		await writeFile(path.join(zoneFilesDir, 'AGENTS.md'), 'initial\n');
+		await execa('git', ['init', '--bare', remoteUrl]);
+		await ensureZoneGitRepository({
+			branch: 'develop',
+			remoteUrl,
+			runtimeDir,
+			zoneFilesDir,
+			zoneId: 'sunfam',
+		});
+		const gitDir = resolveZoneGitPaths({ runtimeDir, zoneId: 'sunfam' }).hostGitDir;
+		await configureGitUser({ gitDir, workTree: zoneFilesDir });
+		const localHead = await commitZoneFiles({
+			gitDir,
+			message: 'docs: seed zone files',
+			workTree: zoneFilesDir,
+		});
+
+		await expect(
+			pushZoneGit({
+				branch: 'develop',
+				defaultBranch: 'trunk',
+				expectedHead: localHead,
+				protectedBranches: ['develop'],
+				remoteUrl,
+				runtimeDir,
+				zoneFilesDir,
+				zoneId: 'sunfam',
+			}),
+		).rejects.toThrow(/refuses protected branch 'develop'/u);
+		await expect(
+			execa('git', ['--git-dir', remoteUrl, 'rev-parse', '--verify', 'refs/heads/develop']),
+		).rejects.toThrow();
+	});
+
+	it('refuses controller pushes to protected branch patterns', async () => {
+		const rootPath = await createTemporaryDirectory();
+		const runtimeDir = path.join(rootPath, 'runtime');
+		const zoneFilesDir = path.join(rootPath, 'zone-files', 'sunfam');
+		const remoteUrl = path.join(rootPath, 'remote.git');
+		await mkdir(zoneFilesDir, { recursive: true });
+		await writeFile(path.join(zoneFilesDir, 'AGENTS.md'), 'initial\n');
+		await execa('git', ['init', '--bare', remoteUrl]);
+		await ensureZoneGitRepository({
+			branch: 'release/2026-07',
+			remoteUrl,
+			runtimeDir,
+			zoneFilesDir,
+			zoneId: 'sunfam',
+		});
+		const gitDir = resolveZoneGitPaths({ runtimeDir, zoneId: 'sunfam' }).hostGitDir;
+		await configureGitUser({ gitDir, workTree: zoneFilesDir });
+		const localHead = await commitZoneFiles({
+			gitDir,
+			message: 'docs: seed zone files',
+			workTree: zoneFilesDir,
+		});
+
+		await expect(
+			pushZoneGit({
+				branch: 'release/2026-07',
+				defaultBranch: 'main',
+				expectedHead: localHead,
+				protectedBranchPatterns: ['release/*'],
+				remoteUrl,
+				runtimeDir,
+				zoneFilesDir,
+				zoneId: 'sunfam',
+			}),
+		).rejects.toThrow(/refuses protected branch pattern 'release\/\*'/u);
+		await expect(
+			execa('git', ['--git-dir', remoteUrl, 'rev-parse', '--verify', 'refs/heads/release/2026-07']),
+		).rejects.toThrow();
 	});
 
 	it('rejects pushes when expectedHead does not match the local head', async () => {
@@ -230,11 +313,12 @@ describe('zone-git-operations', () => {
 		const runtimeDir = path.join(rootPath, 'runtime');
 		const zoneFilesDir = path.join(rootPath, 'zone-files', 'sunfam');
 		const remoteUrl = path.join(rootPath, 'remote.git');
+		const branch = 'agent/zone-files';
 		await mkdir(zoneFilesDir, { recursive: true });
 		await writeFile(path.join(zoneFilesDir, 'AGENTS.md'), 'initial\n');
 		await execa('git', ['init', '--bare', remoteUrl]);
 		await ensureZoneGitRepository({
-			branch: 'main',
+			branch,
 			remoteUrl,
 			runtimeDir,
 			zoneFilesDir,
@@ -248,18 +332,18 @@ describe('zone-git-operations', () => {
 			workTree: zoneFilesDir,
 		});
 		await pushZoneGit({
-			branch: 'main',
+			branch,
 			expectedHead: localHead,
 			remoteUrl,
 			runtimeDir,
 			zoneFilesDir,
 			zoneId: 'sunfam',
 		});
-		await execa('git', ['--git-dir', remoteUrl, 'update-ref', '-d', 'refs/heads/main']);
+		await execa('git', ['--git-dir', remoteUrl, 'update-ref', '-d', `refs/heads/${branch}`]);
 
 		await expect(
 			getZoneGitStatus({
-				branch: 'main',
+				branch,
 				remoteUrl,
 				runtimeDir,
 				zoneFilesDir,

@@ -72,7 +72,10 @@ export async function collectZoneGitDoctorChecks(options: {
 			// oxlint-disable-next-line no-await-in-loop -- doctor output should stay zone ordered
 			const status = await getZoneGitStatus({
 				branch: zone.gateway.zoneGit.remote.branch,
+				defaultBranch: zone.gateway.zoneGit.remote.defaultBranch,
 				...(options.githubToken ? { githubToken: options.githubToken } : {}),
+				protectedBranches: zone.gateway.zoneGit.remote.protectedBranches,
+				protectedBranchPatterns: zone.gateway.zoneGit.remote.protectedBranchPatterns,
 				remoteUrl: zone.gateway.zoneGit.remote.repoUrl,
 				runtimeDir: options.systemConfig.runtimeDir,
 				zoneFilesDir: zone.gateway.zoneFilesDir,

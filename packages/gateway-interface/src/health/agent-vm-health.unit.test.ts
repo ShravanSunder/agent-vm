@@ -10,15 +10,40 @@ import {
 } from './agent-vm-health.js';
 
 describe('agent-vm health events', () => {
-	it('accepts zone-scoped gateway control-link events with controller endpoint literals', () => {
+	it('accepts bounded caller-context rejection diagnostics without affecting readiness', () => {
 		const event = {
-			controllerHost: 'controller.vm.host',
-			controllerPort: 18800,
-			elapsedMs: 12,
-			kind: 'gateway-control-link',
+			kind: 'caller-context-rejection',
 			observedAtMs: 1_000,
-			operation: 'controller-health',
-			path: '/health',
+			operation: 'lease_renew',
+			reason: 'caller_context_stale',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		expect(isAgentVmHealthEvent(event)).toBe(true);
+		expect(isAgentVmHealthEvent({ ...event, operation: 'control_ping' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, reason: 'raw-error' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, result: 'ok' })).toBe(false);
+		expect(healthEventBucketKey(event)).toBe(
+			'beta:caller-context-rejection:lease_renew:caller_context_stale',
+		);
+		expect(
+			deriveZoneHealthSnapshot([event], {
+				nowMs: 100_000,
+				staleAfterMs: 30_000,
+				zoneId: 'beta',
+			}),
+		).toEqual({ kind: 'unknown', reason: 'no-events', zoneId: 'beta' });
+	});
+
+	it('accepts zone-scoped gateway control-session events with control-session identity', () => {
+		const event = {
+			domain: 'gateway_control',
+			elapsedMs: 12,
+			kind: 'gateway-control-session',
+			observedAtMs: 1_000,
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-beta',
 			result: 'ok',
 			zoneId: 'beta',
 		} satisfies AgentVmHealthEvent;
@@ -27,7 +52,7 @@ describe('agent-vm health events', () => {
 		expect(
 			isAgentVmHealthEvent({
 				...event,
-				controllerHost: 'wrong.vm.host',
+				peerId: '',
 			}),
 		).toBe(false);
 	});
@@ -95,6 +120,145 @@ describe('agent-vm health events', () => {
 		expect(healthEventBucketKey(event)).toBe(
 			'sunfam:agent-channel-provider-health:primary-channel',
 		);
+	});
+
+	it('validates Tool VM lease lifecycle fields when they are present', () => {
+		const event = {
+			activeUseId: '66666666-6666-4666-8666-666666666666',
+			agentId: 'main',
+			callerContextState: 'stale',
+			elapsedMs: 25,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			leaseRejectionReason: 'caller_context_stale',
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 1_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+			result: 'ok',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: 'beta',
+		};
+
+		expect(isAgentVmHealthEvent(event)).toBe(true);
+		expect(isAgentVmHealthEvent({ ...event, lifecycleEventRole: 'operator_guess' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, lifecycleTransition: 'same_id_stale_current' })).toBe(
+			false,
+		);
+		expect(isAgentVmHealthEvent({ ...event, callerContextState: 'maybe' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, leaseRejectionReason: 'raw-controller-error' })).toBe(
+			false,
+		);
+		expect(isAgentVmHealthEvent({ ...event, activeUseId: '' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, transitionId: '' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, transitionId: undefined })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, lifecycleTransition: undefined })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, replacementLeaseId: undefined })).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				...event,
+				lifecycleEventRole: undefined,
+			}),
+		).toBe(false);
+	});
+
+	it('dedupes Tool VM lifecycle observations by transition id with controller final authority', () => {
+		const pluginObservation = {
+			agentId: 'main',
+			callerContextState: 'stale',
+			elapsedMs: 25,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			leaseRejectionReason: 'caller_context_stale',
+			lifecycleEventRole: 'plugin_observation',
+			lifecycleTransition: 'current_to_stale',
+			observedAtMs: 1_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			result: 'failed',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+		const controllerFinal = {
+			agentId: 'main',
+			callerContextState: 'ok',
+			elapsedMs: 10,
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000002',
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 2_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+			result: 'ok',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		expect(healthEventBucketKey(pluginObservation)).toBe(
+			'beta:tool-vm-ssh:lifecycle:77777777-7777-4777-8777-777777777777',
+		);
+		expect(healthEventBucketKey(controllerFinal)).toBe(
+			'beta:tool-vm-ssh:lifecycle:77777777-7777-4777-8777-777777777777',
+		);
+		expect(
+			deriveZoneHealthSnapshot([pluginObservation, controllerFinal], {
+				nowMs: 2_500,
+				staleAfterMs: 30_000,
+				zoneId: 'beta',
+			}),
+		).toEqual({
+			kind: 'ok',
+			latestEvents: [controllerFinal],
+			zoneId: 'beta',
+		});
+	});
+
+	it('supersedes a plain old Tool VM SSH failure after controller-final reacquire succeeds', () => {
+		const plainOldFailure = {
+			agentId: 'main',
+			elapsedMs: 5_021,
+			errorCode: 'ssh-command-failed',
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			observedAtMs: 1_000,
+			operation: 'file-bridge',
+			result: 'failed',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+		const controllerFinal = {
+			agentId: 'main',
+			callerContextState: 'ok',
+			elapsedMs: 10,
+			kind: 'tool-vm-ssh',
+			leaseId: '01890f00-0000-7000-8000-000000000002',
+			lifecycleEventRole: 'controller_final',
+			lifecycleTransition: 'stale_to_reacquired',
+			observedAtMs: 2_000,
+			oldLeaseId: '01890f00-0000-7000-8000-000000000001',
+			operation: 'file-bridge',
+			replacementLeaseId: '01890f00-0000-7000-8000-000000000002',
+			result: 'ok',
+			transitionId: '77777777-7777-4777-8777-777777777777',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		expect(
+			deriveZoneHealthSnapshot([plainOldFailure, controllerFinal], {
+				nowMs: 2_500,
+				staleAfterMs: 30_000,
+				zoneId: 'beta',
+			}),
+		).toEqual({
+			kind: 'ok',
+			latestEvents: [controllerFinal],
+			zoneId: 'beta',
+		});
 	});
 
 	it('rejects channel-provider health details outside the operational whitelist', () => {
@@ -180,7 +344,7 @@ describe('agent-vm health events', () => {
 			oldBootedAt: '2026-05-27T12:00:00.000Z',
 			oldHostPid: 1111,
 			oldVmId: 'old-gateway-vm',
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			result: 'ok',
 			zoneId: 'sunfam',
 		} satisfies AgentVmHealthEvent;
@@ -205,7 +369,7 @@ describe('agent-vm health events', () => {
 			oldHostPid: 1111,
 			oldVmId: 'old-gateway-vm',
 			operationId: 'sunfam-restart-018f',
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			result: 'ok',
 			zoneId: 'sunfam',
 		} satisfies AgentVmHealthEvent;
@@ -225,7 +389,7 @@ describe('agent-vm health events', () => {
 			newHostPid: 2222,
 			newVmId: 'new-gateway-vm',
 			observedAtMs: 1_000,
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			result: 'ok',
 			zoneId: 'sunfam',
 		} satisfies AgentVmHealthEvent;
@@ -249,7 +413,7 @@ describe('agent-vm health events', () => {
 			oldBootedAt: '2026-05-27T12:00:00.000Z',
 			oldHostPid: 1111,
 			oldVmId: 'old-gateway-vm',
-			reason: 'gateway-control-link-unhealthy',
+			reason: 'gateway-control-session-unhealthy',
 			result: 'ok',
 			zoneId: 'sunfam',
 		};

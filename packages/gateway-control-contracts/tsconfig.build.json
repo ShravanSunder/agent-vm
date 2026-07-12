@@ -1,0 +1,15 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"rootDir": "./src",
+		"outDir": "./dist",
+		"declaration": true,
+		"declarationMap": true,
+		"sourceMap": true,
+		"noEmit": false,
+		"paths": {
+			"@agent-vm/control-protocol-contracts": ["../control-protocol-contracts/dist/index.d.ts"]
+		}
+	},
+	"exclude": ["src/**/*.test.ts"]
+}

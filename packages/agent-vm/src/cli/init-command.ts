@@ -166,7 +166,6 @@ interface DefaultManagedImageOverlay {
 const defaultGatewayIngressPort = 18791;
 const defaultOpenClawExtensionsRootPath = '/home/openclaw/.openclaw/extensions';
 const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions/gondolin';
-const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const defaultOpenClawManagedPackageExtensionsPath = '/pnpm/global/5/node_modules/@openclaw';
 const defaultAgentVmManagedPackageExtensionsPath = '/pnpm/global/5/node_modules/@agent-vm';
 const scaffoldedGatewayPortSystemConfigSchema = z
@@ -419,7 +418,6 @@ const defaultSystemConfig = (
 							},
 							zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId),
 							authProfilesByAgent: {},
-							rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN'],
 						}
 					: {}),
 				backupDir: pathProfile.gatewayBackupDir(zoneId),
@@ -434,8 +432,10 @@ const defaultSystemConfig = (
 				: {}),
 			...(gatewayType === 'openclaw'
 				? {
-						agents: (agentIds ?? []).map((agentId) => ({ id: agentId })),
-						mcpPortal: { configDir: pathProfile.gatewayConfigDir(zoneId) },
+						agents: resolveOpenClawScaffoldAgentIds(agentIds).map((agentId) => ({
+							id: agentId,
+						})),
+						toolPortal: { configDir: pathProfile.gatewayConfigDir(zoneId) },
 					}
 				: {}),
 		},
@@ -708,6 +708,14 @@ function formatAgentIdentityName(agentId: string): string {
 	return agentId.charAt(0).toUpperCase() + agentId.slice(1);
 }
 
+const defaultOpenClawScaffoldAgentId = 'default';
+
+function resolveOpenClawScaffoldAgentIds(
+	agentIds: readonly string[] | undefined,
+): readonly string[] {
+	return agentIds && agentIds.length > 0 ? agentIds : [defaultOpenClawScaffoldAgentId];
+}
+
 function defaultOpenClawPortalToolDenyList(
 	_agentId: string,
 	_agentIds: readonly string[],
@@ -716,6 +724,7 @@ function defaultOpenClawPortalToolDenyList(
 }
 
 function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): object {
+	const resolvedAgentIds = resolveOpenClawScaffoldAgentIds(agentIds);
 	return {
 		defaults: {
 			model: { primary: 'openai/gpt-5.5' },
@@ -732,16 +741,12 @@ function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): o
 			},
 			workspace: '/zone/agents/default',
 		},
-		...(agentIds && agentIds.length > 0
-			? {
-					list: agentIds.map((agentId) => ({
-						id: agentId,
-						workspace: `/zone/agents/${agentId}`,
-						identity: { name: formatAgentIdentityName(agentId) },
-						tools: { deny: defaultOpenClawPortalToolDenyList(agentId, agentIds) },
-					})),
-				}
-			: {}),
+		list: resolvedAgentIds.map((agentId) => ({
+			id: agentId,
+			workspace: `/zone/agents/${agentId}`,
+			identity: { name: formatAgentIdentityName(agentId) },
+			tools: { deny: defaultOpenClawPortalToolDenyList(agentId, resolvedAgentIds) },
+		})),
 	};
 }
 
@@ -759,10 +764,9 @@ function defaultMcpProviderConfig(): object {
 }
 
 function defaultMcpPortalAgentAssignments(agentIds: readonly string[] | undefined): object {
-	if (!agentIds || agentIds.length === 0) {
-		return {};
-	}
-	return Object.fromEntries(agentIds.map((agentId) => [agentId, { profile: 'default' }]));
+	return Object.fromEntries(
+		resolveOpenClawScaffoldAgentIds(agentIds).map((agentId) => [agentId, { profile: 'default' }]),
+	);
 }
 
 function defaultMcpPortalConfig(agentIds: readonly string[] | undefined): object {
@@ -839,27 +843,21 @@ const defaultOpenClawConfig = (
 			paths: [
 				defaultOpenClawExtensionsRootPath,
 				defaultOpenClawExtensionsPath,
-				defaultOpenClawMcpPortalExtensionsPath,
 				defaultOpenClawManagedPackageExtensionsPath,
 				defaultAgentVmManagedPackageExtensionsPath,
 			],
 		},
-		allow: ['gondolin', 'memory-core', 'mcp-portal'],
+		allow: ['gondolin', 'memory-core'],
 		slots: { memory: 'memory-core' },
 		entries: {
 			gondolin: {
 				enabled: true,
 				config: {
-					controllerUrl: 'http://controller.vm.host:18800',
 					zoneId,
 				},
 			},
 			'memory-core': {
 				enabled: true,
-			},
-			'mcp-portal': {
-				enabled: true,
-				hooks: { allowPromptInjection: true },
 			},
 		},
 	},
@@ -939,6 +937,7 @@ async function writeConfigSchemaArtifacts(options: {
 		'system.schema.json': createSystemConfigSchemaArtifact(),
 		'mcp.schema.json': contractSchemas.mcp,
 		'mcp-portal.schema.json': contractSchemas.mcpPortal,
+		'tool-portal.schema.json': contractSchemas.toolPortal,
 	};
 	const schemaWriteResults = await Promise.all(
 		Object.entries(schemas).map(async ([fileName, schema]) => {

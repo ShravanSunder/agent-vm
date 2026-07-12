@@ -19,9 +19,11 @@ import {
 	type IngressRoute as GondolinIngressRoute,
 	type ShadowPredicate,
 	type ShadowProviderOptions,
+	type SshOptions,
 	type VMOptions,
 	type VmFs as GondolinVmFs,
 	type VirtualProvider,
+	getInfoFromSshExecRequest,
 } from '@earendil-works/gondolin';
 
 import {
@@ -53,18 +55,127 @@ export type ManagedExecOptions = GondolinExecOptions;
 export type ManagedExecProcess = GondolinExecProcess;
 export type ManagedExecResult = GondolinExecResult;
 export type ManagedVmFs = GondolinVmFs;
+export type ManagedSshEgressOptions = SshOptions;
 
 export type IngressRoute = GondolinIngressRoute;
 
+export interface GitReadOnlySshEgressOptions {
+	readonly allowedHosts: readonly string[];
+	readonly allowedRepos?: readonly string[];
+	readonly agent?: string;
+	readonly knownHostsFile?: SshOptions['knownHostsFile'];
+}
+
 export interface SshAccess {
+	close(): Promise<void>;
 	readonly host: string;
 	readonly command?: string;
 	readonly identityFile?: string;
 	readonly port: number;
+	readonly serverHostKey: SshServerHostKey;
 	readonly user?: string;
 }
 
+export interface ManagedVmSshAccess {
+	close(): Promise<void>;
+	readonly command: string;
+	readonly host: string;
+	readonly identityFile: string;
+	readonly port: number;
+	readonly user: string;
+}
+
+export interface SshServerHostKey {
+	readonly algorithm: 'ssh-ed25519';
+	readonly publicKeyBase64: string;
+}
+
+export function isSshServerHostKey(value: unknown): value is SshServerHostKey {
+	if (typeof value !== 'object' || value === null) {
+		return false;
+	}
+	if (!('algorithm' in value) || !('publicKeyBase64' in value)) {
+		return false;
+	}
+	const algorithm = value.algorithm;
+	const publicKeyBase64 = value.publicKeyBase64;
+	if (
+		algorithm !== 'ssh-ed25519' ||
+		typeof publicKeyBase64 !== 'string' ||
+		!/^[A-Za-z0-9+/]+={0,2}$/u.test(publicKeyBase64)
+	) {
+		return false;
+	}
+
+	try {
+		const decodedPublicKey = Buffer.from(publicKeyBase64, 'base64');
+		if (decodedPublicKey.toString('base64') !== publicKeyBase64 || decodedPublicKey.length < 4) {
+			return false;
+		}
+		const algorithmLength = decodedPublicKey.readUInt32BE(0);
+		const algorithmStart = 4;
+		const algorithmEnd = algorithmStart + algorithmLength;
+		const publicKeyLengthOffset = algorithmEnd;
+		const publicKeyStart = publicKeyLengthOffset + 4;
+		return (
+			algorithmEnd + 4 <= decodedPublicKey.length &&
+			decodedPublicKey.subarray(algorithmStart, algorithmEnd).toString('utf8') === 'ssh-ed25519' &&
+			decodedPublicKey.readUInt32BE(publicKeyLengthOffset) === 32 &&
+			decodedPublicKey.length === publicKeyStart + 32
+		);
+	} catch {
+		return false;
+	}
+}
+
+export function parseSshServerHostKey(publicKeyText: string): SshServerHostKey {
+	const publicKeyLines = publicKeyText
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+	if (publicKeyLines.length !== 1) {
+		throw new Error('Tool VM did not expose exactly one ssh-ed25519 server host key.');
+	}
+	const publicKeyFields = publicKeyLines[0]?.split(/\s+/u);
+	const serverHostKey = {
+		algorithm: publicKeyFields?.[0],
+		publicKeyBase64: publicKeyFields?.[1],
+	};
+	if (!isSshServerHostKey(serverHostKey)) {
+		throw new Error('Tool VM did not expose a valid ssh-ed25519 server host key.');
+	}
+	return serverHostKey;
+}
+
+async function readSshServerHostKey(vmInstance: ManagedVmInstance): Promise<SshServerHostKey> {
+	const publicKeyResult = await vmInstance.exec(['/bin/cat', '/etc/ssh/ssh_host_ed25519_key.pub']);
+	if (publicKeyResult.exitCode !== 0) {
+		throw new Error(
+			`Tool VM server host key read failed with exit ${String(publicKeyResult.exitCode)}.`,
+		);
+	}
+	return parseSshServerHostKey(publicKeyResult.stdout);
+}
+
+async function closeSshAccessAfterIdentityFailure(
+	sshAccess: Awaited<ReturnType<ManagedVmInstance['enableSsh']>>,
+	identityError: unknown,
+): Promise<never> {
+	try {
+		await sshAccess.close();
+	} catch (closeError) {
+		// oxlint-disable-next-line preserve-caught-error -- AggregateError.errors preserves closeError while cause retains the primary identity failure.
+		throw new AggregateError(
+			[identityError, closeError],
+			'Tool VM SSH server identity validation and SSH access cleanup both failed.',
+			{ cause: identityError },
+		);
+	}
+	throw identityError;
+}
+
 export interface IngressAccess {
+	close(): Promise<void>;
 	readonly host: string;
 	readonly port: number;
 }
@@ -73,10 +184,11 @@ export interface ManagedVmInstance {
 	readonly fs: ManagedVmFs;
 	readonly id: string;
 	exec(command: string | string[], options?: ManagedExecOptions): ManagedExecProcess;
-	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
+	enableSsh(options?: EnableSshOptions): Promise<ManagedVmSshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	getHostPid?(): number | null;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
+	start(): Promise<void>;
 	close(): Promise<void>;
 }
 
@@ -119,6 +231,7 @@ export interface CreateVmOptions {
 	readonly secrets: Record<string, MediatedSecretSpec>;
 	readonly vfsMounts: Record<string, VfsMountSpec>;
 	readonly tcpHosts?: Record<string, string>;
+	readonly sshEgress?: ManagedSshEgressOptions;
 	readonly env?: Record<string, string>;
 	readonly sessionLabel?: string;
 	readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
@@ -134,6 +247,7 @@ export interface ManagedVm {
 	getHostPid(): number | null;
 	getVmInstance(): ManagedVmInstance;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
+	start(): Promise<void>;
 	close(): Promise<void>;
 }
 
@@ -468,6 +582,53 @@ function mergeUniqueHosts(
 	return mergedHosts;
 }
 
+function normalizeGitRepoPath(repoPath: string): string {
+	return repoPath.replace(/^\/+/u, '').replace(/\.git$/u, '');
+}
+
+export function createGitReadOnlySshEgressOptions(
+	options: GitReadOnlySshEgressOptions,
+): ManagedSshEgressOptions {
+	const allowedRepos =
+		options.allowedRepos === undefined
+			? undefined
+			: new Set(options.allowedRepos.map((repoPath) => normalizeGitRepoPath(repoPath)));
+
+	return {
+		allowedHosts: [...options.allowedHosts],
+		...(options.agent ? { agent: options.agent } : {}),
+		...(options.knownHostsFile ? { knownHostsFile: options.knownHostsFile } : {}),
+		execPolicy: (request) => {
+			const gitExec = getInfoFromSshExecRequest(request);
+			if (!gitExec) {
+				return {
+					allow: false,
+					message: 'agent-vm: non-git SSH exec is denied',
+				};
+			}
+			if (gitExec.service === 'git-receive-pack') {
+				return {
+					allow: false,
+					message: 'agent-vm: git push over guest SSH is denied',
+				};
+			}
+			if (gitExec.service !== 'git-upload-pack') {
+				return {
+					allow: false,
+					message: 'agent-vm: unsupported git SSH service is denied',
+				};
+			}
+			if (allowedRepos && !allowedRepos.has(normalizeGitRepoPath(gitExec.repo))) {
+				return {
+					allow: false,
+					message: 'agent-vm: git repository is not allowlisted for guest SSH reads',
+				};
+			}
+			return { allow: true };
+		},
+	};
+}
+
 function createInternalTcpHostPolicy(
 	rules: readonly InternalTcpHostRule[],
 ): HttpHooks['isIpAllowed'] | undefined {
@@ -496,6 +657,7 @@ export async function createManagedVm(
 ): Promise<ManagedVm> {
 	dependencies.configureHostNetworkDefaults?.();
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
+	const hasSshEgress = options.sshEgress !== undefined && options.sshEgress.allowedHosts.length > 0;
 	const internalTcpHostRules = deriveInternalTcpHostRules(options.tcpHosts);
 	const allowedHosts = mergeUniqueHosts(
 		options.allowedHosts,
@@ -530,7 +692,7 @@ export async function createManagedVm(
 				fuseMount: '/data',
 				mounts: createVfsMounts(options.vfsMounts, dependencies),
 			},
-			...(hasTcpHosts
+			...(hasTcpHosts || hasSshEgress
 				? {
 						dns: {
 							mode: 'synthetic',
@@ -538,9 +700,14 @@ export async function createManagedVm(
 							syntheticIPv6: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 							syntheticHostMapping: 'per-host',
 						},
-						tcp: {
-							hosts: options.tcpHosts,
-						},
+						...(hasSshEgress ? { ssh: options.sshEgress } : {}),
+						...(hasTcpHosts
+							? {
+									tcp: {
+										hosts: options.tcpHosts,
+									},
+								}
+							: {}),
 					}
 				: {}),
 		});
@@ -557,7 +724,22 @@ export async function createManagedVm(
 			return vmInstance.exec(normalizedCommand, execOptions);
 		},
 		async enableSsh(sshOptions?: EnableSshOptions): Promise<SshAccess> {
-			return await vmInstance.enableSsh(sshOptions);
+			const sshAccess = await vmInstance.enableSsh(sshOptions);
+			let serverHostKey: SshServerHostKey;
+			try {
+				serverHostKey = await readSshServerHostKey(vmInstance);
+			} catch (identityError) {
+				return await closeSshAccessAfterIdentityFailure(sshAccess, identityError);
+			}
+			return {
+				close: async (): Promise<void> => await sshAccess.close(),
+				command: sshAccess.command,
+				host: sshAccess.host,
+				identityFile: sshAccess.identityFile,
+				port: sshAccess.port,
+				serverHostKey,
+				user: sshAccess.user,
+			};
 		},
 		async enableIngress(ingressOptions?: EnableIngressOptions): Promise<IngressAccess> {
 			return await vmInstance.enableIngress(resolveManagedVmIngressOptions(ingressOptions));
@@ -570,6 +752,9 @@ export async function createManagedVm(
 		},
 		setIngressRoutes(routes: readonly IngressRoute[]): void {
 			vmInstance.setIngressRoutes(routes);
+		},
+		async start(): Promise<void> {
+			await vmInstance.start();
 		},
 		async close(): Promise<void> {
 			let closeError: unknown;

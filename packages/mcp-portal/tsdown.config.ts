@@ -7,6 +7,7 @@ export default defineConfig({
 		'src/index.ts',
 		'src/core/index.ts',
 		'src/mcp-proxy/index.ts',
+		'src/mcp-provider-backend/index.ts',
 		'src/cli/index.ts',
 		'src/portal-config/index.ts',
 		'src/portal-auth/agent-bearer-token.ts',

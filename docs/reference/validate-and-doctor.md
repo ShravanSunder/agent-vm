@@ -50,9 +50,12 @@ deployment configs should not carry a raw WebSocket TCP passthrough field.
 
 Use `agent-vm validate --config config/system.jsonc --mcp-live` after changing
 MCP providers, provider secrets, or MCP Portal profile tool names. The live MCP
-pass resolves configured secrets, starts each provider, runs `tools/list`, and
-reports namespace, transport, phase, and hints for provider failures. That
-live upstream proof belongs to `validate --mcp-live`, not `doctor`.
+pass resolves configured secrets, starts each referenced provider, runs
+`tools/list`, checks discovered tool input schemas can build validators, and
+reports namespace, transport, phase, and hints for provider failures. A
+referenced namespace may still be reported as `unavailable` for operator
+diagnostics, but it fails validation proof. That live upstream proof belongs to
+`validate --mcp-live`, not `doctor`.
 
 ## doctor
 
@@ -75,8 +78,8 @@ It checks:
   configs, using `op whoami` under an isolated service-account environment.
 - OpenClaw CLI availability for OpenClaw zones.
 - OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
-- OpenClaw MCP Portal plugin wiring and plugin approval routing for OpenClaw
-  zones.
+- OpenClaw Tool Portal native tool wiring through the `gondolin` plugin and
+  plugin approval routing for OpenClaw zones.
 - OpenClaw Tool VM profile mappings, per-agent auth profile entries, sandbox
   seed entries, and loaded Tool VM mediated secret access entries are visible as
   named inventory checks.

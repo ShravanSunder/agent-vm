@@ -535,7 +535,8 @@ describe('scaffoldAgentVmProject', () => {
 			'utf8',
 		);
 		expect(perAgentManual).toContain('Do not run raw git push.');
-		expect(perAgentManual).toContain('zone_git_push');
+		expect(perAgentManual).toContain('controller-owned zone Git push capability');
+		expect(perAgentManual).not.toContain('zone_git_push');
 		expect(await fs.readlink(path.join(targetDir, 'CLAUDE.md'))).toBe('AGENTS.md');
 	});
 
@@ -945,7 +946,6 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.plugins.load.paths).toEqual([
 			'/home/openclaw/.openclaw/extensions',
 			'/home/openclaw/.openclaw/extensions/gondolin',
-			'/home/openclaw/.openclaw/extensions/mcp-portal',
 			'/pnpm/global/5/node_modules/@openclaw',
 			'/pnpm/global/5/node_modules/@agent-vm',
 		]);
@@ -977,7 +977,7 @@ describe('scaffoldAgentVmProject', () => {
 		]);
 	});
 
-	it('scaffolds OpenClaw agent list from requested multi-agent ids', async () => {
+	it('scaffolds OpenClaw agent list from requested same-zone managed agent ids', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -1316,7 +1316,7 @@ describe('scaffoldAgentVmProject', () => {
 			secret: 'OPENCLAW_GATEWAY_TOKEN',
 		});
 		expect(config.zones[0].gateway.ssh).toEqual({ secretEnv: 'explicit' });
-		expect(config.zones[0].gateway.rawEnvSecrets).toEqual(['AGENT_VM_ZONE_GIT_TOKEN']);
+		expect(config.zones[0].gateway.rawEnvSecrets).toBeUndefined();
 	});
 
 	it('scaffolds broad model-provider network defaults for openclaw type', async () => {
@@ -1489,16 +1489,17 @@ describe('scaffoldAgentVmProject', () => {
 		});
 		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
-		expect(openClawConfig.plugins?.allow).toContain('mcp-portal');
+		expect(openClawConfig.plugins?.allow).toContain('gondolin');
+		expect(openClawConfig.plugins?.allow).not.toContain('mcp-portal');
 		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
-		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });
-		expect(openClawConfig.plugins?.entries?.['mcp-portal']).toMatchObject({
+		expect(openClawConfig.plugins?.entries?.gondolin).toMatchObject({
 			enabled: true,
-			hooks: { allowPromptInjection: true },
+			config: {
+				zoneId: 'test-openclaw',
+			},
 		});
-		expect(openClawConfig.plugins?.entries?.['mcp-portal']).not.toHaveProperty(
-			'config.promptContext',
-		);
+		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });
+		expect(openClawConfig.plugins?.entries?.['mcp-portal']).toBeUndefined();
 		expect(openClawConfig.mcp?.servers).toEqual({});
 		expect(openClawConfig.tools?.allow).toEqual(['*']);
 	});

@@ -67,7 +67,29 @@ runtimeDir/zones/<zone>/zone-git/                   per-zone, preserved    NOT w
                                                     by destroy-zone's       destroy-zone --purge
                                                     selective deletion      (see two reasons
                                                     (see note below)        below)
+
+runtimeDir/vm-ownership/controller-ownership.lock   controller lifetime    released by the
+                                                                           controller or offline
+                                                                           cleanup process
+
+stateDir/gateway-runtime.json                        Gateway lifetime        exact Gateway cleanup
+                                                    schema v2 evidence      after child cleanup
+
+stateDir/tool-leases/<recordId>.json                 Tool VM lifetime        exact Tool cleanup
+                                                    schema v2 evidence      before parent cleanup
 ```
+
+The controller holds `controller-ownership.lock` for its complete process
+lifetime. Offline cleanup acquires the same lock before probing controller
+health or reading destructive evidence. The lock provides deployment-wide
+mutual exclusion; it is not destruction evidence. The controller is the sole
+lifecycle authority. Schema-v2 runtime records under the selected zone's
+`stateDir` are its durable exact-cleanup evidence after a crash: they bind the
+canonical deployment and zone to the recorded VM id, host pid, process-start
+identity, and Gateway parent identity. Cleanup revalidates that evidence
+against the current config and live process/endpoint state before signaling.
+HTTP health and telemetry remain diagnostic inputs and cannot authorize VM
+adoption, destruction, or TCP-slot reuse.
 
 Note that `zone-git/` is preserved **implicitly**, not by explicit policy.
 `destroy-zone --purge` enumerates specific subtrees to delete (`worker-tasks/`,
@@ -116,7 +138,7 @@ zoneFilesDir                        system.json host config            durable R
 /zone                               OpenClaw gateway VM                RealFS -> zoneFilesDir
                                     durable zone files                 shared, backed up
 
-workMountDir                        POST /lease request                gateway VM path, untrusted input
+workMountDir                        gateway_control_rpc lease_create   gateway VM path, untrusted input
                                     chosen by OpenClaw/plugin          must be child of /zone or sandboxes
 
 /home/openclaw/.openclaw/state/
@@ -181,41 +203,57 @@ durable state
   Backup: yes
   Rule: difficult or annoying to recreate; identity, auth profiles, runtime records
 
-  Note: `gateway-runtime.json` is a durable recovery record under `stateDir`.
-  It is not part of `runtimeDir`; the shared word "runtime" does not imply the
-  same lifecycle.
+  Note: `gateway-runtime.json` is the schema-v2 Gateway cleanup record under
+  `stateDir`. It is not part of `runtimeDir`; the shared word "runtime" does
+  not imply the same lifecycle. It records canonical config path, controller
+  port, project namespace, zone, full Gateway epoch identity, VM id, host pid,
+  process command/start identity, session label, and the ingress port once
+  available.
 
-  Note: `tool-leases/<recordId>.json` is a durable recovery record for an
+  Note: `tool-leases/<recordId>.json` is the schema-v2 cleanup record for an
   OpenClaw Tool VM. `recordId` is a controller-generated UUID. The record keeps
-  `agentId`, `leaseId`, `vmId`, `qemuPid`, deployment fences, TCP slot, and
-  session/process evidence. It never persists OpenClaw scope keys.
+  canonical config path, controller port, project namespace, zone, full parent
+  Gateway identity, `agentId`, `leaseId`, `vmId`, `qemuPid`, process
+  command/start identity, TCP slot, and session label. It never persists
+  OpenClaw scope keys.
 
-  On controller startup, Phase A scans this directory and applies the following
-  recovery discipline:
+  Controller restart adopts no VM. Startup and scoped offline cleanup process
+  all Tool VM records for a zone before its Gateway record, prove the recorded
+  processes and relevant endpoints absent, and only then permit a fresh tree.
+  Records are deleted only after exact cleanup or already-absent process and
+  endpoint state is proven.
 
-  - **Five-fence deployment check** — `configPath`, `controllerPort`,
-    `projectNamespace`, `zoneId`, `sessionLabel` must all match the running
-    deployment. Any mismatch in `in-process-recovery` mode warns and skips the
-    record without signaling or mutating it; in `offline-cleanup` mode the
-    cleanup throws.
+  Recovery applies the following fail-closed discipline:
 
-  - **Host ownership proof** — recovery uses host-side `lsof` to check TCP
-    listener ownership, then verifies the recorded pid and process identity
-    before signaling QEMU/krun. PID reuse during the read-record → signal
-    window is detected and refused.
+  - **Deployment and parent fences** — `configPath`, `controllerPort`,
+    `projectNamespace`, `zoneId`, and `sessionLabel` must match the running
+    deployment. Schema validation also requires each Tool record's parent
+    Gateway zone to match and the Gateway record's epoch VM id to match its
+    recorded VM id. Any mismatch in `in-process-recovery` mode warns and leaves
+    the record untouched; `offline-cleanup` throws.
 
-  - **Hard-cut schema handling** — records whose JSON fails Zod parse are
-    warned and skipped by startup recovery without mutation. There is no
-    compatibility or rename path for this development format.
+  - **Exact host-process proof** — cleanup re-reads the recorded pid's command
+    and process-start identity immediately before TERM/KILL. PID reuse or an
+    unexpected command is refused. Host-side `lsof` verifies the relevant
+    ingress or Tool SSH endpoint; an occupied Tool slot is not reusable because
+    stock Gondolin's Tool SSH listener belongs to the controller process, not
+    the QEMU runner.
+
+  - **Hard-cut schema handling** — old, malformed, or otherwise non-v2 JSON has
+    no compatibility/adoption path. In-process recovery warns and preserves it;
+    offline cleanup fails.
 
   Lifecycle invariants enforced by the lease manager:
-  - `createLease` writes the record after `storeLease`. On write failure
-    the lease is unstored and the VM is closed before throwing.
-  - `evictLease` and `releaseLease` delete the record **only** when
-    `vm.close()` succeeds. On close failure the record is preserved AND the
-    tcp slot is moved into a per-process quarantine set (not reusable until
-    next controller restart) so the orphan QEMU's host port cannot collide
-    with a fresh lease on the same slot.
+  - `createLease` starts the stock Gondolin VM, captures exact process identity,
+    and writes its v2 record before enabling SSH and publishing the lease as
+    current.
+  - Live-handle teardown first closes Tool SSH, terminates the exact recorded
+    runner, observes Gondolin's runner detached, and then calls stock
+    `VM.close()` for remaining wrapper resources.
+  - `evictLease` and `releaseLease` delete the record and release the TCP slot
+    only after the exact runner and listener are absent. Unknown or unproven
+    identity preserves the record, quarantines the slot, and refuses a
+    replacement.
 
 rebuildable cache
   Owner: controller/runtime tooling

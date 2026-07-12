@@ -17,16 +17,19 @@ function createPortalAgentIdentity(
 
 function createDeferred<TValue>(): {
 	readonly promise: Promise<TValue>;
+	readonly reject: (reason?: unknown) => void;
 	readonly resolve: (value: TValue) => void;
 } {
+	let rejectPromise: ((reason?: unknown) => void) | undefined;
 	let resolvePromise: ((value: TValue) => void) | undefined;
-	const promise = new Promise<TValue>((resolve) => {
+	const promise = new Promise<TValue>((resolve, reject) => {
+		rejectPromise = reject;
 		resolvePromise = resolve;
 	});
-	if (!resolvePromise) {
+	if (!rejectPromise || !resolvePromise) {
 		throw new Error('deferred resolver was not initialized');
 	}
-	return { promise, resolve: resolvePromise };
+	return { promise, reject: rejectPromise, resolve: resolvePromise };
 }
 
 describe('portal sessions', () => {
@@ -278,6 +281,59 @@ describe('portal sessions', () => {
 			recoveredSession.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`),
 		).toEqual(['linear.create_issue', 'readwise.search_highlights']);
 		expect(listTools).toHaveBeenCalledTimes(4);
+	});
+
+	it('starts allowed namespace discovery concurrently and settles failed namespaces', async () => {
+		const linearTools = createDeferred<readonly Tool[]>();
+		const readwiseTools = createDeferred<readonly Tool[]>();
+		const startedNamespaces: string[] = [];
+		const listTools = vi.fn(
+			async ({ namespace }: { readonly namespace: string }): Promise<readonly Tool[]> => {
+				startedNamespaces.push(namespace);
+				if (namespace === 'linear') {
+					return await linearTools.promise;
+				}
+				if (namespace === 'readwise') {
+					return await readwiseTools.promise;
+				}
+				throw new Error(`Unexpected namespace ${namespace}.`);
+			},
+		);
+		const manager = createPortalSessionManager({
+			accessPolicy: {
+				enabledNamespaces: ['linear', 'readwise'],
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			catalogTtlMs: 60_000,
+			runtime: {
+				closeAgentScope: vi.fn(),
+				listTools,
+			},
+			upstreamNamespaces: ['linear', 'readwise'],
+		});
+
+		const sessionPromise = manager.getSession(
+			createPortalAgentIdentity({
+				agentId: 'agent-a',
+				agentScopeId: 'agent-scope-a',
+			}),
+		);
+		await vi.waitFor(() => expect(startedNamespaces).toEqual(['linear', 'readwise']));
+		linearTools.resolve([{ inputSchema: { type: 'object' }, name: 'create_issue' }]);
+		readwiseTools.reject(new Error('readwise unavailable'));
+		const degradedSession = await sessionPromise;
+
+		expect(degradedSession.catalog.discoveryFailures).toEqual([
+			{
+				kind: 'upstream_discovery_failed',
+				message: 'readwise unavailable',
+				namespace: 'readwise',
+			},
+		]);
+		expect(
+			degradedSession.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`),
+		).toEqual(['linear.create_issue']);
 	});
 
 	it('includes configured discovery diagnostics in the catalog snapshot', async () => {

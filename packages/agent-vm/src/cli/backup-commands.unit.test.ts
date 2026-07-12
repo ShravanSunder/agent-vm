@@ -68,6 +68,7 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
+					agents: [{ id: 'main' }],
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							source: 'environment',

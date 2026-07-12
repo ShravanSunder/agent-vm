@@ -1,0 +1,56 @@
+{
+	"name": "@agent-vm/tool-portal",
+	"version": "0.0.114",
+	"description": "Cross-backend capability portal contracts and MCP-backed in-process runtime.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-portal"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./in-process-entrypoint": {
+			"types": "./dist/in-process-entrypoint/index.d.ts",
+			"import": "./dist/in-process-entrypoint/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"prepack": "pnpm -C ../.. build",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "pnpm test:unit",
+		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/tool-portal/src"
+	},
+	"dependencies": {
+		"@agent-vm/agent-portal-sdk": "workspace:*",
+		"@agent-vm/config-contracts": "workspace:*",
+		"@agent-vm/controller-execution-contracts": "workspace:*",
+		"@agent-vm/mcp-portal": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.5"
+	}
+}

@@ -150,6 +150,7 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 		zones: [
 			{
 				id: 'shravan',
+				agents: [{ id: 'shravan' }],
 				gateway: {
 					type: 'openclaw',
 					controlAuth: {
@@ -256,7 +257,79 @@ async function addMcpPortalReferencesToOpenClawFixture(rootPath: string): Promis
 		}
 		const zone = firstZone as Record<string, unknown>;
 		zone.agents = [{ id: 'shravan' }];
-		zone.mcpPortal = { configDir: './gateways/shravan' };
+		zone.toolPortal = { configDir: './gateways/shravan' };
+	});
+}
+
+async function addZoneGitToOpenClawFixture(rootPath: string): Promise<void> {
+	const systemConfigPath = path.join(rootPath, 'config', 'system.json');
+	await updateJsonFile(systemConfigPath, (systemConfig) => {
+		const zones = systemConfig.zones;
+		if (!Array.isArray(zones)) {
+			throw new Error('Expected zones array.');
+		}
+		const firstZone = zones[0];
+		if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
+			throw new Error('Expected first zone object.');
+		}
+		const zone = firstZone as Record<string, unknown>;
+		const gateway = zone.gateway;
+		if (typeof gateway !== 'object' || gateway === null || Array.isArray(gateway)) {
+			throw new Error('Expected gateway object.');
+		}
+		const gatewayRecord = gateway as Record<string, unknown>;
+		gatewayRecord.zoneGit = {
+			remote: {
+				repoUrl: 'ShravanSunder/sunfam-zone-files',
+				branch: 'agent/zone-files',
+			},
+		};
+	});
+}
+
+async function addObservabilityToOpenClawFixture(rootPath: string): Promise<void> {
+	const systemConfigPath = path.join(rootPath, 'config', 'system.json');
+	await updateJsonFile(systemConfigPath, (systemConfig) => {
+		const hostValue = systemConfig.host;
+		if (typeof hostValue !== 'object' || hostValue === null || Array.isArray(hostValue)) {
+			throw new Error('Expected host object.');
+		}
+		const hostRecord = hostValue as Record<string, unknown>;
+		hostRecord.observability = {
+			enabled: true,
+			stack: {
+				mode: 'managed',
+				scrubbing: { responsibility: 'agent-vm-managed-collector' },
+			},
+			mode: 'collector',
+			dataDir: path.join(rootPath, 'observability-data'),
+			runner: 'docker-compose',
+			prepareOnBuild: true,
+			retention: {
+				metrics: { period: '30d' },
+				logs: { period: '14d' },
+				traces: { period: '7d' },
+			},
+		};
+
+		const zones = systemConfig.zones;
+		if (!Array.isArray(zones)) {
+			throw new Error('Expected zones array.');
+		}
+		const firstZone = zones[0];
+		if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
+			throw new Error('Expected first zone object.');
+		}
+		const zoneRecord = firstZone as Record<string, unknown>;
+		zoneRecord.observability = {
+			enabled: true,
+			openclaw: {
+				serviceName: 'agent-vm-openclaw-shravan',
+				logs: true,
+				metrics: true,
+				traces: true,
+			},
+		};
 	});
 }
 
@@ -276,9 +349,43 @@ async function writeMcpPortalConfigFiles(rootPath: string, profileName: string):
 	});
 }
 
+async function writeMcpPortalConfigWithControllerHostAction(
+	rootPath: string,
+	actionTools: readonly ('controller_host_probe' | 'zone_git_push')[] = ['zone_git_push'],
+): Promise<void> {
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
+		schemaVersion: 1,
+		providers: {},
+	});
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
+		schemaVersion: 1,
+		agents: { shravan: { profile: 'default' } },
+		profiles: {
+			default: {
+				namespaces: {
+					controller_host_action: {
+						calls: {
+							requiresApproval: { allow: [] },
+							withoutApproval: { allow: actionTools },
+						},
+						tools: { allow: actionTools },
+					},
+				},
+			},
+		},
+	});
+}
+
 async function writeMcpPortalConfigWithProvider(
 	rootPath: string,
 	provider: unknown,
+	calls: {
+		readonly requiresApproval: { readonly allow: '*' | readonly string[] };
+		readonly withoutApproval: { readonly allow: '*' | readonly string[] };
+	} = {
+		requiresApproval: { allow: [] },
+		withoutApproval: { allow: '*' },
+	},
 ): Promise<void> {
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
 		providers: { tavily: provider },
@@ -290,10 +397,7 @@ async function writeMcpPortalConfigWithProvider(
 			default: {
 				namespaces: {
 					tavily: {
-						calls: {
-							requiresApproval: { allow: '*' },
-							withoutApproval: { allow: [] },
-						},
+						calls,
 						tools: { allow: '*' },
 					},
 				},
@@ -328,6 +432,21 @@ async function createOpenClawSystemConfigWithMcpPortal(): Promise<
 	const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 	const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 	await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+	await updateJsonFile(
+		path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+		(openClawConfig) => {
+			openClawConfig.tools = {
+				...(typeof openClawConfig.tools === 'object' && openClawConfig.tools !== null
+					? openClawConfig.tools
+					: {}),
+				sandbox: {
+					tools: {
+						alsoAllow: ['group:plugins'],
+					},
+				},
+			};
+		},
+	);
 	await writeMcpPortalConfigFiles(temporaryDirectoryPath, 'default');
 	return await loadSystemConfig(systemConfigPath);
 }
@@ -354,12 +473,16 @@ function createSingleToolMcpConfig(props: {
 }
 
 async function createSystemConfigWithLiveMcpFiles(props: {
+	readonly enableZoneGit?: boolean;
 	readonly mcpConfig: unknown;
 	readonly portalConfig: unknown;
 }): Promise<Awaited<ReturnType<typeof loadSystemConfig>>> {
 	const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 	const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 	await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+	if (props.enableZoneGit === true) {
+		await addZoneGitToOpenClawFixture(temporaryDirectoryPath);
+	}
 	await writeJson(
 		path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'),
 		props.mcpConfig,
@@ -442,6 +565,47 @@ describe('runConfigValidation', () => {
 		});
 	});
 
+	it('keeps degraded MCP namespaces visible without failing the whole validation', async () => {
+		const systemConfig = await createOpenClawSystemConfigWithMcpPortal();
+		const secretResolver = createTestSecretResolver();
+		const runLiveMcpPortalValidationMock = vi.fn(async () => [
+			{
+				hint: 'deepwiki disabled/unavailable: list_tools timed out',
+				name: 'mcp-live-beta-deepwiki',
+				ok: false,
+				status: 'unavailable' as const,
+			},
+			{
+				hint: 'tavily discovered 5 tools.',
+				name: 'mcp-live-beta-tavily',
+				ok: true,
+				status: 'available' as const,
+			},
+		]);
+
+		const result = await runConfigValidation({
+			mcpLive: true,
+			runCommand: successfulOpenClawValidationCommand,
+			runLiveMcpPortalValidation: runLiveMcpPortalValidationMock,
+			secretResolver,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.checks).toContainEqual({
+			hint: 'deepwiki disabled/unavailable: list_tools timed out',
+			name: 'mcp-live-beta-deepwiki',
+			ok: false,
+			status: 'unavailable',
+		});
+		expect(result.checks).toContainEqual({
+			hint: 'tavily discovered 5 tools.',
+			name: 'mcp-live-beta-tavily',
+			ok: true,
+			status: 'available',
+		});
+	});
+
 	it('validates the OpenClaw default OpenAI runtime shape', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
@@ -481,6 +645,26 @@ describe('runConfigValidation', () => {
 		await rm(temporaryDirectoryPath, { recursive: true, force: true });
 	});
 
+	it('accepts OpenClaw zone observability through mediated OTLP HTTP during control-plane cutover', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addObservabilityToOpenClawFixture(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.checks).toContainEqual({
+			name: 'openclaw-config-shravan',
+			ok: true,
+			hint: path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+		});
+		expect(result.ok).toBe(true);
+		await rm(temporaryDirectoryPath, { recursive: true, force: true });
+	});
+
 	it('reports Tool VM mediated secret agent access', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
@@ -494,7 +678,7 @@ describe('runConfigValidation', () => {
 				throw new Error('Expected first zone object.');
 			}
 			const zoneRecord = zone as Record<string, unknown>;
-			zoneRecord.agents = [{ id: 'sun' }, { id: 'mak' }];
+			zoneRecord.agents = [{ id: 'shravan' }];
 			zoneRecord.egressHosts = [
 				{ host: 'api.openai.com', audience: 'gateway' },
 				{ host: 'api.github.com', audience: 'both' },
@@ -508,7 +692,7 @@ describe('runConfigValidation', () => {
 					injection: 'http-mediation',
 					audience: 'both',
 					hosts: ['api.github.com'],
-					agentAccess: ['sun'],
+					agentAccess: ['shravan'],
 				},
 				LINEAR_API_KEY: {
 					source: 'environment',
@@ -530,7 +714,7 @@ describe('runConfigValidation', () => {
 		expect(result.checks).toContainEqual({
 			name: 'zone-agent-secret-access-shravan-GITHUB_TOKEN',
 			ok: true,
-			hint: 'tool-vm: sun; gateway: zone-wide',
+			hint: 'tool-vm: shravan; gateway: zone-wide',
 		});
 		expect(result.checks).toContainEqual({
 			name: 'zone-agent-secret-access-shravan-LINEAR_API_KEY',
@@ -611,6 +795,75 @@ describe('runConfigValidation', () => {
 		});
 	});
 
+	it('does not require controller host action to be declared as an upstream MCP provider', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			enableZoneGit: true,
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							controller_host_action: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['zone_git_push'] },
+								},
+								tools: { allow: ['zone_git_push'] },
+							},
+						},
+					},
+				},
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({}),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toEqual([]);
+	});
+
+	it('does not require controller host probe to be declared as an upstream MCP provider', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							controller_host_action: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['controller_host_probe'] },
+								},
+								tools: { allow: ['controller_host_probe'] },
+							},
+						},
+					},
+				},
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({}),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toEqual([]);
+	});
+
 	it('checks hidden and approval tool names, not only enabled tools', async () => {
 		const systemConfig = await createSystemConfigWithLiveMcpFiles({
 			mcpConfig: createSingleToolMcpConfig({
@@ -648,6 +901,168 @@ describe('runConfigValidation', () => {
 		).resolves.toContainEqual({
 			hint: "Agent 'shravan' profile 'default' references missing deepwiki tools: missing_approval_tool, missing_hidden_tool. Actual tools: ask_question.",
 			name: 'mcp-live-profile-tools-shravan-shravan-deepwiki',
+			ok: false,
+		});
+	});
+
+	it('fails referenced MCP namespaces that are unavailable without suppressing successful namespaces', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {
+					deepwiki: {
+						kind: 'mcp',
+						namespace: 'deepwiki',
+						secretPolicies: {},
+						transport: {
+							kind: 'streamable-http',
+							url: 'https://deepwiki.example.test/mcp',
+						},
+					},
+					tavily: {
+						kind: 'mcp',
+						namespace: 'tavily',
+						secretPolicies: {},
+						transport: {
+							kind: 'streamable-http',
+							url: 'https://tavily.example.test/mcp',
+						},
+					},
+				},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['ask_question'] },
+								},
+								tools: { allow: ['ask_question'] },
+							},
+							tavily: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['tavily_search'] },
+								},
+								tools: { allow: ['tavily_search'] },
+							},
+						},
+					},
+				},
+			},
+		});
+		const listTools = vi.fn(async (call: { readonly namespace: string }) => {
+			if (call.namespace === 'deepwiki') {
+				throw new Error('MCP listTools timed out after 12000ms');
+			}
+			return [{ inputSchema: { type: 'object' as const }, name: 'tavily_search' }];
+		});
+		const runtime = {
+			callTool: vi.fn(),
+			closeAgentScope: vi.fn(),
+			closeSession: vi.fn(),
+			listTools,
+		} satisfies UpstreamMcpClientRuntime;
+
+		const checks = await runLiveMcpPortalValidation({
+			createRuntime: () => runtime,
+			secretResolver: createTestSecretResolver(),
+			systemConfig,
+		});
+
+		expect(checks).toContainEqual({
+			hint: expect.stringContaining('disabled/unavailable'),
+			name: 'mcp-live-shravan-deepwiki',
+			ok: false,
+			status: 'unavailable',
+		});
+		expect(checks).toContainEqual({
+			hint: 'tavily discovered 1 tools.',
+			name: 'mcp-live-shravan-tavily',
+			ok: true,
+			status: 'available',
+		});
+		expect(checks).not.toContainEqual(
+			expect.objectContaining({
+				name: 'mcp-live-profile-tools-shravan-shravan-deepwiki',
+			}),
+		);
+		expect(listTools).toHaveBeenCalledWith({
+			agentScopeId: 'validate:shravan',
+			namespace: 'deepwiki',
+		});
+		expect(listTools).toHaveBeenCalledWith({
+			agentScopeId: 'validate:shravan',
+			namespace: 'tavily',
+		});
+	});
+
+	it('fails live MCP validation when discovered tool schemas cannot build validators', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {
+					deepwiki: {
+						kind: 'mcp',
+						namespace: 'deepwiki',
+						secretPolicies: {},
+						transport: {
+							kind: 'streamable-http',
+							url: 'https://deepwiki.example.test/mcp',
+						},
+					},
+				},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['ask_question'] },
+								},
+								tools: { allow: ['ask_question'] },
+							},
+						},
+					},
+				},
+			},
+		});
+		const runtime = {
+			callTool: vi.fn(),
+			closeAgentScope: vi.fn(),
+			closeSession: vi.fn(),
+			listTools: vi.fn(async () => [
+				{
+					inputSchema: {
+						properties: { repo: { type: 'string' } },
+						required: ['repo'],
+						type: 'object' as const,
+						unevaluatedProperties: false,
+					},
+					name: 'ask_question',
+				},
+			]),
+		} satisfies UpstreamMcpClientRuntime;
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => runtime,
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toContainEqual({
+			hint: expect.stringContaining(
+				"deepwiki.ask_question input schema uses unsupported JSON Schema feature 'unevaluatedProperties'",
+			),
+			name: 'mcp-live-tool-schema-shravan-deepwiki-ask_question',
 			ok: false,
 		});
 	});
@@ -1150,7 +1565,7 @@ describe('runConfigValidation', () => {
 			result.checks.find((check) => check.name === 'openclaw-sandbox-plugin-tools-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or mcp-portal / mcp_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.',
+			hint: 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or tool-portal / tool_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.',
 		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
@@ -1250,9 +1665,122 @@ describe('runConfigValidation', () => {
 
 		expect(result.ok).toBe(false);
 		expect(
-			result.checks.find((check) => check.name === 'mcp-portal-effective-config-shravan'),
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
 		).toMatchObject({
 			hint: expect.stringContaining('must declare networkAccess'),
+			ok: false,
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('allows controller host action Tool Portal materialization when zoneGit is enabled', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await addZoneGitToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithControllerHostAction(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
+		).toMatchObject({
+			ok: true,
+		});
+		expect(result.checks.map((check) => check.hint).join('\n')).not.toMatch(
+			/controller_host_action while zoneGit is disabled/u,
+		);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('allows controller host probe Tool Portal materialization without zoneGit', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithControllerHostAction(temporaryDirectoryPath, [
+			'controller_host_probe',
+		]);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
+		).toMatchObject({
+			ok: true,
+		});
+		expect(result.checks.map((check) => check.hint).join('\n')).not.toMatch(
+			/zone_git_push while zoneGit is disabled/u,
+		);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('rejects zone git controller host action Tool Portal materialization without zoneGit', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithControllerHostAction(temporaryDirectoryPath, ['zone_git_push']);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
+		).toMatchObject({
+			hint: expect.stringContaining('zone_git_push while zoneGit is disabled'),
+			ok: false,
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('rejects managed OpenClaw MCP Portal calls that require approval', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithProvider(
+			temporaryDirectoryPath,
+			{
+				kind: 'mcp',
+				namespace: 'tavily',
+				transport: {
+					args: ['-y', 'tavily-mcp'],
+					command: 'npx',
+					kind: 'stdio',
+					networkAccess: 'none',
+				},
+			},
+			{
+				requiresApproval: { allow: '*' },
+				withoutApproval: { allow: [] },
+			},
+		);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
+		).toMatchObject({
+			hint: expect.stringContaining('does not support calls.requiresApproval'),
 			ok: false,
 		});
 
@@ -1298,6 +1826,66 @@ describe('runConfigValidation', () => {
 		).toMatchObject({
 			ok: false,
 			hint: "Agent 'shravan' is missing from mcp-portal.config.jsonc agents.",
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('accepts matching same-zone multi-agent MCP Portal bindings', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await updateJsonFile(systemConfigPath, (systemConfig) => {
+			const zones = systemConfig.zones;
+			if (!Array.isArray(zones)) {
+				throw new Error('Expected zones array.');
+			}
+			const firstZone = zones[0];
+			if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
+				throw new Error('Expected first zone object.');
+			}
+			const zone = firstZone as Record<string, unknown>;
+			zone.agents = [{ id: 'shravan' }, { id: 'sun' }];
+			zone.agentToolVmProfiles = { sun: 'default' };
+		});
+		await writeMcpPortalConfigWithAgents(temporaryDirectoryPath, {
+			shravan: { profile: 'default' },
+			sun: { profile: 'default' },
+		});
+		await updateJsonFile(
+			path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+			(openClawConfig) => {
+				openClawConfig.tools = {
+					sandbox: {
+						tools: {
+							alsoAllow: ['group:plugins'],
+						},
+					},
+				};
+			},
+		);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.checks.filter((check) => !check.ok)).toEqual([]);
+		expect(result.ok).toBe(true);
+		expect(
+			result.checks.find((check) => check.name === 'mcp-portal-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: true,
+		});
+		expect(
+			result.checks.find((check) => check.name === 'mcp-portal-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
+		});
+		expect(
+			result.checks.find((check) => check.name === 'zone-agent-tool-vm-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
 		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });

@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { createControllerClient } from './controller-client.js';
 
-const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
-
 describe('createControllerClient', () => {
 	it('calls the controller service routes for operational commands', async () => {
 		const requests: { body?: string; method: string; url: string }[] = [];
@@ -17,23 +15,7 @@ describe('createControllerClient', () => {
 					url,
 				});
 
-				const responseBody = url.endsWith('/lease/lease-123/peek')
-					? {
-							agentId: 'main',
-							createdAt: 1,
-							idleTtlMs: 6_000_000,
-							lastUsedAt: 1,
-							leaseId: '01890f00-0000-7000-8000-000000000000',
-							profileId: 'standard',
-							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-							tcpSlot: 0,
-							transport: 'ssh-sandbox',
-							workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-							zoneId: 'shravan',
-						}
-					: { ok: true, zoneId: 'shravan' };
-
-				return new Response(JSON.stringify(responseBody), {
+				return new Response(JSON.stringify({ ok: true, zoneId: 'shravan' }), {
 					headers: {
 						'content-type': 'application/json',
 					},
@@ -66,7 +48,6 @@ describe('createControllerClient', () => {
 		});
 		await controllerClient.destroyZone('shravan', true);
 		await controllerClient.upgradeZone('shravan');
-		const leasePeek = await controllerClient.peekLease('lease-123');
 
 		expect(requests).toEqual([
 			{ method: 'GET', url: 'http://127.0.0.1:18800/controller-status' },
@@ -96,9 +77,18 @@ describe('createControllerClient', () => {
 				url: 'http://127.0.0.1:18800/zones/shravan/destroy',
 			},
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/upgrade' },
-			{ method: 'GET', url: 'http://127.0.0.1:18800/lease/lease-123/peek' },
 		]);
-		expect(leasePeek.agentId).toBe('main');
+	});
+
+	it('does not expose deleted VM-facing lease peek or release client methods', () => {
+		const controllerClient = createControllerClient({
+			baseUrl: 'http://127.0.0.1:18800',
+			fetchImpl: async () => new Response('{}', { status: 200 }),
+		});
+
+		expect('peekLease' in controllerClient).toBe(false);
+		expect('releaseLease' in controllerClient).toBe(false);
+		expect('listLeases' in controllerClient).toBe(false);
 	});
 
 	it('surfaces a readable error when a controller route returns non-json failure text', async () => {

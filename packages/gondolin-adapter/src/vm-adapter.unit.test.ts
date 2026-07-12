@@ -11,16 +11,19 @@ import {
 	type VmFs as GondolinVmFs,
 	type VirtualProvider,
 } from '@earendil-works/gondolin';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { configureHostNetworkDefaults } from './host-network-defaults.js';
 import type { PinnedRealFsRoot } from './pinned-realfs.js';
 import {
 	SYNTHETIC_DNS_IPV4_BENCHMARK,
 	SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
+	createGitReadOnlySshEgressOptions,
 	createManagedVm,
+	parseSshServerHostKey,
 	type ManagedVmDependencies,
 	type ManagedVmInstance,
+	type SshAccess,
 } from './vm-adapter.js';
 
 function createTestProvider(): VirtualProvider {
@@ -80,19 +83,46 @@ type TestManagedVmInstance = ManagedVmInstance & {
 	getHostPid(): number | null;
 };
 
+const TEST_SSH_SERVER_HOST_KEY = {
+	algorithm: 'ssh-ed25519',
+	publicKeyBase64: 'AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+} as const;
+
 function createFakeVmInstance(
 	options: {
 		readonly hostPid?: number | null;
 	} = {},
 ): TestManagedVmInstance {
+	const exec = vi.fn((command: string | string[]) =>
+		createFakeExecProcess({
+			exitCode: 0,
+			stderr: '',
+			stdout:
+				Array.isArray(command) && command[1] === '/etc/ssh/ssh_host_ed25519_key.pub'
+					? `${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}\n`
+					: 'ok',
+		}),
+	);
 	return {
 		fs: createFakeVmFs(),
 		id: 'vm-123',
-		exec: vi.fn(() => createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' })),
-		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-		enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+		exec,
+		enableIngress: vi.fn(async () => ({
+			close: async () => {},
+			host: '127.0.0.1',
+			port: 18791,
+		})),
+		enableSsh: vi.fn(async () => ({
+			close: async () => {},
+			command: 'ssh root@127.0.0.1',
+			host: '127.0.0.1',
+			identityFile: '/tmp/id_ed25519',
+			port: 2222,
+			user: 'root',
+		})),
 		getHostPid: vi.fn(() => options.hostPid ?? null),
 		setIngressRoutes: vi.fn(),
+		start: vi.fn(async () => {}),
 		close: vi.fn(async () => {}),
 	};
 }
@@ -140,6 +170,32 @@ function createPinnedRoot(fd: number): PinnedRealFsRoot {
 }
 
 describe('createManagedVm', () => {
+	it('requires a structured ssh-ed25519 server host key in ManagedVm SSH access', () => {
+		expectTypeOf<SshAccess>().toHaveProperty('serverHostKey').toEqualTypeOf<{
+			readonly algorithm: 'ssh-ed25519';
+			readonly publicKeyBase64: string;
+		}>();
+	});
+
+	it('parses one exact ssh-ed25519 public host key with an optional comment', () => {
+		expect(
+			parseSshServerHostKey(
+				`${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64} root@tool-vm\n`,
+			),
+		).toEqual(TEST_SSH_SERVER_HOST_KEY);
+	});
+
+	it('rejects ambiguous or malformed SSH server host-key output', () => {
+		expect(() => parseSshServerHostKey('ssh-rsa invalid\n')).toThrow(
+			'Tool VM did not expose a valid ssh-ed25519 server host key',
+		);
+		expect(() =>
+			parseSshServerHostKey(
+				`${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}\n${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}\n`,
+			),
+		).toThrow('Tool VM did not expose exactly one ssh-ed25519 server host key');
+	});
+
 	it('forces host Node DNS and family-autoselection defaults for Gondolin tcpHosts', () => {
 		const setDefaultResultOrder = vi.fn();
 		const setDefaultAutoSelectFamily = vi.fn();
@@ -321,6 +377,132 @@ describe('createManagedVm', () => {
 		).resolves.toBe(false);
 	});
 
+	it('passes SSH egress config into Gondolin VM options and enables synthetic DNS', async () => {
+		let capturedVmOptions: VMOptions | undefined;
+		const sshEgress = createGitReadOnlySshEgressOptions({
+			allowedHosts: ['github.com'],
+			allowedRepos: ['acme/widgets.git'],
+		});
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
+				capturedVmOptions = vmOptions;
+				return createFakeVmInstance();
+			}),
+		});
+
+		await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				env: {},
+				imagePath: '',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				sshEgress,
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(capturedVmOptions?.dns).toEqual({
+			mode: 'synthetic',
+			syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
+			syntheticIPv6: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
+			syntheticHostMapping: 'per-host',
+		});
+		expect(capturedVmOptions?.ssh).toBe(sshEgress);
+		expect(capturedVmOptions?.tcp).toBeUndefined();
+	});
+
+	it('allows git-upload-pack while denying receive-pack and non-git SSH exec', async () => {
+		const sshEgress = createGitReadOnlySshEgressOptions({
+			allowedHosts: ['github.com'],
+			allowedRepos: ['acme/widgets.git'],
+		});
+		if (!sshEgress.execPolicy) {
+			throw new Error('Expected git read-only SSH exec policy');
+		}
+
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-upload-pack 'acme/widgets.git'",
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_000 },
+				}),
+			),
+		).resolves.toEqual({ allow: true });
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-receive-pack 'acme/widgets.git'",
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_001 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-upload-pack 'acme/other.git'",
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_002 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: 'bash',
+					guestUsername: 'git',
+					hostname: 'github.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_003 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+	});
+
+	it('keeps generic SSH repo allowlists case-sensitive', async () => {
+		const sshEgress = createGitReadOnlySshEgressOptions({
+			allowedHosts: ['git.example.com'],
+			allowedRepos: ['Team/Repo.git'],
+		});
+		if (!sshEgress.execPolicy) {
+			throw new Error('Expected git read-only SSH exec policy');
+		}
+
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-upload-pack 'Team/Repo.git'",
+					guestUsername: 'git',
+					hostname: 'git.example.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_000 },
+				}),
+			),
+		).resolves.toEqual({ allow: true });
+		await expect(
+			Promise.resolve(
+				sshEgress.execPolicy({
+					command: "git-upload-pack 'team/repo.git'",
+					guestUsername: 'git',
+					hostname: 'git.example.com',
+					port: 22,
+					src: { ip: '198.18.0.2', port: 48_001 },
+				}),
+			),
+		).resolves.toMatchObject({ allow: false });
+	});
+
 	it('does not turn public raw TCP hosts into HTTP allowed hosts', async () => {
 		const createHttpHooksMock = vi.fn(() => ({
 			env: { HTTPS_PROXY: 'http://proxy.vm.host:8080' },
@@ -360,11 +542,31 @@ describe('createManagedVm', () => {
 		const fakeFs = createFakeVmFs();
 		const execMock = vi.fn((command: string | string[]) => {
 			capturedExecCommand = command;
-			return createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' });
+			return createFakeExecProcess({
+				exitCode: 0,
+				stderr: '',
+				stdout:
+					Array.isArray(command) && command[1] === '/etc/ssh/ssh_host_ed25519_key.pub'
+						? `${TEST_SSH_SERVER_HOST_KEY.algorithm} ${TEST_SSH_SERVER_HOST_KEY.publicKeyBase64}\n`
+						: 'ok',
+			});
 		});
-		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
-		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const closeSshAccessMock = vi.fn(async () => {});
+		const enableSshMock = vi.fn(async () => ({
+			close: closeSshAccessMock,
+			command: 'ssh root@127.0.0.1',
+			host: '127.0.0.1',
+			identityFile: '/tmp/id_ed25519',
+			port: 2222,
+			user: 'root',
+		}));
+		const enableIngressMock = vi.fn(async () => ({
+			close: async () => {},
+			host: '127.0.0.1',
+			port: 18791,
+		}));
 		const setIngressRoutesMock = vi.fn();
+		const startMock = vi.fn(async () => {});
 		const closeMock = vi.fn(async () => {});
 		const fakeVmInstance: ManagedVmInstance = {
 			fs: fakeFs,
@@ -373,6 +575,7 @@ describe('createManagedVm', () => {
 			enableSsh: enableSshMock,
 			enableIngress: enableIngressMock,
 			setIngressRoutes: setIngressRoutesMock,
+			start: startMock,
 			close: closeMock,
 		};
 
@@ -445,6 +648,7 @@ describe('createManagedVm', () => {
 				fuseMount: '/data',
 			},
 		});
+		expect(capturedVmOptions).not.toHaveProperty('ownershipReservation');
 
 		const bufferedResult = await managedVm.exec('echo hi');
 		expect(bufferedResult.stdout).toBe('ok');
@@ -464,18 +668,62 @@ describe('createManagedVm', () => {
 			windowBytes: 32 * 1024,
 		});
 		expect(capturedExecCommand).not.toBe(readonlyCommand);
-		await managedVm.enableSsh();
+		const managedSshAccess = await managedVm.enableSsh();
+		expect(managedSshAccess).toMatchObject({
+			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+		});
+		await managedSshAccess.close();
 		await managedVm.enableIngress();
 		expect(managedVm.getVmInstance()).toBe(fakeVmInstance);
+		expect(managedVm).not.toHaveProperty('getDestroyTarget');
+		await managedVm.start();
 		managedVm.setIngressRoutes([{ port: 18789, prefix: '/', stripPrefix: true }]);
-		await managedVm.close();
+		await expect(managedVm.close()).resolves.toBeUndefined();
 
 		expect(enableSshMock).toHaveBeenCalled();
+		expect(closeSshAccessMock).toHaveBeenCalledOnce();
 		expect(enableIngressMock).toHaveBeenCalled();
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{ port: 18789, prefix: '/', stripPrefix: true },
 		]);
+		expect(startMock).toHaveBeenCalledOnce();
 		expect(closeMock).toHaveBeenCalled();
+	});
+
+	it('fails closed and closes SSH access when the live VM exposes an invalid server key', async () => {
+		const closeSshAccess = vi.fn(async () => {});
+		const vmInstance = createFakeVmInstance();
+		vmInstance.enableSsh = vi.fn(async () => ({
+			close: closeSshAccess,
+			command: 'ssh root@127.0.0.1',
+			host: '127.0.0.1',
+			identityFile: '/tmp/id_ed25519',
+			port: 2222,
+			user: 'root',
+		}));
+		vmInstance.exec = vi.fn(() =>
+			createFakeExecProcess({ exitCode: 0, stderr: '', stdout: 'ssh-rsa invalid\n' }),
+		);
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (): Promise<ManagedVmInstance> => vmInstance),
+		});
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/tool-vm',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		await expect(managedVm.enableSsh()).rejects.toThrow(
+			'Tool VM did not expose a valid ssh-ed25519 server host key',
+		);
+		expect(closeSshAccess).toHaveBeenCalledOnce();
 	});
 
 	it('passes Gondolin mediated secret placeholders into VM environment', async () => {
@@ -531,7 +779,12 @@ describe('createManagedVm', () => {
 	});
 
 	it('applies managed ingress defaults when enabling ingress without explicit options', async () => {
-		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const closeIngressMock = vi.fn(async () => {});
+		const enableIngressMock = vi.fn(async () => ({
+			close: closeIngressMock,
+			host: '127.0.0.1',
+			port: 18791,
+		}));
 		const fakeVmInstance: ManagedVmInstance = {
 			...createFakeVmInstance(),
 			enableIngress: enableIngressMock,
@@ -553,7 +806,8 @@ describe('createManagedVm', () => {
 			dependencies,
 		);
 
-		await managedVm.enableIngress();
+		const ingressAccess = await managedVm.enableIngress();
+		await ingressAccess.close();
 
 		expect(enableIngressMock).toHaveBeenCalledWith({
 			allowWebSockets: true,
@@ -562,10 +816,15 @@ describe('createManagedVm', () => {
 			upstreamHeaderTimeoutMs: 120_000,
 			upstreamResponseTimeoutMs: 120_000,
 		});
+		expect(closeIngressMock).toHaveBeenCalledOnce();
 	});
 
 	it('lets explicit ingress options override managed defaults', async () => {
-		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18891 }));
+		const enableIngressMock = vi.fn(async () => ({
+			close: async () => {},
+			host: '127.0.0.1',
+			port: 18891,
+		}));
 		const fakeVmInstance: ManagedVmInstance = {
 			...createFakeVmInstance(),
 			enableIngress: enableIngressMock,
@@ -770,6 +1029,37 @@ describe('createManagedVm', () => {
 
 		expect(closePinnedRealFsRoot).toHaveBeenCalledOnce();
 		expect(closePinnedRealFsRoot).toHaveBeenCalledWith(pinnedRoot);
+	});
+
+	it('returns the stock void close result after pinned-root cleanup', async () => {
+		const pinnedRoot = createPinnedRoot(151);
+		const vmInstance = createFakeVmInstance();
+		vmInstance.close = vi.fn(async () => {});
+		const closePinnedRealFsRoot = vi.fn();
+		const dependencies = createBaseDependencies({
+			closePinnedRealFsRoot,
+			createVm: async () => vmInstance,
+		});
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/tool',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/work': {
+						kind: 'realfs',
+						pinnedHostRoot: pinnedRoot,
+					},
+				},
+			},
+			dependencies,
+		);
+
+		await expect(managedVm.close()).resolves.toBeUndefined();
+		expect(closePinnedRealFsRoot).toHaveBeenCalledOnce();
 	});
 
 	it('closes pinned roots when VM creation fails', async () => {

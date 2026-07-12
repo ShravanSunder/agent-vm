@@ -48,6 +48,7 @@ const systemConfig = {
 	zones: [
 		{
 			id: 'shravan',
+			agents: [{ id: 'shravan' }],
 			gateway: {
 				type: 'openclaw',
 				controlAuth: {

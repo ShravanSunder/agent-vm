@@ -24,20 +24,22 @@ import {
 	type OpenClawE2eProject,
 	type E2eHarnessRuntime,
 	useLocalOpenClawGatewayImagePackages,
-	writeOpenClawMcpPortalE2eConfigs,
 } from './e2e-harness.js';
 
 const architecture = currentE2eArchitecture();
 const runOpenClawMcpPortalSmoke =
 	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunGondolinE2e({ architecture }));
 const describeOpenClawMcpPortalSmoke = runOpenClawMcpPortalSmoke ? describe : describe.skip;
-const agentId = 'smoke';
+const agentIds = ['main', 'beta'] as const;
+const mainAgentId = agentIds[0];
+const betaAgentId = agentIds[1];
 const gatewayToken = 'mcp-portal-smoke-gateway-token';
+const unavailableNamespace = 'unavailable-mock';
 const portalToolNames = [
-	'mcp_portal_list',
-	'mcp_portal_search',
-	'mcp_portal_describe',
-	'mcp_portal_call',
+	'tool_portal_list',
+	'tool_portal_search',
+	'tool_portal_describe',
+	'tool_portal_call',
 ] as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -57,12 +59,12 @@ async function readManagedEffectiveConfigPair(effectivePortalDir: string): Promi
 	readonly effectivePortalConfig: Record<string, unknown>;
 }> {
 	const manifest = await readJsonObjectFile(
-		path.join(effectivePortalDir, 'mcp-portal-effective-manifest.json'),
+		path.join(effectivePortalDir, 'tool-portal-effective-manifest.json'),
 	);
 	const mcpConfigFile = manifest.mcpConfigFile;
-	const portalConfigFile = manifest.portalConfigFile;
+	const portalConfigFile = manifest.toolPortalConfigFile;
 	if (typeof mcpConfigFile !== 'string' || typeof portalConfigFile !== 'string') {
-		throw new Error('Expected MCP Portal effective config manifest to name both config files.');
+		throw new Error('Expected Tool Portal effective config manifest to name both config files.');
 	}
 	return {
 		effectiveMcpConfig: await readJsonObjectFile(path.join(effectivePortalDir, mcpConfigFile)),
@@ -99,6 +101,97 @@ async function allowPortalNativeToolsInOpenClawConfig(configPath: string): Promi
 	await writeFile(configPath, `${JSON.stringify(parsed, null, '\t')}\n`, 'utf8');
 }
 
+async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
+	readonly configDir: string;
+	readonly namespace: string;
+	readonly portalAccessHeaderName: string;
+	readonly unavailableNamespace: string;
+	readonly unavailableUpstreamUrl: string;
+	readonly upstreamUrl: string;
+}): Promise<void> {
+	await writeFile(
+		path.join(options.configDir, 'mcp.config.jsonc'),
+		`${JSON.stringify(
+			{
+				$schema: '../../schemas/mcp.schema.json',
+				providers: {
+					upstreamMock: {
+						discovery: { summary: 'Mock upstream MCP server for e2e tests' },
+						kind: 'mcp',
+						namespace: options.namespace,
+						transport: {
+							kind: 'streamable-http',
+							url: options.upstreamUrl,
+						},
+					},
+					unavailableMock: {
+						discovery: { summary: 'Unavailable upstream MCP server for e2e tests' },
+						kind: 'mcp',
+						namespace: options.unavailableNamespace,
+						transport: {
+							kind: 'streamable-http',
+							url: options.unavailableUpstreamUrl,
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+	await writeFile(
+		path.join(options.configDir, 'mcp-portal.config.jsonc'),
+		`${JSON.stringify(
+			{
+				$schema: '../../schemas/mcp-portal.schema.json',
+				agents: {
+					[mainAgentId]: { profile: 'reader' },
+					[betaAgentId]: { profile: 'writer' },
+				},
+				profiles: {
+					reader: {
+						namespaces: {
+							[options.namespace]: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['read_thing'] },
+								},
+								tools: { allow: ['read_thing', 'write_thing'] },
+							},
+							[options.unavailableNamespace]: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['read_thing'] },
+								},
+								tools: { allow: ['read_thing'] },
+							},
+						},
+						promptContext: { enabled: true, maxNamespaces: 12 },
+					},
+					writer: {
+						namespaces: {
+							[options.namespace]: {
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['write_thing'] },
+								},
+								tools: { allow: ['read_thing', 'write_thing'] },
+							},
+						},
+						promptContext: { enabled: true, maxNamespaces: 12 },
+					},
+				},
+				schemaVersion: 1,
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+}
+
 function parseNativePortalToolResult(value: unknown): unknown {
 	if (!isObjectRecord(value) || value.ok !== true || !isObjectRecord(value.result)) {
 		throw new Error(`Expected successful OpenClaw /tools/invoke result: ${JSON.stringify(value)}`);
@@ -114,19 +207,6 @@ function parseNativePortalToolResult(value: unknown): unknown {
 	throw new Error(
 		`Expected OpenClaw tool result details or JSON content: ${JSON.stringify(value)}`,
 	);
-}
-
-function readScalarStructuredContent(result: unknown): unknown {
-	if (!isObjectRecord(result) || !Array.isArray(result.content)) {
-		throw new Error(`Expected scalar PortalCoreResult content: ${JSON.stringify(result)}`);
-	}
-	const contentBlock = result.content[0];
-	if (!isObjectRecord(contentBlock) || contentBlock.type !== 'json') {
-		throw new Error(
-			`Expected first scalar PortalCoreResult block to be JSON: ${JSON.stringify(result)}`,
-		);
-	}
-	return contentBlock.value;
 }
 
 function readSingleItem(result: unknown): Record<string, unknown> {
@@ -151,8 +231,9 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		upstreamServer = await startFakeUpstreamMcpServer();
 		const upstreamHost = 'smoke-upstream.vm.host';
 		const upstreamUrl = `http://${upstreamHost}:${String(upstreamServer.port)}/mcp`;
+		const unavailableUpstreamUrl = `http://${upstreamHost}:${String(upstreamServer.port)}/missing-mcp`;
 		project = await scaffoldOpenClawE2eProject({
-			agents: [agentId],
+			agents: agentIds,
 			architecture,
 			prefix: 'openclaw-mcp-portal-e2e-',
 			zoneId: 'mcp-portal-smoke',
@@ -165,15 +246,21 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			...systemZone.egressHosts,
 			{ audience: 'gateway', host: upstreamHost },
 		];
-		await mkdir(path.join(systemZone.gateway.zoneFilesDir, 'agents', agentId), {
-			recursive: true,
-		});
+		const zoneFilesDir = project.zone.gateway.zoneFilesDir;
+		await Promise.all(
+			agentIds.map(async (agentId) => {
+				await mkdir(path.join(zoneFilesDir, 'agents', agentId), {
+					recursive: true,
+				});
+			}),
+		);
 		await allowPortalNativeToolsInOpenClawConfig(systemZone.gateway.config);
-		await writeOpenClawMcpPortalE2eConfigs({
-			agentId,
+		await writeOpenClawMultiAgentMcpPortalE2eConfigs({
 			configDir: path.dirname(systemZone.gateway.config),
 			namespace: fakeUpstreamNamespace,
 			portalAccessHeaderName: 'unused-native-smoke-header',
+			unavailableNamespace,
+			unavailableUpstreamUrl,
 			upstreamUrl,
 		});
 		await useLocalOpenClawGatewayImagePackages({
@@ -248,7 +335,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			harness.systemConfig.cacheDir,
 			'gateways',
 			zone.id,
-			'mcp-portal-effective',
+			'tool-portal-effective',
 		);
 		const { effectiveMcpConfig, effectivePortalConfig } =
 			await readManagedEffectiveConfigPair(effectivePortalDir);
@@ -277,49 +364,45 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		expect(effectivePortalConfig.externalAuth).toBeUndefined();
 	});
 
-	it('discovers the fake upstream namespace through mcp_portal_list', async () => {
+	it('discovers the fake upstream namespace through tool_portal_list', async () => {
 		const result = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
-				agentId,
+				agentId: mainAgentId,
 				args: { requests: [{ id: 'list', limit: 10 }] },
-				tool: 'mcp_portal_list',
+				tool: 'tool_portal_list',
 			}),
 		);
-		expect(readScalarStructuredContent(result)).toMatchObject({
-			ok: true,
-			results: {
-				list: {
-					ok: true,
-					output: {
-						namespaces: [fakeUpstreamNamespace],
-					},
-				},
+		expect(readSingleItem(result)).toMatchObject({
+			id: 'list',
+			status: 'ok',
+			value: {
+				namespaces: [fakeUpstreamNamespace],
 			},
 		});
 	});
 
-	it('calls read tools and blocks unsigned write tools', async () => {
+	it('keeps same-zone agents on their own Tool Portal profiles', async () => {
 		const readArguments = { title: 'Read from full OpenClaw smoke' };
 		const readResult = parseNativePortalToolResult(
 			await gatewayClient?.invokeTool({
-				agentId,
+				agentId: mainAgentId,
 				args: {
 					calls: [
 						{
 							arguments: readArguments,
 							id: 'read',
+							name: 'read_thing',
 							namespace: fakeUpstreamNamespace,
-							toolName: 'read_thing',
 						},
 					],
 				},
-				tool: 'mcp_portal_call',
+				tool: 'tool_portal_call',
 			}),
 		);
 		expect(readSingleItem(readResult)).toMatchObject({
-			requestId: 'read',
-			status: 'success',
-			structuredContent: {
+			id: 'read',
+			status: 'ok',
+			value: {
 				namespace: fakeUpstreamNamespace,
 				result: {
 					content: [
@@ -333,7 +416,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 						ok: true,
 					},
 				},
-				toolName: 'read_thing',
+				name: 'read_thing',
 			},
 		});
 		expect(upstreamServer?.calls).toContainEqual({
@@ -342,25 +425,165 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 
 		const writeArguments = { title: 'Write from full OpenClaw smoke' };
-		await expect(
-			gatewayClient?.invokeTool({
-				agentId,
+		const upstreamRequestCountBeforeDeniedWrite = upstreamServer?.requests.length ?? 0;
+		const deniedWriteResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: mainAgentId,
 				args: {
 					calls: [
 						{
 							arguments: writeArguments,
 							id: 'write',
+							name: 'write_thing',
 							namespace: fakeUpstreamNamespace,
-							toolName: 'write_thing',
 						},
 					],
 				},
-				tool: 'mcp_portal_call',
+				tool: 'tool_portal_call',
 			}),
-		).rejects.toThrow(/requiresApproval/u);
+		);
+		expect(deniedWriteResult).toMatchObject({
+			items: [
+				{
+					error: {
+						code: 'capability_denied',
+					},
+					id: 'write',
+					status: 'error',
+				},
+			],
+			ok: false,
+		});
 		expect(upstreamServer?.calls).not.toContainEqual({
 			argumentsValue: writeArguments,
 			name: 'write_thing',
 		});
+		expect(upstreamServer?.requests.length).toBe(upstreamRequestCountBeforeDeniedWrite);
+
+		const betaListResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: betaAgentId,
+				args: { requests: [{ id: 'beta-list', limit: 10 }] },
+				tool: 'tool_portal_list',
+			}),
+		);
+		expect(readSingleItem(betaListResult)).toMatchObject({
+			id: 'beta-list',
+			status: 'ok',
+			value: {
+				namespaces: [fakeUpstreamNamespace],
+			},
+		});
+
+		const betaReadDeniedArguments = { title: 'Beta read should stay denied' };
+		const upstreamRequestCountBeforeDeniedBetaRead = upstreamServer?.requests.length ?? 0;
+		const betaReadDeniedResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: betaAgentId,
+				args: {
+					calls: [
+						{
+							arguments: betaReadDeniedArguments,
+							id: 'beta-read-denied',
+							name: 'read_thing',
+							namespace: fakeUpstreamNamespace,
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+		);
+		expect(betaReadDeniedResult).toMatchObject({
+			items: [
+				{
+					error: {
+						code: 'capability_denied',
+					},
+					id: 'beta-read-denied',
+					status: 'error',
+				},
+			],
+			ok: false,
+		});
+		expect(upstreamServer?.calls).not.toContainEqual({
+			argumentsValue: betaReadDeniedArguments,
+			name: 'read_thing',
+		});
+		expect(upstreamServer?.requests.length).toBe(upstreamRequestCountBeforeDeniedBetaRead);
+
+		const betaWriteArguments = { title: 'Write from beta agent' };
+		const betaWriteResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: betaAgentId,
+				args: {
+					calls: [
+						{
+							arguments: betaWriteArguments,
+							id: 'beta-write',
+							name: 'write_thing',
+							namespace: fakeUpstreamNamespace,
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+		);
+		expect(readSingleItem(betaWriteResult)).toMatchObject({
+			id: 'beta-write',
+			status: 'ok',
+			value: {
+				namespace: fakeUpstreamNamespace,
+				result: {
+					structuredContent: {
+						name: 'write_thing',
+						ok: true,
+					},
+				},
+				name: 'write_thing',
+			},
+		});
+		expect(upstreamServer?.calls).toContainEqual({
+			argumentsValue: betaWriteArguments,
+			name: 'write_thing',
+		});
+	});
+
+	it('fails closed for unavailable MCP namespaces without calling upstream tools', async () => {
+		const unavailableArguments = { title: 'Unavailable should not call upstream' };
+		const unavailableResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId: mainAgentId,
+				args: {
+					calls: [
+						{
+							arguments: unavailableArguments,
+							id: 'unavailable-read',
+							name: 'read_thing',
+							namespace: unavailableNamespace,
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+		);
+
+		expect(readSingleItem(unavailableResult)).toMatchObject({
+			error: {
+				code: 'provider_unavailable',
+				message: 'Capability provider is unavailable.',
+			},
+			id: 'unavailable-read',
+			status: 'error',
+		});
+		expect(upstreamServer?.calls).not.toContainEqual({
+			argumentsValue: unavailableArguments,
+			name: 'read_thing',
+		});
+		expect(
+			upstreamServer?.requests.some(
+				(request) =>
+					request.path === '/missing-mcp' && request.jsonRpcMethods.includes('tools/call'),
+			),
+		).toBe(false);
 	});
 });

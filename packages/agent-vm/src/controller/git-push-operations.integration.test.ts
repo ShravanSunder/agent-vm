@@ -24,6 +24,12 @@ function buildActiveTask(): ActiveWorkerTask {
 			{
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
+				pushPolicy: {
+					kind: 'trusted_config',
+					defaultBranch: 'main',
+					protectedBranches: [],
+					protectedBranchPatterns: [],
+				},
 				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
 				vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 			},
@@ -38,12 +44,24 @@ function buildMultiRepoActiveTask(): ActiveWorkerTask {
 			{
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
+				pushPolicy: {
+					kind: 'trusted_config',
+					defaultBranch: 'main',
+					protectedBranches: [],
+					protectedBranchPatterns: [],
+				},
 				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
 				vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 			},
 			{
 				repoUrl: 'https://github.com/acme/api.git',
 				baseBranch: 'main',
+				pushPolicy: {
+					kind: 'trusted_config',
+					defaultBranch: 'main',
+					protectedBranches: [],
+					protectedBranchPatterns: [],
+				},
 				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/api.git'),
 				vmWorkPath: createVmWorkPath('/work/repos/api'),
 			},
@@ -168,6 +186,37 @@ describe('git-push-operations', () => {
 			],
 			expect.not.objectContaining({ cwd: expect.any(String) }),
 		);
+	});
+
+	it('refuses stale expectedHead before pushing', async () => {
+		mockGitSuccess();
+
+		const result = await pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [
+				{
+					branchName: 'agent/task-1',
+					expectedHead: 'stale-sha',
+					repoUrl: 'https://github.com/acme/widgets.git',
+				},
+			],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toEqual({
+			branch: 'agent/task-1',
+			error:
+				"Refusing to push: local HEAD 'local-sha' does not match expectedHead 'stale-sha'. Refresh task state before retrying.",
+			localHead: 'local-sha',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			success: false,
+		});
+		expect(
+			execaMock.mock.calls.some((call) => {
+				const args = call[1];
+				return Array.isArray(args) && extractGitArgs(args)[0] === 'push';
+			}),
+		).toBe(false);
 	});
 
 	it('retries git commands that terminate without an exit code', async () => {
@@ -693,6 +742,84 @@ describe('git-push-operations', () => {
 			success: false,
 			error: expect.stringContaining('Refusing to push'),
 		});
+	});
+
+	it('soft-fails before git IO when a worker repo has no trusted push policy', async () => {
+		const activeTask = buildActiveTask();
+		const result = await pushBranchesForTask({
+			activeTask: {
+				...activeTask,
+				repos: activeTask.repos.map((repo) => ({
+					...repo,
+					pushPolicy: { kind: 'missing' },
+				})),
+			},
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: false,
+		});
+		expect(result.results[0]?.error).toContain('no trusted controller push policy');
+		expect(execaMock).not.toHaveBeenCalled();
+	});
+
+	it('soft-fails if controller is asked to push a protected worker repo branch', async () => {
+		const activeTask = buildActiveTask();
+		const result = await pushBranchesForTask({
+			activeTask: {
+				...activeTask,
+				repos: activeTask.repos.map((repo) => ({
+					...repo,
+					pushPolicy: {
+						kind: 'trusted_config',
+						defaultBranch: 'main',
+						protectedBranches: ['agent/release'],
+						protectedBranchPatterns: [],
+					},
+				})),
+			},
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/release' }],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/release',
+			success: false,
+			error: expect.stringContaining('protected branch "agent/release"'),
+		});
+		expect(execaMock).not.toHaveBeenCalled();
+	});
+
+	it('soft-fails if controller is asked to push a protected worker repo branch pattern', async () => {
+		const activeTask = buildActiveTask();
+		const result = await pushBranchesForTask({
+			activeTask: {
+				...activeTask,
+				repos: activeTask.repos.map((repo) => ({
+					...repo,
+					pushPolicy: {
+						kind: 'trusted_config',
+						defaultBranch: 'main',
+						protectedBranches: [],
+						protectedBranchPatterns: ['agent/release/*'],
+					},
+				})),
+			},
+			branches: [
+				{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/release/2026' },
+			],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/release/2026',
+			success: false,
+			error: expect.stringContaining('protected branch pattern "agent/release/*"'),
+		});
+		expect(execaMock).not.toHaveBeenCalled();
 	});
 
 	it('pushes branches for different repos concurrently', async () => {

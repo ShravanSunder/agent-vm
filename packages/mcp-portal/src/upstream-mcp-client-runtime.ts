@@ -150,7 +150,7 @@ interface PendingClient {
 	readonly promise: Promise<UpstreamMcpClientLike>;
 }
 
-const defaultConnectionTimeoutMs = 30_000;
+const defaultConnectionTimeoutMs = 12_000;
 const defaultMaxResponseBytes = 4 * 1_024 * 1_024;
 const inheritedStdioRuntimeEnvNames = [
 	'NODE_EXTRA_CA_CERTS',

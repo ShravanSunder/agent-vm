@@ -1,3 +1,4 @@
+import { ControlCorrelationSchema } from '@agent-vm/control-protocol-contracts';
 import { z } from 'zod';
 
 import { workerConfigSchema } from '../config/worker-config.js';
@@ -55,6 +56,13 @@ export type ControllerGitPushPhase = z.infer<typeof controllerGitPushPhaseSchema
 
 const controllerGitPullBaseSchema = z.object({
 	repoUrl: z.string().min(1),
+});
+
+const workerControlFindingSchema = z.object({
+	id: z.string().min(1),
+	ok: z.boolean(),
+	safeMessage: z.string().min(1).optional(),
+	severity: z.enum(['info', 'warning', 'error']).optional(),
 });
 
 export const taskEventSchema = z.discriminatedUnion('event', [
@@ -168,6 +176,31 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		attempts: z.number().int().nonnegative(),
 		message: z.string(),
 		retryAfterSeconds: z.number().int().positive().optional(),
+	}),
+	z.object({
+		event: z.literal('worker-control-runtime-observation'),
+		correlation: ControlCorrelationSchema.optional(),
+		observedAtMs: z.number().int().positive(),
+		sessionState: z
+			.enum([
+				'unknown',
+				'connecting',
+				'ready',
+				'reconnecting',
+				'stale',
+				'rejected',
+				'generation_mismatch',
+				'failed',
+				'closed',
+			])
+			.optional(),
+		state: z.enum(['running', 'closing', 'closed', 'failed']).optional(),
+	}),
+	z.object({
+		event: z.literal('worker-control-runtime-status'),
+		findings: z.array(workerControlFindingSchema),
+		observedAtMs: z.number().int().positive(),
+		statusKind: z.string().min(1),
 	}),
 	z.object({
 		event: z.literal('task-completed'),

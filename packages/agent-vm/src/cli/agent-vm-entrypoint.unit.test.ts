@@ -205,23 +205,7 @@ function createControllerClientStub(
 		execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
-		peekLease: async () => ({
-			agentId: 'main',
-			createdAt: 1,
-			idleTtlMs: 6_000_000,
-			lastUsedAt: 1,
-			leaseId: 'lease-123',
-			profileId: 'standard',
-			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-			tcpSlot: 0,
-			transport: 'ssh-sandbox' as const,
-			workdir: '/workspace',
-
-			zoneId: 'shravan',
-		}),
-		listLeases: async () => [],
 		refreshZoneCredentials: async () => ({}),
-		releaseLease: async () => {},
 		stopController: async () => ({}),
 		upgradeZone: async () => ({}),
 	};
@@ -440,9 +424,47 @@ describe('runAgentVmCli', () => {
 		await fs.rm(targetDir, { recursive: true, force: true });
 	});
 
-	it('passes comma-separated init agent ids to the project scaffolder', async () => {
+	it('passes a single init agent id to the project scaffolder', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--openclaw-agents',
+				'sun',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agents: ['sun'],
+			}),
+		);
+	});
+
+	it('passes multi-agent managed OpenClaw init requests to the scaffolder', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.jsonc'],
 			keychainStored: false,
 			skipped: [],
 		}));
@@ -2839,15 +2861,8 @@ describe('runAgentVmCli', () => {
 		const runControllerOfflineCleanup = vi.fn(async () => ({
 			results: [
 				{
-					cleanedUp: true,
-					killedPid: 48282,
+					ownershipDisposition: 'complete' as const,
 					stateDir: './state/shravan',
-					toolVmCleanup: {
-						cleanedCount: 0,
-						killedPids: [],
-						quarantinedCount: 0,
-						warnings: [],
-					},
 					zoneId: 'shravan',
 				},
 			],
@@ -2885,15 +2900,8 @@ describe('runAgentVmCli', () => {
 		expect(JSON.parse(stdoutChunks.join(''))).toEqual({
 			results: [
 				{
-					cleanedUp: true,
-					killedPid: 48282,
+					ownershipDisposition: 'complete',
 					stateDir: './state/shravan',
-					toolVmCleanup: {
-						cleanedCount: 0,
-						killedPids: [],
-						quarantinedCount: 0,
-						warnings: [],
-					},
 					zoneId: 'shravan',
 				},
 			],
@@ -2927,26 +2935,16 @@ describe('runAgentVmCli', () => {
 		});
 	});
 
-	it('reports controller cleanup warnings as command failures', async () => {
+	it('propagates exact reconciliation failure without writing a success result', async () => {
 		const stderrChunks: string[] = [];
 		const stdoutChunks: string[] = [];
-		const runControllerOfflineCleanup = vi.fn(async () => ({
-			results: [
-				{
-					cleanedUp: false,
-					cleanupWarning: 'failed to remove stale runtime record',
-					killedPid: 48282,
-					stateDir: './state/shravan',
-					toolVmCleanup: {
-						cleanedCount: 1,
-						killedPids: [123],
-						quarantinedCount: 0,
-						warnings: ['failed to remove stale tool VM runtime record'],
-					},
-					zoneId: 'shravan',
-				},
-			],
-		}));
+		const reconciliationError = Object.assign(
+			new Error('exact VM ownership reconciliation failed'),
+			{ code: 'owner-unsafe' as const },
+		);
+		const runControllerOfflineCleanup = vi.fn(async () => {
+			throw reconciliationError;
+		});
 
 		await expect(
 			runAgentVmCli(
@@ -2971,137 +2969,71 @@ describe('runAgentVmCli', () => {
 					runControllerOfflineCleanup,
 				},
 			),
-		).rejects.toThrow(/Controller cleanup completed with warnings/u);
+		).rejects.toBe(reconciliationError);
 
-		expect(JSON.parse(stdoutChunks.join(''))).toEqual({
-			results: [
-				{
-					cleanedUp: false,
-					cleanupWarning: 'failed to remove stale runtime record',
-					killedPid: 48282,
-					stateDir: './state/shravan',
-					toolVmCleanup: {
-						cleanedCount: 1,
-						killedPids: [123],
-						quarantinedCount: 0,
-						warnings: ['failed to remove stale tool VM runtime record'],
-					},
-					zoneId: 'shravan',
-				},
-			],
-		});
+		expect(runControllerOfflineCleanup).toHaveBeenCalledOnce();
+		expect(stdoutChunks.join('')).toBe('');
 		expect(stderrChunks.join('')).toBe('');
 	});
 
-	it('routes controller lease list and release through the lease handler', async () => {
-		const listLeases = vi.fn(async () => [{ id: 'lease-123' }]);
-		const peekLease = vi.fn(async () => ({
-			agentId: 'main',
-			createdAt: 1,
-			idleTtlMs: 6_000_000,
-			lastUsedAt: 1,
-			leaseId: 'lease-123',
-			profileId: 'standard',
-			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-			tcpSlot: 0,
-			transport: 'ssh-sandbox' as const,
-			workdir: '/workspace',
-
-			zoneId: 'shravan',
-		}));
-		const releaseLease = vi.fn(async () => {});
-
-		await runAgentVmCli(
-			['controller', 'lease', 'list'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () => ({
-					destroyZone: async () => ({}),
-					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
-					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
-					getZoneLogs: async () => ({}),
-					getControllerStatus: async () => ({}),
-					peekLease,
-					listLeases,
-					refreshZoneCredentials: async () => ({}),
-					releaseLease,
-					stopController: async () => ({ ok: true }),
-					upgradeZone: async () => ({}),
-				}),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-			},
+	it('rejects removed controller lease subcommands', async () => {
+		const createControllerClient = vi.fn(
+			(): ControllerClient => ({
+				destroyZone: async () => ({}),
+				enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+				execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+				getZoneLogs: async () => ({}),
+				getControllerStatus: async () => ({}),
+				refreshZoneCredentials: async () => ({}),
+				stopController: async () => ({ ok: true }),
+				upgradeZone: async () => ({}),
+			}),
 		);
 
-		await runAgentVmCli(
-			['controller', 'lease', 'peek', 'lease-123'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () => ({
-					destroyZone: async () => ({}),
-					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
-					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
-					getZoneLogs: async () => ({}),
-					getControllerStatus: async () => ({}),
-					peekLease,
-					listLeases,
-					refreshZoneCredentials: async () => ({}),
-					releaseLease,
-					stopController: async () => ({ ok: true }),
-					upgradeZone: async () => ({}),
-				}),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-			},
-		);
+		await expect(
+			runAgentVmCli(
+				['controller', 'lease', 'list'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					createControllerClient,
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				},
+			),
+		).rejects.toThrow('lease');
+		await expect(
+			runAgentVmCli(
+				['controller', 'lease', 'peek', 'lease-123'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					createControllerClient,
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				},
+			),
+		).rejects.toThrow('peek');
+		await expect(
+			runAgentVmCli(
+				['controller', 'lease', 'release', 'lease-123'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					createControllerClient,
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				},
+			),
+		).rejects.toThrow('release');
 
-		await runAgentVmCli(
-			['controller', 'lease', 'release', 'lease-123'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () => ({
-					destroyZone: async () => ({}),
-					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
-					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
-					getZoneLogs: async () => ({}),
-					getControllerStatus: async () => ({}),
-					peekLease: async () => ({
-						agentId: 'main',
-						createdAt: 1,
-						idleTtlMs: 6_000_000,
-						lastUsedAt: 1,
-						leaseId: 'lease-123',
-						profileId: 'standard',
-						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-						tcpSlot: 0,
-						transport: 'ssh-sandbox' as const,
-						workdir: '/workspace',
-
-						zoneId: 'shravan',
-					}),
-					listLeases,
-					refreshZoneCredentials: async () => ({}),
-					releaseLease,
-					stopController: async () => ({ ok: true }),
-					upgradeZone: async () => ({}),
-				}),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-			},
-		);
-
-		expect(listLeases).toHaveBeenCalled();
-		expect(peekLease).toHaveBeenCalledWith('lease-123');
-		expect(releaseLease).toHaveBeenCalledWith('lease-123');
+		expect(createControllerClient).not.toHaveBeenCalled();
 	});
 
 	it('routes backup list through the backup manager', async () => {

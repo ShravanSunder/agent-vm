@@ -1,7 +1,7 @@
 import {
 	isManagedVmProcess,
 	isProcessAlive,
-	killOrphanedManagedVmProcess,
+	terminateRecordedManagedVmHostProcess,
 	killProcess,
 	readProcessCommand,
 	readProcessIdentity,
@@ -110,7 +110,7 @@ function validateRuntimeRecordCleanupScope(options: {
 	return { kind: 'ok' };
 }
 
-async function killOrphanedGatewayProcess(
+async function terminateRecordedGatewayVmProcess(
 	runtimeRecord: GatewayRuntimeRecord,
 	dependencies: Required<
 		Pick<
@@ -119,7 +119,7 @@ async function killOrphanedGatewayProcess(
 		>
 	>,
 ): Promise<number | null> {
-	return await killOrphanedManagedVmProcess({
+	return await terminateRecordedManagedVmHostProcess({
 		contextLabel: `Gateway runtime record for zone '${runtimeRecord.zoneId}'`,
 		dependencies,
 		pid: runtimeRecord.qemuPid,
@@ -177,6 +177,9 @@ async function verifyGatewayPortOwnership(options: {
 	readonly readTcpListenPortOwner: (port: number) => Promise<PortOwner | null>;
 	readonly runtimeRecord: GatewayRuntimeRecord;
 }): Promise<GatewayPortOwnershipProof> {
+	if (options.runtimeRecord.ingressPort === undefined) {
+		return { kind: 'owned' };
+	}
 	const portOwner = await options.readTcpListenPortOwner(options.runtimeRecord.ingressPort);
 	if (portOwner === null) {
 		return { kind: 'record-stale' };
@@ -223,7 +226,7 @@ export interface GatewayRecoveryDependencies {
 	readonly sleep?: (delayMs: number) => Promise<void>;
 }
 
-export interface GatewayOrphanCleanupOptions {
+export interface GatewayRecordedRuntimeCleanupOptions {
 	readonly configuredIngressPort?: number | undefined;
 	readonly expectedConfigPath: string;
 	readonly expectedControllerPort: number;
@@ -233,8 +236,8 @@ export interface GatewayOrphanCleanupOptions {
 	readonly zoneId: string;
 }
 
-export async function preflightOrphanedGatewayCleanupIfPresent(
-	options: GatewayOrphanCleanupOptions,
+export async function preflightRecordedGatewayRuntimeCleanup(
+	options: GatewayRecordedRuntimeCleanupOptions,
 	dependencies: Pick<
 		GatewayRecoveryDependencies,
 		'loadGatewayRuntimeRecordResult' | 'log' | 'readTcpListenPortOwner'
@@ -319,8 +322,8 @@ export async function preflightOrphanedGatewayCleanupIfPresent(
 	return {};
 }
 
-export async function cleanupOrphanedGatewayIfPresent(
-	options: GatewayOrphanCleanupOptions,
+export async function cleanupRecordedGatewayRuntime(
+	options: GatewayRecordedRuntimeCleanupOptions,
 	dependencies: GatewayRecoveryDependencies = {},
 ): Promise<{
 	readonly cleanedUp: boolean;
@@ -411,7 +414,7 @@ export async function cleanupOrphanedGatewayIfPresent(
 			ownershipEvidence: portOwnershipProof.evidence,
 		};
 	}
-	const killedPid = await killOrphanedGatewayProcess(runtimeRecord, {
+	const killedPid = await terminateRecordedGatewayVmProcess(runtimeRecord, {
 		isProcessAlive: dependencies.isProcessAlive ?? isProcessAlive,
 		killProcess: dependencies.killProcess ?? killProcess,
 		readProcessCommand: dependencies.readProcessCommand ?? readProcessCommand,
@@ -431,8 +434,8 @@ export async function cleanupOrphanedGatewayIfPresent(
 	}
 	log(
 		killedPid === null
-			? `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after confirming the orphaned process was already gone.`
-			: `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after terminating orphaned gateway pid ${killedPid}.`,
+			? `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after confirming the recorded process was already gone.`
+			: `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after terminating recorded gateway pid ${killedPid}.`,
 	);
 
 	return {

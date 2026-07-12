@@ -34,6 +34,9 @@ async function resolveUpstreamServer(
 		return {
 			args: provider.args,
 			command: provider.command,
+			...(provider.connectionTimeoutMs === undefined
+				? {}
+				: { connectionTimeoutMs: provider.connectionTimeoutMs }),
 			...(provider.cwd === undefined ? {} : { cwd: provider.cwd }),
 			env: await resolveProviderSecretRecord(provider.env, resolveSecret),
 			namespace: provider.namespace,
@@ -42,6 +45,9 @@ async function resolveUpstreamServer(
 	}
 
 	return {
+		...(provider.connectionTimeoutMs === undefined
+			? {}
+			: { connectionTimeoutMs: provider.connectionTimeoutMs }),
 		headers: await resolveProviderSecretRecord(provider.headers, resolveSecret),
 		namespace: provider.namespace,
 		transport: provider.transport,

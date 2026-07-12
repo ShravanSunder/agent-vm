@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { GatewayOwnershipEvidence } from '../../gateway/gateway-ownership-evidence.js';
 import type { ControllerZoneLifecycleState } from '../../operations/controller-status.js';
+import type { GatewayVmLifecycleAuthority } from '../vm-ownership/gateway-vm-lifecycle-authority.js';
 import {
 	classifyGatewayStartError,
 	deriveGatewayDiagnosisSnapshot,
@@ -203,12 +204,12 @@ describe('GatewayRecoveryErrorCode', () => {
 	it('stays derived from shared recovery reasons instead of loose strings', () => {
 		expect(gatewayRecoveryHealthReasons).toEqual([
 			'agent-channel-provider-unhealthy',
-			'gateway-control-link-unhealthy',
+			'gateway-control-session-unhealthy',
 			'gateway-service-unhealthy',
 		]);
 		expectTypeOf<GatewayRecoveryErrorCode>().toEqualTypeOf<
 			| 'agent-channel-provider-unhealthy'
-			| 'gateway-control-link-unhealthy'
+			| 'gateway-control-session-unhealthy'
 			| 'gateway-service-unhealthy'
 		>();
 	});
@@ -224,8 +225,9 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 			logPath: '/logs/gateway.log',
 			startCommand: 'start',
 		},
+		terminateVm: async () => {},
 		vm: {
-			close: async (): Promise<void> => {},
+			close: async () => {},
 			enableSsh: (): never => {
 				throw new Error('not used');
 			},
@@ -235,6 +237,25 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 			getHostPid: (): number => 42,
 			id: 'gateway-vm-1',
 		},
+		vmOwnership: createGatewayVmOwnershipStub('gateway-vm-1'),
+	};
+}
+
+function createGatewayVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
+	const gatewaySeed = {
+		bootId: 'boot-test',
+		controllerEpoch: 'controller-test',
+		gatewayEpochId: 'gateway-epoch-test',
+		generationId: 'generation-test',
+		zoneId: 'zone-test',
+	};
+	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
+	return {
+		gatewayIdentity,
+		gatewaySeed,
+		attachGatewayVm: () => gatewayIdentity,
+		containPendingCreate: async () => {},
+		destroyLive: async (destroyVm) => await destroyVm(),
 	};
 }
 
