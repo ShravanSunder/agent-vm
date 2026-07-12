@@ -3,8 +3,8 @@ import type { ToolVmSshFailureKind, ToolVmSshLease } from '@agent-vm/gateway-lif
 import {
 	ControllerLeaseRequestError,
 	type LeaseClient,
-	type OpenClawGondolinLeaseReacquireRequest,
-	type OpenClawGondolinLeaseStaleEvidence,
+	type OpenClawAgentVmLeaseReacquireRequest,
+	type OpenClawAgentVmLeaseStaleEvidence,
 } from '../lease-client-contract.js';
 
 export type ToolVmHandleBindingSshOperation = 'command' | 'file-bridge' | 'finalize' | 'probe';
@@ -12,7 +12,7 @@ export type ToolVmHandleBindingSshOperation = 'command' | 'file-bridge' | 'final
 export type ToolVmHandleMarkStaleResult =
 	| {
 			readonly kind: 'stale-current';
-			readonly reacquireRequest: OpenClawGondolinLeaseReacquireRequest;
+			readonly reacquireRequest: OpenClawAgentVmLeaseReacquireRequest;
 	  }
 	| {
 			readonly kind: 'superseded';
@@ -21,7 +21,7 @@ export type ToolVmHandleMarkStaleResult =
 interface ToolVmHandleStaleBinding {
 	readonly lease: ToolVmSshLease;
 	readonly observedAtMs: number;
-	readonly staleEvidence: OpenClawGondolinLeaseStaleEvidence;
+	readonly staleEvidence: OpenClawAgentVmLeaseStaleEvidence;
 }
 
 export interface ToolVmHandleBinding {
@@ -38,7 +38,7 @@ export interface ToolVmHandleBinding {
 function staleEvidenceForReason(params: {
 	readonly operation: ToolVmHandleBindingSshOperation;
 	readonly reason: ToolVmSshFailureKind;
-}): OpenClawGondolinLeaseStaleEvidence {
+}): OpenClawAgentVmLeaseStaleEvidence {
 	if (params.reason === 'active-use-refreshable-failure') {
 		return {
 			kind: 'caller-context',
@@ -149,7 +149,7 @@ export function createToolVmHandleBinding(options: {
 			const reacquireRequest = {
 				observedAtMs: markOptions.observedAtMs ?? now(),
 				staleEvidence: staleEvidenceForReason(markOptions),
-			} satisfies OpenClawGondolinLeaseReacquireRequest;
+			} satisfies OpenClawAgentVmLeaseReacquireRequest;
 			staleBinding = {
 				lease: markOptions.lease,
 				observedAtMs: reacquireRequest.observedAtMs,

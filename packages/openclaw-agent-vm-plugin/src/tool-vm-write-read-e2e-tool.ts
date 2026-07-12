@@ -9,7 +9,7 @@ import type {
 	OpenClawHttpRouteRegistrationApi,
 	OpenClawPluginToolContext,
 } from './openclaw-sandbox-sdk-contract.js';
-import type { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
+import type { createAgentVmSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV = 'AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE';
 export const AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV =
@@ -23,9 +23,9 @@ const maxRouteBodyBytes = 16 * 1024;
 const maxConfiguredProbeIdentities = 4;
 const proofFilePathPrefix = '.agent-vm/';
 
-type GondolinSandboxBackendFactory = ReturnType<typeof createGondolinSandboxBackendFactory>;
-type GondolinSandboxBackendFactoryProvider = () => Promise<GondolinSandboxBackendFactory>;
-type GondolinSandboxBackendHandle = Awaited<ReturnType<GondolinSandboxBackendFactory>>;
+type AgentVmSandboxBackendFactory = ReturnType<typeof createAgentVmSandboxBackendFactory>;
+type AgentVmSandboxBackendFactoryProvider = () => Promise<AgentVmSandboxBackendFactory>;
+type AgentVmSandboxBackendHandle = Awaited<ReturnType<AgentVmSandboxBackendFactory>>;
 
 interface ConfiguredToolVmWriteReadE2eProbeIdentity {
 	readonly agentId: string;
@@ -568,7 +568,7 @@ function isReadonlyStringArray(value: unknown): value is readonly string[] {
 
 async function runToolVmWriteReadE2eProbe(options: {
 	readonly context: OpenClawPluginToolContext;
-	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
+	readonly factoryProvider: AgentVmSandboxBackendFactoryProvider;
 	readonly params: {
 		readonly filePath: string;
 		readonly marker: string;
@@ -596,10 +596,10 @@ async function runToolVmWriteReadE2eProbe(options: {
 
 async function createToolVmWriteReadE2eBackend(options: {
 	readonly context: OpenClawPluginToolContext;
-	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
+	readonly factoryProvider: AgentVmSandboxBackendFactoryProvider;
 }): Promise<{
 	readonly agentId: string;
-	readonly backend: GondolinSandboxBackendHandle;
+	readonly backend: AgentVmSandboxBackendHandle;
 	readonly sessionKey: string;
 }> {
 	const agentId = requireContextString(options.context.agentId, 'agentId');
@@ -627,7 +627,7 @@ async function createToolVmWriteReadE2eBackend(options: {
 }
 
 async function runToolVmWriteReadE2eProbeStep(options: {
-	readonly backend: GondolinSandboxBackendHandle;
+	readonly backend: AgentVmSandboxBackendHandle;
 	readonly params: {
 		readonly filePath: string;
 		readonly marker: string;
@@ -696,7 +696,7 @@ function isExpectedActiveOperationConnectionLoss(error: unknown): boolean {
 
 async function runActiveOperationContainmentProbe(options: {
 	readonly context: OpenClawPluginToolContext;
-	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
+	readonly factoryProvider: AgentVmSandboxBackendFactoryProvider;
 	readonly params: {
 		readonly filePath: string;
 		readonly marker: string;
@@ -780,7 +780,7 @@ function isExpectedToolVmWriteReadE2eSshResetError(error: unknown): boolean {
 }
 
 async function markToolVmWriteReadE2eHandleStaleWithSshCommandReset(
-	backend: GondolinSandboxBackendHandle,
+	backend: AgentVmSandboxBackendHandle,
 ): Promise<void> {
 	try {
 		await backend.runShellCommand({
@@ -797,7 +797,7 @@ async function markToolVmWriteReadE2eHandleStaleWithSshCommandReset(
 
 async function runToolVmStaleReacquireE2eProbe(options: {
 	readonly context: OpenClawPluginToolContext;
-	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
+	readonly factoryProvider: AgentVmSandboxBackendFactoryProvider;
 	readonly params: {
 		readonly filePath: string;
 		readonly marker: string;
@@ -850,7 +850,7 @@ export function registerToolVmWriteReadE2eRoute(options: {
 	readonly api: {
 		readonly registerHttpRoute: OpenClawHttpRouteRegistrationApi['registerHttpRoute'];
 	};
-	readonly factoryProvider: GondolinSandboxBackendFactoryProvider;
+	readonly factoryProvider: AgentVmSandboxBackendFactoryProvider;
 }): void {
 	if (
 		process.env[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV] !== '1' &&

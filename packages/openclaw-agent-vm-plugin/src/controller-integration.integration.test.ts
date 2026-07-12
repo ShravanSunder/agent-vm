@@ -8,7 +8,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LeaseClient } from './lease-client-contract.js';
-import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
+import { createAgentVmSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 const testLeaseIdByLabel = new Map<string, ToolVmLeaseId>();
@@ -61,7 +61,7 @@ function createLeasePeekResponse(leaseId: string): ToolVmLeasePeek {
 	};
 }
 
-function gondolinSandboxConfig(): {
+function agentVmSandboxConfig(): {
 	readonly backend: 'gondolin';
 	readonly mode: 'all';
 	readonly scope: 'agent';
@@ -75,7 +75,7 @@ function gondolinSandboxConfig(): {
 	};
 }
 
-describe('gondolin controller integration', () => {
+describe('agent-vm controller integration', () => {
 	it('reuses one controller lease for same-agent subagent scopes while sending no scopeKey', async () => {
 		const requestBodies: unknown[] = [];
 		const leaseClient: LeaseClient = {
@@ -98,7 +98,7 @@ describe('gondolin controller integration', () => {
 				useId: request.useId,
 			})),
 		};
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -112,14 +112,14 @@ describe('gondolin controller integration', () => {
 
 		const firstHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/beta',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:discord:channel:123',
 			sessionKey: 'agent:beta:discord:channel:123',
 			workspaceDir: '/zone/agents/beta',
 		});
 		const secondHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/beta',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:beta:subagent:child',
 			sessionKey: 'agent:beta:subagent:child',
 			workspaceDir: '/zone/agents/beta',
@@ -144,7 +144,7 @@ describe('gondolin controller integration', () => {
 			.fn()
 			.mockResolvedValueOnce(createLeaseResponse('lease-1'))
 			.mockResolvedValueOnce(createLeaseResponse('lease-2'));
-		const standardFactory = createGondolinSandboxBackendFactory(
+		const standardFactory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				profileId: 'standard',
@@ -180,7 +180,7 @@ describe('gondolin controller integration', () => {
 				}),
 			},
 		);
-		const gpuFactory = createGondolinSandboxBackendFactory(
+		const gpuFactory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				profileId: 'gpu',
@@ -219,14 +219,14 @@ describe('gondolin controller integration', () => {
 
 		const first = await standardFactory({
 			agentWorkspaceDir: '/home/openclaw/work',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-1',
 			workspaceDir: '/home/openclaw/work',
 		});
 		const second = await gpuFactory({
 			agentWorkspaceDir: '/home/openclaw/work',
-			cfg: gondolinSandboxConfig(),
+			cfg: agentVmSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-1',
 			workspaceDir: '/home/openclaw/work',

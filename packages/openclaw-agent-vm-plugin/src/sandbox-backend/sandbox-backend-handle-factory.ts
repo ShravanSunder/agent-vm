@@ -19,14 +19,14 @@ import {
 import {
 	ControllerLeaseRequestError,
 	type LeaseClient,
-	type OpenClawGondolinLeaseReacquireRequest,
+	type OpenClawAgentVmLeaseReacquireRequest,
 	type OpenClawRuntimeStatusReport,
 } from '../lease-client-contract.js';
 import {
-	findOpenClawGondolinSandboxMismatch,
+	findOpenClawAgentVmSandboxMismatch,
 	resolveOpenClawAgentIdFromSessionKey,
-	type OpenClawGondolinSandboxSnapshot,
-} from '../openclaw-gondolin-contract.js';
+	type OpenClawAgentVmSandboxSnapshot,
+} from '../openclaw-agent-vm-contract.js';
 import { resolveOpenClawAgentWorkspaceSource } from './openclaw-agent-workspace-source.js';
 import { assertOpenClawToolVmPathIntent } from './openclaw-tool-vm-path-mapping.js';
 import {
@@ -116,7 +116,7 @@ function reacquireRequestForStaleLease(params: {
 	readonly observedAtMs?: number;
 	readonly operation: ToolVmHandleBindingSshOperation;
 	readonly reason: ToolVmSshFailureKind;
-}): OpenClawGondolinLeaseReacquireRequest {
+}): OpenClawAgentVmLeaseReacquireRequest {
 	return {
 		observedAtMs: params.observedAtMs ?? Date.now(),
 		staleEvidence:
@@ -220,7 +220,7 @@ async function publishStaleToolVmLeaseObservation(options: {
 	readonly lease: ToolVmSshLease;
 	readonly operation: ToolVmHandleBindingSshOperation;
 	readonly publishHealthEvent: (event: AgentVmHealthEvent) => Promise<void>;
-	readonly reacquireRequest: OpenClawGondolinLeaseReacquireRequest;
+	readonly reacquireRequest: OpenClawAgentVmLeaseReacquireRequest;
 	readonly reason: ToolVmSshFailureKind;
 	readonly zoneId: string;
 }): Promise<void> {
@@ -326,10 +326,8 @@ function defaultOpenClawWorkspaceDir(): string | undefined {
 		: path.join(homeDirectory, '.openclaw', 'workspace');
 }
 
-function assertPluginLeaseContract(params: {
-	readonly cfg: OpenClawGondolinSandboxSnapshot;
-}): void {
-	const mismatch = findOpenClawGondolinSandboxMismatch(params.cfg);
+function assertPluginLeaseContract(params: { readonly cfg: OpenClawAgentVmSandboxSnapshot }): void {
+	const mismatch = findOpenClawAgentVmSandboxMismatch(params.cfg);
 	if (mismatch) {
 		throw new Error(
 			`OpenClaw Gondolin sandbox requires ${mismatch.key}=${mismatch.expectedValue}; received ${String(params.cfg[mismatch.key])}.`,
@@ -337,7 +335,7 @@ function assertPluginLeaseContract(params: {
 	}
 }
 
-export function createGondolinSandboxBackendFactory(
+export function createAgentVmSandboxBackendFactory(
 	options: {
 		readonly controllerUrl: string;
 		readonly openClawDefaultWorkspaceDirProvider?: () => string | undefined;
@@ -350,7 +348,7 @@ export function createGondolinSandboxBackendFactory(
 	dependencies: CreateBackendDependencies,
 ): (params: {
 	readonly agentWorkspaceDir: string;
-	readonly cfg: OpenClawGondolinSandboxSnapshot & {
+	readonly cfg: OpenClawAgentVmSandboxSnapshot & {
 		readonly docker?: {
 			readonly env?: Record<string, string>;
 		};
@@ -408,7 +406,7 @@ export function createGondolinSandboxBackendFactory(
 			lease: CachedAgentLeaseEntry['lease'],
 			reason: ToolVmSshFailureKind,
 			error: unknown,
-			reacquireRequest?: OpenClawGondolinLeaseReacquireRequest,
+			reacquireRequest?: OpenClawAgentVmLeaseReacquireRequest,
 		): Promise<void> => {
 			agentLeaseCache.delete(cacheKey);
 			writeSandboxBackendLog(
@@ -585,7 +583,7 @@ function createSandboxBackendHandle(options: {
 		lease: ToolVmSshLease,
 		reason: ToolVmSshFailureKind,
 		error: unknown,
-		reacquireRequest?: OpenClawGondolinLeaseReacquireRequest,
+		reacquireRequest?: OpenClawAgentVmLeaseReacquireRequest,
 	) => Promise<void>;
 	readonly publishHealthEvent: (event: AgentVmHealthEvent) => Promise<void>;
 	readonly rememberReplacementLease: (lease: ToolVmSshLease) => void;

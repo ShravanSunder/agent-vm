@@ -6,7 +6,7 @@ import {
 	TOOL_VM_WORKSPACE_GUEST_ROOT,
 } from '@agent-vm/gateway-lifecycle';
 
-import { normalizeOpenClawAgentId } from '../openclaw-gondolin-contract.js';
+import { normalizeOpenClawAgentId } from '../openclaw-agent-vm-contract.js';
 
 export interface OpenClawAgentWorkspaceConfig {
 	readonly agents?: {

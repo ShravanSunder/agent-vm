@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
+import { resolveAgentVmPluginConfig } from './agent-vm-plugin-config.js';
 
-describe('resolveGondolinPluginConfig', () => {
+describe('resolveAgentVmPluginConfig', () => {
 	it('parses the zone id from plugin config', () => {
 		expect(
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				profileId: 'gpu',
 				zoneId: 'shravan',
 			}),
@@ -16,14 +16,14 @@ describe('resolveGondolinPluginConfig', () => {
 	});
 
 	it('does not require the legacy controller url', () => {
-		expect(resolveGondolinPluginConfig({ zoneId: 'shravan' })).toEqual({
+		expect(resolveAgentVmPluginConfig({ zoneId: 'shravan' })).toEqual({
 			zoneId: 'shravan',
 		});
 	});
 
 	it('parses Tool Portal native tool config', () => {
 		expect(
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				toolPortal: { configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective' },
 				zoneId: 'shravan',
 			}),
@@ -35,7 +35,7 @@ describe('resolveGondolinPluginConfig', () => {
 
 	it('parses control session config without caller-context proof key material', () => {
 		expect(
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				controlSession: {
 					bootId: 'boot-a',
 					controllerEpoch: 'epoch-a',
@@ -61,7 +61,7 @@ describe('resolveGondolinPluginConfig', () => {
 
 	it('rejects stale caller-context proof key config', () => {
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				controlSession: {
 					bootId: 'boot-a',
 					callerContextProofKey: 'proof-key-that-should-stay-private',
@@ -77,7 +77,7 @@ describe('resolveGondolinPluginConfig', () => {
 
 	it('rejects the removed controller url config field', () => {
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
 			}),
@@ -86,13 +86,13 @@ describe('resolveGondolinPluginConfig', () => {
 
 	it('rejects stale zone-git token config fields', () => {
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 				zoneId: 'shravan',
 			}),
 		).toThrow('Gondolin plugin config no longer accepts zone git token fields.');
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				zoneGitToken: 'push-token',
 				zoneId: 'shravan',
 			}),
@@ -100,29 +100,27 @@ describe('resolveGondolinPluginConfig', () => {
 	});
 
 	it('throws when zoneId is missing', () => {
-		expect(() => resolveGondolinPluginConfig({})).toThrow(
-			'Gondolin plugin config requires zoneId.',
-		);
+		expect(() => resolveAgentVmPluginConfig({})).toThrow('Gondolin plugin config requires zoneId.');
 	});
 
 	it('throws when string fields are empty', () => {
-		expect(() => resolveGondolinPluginConfig({ zoneId: '' })).toThrow(
+		expect(() => resolveAgentVmPluginConfig({ zoneId: '' })).toThrow(
 			'Gondolin plugin config requires non-empty zoneId.',
 		);
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				profileId: '',
 				zoneId: 'shravan',
 			}),
 		).toThrow('Gondolin plugin config requires non-empty profileId.');
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				toolPortal: { configDir: '' },
 				zoneId: 'shravan',
 			}),
 		).toThrow('Gondolin plugin toolPortal requires non-empty configDir.');
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				controlSession: {
 					bootId: '',
 					controllerEpoch: 'epoch-a',
@@ -137,13 +135,13 @@ describe('resolveGondolinPluginConfig', () => {
 
 	it('throws when config objects contain unknown fields', () => {
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				extraRoot: true,
 				zoneId: 'shravan',
 			}),
 		).toThrow("Gondolin plugin config does not accept field 'extraRoot'.");
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				controlSession: {
 					bootId: 'boot-a',
 					controllerEpoch: 'epoch-a',
@@ -156,7 +154,7 @@ describe('resolveGondolinPluginConfig', () => {
 			}),
 		).toThrow("Gondolin plugin controlSession does not accept field 'extraControl'.");
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				toolPortal: {
 					configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 					extraToolPortal: true,
@@ -168,7 +166,7 @@ describe('resolveGondolinPluginConfig', () => {
 
 	it('throws when Tool Portal config is malformed', () => {
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				toolPortal: { configDir: 42 },
 				zoneId: 'shravan',
 			}),
@@ -189,7 +187,7 @@ describe('resolveGondolinPluginConfig', () => {
 		readonly value: boolean | null | string | readonly string[];
 	}[])('throws when $fieldName is present but not an object', ({ fieldName, value }) => {
 		expect(() =>
-			resolveGondolinPluginConfig({
+			resolveAgentVmPluginConfig({
 				[fieldName]: value,
 				zoneId: 'shravan',
 			}),

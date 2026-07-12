@@ -20,14 +20,14 @@ export type JsonValue =
 	| { readonly [key: string]: JsonValue }
 	| readonly JsonValue[];
 
-export interface OpenClawGondolinLeaseSandboxSnapshot {
+export interface OpenClawAgentVmLeaseSandboxSnapshot {
 	readonly backend: unknown;
 	readonly mode: unknown;
 	readonly scope: unknown;
 	readonly workspaceAccess: unknown;
 }
 
-export interface OpenClawGondolinLeaseRequest {
+export interface OpenClawAgentVmLeaseRequest {
 	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
 	readonly idleTtlMs?: number;
@@ -37,7 +37,7 @@ export interface OpenClawGondolinLeaseRequest {
 	readonly zoneId: string;
 }
 
-export type OpenClawGondolinLeaseStaleEvidence =
+export type OpenClawAgentVmLeaseStaleEvidence =
 	| {
 			readonly errorCode?: string;
 			readonly kind: 'tool-vm-ssh';
@@ -52,16 +52,16 @@ export type OpenClawGondolinLeaseStaleEvidence =
 			readonly reason?: 'expired' | 'released' | 'force_released' | 'generation_stale';
 	  };
 
-export interface OpenClawGondolinLeaseReacquireRequest {
+export interface OpenClawAgentVmLeaseReacquireRequest {
 	readonly idleTtlMs?: number;
 	readonly observedAtMs: number;
-	readonly staleEvidence: OpenClawGondolinLeaseStaleEvidence;
+	readonly staleEvidence: OpenClawAgentVmLeaseStaleEvidence;
 }
 
-export interface OpenClawGondolinLeaseReleaseOptions {
+export interface OpenClawAgentVmLeaseReleaseOptions {
 	readonly force?: boolean;
 	readonly observedAtMs?: number;
-	readonly staleEvidence?: OpenClawGondolinLeaseStaleEvidence;
+	readonly staleEvidence?: OpenClawAgentVmLeaseStaleEvidence;
 }
 
 export interface LeaseClient {
@@ -69,7 +69,7 @@ export interface LeaseClient {
 	endActiveUse(leaseId: string, useId: string, request: EndToolVmActiveUseRequest): Promise<void>;
 	getRetiredLeaseReacquireRequest?(
 		leaseId: string,
-	): OpenClawGondolinLeaseReacquireRequest | undefined;
+	): OpenClawAgentVmLeaseReacquireRequest | undefined;
 	heartbeatActiveUse(
 		leaseId: string,
 		useId: string,
@@ -78,15 +78,15 @@ export interface LeaseClient {
 	peekLease(leaseId: string): Promise<ToolVmLeasePeek>;
 	reacquireLease(
 		oldLeaseId: string,
-		request: OpenClawGondolinLeaseReacquireRequest,
+		request: OpenClawAgentVmLeaseReacquireRequest,
 	): Promise<ToolVmSshLease>;
-	releaseLease(leaseId: string, options?: OpenClawGondolinLeaseReleaseOptions): Promise<void>;
+	releaseLease(leaseId: string, options?: OpenClawAgentVmLeaseReleaseOptions): Promise<void>;
 	retainRetiredLeaseReacquireRequest?(
 		leaseId: string,
-		request: OpenClawGondolinLeaseReacquireRequest,
+		request: OpenClawAgentVmLeaseReacquireRequest,
 	): boolean;
 	renewLease(leaseId: string): Promise<ToolVmSshLease>;
-	requestLease(request: OpenClawGondolinLeaseRequest): Promise<ToolVmSshLease>;
+	requestLease(request: OpenClawAgentVmLeaseRequest): Promise<ToolVmSshLease>;
 	startActiveUse(
 		leaseId: string,
 		request: StartToolVmActiveUseRequest,

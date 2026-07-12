@@ -5,15 +5,15 @@ import {
 } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LeaseClient, OpenClawGondolinLeaseRequest } from './lease-client-contract.js';
-import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
+import type { LeaseClient, OpenClawAgentVmLeaseRequest } from './lease-client-contract.js';
+import { createAgentVmSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 const openClawToolVmWorkspaceMount = '/workspace';
 
 interface CapturedLeaseClientCalls {
 	readonly reacquireLeaseIds: string[];
 	readonly renewLeaseIds: string[];
-	readonly requestedLeases: OpenClawGondolinLeaseRequest[];
+	readonly requestedLeases: OpenClawAgentVmLeaseRequest[];
 }
 
 function createLeaseResponse(options: {
@@ -118,7 +118,7 @@ function createOpenClawSandboxParams(options: {
 	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly workspaceDir?: string;
-}): Parameters<ReturnType<typeof createGondolinSandboxBackendFactory>>[0] {
+}): Parameters<ReturnType<typeof createAgentVmSandboxBackendFactory>>[0] {
 	const agentWorkspaceDir = `/zone/agents/${options.agentId}`;
 	return {
 		agentWorkspaceDir,
@@ -177,7 +177,7 @@ describe('OpenClaw agent-vm lease contract', () => {
 			stdout: Buffer.from('ok'),
 		}));
 		const leaseClient = createSmokeLeaseClient(calls);
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',
@@ -260,7 +260,7 @@ describe('OpenClaw agent-vm lease contract', () => {
 			stdout: Buffer.from('ok'),
 		}));
 		const leaseClient = createSmokeLeaseClient(calls);
-		const factory = createGondolinSandboxBackendFactory(
+		const factory = createAgentVmSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
 				zoneId: 'shravan',

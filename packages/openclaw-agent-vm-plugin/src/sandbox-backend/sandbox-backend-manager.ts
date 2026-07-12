@@ -1,7 +1,7 @@
 import { ControllerLeaseRequestError } from '../lease-client-contract.js';
 import type { CreateBackendDependencies } from './sandbox-backend-contract.js';
 
-export function createGondolinSandboxBackendManager(
+export function createAgentVmSandboxBackendManager(
 	options: {
 		readonly controllerUrl: string;
 		readonly zoneId: string;

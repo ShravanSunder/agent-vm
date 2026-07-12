@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	normalizeOpenClawAgentId,
 	resolveOpenClawAgentIdFromSessionKey,
-} from './openclaw-gondolin-contract.js';
+} from './openclaw-agent-vm-contract.js';
 
 describe('OpenClaw Gondolin agent identity contract', () => {
 	it('resolves agent id from agent-shaped session keys', () => {

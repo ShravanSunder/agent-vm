@@ -126,10 +126,10 @@ export function assertSdkShape(value: unknown): asserts value is SshHelpers & {
 		id: string,
 		registration: {
 			factory: ReturnType<
-				typeof import('./sandbox-backend-factory.js').createGondolinSandboxBackendFactory
+				typeof import('./sandbox-backend-factory.js').createAgentVmSandboxBackendFactory
 			>;
 			manager?: ReturnType<
-				typeof import('./sandbox-backend-factory.js').createGondolinSandboxBackendManager
+				typeof import('./sandbox-backend-factory.js').createAgentVmSandboxBackendManager
 			>;
 		},
 	) => void;

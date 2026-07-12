@@ -2,31 +2,34 @@ const agentIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/iu;
 
 export const OPENCLAW_DEFAULT_AGENT_ID = 'main';
 
-export const OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS = [
-	{ expectedValue: 'gondolin', key: 'backend' },
-	{ expectedValue: 'all', key: 'mode' },
-	{ expectedValue: 'agent', key: 'scope' },
-	{ expectedValue: 'rw', key: 'workspaceAccess' },
-] as const;
+export interface OpenClawAgentVmSandboxRequirement {
+	readonly expectedValue: string;
+	readonly key: 'backend' | 'mode' | 'scope' | 'workspaceAccess';
+}
 
-export const OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE =
+export const OPENCLAW_AGENT_VM_SANDBOX_REQUIREMENTS: readonly OpenClawAgentVmSandboxRequirement[] =
+	[
+		{ expectedValue: 'gondolin', key: 'backend' },
+		{ expectedValue: 'all', key: 'mode' },
+		{ expectedValue: 'agent', key: 'scope' },
+		{ expectedValue: 'rw', key: 'workspaceAccess' },
+	] as const;
+
+export const OPENCLAW_AGENT_VM_LEASE_SCOPE_GUIDANCE: string =
 	'Managed OpenClaw/Gondolin leases are agent-scoped. The plugin derives agentId from sessionKey and does not send OpenClaw scope keys to the controller.';
 
-export type OpenClawGondolinSandboxRequirement =
-	(typeof OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS)[number];
+export type OpenClawAgentVmSandboxRequirementKey = OpenClawAgentVmSandboxRequirement['key'];
 
-export type OpenClawGondolinSandboxRequirementKey = OpenClawGondolinSandboxRequirement['key'];
-
-export interface OpenClawGondolinSandboxSnapshot {
+export interface OpenClawAgentVmSandboxSnapshot {
 	readonly backend?: unknown;
 	readonly mode?: unknown;
 	readonly scope?: unknown;
 	readonly workspaceAccess?: unknown;
 }
 
-export interface OpenClawGondolinAgentConfig {
+export interface OpenClawAgentVmAgentConfig {
 	readonly id?: unknown;
-	readonly sandbox?: OpenClawGondolinSandboxSnapshot;
+	readonly sandbox?: OpenClawAgentVmSandboxSnapshot;
 	readonly workspace?: unknown;
 }
 
@@ -41,22 +44,22 @@ export function isOpenClawAgentId(value: string): boolean {
 	return agentIdPattern.test(value.trim());
 }
 
-export function effectiveOpenClawGondolinSandboxValue(
-	defaults: OpenClawGondolinAgentConfig,
-	agentConfig: OpenClawGondolinAgentConfig,
-	key: OpenClawGondolinSandboxRequirementKey,
+export function effectiveOpenClawAgentVmSandboxValue(
+	defaults: OpenClawAgentVmAgentConfig,
+	agentConfig: OpenClawAgentVmAgentConfig,
+	key: OpenClawAgentVmSandboxRequirementKey,
 ): unknown {
 	return agentConfig.sandbox?.[key] ?? defaults.sandbox?.[key];
 }
 
-export function formatOpenClawGondolinRequirementFieldPath(
+export function formatOpenClawAgentVmRequirementFieldPath(
 	label: string,
-	key: OpenClawGondolinSandboxRequirementKey,
+	key: OpenClawAgentVmSandboxRequirementKey,
 ): string {
 	return `agents.${label}.sandbox.${key}`;
 }
 
-export function formatOpenClawGondolinRequirementFindingId(options: {
+export function formatOpenClawAgentVmRequirementFindingId(options: {
 	readonly fieldPath: string;
 	readonly label: string;
 	readonly zoneId: string;
@@ -64,7 +67,7 @@ export function formatOpenClawGondolinRequirementFindingId(options: {
 	return `openclaw-tool-vm-${options.fieldPath.replace(/[.[\]]/gu, '-')}-${options.zoneId}-${options.label}`;
 }
 
-export function formatOpenClawGondolinRequirementHint(options: {
+export function formatOpenClawAgentVmRequirementHint(options: {
 	readonly expectedValue: string;
 	readonly fieldPath: string;
 	readonly ok: boolean;
@@ -100,7 +103,7 @@ export function isOpenClawAgentSessionKey(sessionKey: string): boolean {
 	return parts[0] === 'agent' && parts[1] !== undefined && isOpenClawAgentId(parts[1]);
 }
 
-export function snapshotOpenClawGondolinSandboxConfig(cfg: OpenClawGondolinSandboxSnapshot): {
+export function snapshotOpenClawAgentVmSandboxConfig(cfg: OpenClawAgentVmSandboxSnapshot): {
 	readonly backend: unknown;
 	readonly mode: unknown;
 	readonly scope: unknown;
@@ -114,10 +117,10 @@ export function snapshotOpenClawGondolinSandboxConfig(cfg: OpenClawGondolinSandb
 	};
 }
 
-export function findOpenClawGondolinSandboxMismatch(
-	sandbox: OpenClawGondolinSandboxSnapshot,
-): OpenClawGondolinSandboxRequirement | undefined {
-	return OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS.find(
+export function findOpenClawAgentVmSandboxMismatch(
+	sandbox: OpenClawAgentVmSandboxSnapshot,
+): OpenClawAgentVmSandboxRequirement | undefined {
+	return OPENCLAW_AGENT_VM_SANDBOX_REQUIREMENTS.find(
 		(requirement) => sandbox[requirement.key] !== requirement.expectedValue,
 	);
 }

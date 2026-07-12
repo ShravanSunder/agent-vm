@@ -1,4 +1,4 @@
-export interface ResolvedGondolinPluginConfig {
+export interface ResolvedAgentVmPluginConfig {
 	readonly controlSession?: {
 		readonly bootId: string;
 		readonly controllerEpoch: string;
@@ -14,30 +14,30 @@ export interface ResolvedGondolinPluginConfig {
 	readonly zoneId: string;
 }
 
-export type GondolinPluginConfigJsonValue =
+export type AgentVmPluginConfigJsonValue =
 	| boolean
 	| null
 	| number
 	| string
-	| GondolinPluginConfigJsonObject
-	| readonly GondolinPluginConfigJsonValue[];
+	| AgentVmPluginConfigJsonObject
+	| readonly AgentVmPluginConfigJsonValue[];
 
-export interface GondolinPluginConfigJsonObject {
-	readonly [fieldName: string]: GondolinPluginConfigJsonValue;
+export interface AgentVmPluginConfigJsonObject {
+	readonly [fieldName: string]: AgentVmPluginConfigJsonValue;
 }
 
-export type GondolinPluginConfigInput = GondolinPluginConfigJsonObject;
+export type AgentVmPluginConfigInput = AgentVmPluginConfigJsonObject;
 
 function isConfigObject(
-	value: GondolinPluginConfigJsonValue | undefined,
-): value is GondolinPluginConfigJsonObject {
+	value: AgentVmPluginConfigJsonValue | undefined,
+): value is AgentVmPluginConfigJsonObject {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function optionalConfigObject(options: {
 	readonly fieldName: string;
-	readonly record: GondolinPluginConfigInput;
-}): GondolinPluginConfigJsonObject | undefined {
+	readonly record: AgentVmPluginConfigInput;
+}): AgentVmPluginConfigJsonObject | undefined {
 	if (!Object.hasOwn(options.record, options.fieldName)) {
 		return undefined;
 	}
@@ -51,7 +51,7 @@ function optionalConfigObject(options: {
 function assertNoUnknownFields(options: {
 	readonly allowedFields: ReadonlySet<string>;
 	readonly label: string;
-	readonly record: GondolinPluginConfigJsonObject;
+	readonly record: AgentVmPluginConfigJsonObject;
 }): void {
 	for (const fieldName of Object.keys(options.record)) {
 		if (!options.allowedFields.has(fieldName)) {
@@ -63,7 +63,7 @@ function assertNoUnknownFields(options: {
 function requireNonEmptyString(options: {
 	readonly fieldName: string;
 	readonly label: string;
-	readonly value: GondolinPluginConfigJsonValue | undefined;
+	readonly value: AgentVmPluginConfigJsonValue | undefined;
 }): string {
 	if (typeof options.value !== 'string') {
 		throw new Error(`Gondolin plugin ${options.label} requires string ${options.fieldName}.`);
@@ -97,8 +97,8 @@ const controlSessionConfigFields = new Set([
 const toolPortalConfigFields = new Set(['configDir']);
 
 function resolveControlSessionConfig(
-	config: GondolinPluginConfigInput,
-): ResolvedGondolinPluginConfig['controlSession'] {
+	config: AgentVmPluginConfigInput,
+): ResolvedAgentVmPluginConfig['controlSession'] {
 	const rawControlSession = optionalConfigObject({
 		fieldName: 'controlSession',
 		record: config,
@@ -155,8 +155,8 @@ function resolveControlSessionConfig(
 }
 
 function resolveToolPortalConfig(
-	config: GondolinPluginConfigInput,
-): ResolvedGondolinPluginConfig['toolPortal'] {
+	config: AgentVmPluginConfigInput,
+): ResolvedAgentVmPluginConfig['toolPortal'] {
 	const rawToolPortalConfig = optionalConfigObject({
 		fieldName: 'toolPortal',
 		record: config,
@@ -178,9 +178,9 @@ function resolveToolPortalConfig(
 	};
 }
 
-export function resolveGondolinPluginConfig(
-	config: GondolinPluginConfigInput,
-): ResolvedGondolinPluginConfig {
+export function resolveAgentVmPluginConfig(
+	config: AgentVmPluginConfigInput,
+): ResolvedAgentVmPluginConfig {
 	if (typeof config.zoneId !== 'string') {
 		throw new Error('Gondolin plugin config requires zoneId.');
 	}

@@ -29,9 +29,9 @@ import {
 	ControllerLeaseRequestError,
 	type JsonValue,
 	type LeaseClient,
-	type OpenClawGondolinLeaseReleaseOptions,
-	type OpenClawGondolinLeaseReacquireRequest,
-	type OpenClawGondolinLeaseRequest,
+	type OpenClawAgentVmLeaseReleaseOptions,
+	type OpenClawAgentVmLeaseReacquireRequest,
+	type OpenClawAgentVmLeaseRequest,
 } from '../lease-client-contract.js';
 import {
 	signGatewayControlCallerContextAgentAuthority,
@@ -64,13 +64,13 @@ interface LeaseCallerContextRef {
 	readonly attachmentKey: string;
 	readonly cacheKey: string;
 	readonly callerContextId: string;
-	readonly request: OpenClawGondolinLeaseRequest;
+	readonly request: OpenClawAgentVmLeaseRequest;
 }
 
 interface RetiredLeaseReacquireEntry {
 	readonly expiresAtMs: number;
-	readonly reacquireRequest: OpenClawGondolinLeaseReacquireRequest;
-	readonly request: OpenClawGondolinLeaseRequest;
+	readonly reacquireRequest: OpenClawAgentVmLeaseReacquireRequest;
+	readonly request: OpenClawAgentVmLeaseRequest;
 }
 
 interface GatewayControlCommandResultResponse {
@@ -174,8 +174,8 @@ function isCleanupSafeLeaseReleaseRejection(
 }
 
 function staleEvidencePayloadForReacquireRequest(
-	request: OpenClawGondolinLeaseReacquireRequest,
-): OpenClawGondolinLeaseReacquireRequest['staleEvidence'] & { readonly observedAtMs: number } {
+	request: OpenClawAgentVmLeaseReacquireRequest,
+): OpenClawAgentVmLeaseReacquireRequest['staleEvidence'] & { readonly observedAtMs: number } {
 	return {
 		...request.staleEvidence,
 		observedAtMs: request.observedAtMs,
@@ -343,7 +343,7 @@ function requireActiveUseTiming(
 }
 
 export function buildGatewayControlCallerContextCacheKey(
-	request: OpenClawGondolinLeaseRequest,
+	request: OpenClawAgentVmLeaseRequest,
 ): string {
 	return JSON.stringify({
 		agentId: request.agentId,
@@ -354,7 +354,7 @@ export function buildGatewayControlCallerContextCacheKey(
 	});
 }
 
-function callerContextScopeForLeaseRequest(request: OpenClawGondolinLeaseRequest): {
+function callerContextScopeForLeaseRequest(request: OpenClawAgentVmLeaseRequest): {
 	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
 	readonly purpose: 'tool_vm_lease';
@@ -483,7 +483,7 @@ export function createGatewayControlLeaseClient(
 	};
 
 	const registerCallerContext = async (
-		request: OpenClawGondolinLeaseRequest,
+		request: OpenClawAgentVmLeaseRequest,
 		cacheOptions: { readonly forceRefresh?: boolean } = {},
 	): Promise<RegisteredCallerContextRef> => {
 		const acceptedSession = options.controlService.getCurrentAcceptedSession();
@@ -589,7 +589,7 @@ export function createGatewayControlLeaseClient(
 	const rememberCallerContextForLease = (leaseContext: {
 		readonly leaseId: string;
 		readonly registeredCallerContext: RegisteredCallerContextRef;
-		readonly request: OpenClawGondolinLeaseRequest;
+		readonly request: OpenClawAgentVmLeaseRequest;
 	}): void => {
 		reacquireRequestByRetiredLeaseId.delete(leaseContext.leaseId);
 		callerContextByLeaseId.set(leaseContext.leaseId, {
@@ -602,7 +602,7 @@ export function createGatewayControlLeaseClient(
 	};
 
 	const forgetRegisteredCallerContext = (
-		request: OpenClawGondolinLeaseRequest,
+		request: OpenClawAgentVmLeaseRequest,
 		callerContext: RegisteredCallerContextRef | LeaseCallerContextRef,
 	): void => {
 		callerContextByCacheKey.delete(callerContext.cacheKey);
@@ -630,7 +630,7 @@ export function createGatewayControlLeaseClient(
 	const retainReacquireRequestForRetiredLease = (retainOptions: {
 		readonly leaseCallerContext: LeaseCallerContextRef;
 		readonly leaseId: string;
-		readonly reacquireRequest?: OpenClawGondolinLeaseReacquireRequest;
+		readonly reacquireRequest?: OpenClawAgentVmLeaseReacquireRequest;
 	}): boolean => {
 		const existingEntry = getRetiredLeaseReacquireEntry(retainOptions.leaseId);
 		const observedAtMs =
@@ -646,7 +646,7 @@ export function createGatewayControlLeaseClient(
 					kind: 'caller-context',
 					reason: 'stale',
 				},
-			} satisfies OpenClawGondolinLeaseReacquireRequest);
+			} satisfies OpenClawAgentVmLeaseReacquireRequest);
 		reacquireRequestByRetiredLeaseId.set(retainOptions.leaseId, {
 			expiresAtMs: observedAtMs + retiredLeaseReacquireRequestTtlMs,
 			reacquireRequest,
@@ -660,7 +660,7 @@ export function createGatewayControlLeaseClient(
 		leaseCallerContext: LeaseCallerContextRef,
 		forgetOptions: {
 			readonly forgetRegisteredContext?: boolean;
-			readonly reacquireRequest?: OpenClawGondolinLeaseReacquireRequest;
+			readonly reacquireRequest?: OpenClawAgentVmLeaseReacquireRequest;
 			readonly retainReacquireRequest?: boolean;
 		} = {},
 	): void => {
@@ -851,7 +851,7 @@ export function createGatewayControlLeaseClient(
 
 	const sendLeaseReacquireCommand = async (
 		oldLeaseId: string,
-		request: OpenClawGondolinLeaseReacquireRequest,
+		request: OpenClawAgentVmLeaseReacquireRequest,
 	): Promise<{
 		readonly leaseCallerContext: LeaseCallerContextRef;
 		readonly response: GatewayControlCommandResultMessage;
@@ -912,7 +912,7 @@ export function createGatewayControlLeaseClient(
 
 	const releaseLeaseWithCleanupTolerance = async (
 		leaseId: string,
-		releaseOptions: OpenClawGondolinLeaseReleaseOptions | undefined,
+		releaseOptions: OpenClawAgentVmLeaseReleaseOptions | undefined,
 	): Promise<void> => {
 		let leaseCallerContext = resolveCallerContextForLease(leaseId);
 		if (leaseCallerContext === undefined) {
@@ -974,7 +974,7 @@ export function createGatewayControlLeaseClient(
 				: ({
 						observedAtMs: releaseOptions.observedAtMs ?? Math.max(1, now()),
 						staleEvidence: releaseOptions.staleEvidence,
-					} satisfies OpenClawGondolinLeaseReacquireRequest);
+					} satisfies OpenClawAgentVmLeaseReacquireRequest);
 		if (result.response.payload.result === 'ok') {
 			forgetCallerContextForLease(leaseId, leaseCallerContext, {
 				...(reacquireRequest === undefined ? {} : { reacquireRequest }),
