@@ -29,11 +29,11 @@ back pure data specs that Gondolin consumes.
 
 ## GatewayLifecycle interface
 
-Defined in `packages/gateway-interface/src/gateway-lifecycle.ts`.
+Defined in `packages/gateway-contracts/src/gateway-lifecycle.ts`.
 
 ```
 GatewayLifecycle
-  |-- buildVmSpec(options)        -> GatewayVmSpec       pure data
+  |-- buildVmSpec(options)        -> GondolinGatewayVmSpec       pure data
   |-- buildProcessSpec(zone, rs)  -> GatewayProcessSpec  pure data
   |-- preflightHostState?(zone,sr)-> Promise<void>       secret preflight
   |-- prepareHostState?(zone, sr) -> Promise<void>       side effects
@@ -42,7 +42,7 @@ GatewayLifecycle
 
 ### buildVmSpec
 
-Accepts `BuildGatewayVmSpecOptions` and returns a `GatewayVmSpec`.  Pure
+Accepts `BuildGatewayVmSpecOptions` and returns a `GondolinGatewayVmSpec`.  Pure
 data assembly -- no side effects.  The options carry:
 
 | Field              | Type                          | Purpose                                  |
@@ -82,9 +82,9 @@ Only OpenClaw defines this; Worker has no interactive auth.
 
 ---
 
-## GatewayVmSpec
+## GondolinGatewayVmSpec
 
-Defined in `packages/gateway-interface/src/gateway-vm-spec.ts`.  This is
+Defined in `packages/gondolin-gateway-types/src/gondolin-gateway-vm-spec.ts`. This is
 the full Gondolin-facing contract -- everything needed to create a VM.
 
 | Field              | Type                            | Purpose                                         |
@@ -110,7 +110,7 @@ Secrets are split by `splitResolvedGatewaySecrets` based on each zone secret's
 
 ## GatewayProcessSpec
 
-Defined in `packages/gateway-interface/src/gateway-process-spec.ts`.
+Defined in `packages/gateway-contracts/src/gateway-process-spec.ts`.
 
 | Field              | Type                  | Purpose                                      |
 |--------------------|-----------------------|----------------------------------------------|
@@ -332,7 +332,7 @@ and the TypeScript compiler will enforce the contract.
 
 ## Session labels
 
-Defined in `packages/gateway-interface/src/gateway-runtime-contract.ts`.
+Defined in `packages/gateway-contracts/src/gateway-runtime-contract.ts`.
 
 Two naming conventions for Gondolin session identifiers:
 
@@ -355,11 +355,11 @@ with `GatewayType` derived as the union of those literal strings.
 
 | File | Package |
 |------|---------|
-| `packages/gateway-interface/src/gateway-lifecycle.ts` | gateway-interface |
-| `packages/gateway-interface/src/gateway-runtime-contract.ts` | gateway-interface |
-| `packages/gateway-interface/src/gateway-vm-spec.ts` | gateway-interface |
-| `packages/gateway-interface/src/gateway-process-spec.ts` | gateway-interface |
-| `packages/gateway-interface/src/split-resolved-gateway-secrets.ts` | gateway-interface |
+| `packages/gateway-contracts/src/gateway-lifecycle.ts` | gateway-contracts |
+| `packages/gateway-contracts/src/gateway-runtime-contract.ts` | gateway-contracts |
+| `packages/gondolin-gateway-types/src/gondolin-gateway-vm-spec.ts` | gondolin-gateway-types |
+| `packages/gateway-contracts/src/gateway-process-spec.ts` | gateway-contracts |
+| `packages/gateway-contracts/src/split-resolved-gateway-secrets.ts` | gateway-contracts |
 | `packages/openclaw-gateway/src/openclaw-lifecycle.ts` | openclaw-gateway |
 | `packages/worker-gateway/src/worker-lifecycle.ts` | worker-gateway |
 | `packages/agent-vm/src/gateway/gateway-lifecycle-loader.ts` | agent-vm |

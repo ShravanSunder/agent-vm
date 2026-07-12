@@ -5,11 +5,11 @@ import {
 	type ControlEnvelope,
 	type ControlMessageReceipt,
 } from '@agent-vm/control-protocol-contracts';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 import type {
 	GatewayControlHello,
 	GatewayControlHelloResponse,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGatewayControlProcessAdmissionCoordinator } from './gateway-control-process-admission-coordinator.js';

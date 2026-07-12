@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { GatewayProcessSpec } from '@agent-vm/gateway-interface';
+import type { GatewayProcessSpec } from '@agent-vm/gateway-contracts';
 
 import {
 	deriveGatewayControlSessionMaterialForProcess,

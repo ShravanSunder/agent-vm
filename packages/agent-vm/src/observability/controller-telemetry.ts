@@ -1,4 +1,4 @@
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 
 import {
 	mapHealthEventToTelemetry,

@@ -1,0 +1,16 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"rootDir": "./src",
+		"outDir": "./dist",
+		"declaration": true,
+		"declarationMap": true,
+		"sourceMap": true,
+		"noEmit": false,
+		"paths": {
+			"@agent-vm/gateway-contracts": ["../gateway-contracts/dist/index.d.ts"],
+			"@agent-vm/gondolin-adapter": ["../gondolin-adapter/dist/index.d.ts"],
+			"@agent-vm/secret-management": ["../secret-management/dist/index.d.ts"]
+		}
+	}
+}

@@ -372,7 +372,7 @@ OpenClaw admin commands source the gateway token in a subshell wrapper.
 | `composite-secret-resolver.ts` | secrets | Dispatches by source discriminant; exhaustive switch |
 | `controller-runtime-support.ts` | agent-vm | Wires token source -> resolver -> composite; resolves githubToken |
 | `credential-manager.ts` | agent-vm | Maps zone config entries to SecretRefs; resolves per-zone secrets |
-| `split-resolved-gateway-secrets.ts` | gateway-interface | Categorizes resolved secrets into env vs mediated |
+| `split-resolved-gateway-secrets.ts` | gateway-contracts | Categorizes resolved secrets into env vs mediated |
 | `system-config.ts` | agent-vm | Zod schemas for secret config, injection modes, token sources |
 | `openclaw-lifecycle.ts` | openclaw-gateway | prepareHostState: writes effective config + auth profiles to disk |
 | `vm-adapter.ts` | gondolin-adapter | Passes `SecretSpec` map to Gondolin `createHttpHooks` for mediation |

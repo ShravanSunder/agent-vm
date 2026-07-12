@@ -40,8 +40,9 @@ const runtimePortalImportPrefixes = [
 	'@agent-vm/openclaw-agent-vm-plugin',
 	'@agent-vm/openclaw-gateway',
 	'@agent-vm/worker-gateway',
-	'@agent-vm/gateway-interface',
+	'@agent-vm/gateway-contracts',
 	'@agent-vm/gondolin-adapter',
+	'@agent-vm/gondolin-gateway-types',
 ];
 
 const harnessProcessBoundaryImports = new Set(['node:child_process', 'child_process', 'execa']);
@@ -446,11 +447,11 @@ function collectManagedControlResidueViolations(
 	return violations;
 }
 
-function collectGatewayInterfacePublicRawControlViolations(
+function collectGatewayContractsPublicRawControlViolations(
 	file: PortalArchitectureSourceFile,
 ): readonly string[] {
 	const filePath = normalizedFilePath(file.filePath);
-	if (filePath !== 'packages/gateway-interface/src/index.ts') {
+	if (filePath !== 'packages/gateway-contracts/src/index.ts') {
 		return [];
 	}
 	const violations: string[] = [];
@@ -462,7 +463,7 @@ function collectGatewayInterfacePublicRawControlViolations(
 	]) {
 		if (file.sourceText.includes(exportedName)) {
 			violations.push(
-				`${filePath}: gateway-interface must not publicly export raw controller helper ${exportedName}`,
+				`${filePath}: gateway-contracts must not publicly export raw controller helper ${exportedName}`,
 			);
 		}
 	}
@@ -479,7 +480,7 @@ export function collectPortalArchitectureViolations(
 		...collectExportEntryViolations(props.files),
 		...props.files.flatMap(collectOpenClawPluginToolSurfaceViolations),
 		...props.files.flatMap(collectManagedControlResidueViolations),
-		...props.files.flatMap(collectGatewayInterfacePublicRawControlViolations),
+		...props.files.flatMap(collectGatewayContractsPublicRawControlViolations),
 	];
 	return sortedStrings(violations);
 }

@@ -6,6 +6,7 @@ import {
 	CONTROL_SESSION_TIMING_MS,
 	type ControlEnvelope,
 } from '@agent-vm/control-protocol-contracts';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 import {
 	GatewayControlRpcMessageSchema,
 	gatewayControlDeliveryPolicyByKind,
@@ -13,7 +14,6 @@ import {
 	type GatewayControlHello,
 	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import {
 	GATEWAY_CONTROL_READY_PATH,
 	GATEWAY_CONTROL_SOCKET_PATH,

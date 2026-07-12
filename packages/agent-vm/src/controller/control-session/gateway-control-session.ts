@@ -20,15 +20,15 @@ import {
 	type ControlReadyRequestCredential,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+} from '@agent-vm/gateway-contracts';
+import {
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayControlHelloResponse,
 } from '@agent-vm/gateway-control-contracts';
-import {
-	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
-	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
-} from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import {

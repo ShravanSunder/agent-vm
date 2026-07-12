@@ -4,7 +4,6 @@ import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayControlPrivateEnvironmentName } from './gateway-control-private-environment.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
-import type { GatewayVmSpec } from './gateway-vm-spec.js';
 import type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 
 /**
@@ -232,7 +231,7 @@ export interface BuildGatewayVmSpecOptions {
 	readonly zone: GatewayZoneConfig;
 }
 
-export interface GatewayLifecycle {
+export interface GatewayLifecycle<TGatewayVmSpec> {
 	/**
 	 * How to run interactive auth for this gateway type.
 	 * Absent means the gateway type does not support interactive auth.
@@ -240,10 +239,10 @@ export interface GatewayLifecycle {
 	readonly authConfig?: GatewayAuthConfig | undefined;
 
 	/**
-	 * Build the full VM spec — everything Gondolin needs to create the VM.
+	 * Build the full VM spec — everything the selected VM backend needs.
 	 * Pure data assembly — no side effects.
 	 */
-	buildVmSpec(options: BuildGatewayVmSpecOptions): GatewayVmSpec;
+	buildVmSpec(options: BuildGatewayVmSpecOptions): TGatewayVmSpec;
 
 	/**
 	 * Build the process spec — everything about startup, health, and logging.

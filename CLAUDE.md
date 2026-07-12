@@ -78,9 +78,10 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 
 ```text
 gondolin-adapter          → VM build pipeline, adapter, secret resolver (no internal deps)
-gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter)
-openclaw-gateway          → OpenClaw lifecycle (→ gateway-interface, gondolin-adapter)
-worker-gateway            → Worker lifecycle (→ gateway-interface, gondolin-adapter)
+gateway-contracts         → Backend-neutral lifecycle, health, process, and lease contracts
+gondolin-gateway-types    → Gondolin-specific Gateway VM/lifecycle integration types
+openclaw-gateway          → OpenClaw lifecycle (→ gateway-contracts, gondolin-gateway-types, gondolin-adapter)
+worker-gateway            → Worker lifecycle (→ gateway-contracts, gondolin-gateway-types, gondolin-adapter)
 openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ gondolin-adapter)
 agent-vm-worker           → Worker process, runs inside VM (standalone)
 agent-vm                  → Controller CLI + HTTP server (→ all above)

@@ -2,8 +2,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { GatewayLifecycle } from '@agent-vm/gateway-interface';
 import type { BuildConfig, ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
+import type { GondolinGatewayLifecycle } from '@agent-vm/gondolin-gateway-types';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -210,7 +210,7 @@ describe('smoke: gateway startup secret resolution', () => {
 		const previousEnvOnlyToken = process.env.SECRET_SMOKE_ENV_ONLY_TOKEN;
 		process.env.SECRET_SMOKE_ENV_ONLY_TOKEN = 'env-only-token';
 
-		const lifecycle: GatewayLifecycle = {
+		const lifecycle: GondolinGatewayLifecycle = {
 			buildProcessSpec: () => ({
 				bootstrapCommand: 'true',
 				startCommand: 'true',

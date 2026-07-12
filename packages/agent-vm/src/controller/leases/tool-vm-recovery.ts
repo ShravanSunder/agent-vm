@@ -1,4 +1,4 @@
-import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
+import { buildToolSessionLabel } from '@agent-vm/gateway-contracts';
 
 import {
 	isProcessAlive,

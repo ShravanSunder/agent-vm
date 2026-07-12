@@ -1,4 +1,4 @@
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 import { describe, expect, it } from 'vitest';
 
 import type { GatewayToolVmPlane } from '../zone-runtimes/gateway-zone-state-machine.js';

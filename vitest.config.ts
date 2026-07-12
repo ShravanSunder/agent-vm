@@ -83,7 +83,8 @@ export default defineConfig({
 			'@agent-vm/gateway-control-contracts': repoPath(
 				'packages/gateway-control-contracts/src/index.ts',
 			),
-			'@agent-vm/gateway-interface': repoPath('packages/gateway-interface/src/index.ts'),
+			'@agent-vm/gateway-contracts': repoPath('packages/gateway-contracts/src/index.ts'),
+			'@agent-vm/gondolin-gateway-types': repoPath('packages/gondolin-gateway-types/src/index.ts'),
 			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
 				'packages/openclaw-agent-vm-plugin/src/index.ts',
 			),

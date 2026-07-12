@@ -1,7 +1,7 @@
 import type {
 	ToolVmActiveUseCorrelation,
 	ToolVmActiveUseOperationReport,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 

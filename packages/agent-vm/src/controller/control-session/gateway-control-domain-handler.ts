@@ -1,5 +1,9 @@
 import type { ControlEnvelope } from '@agent-vm/control-protocol-contracts';
 import {
+	normalizeToolVmActiveUseCorrelation,
+	type AgentVmHealthEvent,
+} from '@agent-vm/gateway-contracts';
+import {
 	type GatewayControlLeaseCreateIntentPayload,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlLeaseIdPayload,
@@ -28,10 +32,6 @@ import {
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
-import {
-	normalizeToolVmActiveUseCorrelation,
-	type AgentVmHealthEvent,
-} from '@agent-vm/gateway-interface';
 
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
@@ -423,13 +423,13 @@ function requireNumber(value: number | undefined, fieldName: string): number {
 	return value;
 }
 
-function healthResultForGatewayInterface(
+function healthResultForGatewayContracts(
 	result: GatewayControlHealthEventPayload['result'],
 ): AgentVmHealthEvent['result'] {
 	return result === 'degraded' ? 'stale' : result;
 }
 
-function providerHealthForGatewayInterface(
+function providerHealthForGatewayContracts(
 	health: GatewayControlProviderRuntimeHealth,
 ): 'healthy' | 'transitioning' | 'unhealthy-recoverable' | 'unhealthy-unrecoverable' {
 	switch (health) {
@@ -494,7 +494,7 @@ function healthEventFromPayload(options: {
 	const base = {
 		...healthEventCorrelationFromPayload(options.payload.correlation),
 		observedAtMs: options.payload.observedAtMs,
-		result: healthResultForGatewayInterface(options.payload.result),
+		result: healthResultForGatewayContracts(options.payload.result),
 		zoneId: options.zoneId,
 	};
 	switch (options.payload.eventKind) {
@@ -503,7 +503,7 @@ function healthEventFromPayload(options: {
 				...base,
 				channelProviderId: requireString(options.payload.channelProviderId, 'channelProviderId'),
 				kind: 'agent-channel-provider-health',
-				health: providerHealthForGatewayInterface(options.payload.providerRuntimeHealth),
+				health: providerHealthForGatewayContracts(options.payload.providerRuntimeHealth),
 			};
 		case 'controller-request':
 			return {

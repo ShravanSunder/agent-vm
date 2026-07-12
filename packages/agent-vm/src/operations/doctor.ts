@@ -1,11 +1,8 @@
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-	BuildGatewayVmSpecOptions,
-	GatewayVmSpec,
-	GatewayZoneConfig,
-} from '@agent-vm/gateway-interface';
+import type { BuildGatewayVmSpecOptions, GatewayZoneConfig } from '@agent-vm/gateway-contracts';
+import type { GondolinGatewayVmSpec } from '@agent-vm/gondolin-gateway-types';
 import { workerLifecycle } from '@agent-vm/worker-gateway';
 
 import {
@@ -43,7 +40,7 @@ export interface RunControllerDoctorOptions {
 	readonly totalMemoryBytes?: number;
 	readonly workerGatewayVmSpecBuilder?: (
 		options: BuildGatewayVmSpecOptions,
-	) => Pick<GatewayVmSpec, 'vfsMounts'>;
+	) => Pick<GondolinGatewayVmSpec, 'vfsMounts'>;
 	readonly zigVersion?: string;
 }
 
@@ -252,7 +249,9 @@ function isWorkerRootfsWorkMountPath(guestPath: string): boolean {
 
 function buildWorkerWorkRootfsChecks(
 	systemConfig: SystemConfig,
-	buildWorkerVmSpec: (options: BuildGatewayVmSpecOptions) => Pick<GatewayVmSpec, 'vfsMounts'>,
+	buildWorkerVmSpec: (
+		options: BuildGatewayVmSpecOptions,
+	) => Pick<GondolinGatewayVmSpec, 'vfsMounts'>,
 ): readonly DoctorCheck[] {
 	return systemConfig.zones
 		.filter((zone) => zone.gateway.type === 'worker')
@@ -595,7 +594,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 	const openClawCliChecks = buildOpenClawCliCheck(options.systemConfig, availableBinaries);
 	const workerGatewayVmSpecBuilder =
 		options.workerGatewayVmSpecBuilder ??
-		((buildOptions: BuildGatewayVmSpecOptions): Pick<GatewayVmSpec, 'vfsMounts'> =>
+		((buildOptions: BuildGatewayVmSpecOptions): Pick<GondolinGatewayVmSpec, 'vfsMounts'> =>
 			workerLifecycle.buildVmSpec(buildOptions));
 	const workerWorkRootfsChecks = buildWorkerWorkRootfsChecks(
 		options.systemConfig,

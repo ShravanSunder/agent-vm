@@ -242,7 +242,7 @@ fails closed if the field is missing or malformed.
 
 ## VM Capability Transports
 
-`gateway-interface` defines the small shared lease vocabulary for VM
+`gateway-contracts` defines the small shared lease vocabulary for VM
 capabilities: `VmCapabilityLease<TTransport>`, reusable SSH endpoint types, and
 the current `ToolVmSshLease` specialization.
 

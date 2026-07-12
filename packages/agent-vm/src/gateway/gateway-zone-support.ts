@@ -3,7 +3,7 @@ import type {
 	GatewayProcessSpec,
 	GatewayZoneConfig,
 	GatewayZoneObservabilityConfig,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import type {

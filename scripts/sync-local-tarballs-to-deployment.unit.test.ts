@@ -62,9 +62,15 @@ describe('beta tarball sync planning', () => {
 			'file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-agent-vm-0.0.82.tgz',
 		);
 		expect(
-			plan.packages.find((packageEntry) => packageEntry.name === '@agent-vm/gateway-interface')
+			plan.packages.find((packageEntry) => packageEntry.name === '@agent-vm/gateway-contracts')
 				?.specifier,
-		).toBe('file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-gateway-interface-0.0.82.tgz');
+		).toBe('file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-gateway-contracts-0.0.82.tgz');
+		expect(
+			plan.packages.find((packageEntry) => packageEntry.name === '@agent-vm/gondolin-gateway-types')
+				?.specifier,
+		).toBe(
+			'file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-gondolin-gateway-types-0.0.82.tgz',
+		);
 		expect(plan.packages.map((packageEntry) => packageEntry.name)).toContain(
 			'@agent-vm/agent-portal-sdk',
 		);
@@ -426,7 +432,7 @@ describe('openclaw gateway overlay rendering', () => {
 		expect(overlay.runAfterBase).toEqual([
 			'mkdir -p /opt/agent-vm/local-packages',
 			expect.stringContaining(
-				'"@agent-vm/gateway-interface": "file:/tmp/agent-vm-gateway-interface-0.0.82-abc123ef.tgz"',
+				'"@agent-vm/gateway-contracts": "file:/tmp/agent-vm-gateway-contracts-0.0.82-abc123ef.tgz"',
 			),
 			'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
 			expect.stringContaining(

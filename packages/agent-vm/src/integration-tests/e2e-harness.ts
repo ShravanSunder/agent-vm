@@ -1325,8 +1325,8 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		packageName: 'gondolin-adapter',
 		repoRoot: options.repoRoot,
 	});
-	const localGatewayInterfaceTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-interface',
+	const localGatewayContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gateway-contracts',
 		repoRoot: options.repoRoot,
 	});
 	const localControlProtocolContractsTarballPath = await packLocalAgentVmPackageTarball({
@@ -1372,8 +1372,8 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 				sourcePath: localGondolinAdapterTarballPath,
 			}),
 			createLocalDockerPackageTarball({
-				packageName: 'gateway-interface',
-				sourcePath: localGatewayInterfaceTarballPath,
+				packageName: 'gateway-contracts',
+				sourcePath: localGatewayContractsTarballPath,
 			}),
 			createLocalDockerPackageTarball({
 				packageName: 'control-protocol-contracts',
@@ -1456,7 +1456,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
 			localGondolinAdapterTarballPath,
-			localGatewayInterfaceTarballPath,
+			localGatewayContractsTarballPath,
 			localControlProtocolContractsTarballPath,
 			localControllerExecutionContractsTarballPath,
 			localGatewayControlContractsTarballPath,
@@ -1500,8 +1500,8 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		packageName: 'gondolin-adapter',
 		repoRoot: options.repoRoot,
 	});
-	const localGatewayInterfaceTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-interface',
+	const localGatewayContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gateway-contracts',
 		repoRoot: options.repoRoot,
 	});
 	const localControlProtocolContractsTarballPath = await packLocalAgentVmPackageTarball({
@@ -1547,8 +1547,8 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 				sourcePath: localGondolinAdapterTarballPath,
 			}),
 			createLocalDockerPackageTarball({
-				packageName: 'gateway-interface',
-				sourcePath: localGatewayInterfaceTarballPath,
+				packageName: 'gateway-contracts',
+				sourcePath: localGatewayContractsTarballPath,
 			}),
 			createLocalDockerPackageTarball({
 				packageName: 'control-protocol-contracts',
@@ -1623,7 +1623,7 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
 			localGondolinAdapterTarballPath,
-			localGatewayInterfaceTarballPath,
+			localGatewayContractsTarballPath,
 			localControlProtocolContractsTarballPath,
 			localControllerExecutionContractsTarballPath,
 			localGatewayControlContractsTarballPath,
@@ -1684,7 +1684,6 @@ export async function prepareLocalWorkerPackageSetForGatewayImage(
 	const packageNames = [
 		'agent-vm-worker',
 		'control-protocol-contracts',
-		'gateway-interface',
 		'gondolin-adapter',
 		'secret-management',
 		'worker-control-contracts',

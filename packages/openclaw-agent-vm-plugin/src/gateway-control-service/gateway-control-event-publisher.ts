@@ -6,13 +6,13 @@ import {
 	type ControlDeliveryPolicy,
 	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 import {
 	GatewayControlRpcMessageSchema,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayControlRpcOperation,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import type { GatewayControlIdentity, GatewayControlService } from './gateway-control-service.js';

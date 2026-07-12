@@ -6,11 +6,11 @@ import {
 	CONTROL_PROTOCOL_VERSION,
 	ControlEnvelopeSchema,
 } from '@agent-vm/control-protocol-contracts';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 import {
 	GatewayControlRpcCommandResultMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,

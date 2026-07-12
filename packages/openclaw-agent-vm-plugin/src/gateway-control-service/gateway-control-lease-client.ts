@@ -8,6 +8,12 @@ import {
 	type DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	defaultToolVmLeaseAuthorityTombstoneTtlMs,
+	parseToolVmLeaseId,
+	type ToolVmLeasePeek,
+	type ToolVmSshLease,
+} from '@agent-vm/gateway-contracts';
+import {
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
@@ -18,12 +24,6 @@ import {
 	type GatewayControlRpcMessage,
 	type GatewayControlRpcOperation,
 } from '@agent-vm/gateway-control-contracts';
-import {
-	defaultToolVmLeaseAuthorityTombstoneTtlMs,
-	parseToolVmLeaseId,
-	type ToolVmLeasePeek,
-	type ToolVmSshLease,
-} from '@agent-vm/gateway-interface';
 
 import {
 	ControllerLeaseRequestError,

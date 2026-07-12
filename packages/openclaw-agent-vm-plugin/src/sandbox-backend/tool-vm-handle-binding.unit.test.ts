@@ -1,4 +1,4 @@
-import { parseToolVmLeaseId, type ToolVmSshLease } from '@agent-vm/gateway-interface';
+import { parseToolVmLeaseId, type ToolVmSshLease } from '@agent-vm/gateway-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ControllerLeaseRequestError, type LeaseClient } from '../lease-client-contract.js';

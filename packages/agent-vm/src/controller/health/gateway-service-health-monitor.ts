@@ -2,7 +2,7 @@ import type {
 	AgentVmHealthEvent,
 	GatewayRecoveryEventAction,
 	GatewayRecoveryTimeoutErrorCode,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 import {
 	classifyControlSessionDeathGrace,

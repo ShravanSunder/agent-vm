@@ -4,13 +4,13 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 
 import {
+	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
+	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+} from '@agent-vm/gateway-contracts';
+import {
 	createGatewayControlAdmissionExecutor,
 	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
-import {
-	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
-	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
-} from '@agent-vm/gateway-interface';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

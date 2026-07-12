@@ -2,12 +2,12 @@ import type {
 	ControlEnvelope,
 	DomainControlMessageIdentity,
 } from '@agent-vm/control-protocol-contracts';
+import { isToolVmSshLease } from '@agent-vm/gateway-contracts';
 import type {
 	GatewayControlLeaseSnapshot,
 	GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
 import { gatewayControlCommandExecutionTimeoutMsByOperation } from '@agent-vm/gateway-control-contracts';
-import { isToolVmSshLease } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createGatewayControlCallerContextStore } from './gateway-control-caller-context-store.js';

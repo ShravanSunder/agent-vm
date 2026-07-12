@@ -1,4 +1,4 @@
-import type { GatewayAuthConfig } from '@agent-vm/gateway-interface';
+import type { GatewayAuthConfig } from '@agent-vm/gateway-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';

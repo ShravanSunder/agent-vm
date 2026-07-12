@@ -194,16 +194,20 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Seventeen workspace packages compose the system. Dependencies flow downward.
+Nineteen workspace packages compose the system. Dependencies flow downward.
 
 ```
   @earendil-works/gondolin
         |
         v
-  gondolin-adapter
-        |
-        v
-  gateway-interface --------------+
+  gondolin-adapter          gateway-contracts
+        |                          |
+        +------------+-------------+
+                     |
+                     v
+          gondolin-gateway-types
+                     |
+        +------------+-------------+
         |                          |
         v                          v
   openclaw-gateway          worker-gateway
@@ -254,7 +258,8 @@ Seventeen workspace packages compose the system. Dependencies flow downward.
 | **gateway-control-contracts** | Gateway-domain control RPC Zod contracts for gateway readiness, lease intent/observation, health, recovery, and controller-host-action requests. |
 | **worker-control-contracts** | Worker-domain control RPC Zod contracts for worker readiness, task lifecycle observations, runtime status, and controller-backed git operations. |
 | **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
-| **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
+| **gateway-contracts** | Backend-neutral `GatewayLifecycle<TGatewayVmSpec>`, process, health, lease, and runtime vocabulary. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
+| **gondolin-gateway-types** | Binds the generic lifecycle contract to `GondolinGatewayVmSpec`, isolating Gondolin VM mount and SSH egress types. |
 | **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
 | **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, private control-session ingress wiring, no auth, no `prepareHostState`. |
 | **agent-portal-sdk** | Portal-neutral Zod v4 contracts for list/search/describe/call results, capability descriptions, approvals, artifacts, diagnostics, and adapter envelopes. |
@@ -330,7 +335,7 @@ and the default 100 minute fallback.
 
 ## Gateway Abstraction
 
-The `GatewayLifecycle` interface (`gateway-interface` package) is the contract every gateway type must implement. The controller never knows the specifics of OpenClaw or worker -- it calls the lifecycle methods and gets back pure data specs.
+The generic `GatewayLifecycle<TGatewayVmSpec>` interface in `gateway-contracts` is the backend-neutral contract. `gondolin-gateway-types` binds it to `GondolinGatewayVmSpec`; OpenClaw and Worker implement that specialization. The controller never knows their product-specific details -- it calls lifecycle methods and receives pure data specs.
 
 ### Interface
 

@@ -4,7 +4,7 @@ import type {
 	ToolVmActiveUseOperationReport,
 	ToolVmSshHealthOperation,
 	ToolVmSshFailureKind,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 export class ToolVmSshOperationStaleError extends Error {
 	override readonly cause: unknown;

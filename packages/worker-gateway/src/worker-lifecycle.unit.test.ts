@@ -1,4 +1,4 @@
-import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
+import type { GatewayZoneConfig } from '@agent-vm/gateway-contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { workerLifecycle } from './worker-lifecycle.js';
@@ -63,7 +63,7 @@ describe('workerLifecycle', () => {
 		);
 		// IPv4-preference egress for the Node controller-client to defeat
 		// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
-		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-contracts.
 		expect(vmSpec.environment.NODE_OPTIONS).toBe(
 			'--dns-result-order=ipv4first --no-network-family-autoselection',
 		);

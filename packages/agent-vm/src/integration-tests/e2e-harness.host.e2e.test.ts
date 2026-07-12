@@ -551,7 +551,7 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinAdapterPackage(repoRoot);
-		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeGatewayContractsPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
 		await createFakeGatewayControlContractsPackage(repoRoot);
@@ -587,7 +587,7 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-gondolin-adapter-0.0.0-smoke.tgz /tmp/agent-vm-gondolin-adapter-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-interface-0.0.0-smoke.tgz /tmp/agent-vm-gateway-interface-0.0.0-smoke.tgz',
+			'COPY agent-vm-gateway-contracts-0.0.0-smoke.tgz /tmp/agent-vm-gateway-contracts-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
 			'COPY agent-vm-control-protocol-contracts-0.0.0-smoke.tgz /tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz',
@@ -697,7 +697,7 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinAdapterPackage(repoRoot);
-		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeGatewayContractsPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
 		await createFakeGatewayControlContractsPackage(repoRoot);
@@ -727,7 +727,7 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-control-protocol-contracts-0.0.0-smoke.tgz /tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-interface-0.0.0-smoke.tgz /tmp/agent-vm-gateway-interface-0.0.0-smoke.tgz',
+			'COPY agent-vm-gateway-contracts-0.0.0-smoke.tgz /tmp/agent-vm-gateway-contracts-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
 			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
@@ -774,7 +774,7 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinAdapterPackage(repoRoot);
-		await createFakeGatewayInterfacePackage(repoRoot);
+		await createFakeGatewayContractsPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
 		await createFakeGatewayControlContractsPackage(repoRoot);
@@ -1533,18 +1533,17 @@ async function createFakeGondolinAdapterPackage(repoRoot: string): Promise<void>
 	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
 }
 
-async function createFakeGatewayInterfacePackage(repoRoot: string): Promise<void> {
-	const packageDir = path.join(repoRoot, 'packages', 'gateway-interface');
+async function createFakeGatewayContractsPackage(repoRoot: string): Promise<void> {
+	const packageDir = path.join(repoRoot, 'packages', 'gateway-contracts');
 	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
 	await fs.writeFile(
 		path.join(packageDir, 'package.json'),
 		`${JSON.stringify(
 			{
 				dependencies: {
-					'@agent-vm/gondolin-adapter': '0.0.0-smoke',
 					'@agent-vm/secret-management': '0.0.0-smoke',
 				},
-				name: '@agent-vm/gateway-interface',
+				name: '@agent-vm/gateway-contracts',
 				version: '0.0.0-smoke',
 				files: ['dist'],
 			},

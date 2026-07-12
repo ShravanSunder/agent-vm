@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-vm",
-	"version": "0.0.114",
+	"version": "0.0.115",
 	"description": "Controller CLI and HTTP server for sandboxed VM coding agents.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -41,9 +41,10 @@
 		"@agent-vm/agent-vm-worker": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/control-protocol-contracts": "workspace:*",
+		"@agent-vm/gateway-contracts": "workspace:*",
 		"@agent-vm/gateway-control-contracts": "workspace:*",
-		"@agent-vm/gateway-interface": "workspace:*",
 		"@agent-vm/gondolin-adapter": "workspace:*",
+		"@agent-vm/gondolin-gateway-types": "workspace:*",
 		"@agent-vm/mcp-portal": "workspace:*",
 		"@agent-vm/openclaw-agent-vm-plugin": "workspace:*",
 		"@agent-vm/openclaw-gateway": "workspace:*",

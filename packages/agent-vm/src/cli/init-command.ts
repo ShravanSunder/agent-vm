@@ -14,7 +14,7 @@ import {
 	createConfigContractSchemaArtifacts,
 	mcpPortalConfigSchemaPaths,
 } from '@agent-vm/config-contracts';
-import type { EgressHostConfig, GatewayType, VmAudience } from '@agent-vm/gateway-interface';
+import type { EgressHostConfig, GatewayType, VmAudience } from '@agent-vm/gateway-contracts';
 import {
 	resolveGondolinMinimumZigVersion,
 	resolveGondolinPackageSpec,
@@ -83,7 +83,7 @@ export interface PromptAndStoreTokenDependencies {
 	readonly createReadlineInterface?: () => readline.Interface;
 }
 
-export type { GatewayType } from '@agent-vm/gateway-interface';
+export type { GatewayType } from '@agent-vm/gateway-contracts';
 
 export type ScaffoldPathMode = 'local' | 'pod' | 'user-dir';
 

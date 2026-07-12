@@ -19,7 +19,7 @@ import { promisify } from 'node:util';
 import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
 	type GatewayZoneConfig,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -690,7 +690,7 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
 			// IPv4-preference egress for the Node OpenClaw process to defeat
 			// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
-			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-contracts.
 			expect(vmSpec.environment.NODE_OPTIONS).toBe(
 				'--dns-result-order=ipv4first --no-network-family-autoselection',
 			);

@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { GatewayType } from '@agent-vm/gateway-interface';
+import type { GatewayType } from '@agent-vm/gateway-contracts';
 
 import type { GatewayLifecycleErrorCode } from './gateway-zone-state-machine.js';
 

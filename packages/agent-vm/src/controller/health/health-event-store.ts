@@ -5,7 +5,7 @@ import {
 	healthEventBucketKey,
 	type AgentVmHealthEvent,
 	type ZoneHealthSnapshot,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 export interface HealthEventStoreOptions {
 	readonly durableEventLog?:

@@ -1582,10 +1582,6 @@ describe('worker-task-runner', () => {
 			tempDir,
 			'agent-vm-worker-control-contracts-local.tgz',
 		);
-		const localGatewayInterfaceTarballPath = path.join(
-			tempDir,
-			'agent-vm-gateway-interface-local.tgz',
-		);
 		const localGondolinAdapterTarballPath = path.join(
 			tempDir,
 			'agent-vm-gondolin-adapter-local.tgz',
@@ -1598,14 +1594,12 @@ describe('worker-task-runner', () => {
 			fs.writeFile(localWorkerTarballPath, 'local worker tarball bytes'),
 			fs.writeFile(localControlProtocolTarballPath, 'local control protocol tarball bytes'),
 			fs.writeFile(localWorkerControlTarballPath, 'local worker control tarball bytes'),
-			fs.writeFile(localGatewayInterfaceTarballPath, 'local gateway interface tarball bytes'),
 			fs.writeFile(localGondolinAdapterTarballPath, 'local gondolin adapter tarball bytes'),
 			fs.writeFile(localSecretManagementTarballPath, 'local secret management tarball bytes'),
 		]);
 		process.env.AGENT_VM_WORKER_PACKAGE_TARBALLS_JSON = JSON.stringify([
 			{ packageName: 'agent-vm-worker', sourcePath: localWorkerTarballPath },
 			{ packageName: 'control-protocol-contracts', sourcePath: localControlProtocolTarballPath },
-			{ packageName: 'gateway-interface', sourcePath: localGatewayInterfaceTarballPath },
 			{ packageName: 'gondolin-adapter', sourcePath: localGondolinAdapterTarballPath },
 			{ packageName: 'secret-management', sourcePath: localSecretManagementTarballPath },
 			{ packageName: 'worker-control-contracts', sourcePath: localWorkerControlTarballPath },
@@ -1635,8 +1629,6 @@ describe('worker-task-runner', () => {
 			'@agent-vm/agent-vm-worker': 'file:/state/agent-vm-worker-packages/agent-vm-worker-local.tgz',
 			'@agent-vm/control-protocol-contracts':
 				'file:/state/agent-vm-worker-packages/agent-vm-control-protocol-contracts-local.tgz',
-			'@agent-vm/gateway-interface':
-				'file:/state/agent-vm-worker-packages/agent-vm-gateway-interface-local.tgz',
 			'@agent-vm/gondolin-adapter':
 				'file:/state/agent-vm-worker-packages/agent-vm-gondolin-adapter-local.tgz',
 			'@agent-vm/secret-management':

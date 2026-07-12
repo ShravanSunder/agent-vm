@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-vm-worker",
-	"version": "0.0.114",
+	"version": "0.0.115",
 	"description": "Worker process that runs inside a sandboxed VM, plans, edits, validates, and reviews coding tasks.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -42,7 +42,6 @@
 	},
 	"dependencies": {
 		"@agent-vm/control-protocol-contracts": "workspace:*",
-		"@agent-vm/gateway-interface": "workspace:*",
 		"@agent-vm/worker-control-contracts": "workspace:*",
 		"@hono/node-server": "^2.0.2",
 		"@hono/zod-validator": "^0.8.0",

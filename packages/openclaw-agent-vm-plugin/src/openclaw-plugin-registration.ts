@@ -1,7 +1,7 @@
 import {
 	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 import { createGatewayControlCallerContextStore } from './gateway-control-service/gateway-control-caller-context-store.js';
 import { createGatewayControlEventPublisher } from './gateway-control-service/gateway-control-event-publisher.js';

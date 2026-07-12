@@ -8,8 +8,9 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
-			"@agent-vm/gateway-interface": ["../gateway-interface/dist/index.d.ts"],
-			"@agent-vm/gondolin-adapter": ["../gondolin-adapter/dist/index.d.ts"]
+			"@agent-vm/gateway-contracts": ["../gateway-contracts/dist/index.d.ts"],
+			"@agent-vm/gondolin-adapter": ["../gondolin-adapter/dist/index.d.ts"],
+			"@agent-vm/gondolin-gateway-types": ["../gondolin-gateway-types/dist/index.d.ts"]
 		}
 	},
 	"exclude": ["src/**/*.test.ts"]

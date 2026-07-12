@@ -1,3 +1,4 @@
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 import {
 	GatewayControlLeaseCreateIntentPayloadSchema,
 	GatewayControlLeaseIdPayloadSchema,
@@ -8,7 +9,6 @@ import {
 	GatewayControlLeaseUseStartPayloadSchema,
 	type GatewayControlLeaseSnapshot,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import {

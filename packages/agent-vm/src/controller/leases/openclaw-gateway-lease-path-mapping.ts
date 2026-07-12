@@ -4,7 +4,7 @@ import {
 	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 	OPENCLAW_STATE_VM_ROOT,
 	type RuntimePathMapping,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 import { OPENCLAW_ZONE_FILES_GUEST_ROOT } from '../zone-git/zone-git-paths.js';
 

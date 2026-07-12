@@ -4,12 +4,10 @@ import path from 'node:path';
 
 import type {
 	BuildGatewayVmSpecOptions,
-	GatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayZoneConfig,
-	GatewayVmSpec,
 	SplitResolvedGatewaySecretsResult,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	composeNodeOptions,
@@ -19,12 +17,16 @@ import {
 	mergeRuntimeGatewaySecrets,
 	normalizeGitReposForSshReadAllowlist,
 	splitResolvedGatewaySecrets,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 import {
 	createGitReadOnlySshEgressOptions,
 	type ManagedSshEgressOptions,
 	writeFileAtomically,
 } from '@agent-vm/gondolin-adapter';
+import type {
+	GondolinGatewayLifecycle,
+	GondolinGatewayVmSpec,
+} from '@agent-vm/gondolin-gateway-types';
 import {
 	redactOnePasswordReferences,
 	type SecretRef,
@@ -1493,7 +1495,7 @@ async function preflightEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promis
 	}
 }
 
-export const openclawLifecycle: GatewayLifecycle = {
+export const openclawLifecycle: GondolinGatewayLifecycle = {
 	authConfig: {
 		listProvidersCommand: 'openclaw models auth list --format plain 2>/dev/null || echo ""',
 		buildLoginCommand: (
@@ -1531,7 +1533,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 		runtimeDir,
 		tcpPool,
 		zone,
-	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
+	}: BuildGatewayVmSpecOptions): GondolinGatewayVmSpec {
 		if (zone.gateway.type !== 'openclaw') {
 			throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 		}
@@ -1641,7 +1643,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 			// (e.g. a future secrets.env or merge change that drops the
 			// FORCE_IPV4_EGRESS_NODE_OPTIONS flags) is visible in the log
 			// stream without SSHing into the VM.  See
-			// FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			// FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-contracts.
 			startCommand: buildOpenClawGatewayStartCommand(),
 			healthCheck: {
 				type: 'http',

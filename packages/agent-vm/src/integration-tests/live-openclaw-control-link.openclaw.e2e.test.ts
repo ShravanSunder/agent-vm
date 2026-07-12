@@ -2,7 +2,7 @@
 import fs, { watch } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-contracts';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 

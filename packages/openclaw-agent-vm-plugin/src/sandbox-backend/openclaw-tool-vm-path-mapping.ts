@@ -6,7 +6,7 @@ import {
 	type RuntimePathMapping,
 	type RuntimePathTranslation,
 	type RuntimePathTranslationError,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 export type OpenClawToolVmPathIntentKind =
 	| 'host-workspace-root'

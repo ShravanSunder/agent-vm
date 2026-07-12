@@ -7,6 +7,7 @@ import {
 	CONTROL_PROTOCOL_VERSION,
 	type ControlEnvelope,
 } from '@agent-vm/control-protocol-contracts';
+import type { GatewayZoneConfig } from '@agent-vm/gateway-contracts';
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
@@ -16,7 +17,6 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	type GatewayControlCallerContextProofPayloadInput,
 } from '@agent-vm/gateway-control-contracts';
-import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
 import type {
 	BuildConfig,
 	BuildImageResult,

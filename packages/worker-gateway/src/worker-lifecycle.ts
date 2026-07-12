@@ -1,20 +1,19 @@
-import type {
-	BuildGatewayVmSpecOptions,
-	GatewayLifecycle,
-	GatewayProcessSpec,
-	GatewayVmSpec,
-} from '@agent-vm/gateway-interface';
+import type { BuildGatewayVmSpecOptions, GatewayProcessSpec } from '@agent-vm/gateway-contracts';
 import {
 	buildGatewaySessionLabel,
 	composeNodeOptions,
 	normalizeGitReposForSshReadAllowlist,
 	splitResolvedGatewaySecrets,
 	workerVmAllowedHosts,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 import {
 	createGitReadOnlySshEgressOptions,
 	type ManagedSshEgressOptions,
 } from '@agent-vm/gondolin-adapter';
+import type {
+	GondolinGatewayLifecycle,
+	GondolinGatewayVmSpec,
+} from '@agent-vm/gondolin-gateway-types';
 
 const workerGatewayGuestPath = '/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
@@ -48,12 +47,12 @@ function createManagedGitReadOnlySshEgressOptions(options: {
 	});
 }
 
-export const workerLifecycle: GatewayLifecycle = {
+export const workerLifecycle: GondolinGatewayLifecycle = {
 	buildVmSpec({
 		projectNamespace,
 		resolvedSecrets,
 		zone,
-	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
+	}: BuildGatewayVmSpecOptions): GondolinGatewayVmSpec {
 		if (zone.gateway.type !== 'worker') {
 			throw new Error(`Worker lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 		}
@@ -114,7 +113,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			bootstrapCommand: buildWorkerBootstrapCommand(),
 			// printf NODE_OPTIONS into the boot log so an env-loss regression
 			// is visible in the log stream without SSHing into the VM.
-			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-contracts.
 			startCommand: `export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && { printf 'worker-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > /tmp/agent-vm-worker.log; } && cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state >> /tmp/agent-vm-worker.log 2>&1 &`,
 			healthCheck: { type: 'http', port: 18789, path: '/health' },
 			serviceHealthCheck: { type: 'http', port: 18789, path: '/health' },

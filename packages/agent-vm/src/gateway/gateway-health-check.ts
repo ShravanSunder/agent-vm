@@ -1,4 +1,4 @@
-import type { GatewayHealthCheck } from '@agent-vm/gateway-interface';
+import type { GatewayHealthCheck } from '@agent-vm/gateway-contracts';
 
 export interface GatewayHealthProbeResult {
 	readonly exitCode: number;

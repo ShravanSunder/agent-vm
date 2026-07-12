@@ -1,4 +1,3 @@
-import type { GatewayControlLeaseRejectionReason } from '@agent-vm/gateway-control-contracts';
 import type {
 	EndToolVmActiveUseRequest,
 	HeartbeatToolVmActiveUseRequest,
@@ -7,7 +6,8 @@ import type {
 	StartToolVmActiveUseResponse,
 	ToolVmLeasePeek,
 	ToolVmSshLease,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
+import type { GatewayControlLeaseRejectionReason } from '@agent-vm/gateway-control-contracts';
 import { z } from 'zod';
 
 export type { OpenClawRuntimeStatusReport } from './openclaw-runtime-status.js';

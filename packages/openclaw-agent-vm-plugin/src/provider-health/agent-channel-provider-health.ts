@@ -4,7 +4,7 @@ import {
 	type AgentChannelProviderHealthKind,
 	type AgentVmHealthEvent,
 	type AgentVmHealthResultKind,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 
 type AgentChannelProviderHealthEvent = Extract<
 	AgentVmHealthEvent,

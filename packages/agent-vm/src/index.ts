@@ -17,7 +17,6 @@ export type {
 } from './gateway/gateway-zone-orchestrator.js';
 export * from './controller/leases/idle-reaper.js';
 export * from './controller/leases/lease-idle-policy.js';
-export * from './controller/leases/lease-manager.js';
 export * from './operations/zone-logs.js';
 export * from './operations/controller-status.js';
 export * from './config/system-config.js';

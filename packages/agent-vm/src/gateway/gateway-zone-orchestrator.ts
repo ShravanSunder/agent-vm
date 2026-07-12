@@ -2,26 +2,26 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import type {
+	AgentVmHealthEvent,
+	GatewayHealthCheck,
+	GatewayProcessSpec,
+	GatewayZoneConfig,
+} from '@agent-vm/gateway-contracts';
+import {
+	createWebSocketUpgradeRequestGuard,
+	translateRuntimePath,
+} from '@agent-vm/gateway-contracts';
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
 	type GatewayControlCallerContextProof,
 } from '@agent-vm/gateway-control-contracts';
-import type {
-	AgentVmHealthEvent,
-	GatewayHealthCheck,
-	GatewayLifecycle,
-	GatewayProcessSpec,
-	GatewayZoneConfig,
-} from '@agent-vm/gateway-interface';
-import {
-	createWebSocketUpgradeRequestGuard,
-	translateRuntimePath,
-} from '@agent-vm/gateway-interface';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
 } from '@agent-vm/gondolin-adapter';
+import type { GondolinGatewayLifecycle } from '@agent-vm/gondolin-gateway-types';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import {
@@ -353,7 +353,9 @@ export interface GatewayManagerDependencies extends GatewayImageBuilderDependenc
 	readonly createOpenClawProcessSupervisorPorts?: typeof createManagedVmOpenClawProcessSupervisorPorts;
 	readonly gatewayReadinessMaxAttempts?: number;
 	readonly gatewayReadinessRetryDelayMs?: number;
-	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
+	readonly loadGatewayLifecycle?: (
+		type: GatewayZoneConfig['gateway']['type'],
+	) => GondolinGatewayLifecycle;
 	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
 	// Injected by tests so the gateway record build doesn't shell out to ps
 	// against a fake pid. Production omits this; uses the real default.

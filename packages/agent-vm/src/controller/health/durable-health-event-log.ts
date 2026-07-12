@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { isAgentVmHealthEvent, type AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import { isAgentVmHealthEvent, type AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 
 export interface AppendDurableHealthEventOptions {
 	readonly controllerPid: number;

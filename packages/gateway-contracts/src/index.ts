@@ -81,7 +81,6 @@ export type {
 	BuildGatewayVmSpecOptions,
 	GatewayAuthConfig,
 	GatewayIngressConfig,
-	GatewayLifecycle,
 	GatewaySecretConfig,
 	GatewayZoneAgentConfig,
 	GatewayZoneConfig,
@@ -90,8 +89,8 @@ export type {
 	EnvInjectedGatewaySecretConfig,
 	HttpMediatedGatewaySecretConfig,
 } from './gateway-lifecycle.js';
+export type { GatewayLifecycle } from './gateway-lifecycle.js';
 export type { GatewayHealthCheck, GatewayProcessSpec } from './gateway-process-spec.js';
-export type { GatewayVmSpec } from './gateway-vm-spec.js';
 export {
 	mergeRuntimeGatewaySecrets,
 	splitResolvedGatewaySecrets,

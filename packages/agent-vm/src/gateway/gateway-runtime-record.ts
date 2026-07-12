@@ -6,7 +6,7 @@ import {
 	gatewayTypeValues,
 	type GatewayProcessSpec,
 	type GatewayType,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 

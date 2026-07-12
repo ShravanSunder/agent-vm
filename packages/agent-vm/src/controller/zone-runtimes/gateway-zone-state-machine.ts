@@ -1,4 +1,4 @@
-import type { AgentVmHealthEventKind } from '@agent-vm/gateway-interface';
+import type { AgentVmHealthEventKind } from '@agent-vm/gateway-contracts';
 
 import type { GatewayOwnershipEvidence } from '../../gateway/gateway-ownership-evidence.js';
 import type { ControllerZoneLifecycleState } from '../../operations/controller-status.js';

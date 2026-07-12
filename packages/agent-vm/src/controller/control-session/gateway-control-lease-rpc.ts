@@ -1,3 +1,7 @@
+import {
+	normalizeToolVmActiveUseCorrelation,
+	type AgentVmHealthEvent,
+} from '@agent-vm/gateway-contracts';
 import type {
 	GatewayControlLeaseCreateIntentPayload,
 	GatewayControlLeaseIdPayload,
@@ -15,10 +19,6 @@ import {
 	GatewayControlLeaseUseHeartbeatPayloadSchema,
 	GatewayControlLeaseUseStartPayloadSchema,
 } from '@agent-vm/gateway-control-contracts';
-import {
-	normalizeToolVmActiveUseCorrelation,
-	type AgentVmHealthEvent,
-} from '@agent-vm/gateway-interface';
 
 import {
 	type ControllerLeaseManager,

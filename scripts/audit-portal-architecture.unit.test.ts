@@ -231,11 +231,11 @@ describe('portal architecture audit', () => {
 		]);
 	});
 
-	it('rejects public gateway-interface exports for raw controller helpers', () => {
+	it('rejects public gateway-contracts exports for raw controller helpers', () => {
 		const violations = collectPortalArchitectureViolations({
 			files: [
 				{
-					filePath: 'packages/gateway-interface/src/index.ts',
+					filePath: 'packages/gateway-contracts/src/index.ts',
 					sourceText:
 						"export { fetchControllerWithPolicy, gatewayInternalControllerRequestOperations } from './health/controller-request-policy.js';\nexport type { FetchControllerWithPolicyOptions, GatewayInternalControllerRequestOperation } from './health/controller-request-policy.js';\n",
 				},
@@ -243,10 +243,10 @@ describe('portal architecture audit', () => {
 		});
 
 		expect(violations).toEqual([
-			'packages/gateway-interface/src/index.ts: gateway-interface must not publicly export raw controller helper fetchControllerWithPolicy',
-			'packages/gateway-interface/src/index.ts: gateway-interface must not publicly export raw controller helper FetchControllerWithPolicyOptions',
-			'packages/gateway-interface/src/index.ts: gateway-interface must not publicly export raw controller helper GatewayInternalControllerRequestOperation',
-			'packages/gateway-interface/src/index.ts: gateway-interface must not publicly export raw controller helper gatewayInternalControllerRequestOperations',
+			'packages/gateway-contracts/src/index.ts: gateway-contracts must not publicly export raw controller helper fetchControllerWithPolicy',
+			'packages/gateway-contracts/src/index.ts: gateway-contracts must not publicly export raw controller helper FetchControllerWithPolicyOptions',
+			'packages/gateway-contracts/src/index.ts: gateway-contracts must not publicly export raw controller helper GatewayInternalControllerRequestOperation',
+			'packages/gateway-contracts/src/index.ts: gateway-contracts must not publicly export raw controller helper gatewayInternalControllerRequestOperations',
 		]);
 	});
 });

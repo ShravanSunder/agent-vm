@@ -1,4 +1,4 @@
-import { targetsAudience } from '@agent-vm/gateway-interface';
+import { targetsAudience } from '@agent-vm/gateway-contracts';
 
 import type { SystemConfig } from '../config/system-config.js';
 

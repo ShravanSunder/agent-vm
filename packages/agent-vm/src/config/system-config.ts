@@ -2,12 +2,12 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
-import { targetsAudience, vmAudienceValues } from '@agent-vm/gateway-interface';
+import { targetsAudience, vmAudienceValues } from '@agent-vm/gateway-contracts';
 import type {
 	EgressHostConfig,
 	VmAudience,
 	WebSocketUpgradeConfig,
-} from '@agent-vm/gateway-interface';
+} from '@agent-vm/gateway-contracts';
 import { z } from 'zod';
 
 import { loadJsonConfigFile } from './json-config-file.js';

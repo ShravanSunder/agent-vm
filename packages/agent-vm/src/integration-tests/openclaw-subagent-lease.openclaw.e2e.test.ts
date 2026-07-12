@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { type AgentVmHealthEvent } from '@agent-vm/gateway-interface';
+import { type AgentVmHealthEvent } from '@agent-vm/gateway-contracts';
 import { type ManagedVm } from '@agent-vm/gondolin-adapter';
 import {
 	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
