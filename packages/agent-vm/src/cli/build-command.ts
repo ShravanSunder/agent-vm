@@ -1,11 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-	buildImageAssetFileNames,
-	hasBuiltImageAssets,
-	type BuildImageResult,
-} from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
 import {
@@ -17,6 +12,11 @@ import {
 	buildGondolinImage as buildGondolinImageDefault,
 	computeFingerprintFromConfigPath,
 } from '../build/gondolin-image-builder.js';
+import {
+	hasManagedVmImageAssets,
+	managedVmImageAssetFileNames,
+	type ManagedVmBackendImageBuildResult,
+} from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	generateManagedDockerfile as generateManagedDockerfileDefault,
 	resolveManagedImageRelease as resolveManagedImageReleaseDefault,
@@ -70,7 +70,7 @@ export interface BuildCommandDependencies {
 		readonly fingerprintInput?: unknown;
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
-	}) => Promise<BuildImageResult>;
+	}) => Promise<ManagedVmBackendImageBuildResult>;
 	readonly computeGondolinFingerprint?: (options: {
 		readonly buildConfigPath: string;
 		readonly fingerprintInput?: unknown;
@@ -160,7 +160,7 @@ interface ImageTarget {
 
 interface BuiltImageCacheEntry {
 	readonly imageTarget: ImageTarget;
-	readonly result: BuildImageResult;
+	readonly result: ManagedVmBackendImageBuildResult;
 }
 
 interface DockerBackedFingerprintInput {
@@ -178,7 +178,7 @@ interface DockerBuildPlan {
 interface BuiltImagePlanResult {
 	readonly imageTarget: ImageTarget;
 	readonly targetPlan: GondolinTargetPlan;
-	readonly result: BuildImageResult;
+	readonly result: ManagedVmBackendImageBuildResult;
 }
 
 interface GondolinTargetPlan {
@@ -312,12 +312,12 @@ async function materializeGondolinImageAlias(options: {
 	if (path.resolve(options.sourceImagePath) === path.resolve(targetImagePath)) {
 		return targetImagePath;
 	}
-	if (!options.fullReset && (await hasBuiltImageAssets(targetImagePath))) {
+	if (!options.fullReset && (await hasManagedVmImageAssets(targetImagePath))) {
 		return targetImagePath;
 	}
 	await fs.rm(targetImagePath, { recursive: true, force: true });
 	await fs.mkdir(targetImagePath, { recursive: true });
-	for (const fileName of buildImageAssetFileNames) {
+	for (const fileName of managedVmImageAssetFileNames) {
 		// oxlint-disable-next-line no-await-in-loop -- preserve deterministic asset copy/link ordering
 		await linkOrCopyImageAsset(
 			path.join(options.sourceImagePath, fileName),
@@ -337,7 +337,7 @@ async function materializePreparedTargetImage(options: {
 	if (path.resolve(options.sourceImagePath) === path.resolve(targetImagePath)) {
 		return targetImagePath;
 	}
-	if (!(await hasBuiltImageAssets(options.sourceImagePath))) {
+	if (!(await hasManagedVmImageAssets(options.sourceImagePath))) {
 		return options.sourceImagePath;
 	}
 	return await materializeGondolinImageAlias(options);
@@ -979,7 +979,7 @@ export async function runBuildCommand(
 						targetPlan.shouldResetGondolinCache ? 'building vm assets' : 'checking vm assets',
 					);
 					const gondolinTaskOutput = createGondolinPhaseTaskOutput(taskContext, statusController);
-					let result: BuildImageResult;
+					let result: ManagedVmBackendImageBuildResult;
 					try {
 						result = await buildGondolinImage({
 							buildConfigPath: targetPlan.imageTarget.buildConfigPath,

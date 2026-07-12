@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
+import { validateBuildConfig } from '@earendil-works/gondolin';
 
 import {
 	prepareBuildConfigWithAgentVmRootfsInitExtra,
@@ -32,12 +33,64 @@ export interface BuildImageResult {
 	readonly imagePath: string;
 }
 
+export interface GondolinImageBuildToolingOptions {
+	readonly buildConfig: unknown;
+	readonly cacheDir: string;
+	readonly configDir?: string;
+	readonly fullReset?: boolean;
+	readonly fingerprintInput?: unknown;
+	readonly output?: BuildOutput;
+}
+
+export interface GondolinImageFingerprintOptions {
+	readonly buildConfig: unknown;
+	readonly configDir?: string;
+	readonly fingerprintInput?: unknown;
+	readonly gondolinVersion?: string;
+}
+
+export interface GondolinImageBuildTooling {
+	buildImage(
+		options: GondolinImageBuildToolingOptions,
+		dependencies?: { readonly gondolinVersion?: string },
+	): Promise<BuildImageResult>;
+	computeFingerprint(options: GondolinImageFingerprintOptions): Promise<string>;
+}
+
 export const buildImageAssetFileNames = [
 	'manifest.json',
 	'rootfs.ext4',
 	'initramfs.cpio.lz4',
 	'vmlinuz-virt',
 ] as const;
+
+function requireValidBuildConfig(buildConfig: unknown): BuildConfig {
+	if (!validateBuildConfig(buildConfig)) {
+		throw new Error('Managed VM image recipe has an invalid build shape.');
+	}
+	return buildConfig;
+}
+
+export function createGondolinImageBuildTooling(): GondolinImageBuildTooling {
+	return {
+		async buildImage(options, dependencies) {
+			return await buildImage(
+				{
+					...options,
+					buildConfig: requireValidBuildConfig(options.buildConfig),
+				},
+				dependencies,
+			);
+		},
+		async computeFingerprint(options) {
+			const result = await computeEffectiveBuildFingerprint({
+				...options,
+				buildConfig: requireValidBuildConfig(options.buildConfig),
+			});
+			return result.fingerprint;
+		},
+	};
+}
 
 interface BuildPipelineDependencies {
 	readonly buildAssets?: (

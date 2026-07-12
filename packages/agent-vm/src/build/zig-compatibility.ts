@@ -1,5 +1,6 @@
-import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import { execa } from 'execa';
+
+import { resolveManagedVmMinimumZigVersion } from './gondolin-managed-vm-build-tooling.js';
 
 export type GondolinZigCompatibilityResult =
 	| {
@@ -24,7 +25,7 @@ export type GondolinZigCompatibilityResult =
 	  };
 
 export async function resolveGondolinCompatibleZigVersion(
-	resolveRequiredVersion: () => Promise<string> = resolveGondolinMinimumZigVersion,
+	resolveRequiredVersion: () => Promise<string> = resolveManagedVmMinimumZigVersion,
 ): Promise<string> {
 	return await resolveRequiredVersion();
 }

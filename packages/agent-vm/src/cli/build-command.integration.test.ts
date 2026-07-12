@@ -4,13 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 
-import { buildImageAssetFileNames } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	buildGondolinImage,
 	computeFingerprintFromConfigPath,
 } from '../build/gondolin-image-builder.js';
+import { managedVmImageAssetFileNames as buildImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {

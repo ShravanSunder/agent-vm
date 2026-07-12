@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { resolveManagedVmBackendModuleUrl } from './gondolin-managed-vm-build-tooling.js';
+
 export interface RuntimePackageVersions {
 	readonly agentVm: string;
 	readonly gondolinAdapter: string;
@@ -128,16 +130,14 @@ export async function readRuntimePackageVersions(options: {
 export function formatRuntimeBuildVersionTag(versions: RuntimePackageVersions): string {
 	return [
 		`agent-vm@${versions.agentVm}`,
-		`gondolin-adapter@${versions.gondolinAdapter}`,
+		`gondolin-vm-adapter@${versions.gondolinAdapter}`,
 		`gondolin@${versions.gondolinPackage}`,
 	].join('+');
 }
 
 export async function resolveRuntimeBuildVersionTag(): Promise<string> {
 	const agentVmPackageJsonPath = await findPackageJsonPathFromStart(fileURLToPath(import.meta.url));
-	const gondolinAdapterModulePath = fileURLToPath(
-		import.meta.resolve('@agent-vm/gondolin-adapter'),
-	);
+	const gondolinAdapterModulePath = fileURLToPath(resolveManagedVmBackendModuleUrl());
 	const gondolinAdapterPackageJsonPath = await findPackageJsonPathFromStart(
 		gondolinAdapterModulePath,
 	);

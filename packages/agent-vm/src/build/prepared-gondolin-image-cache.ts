@@ -2,12 +2,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { hasBuiltImageAssets, type BuildImageResult } from '@agent-vm/gondolin-adapter';
+import { hasManagedVmImageAssets } from './gondolin-managed-vm-build-tooling.js';
 
 const preparedImageRecordFileName = 'prepared-image.json';
 const preparedImageRecordSchemaVersion = 1;
 
-export interface PreparedGondolinImage extends BuildImageResult {
+interface PreparedImageBuildResult {
+	readonly built: boolean;
+	readonly fingerprint: string;
+	readonly imagePath: string;
+}
+
+export interface PreparedGondolinImage extends PreparedImageBuildResult {
 	readonly fingerprintInput?: unknown;
 }
 
@@ -89,7 +95,7 @@ export async function readPreparedGondolinImage(options: {
 	if (path.resolve(record.imagePath) !== path.resolve(imagePath)) {
 		return undefined;
 	}
-	if (!(await hasBuiltImageAssets(imagePath))) {
+	if (!(await hasManagedVmImageAssets(imagePath))) {
 		return undefined;
 	}
 
@@ -104,7 +110,7 @@ export async function readPreparedGondolinImage(options: {
 export async function writePreparedGondolinImage(
 	options: WritePreparedGondolinImageOptions,
 ): Promise<void> {
-	if (!(await hasBuiltImageAssets(options.imagePath))) {
+	if (!(await hasManagedVmImageAssets(options.imagePath))) {
 		return;
 	}
 	await fs.mkdir(options.cacheDir, { recursive: true });

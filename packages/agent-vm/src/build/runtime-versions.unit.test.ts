@@ -20,7 +20,7 @@ describe('runtime build versions', () => {
 				gondolinPackage: '@earendil-works/gondolin@0.9.1',
 			}),
 		).toBe(
-			'agent-vm@0.0.19+gondolin-adapter@0.0.19+gondolin@@earendil-works/gondolin@0.9.1',
+			'agent-vm@0.0.19+gondolin-vm-adapter@0.0.19+gondolin@@earendil-works/gondolin@0.9.1',
 		);
 	});
 
@@ -60,7 +60,7 @@ describe('runtime build versions', () => {
 		const agentVmPackagePath = path.join(temporaryDirectoryPath, 'agent-vm', 'package.json');
 		const gondolinAdapterPackagePath = path.join(
 			temporaryDirectoryPath,
-			'gondolin-adapter',
+			'gondolin-vm-adapter',
 			'package.json',
 		);
 		await fs.mkdir(path.dirname(agentVmPackagePath), { recursive: true });
@@ -73,7 +73,7 @@ describe('runtime build versions', () => {
 		await fs.writeFile(
 			gondolinAdapterPackagePath,
 			JSON.stringify({
-				name: '@agent-vm/gondolin-adapter',
+				name: '@agent-vm/gondolin-vm-adapter',
 				version: '0.0.19',
 				dependencies: {
 					'@earendil-works/gondolin': 'npm:@example/gondolin@0.9.1',
@@ -100,7 +100,7 @@ describe('runtime build versions', () => {
 		const tag = await resolveRuntimeBuildVersionTag();
 
 		expect(tag).toMatch(
-			/^agent-vm@\d+\.\d+\.\d+\+gondolin-adapter@\d+\.\d+\.\d+\+gondolin@/u,
+			/^agent-vm@\d+\.\d+\.\d+\+gondolin-vm-adapter@\d+\.\d+\.\d+\+gondolin@/u,
 		);
 	});
 });

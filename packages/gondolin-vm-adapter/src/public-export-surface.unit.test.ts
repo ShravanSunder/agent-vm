@@ -12,6 +12,8 @@ describe('gondolin-vm-adapter public export surface', () => {
 			/BuildConfig|BuildImageOptions|BuildImageResult|getDefaultBuildConfig|PinnedRealFsRoot|ManagedVmInstance|getVmInstance/u,
 		);
 		expect(indexSource).toContain('createGondolinManagedVmProvider');
+		expect(indexSource).toContain('configureHostNetworkDefaults');
+		expect(indexSource).toContain('createGondolinImageBuildTooling');
 		expect(indexSource).toContain('resolveGondolinMinimumZigVersion');
 		expect(indexSource).toContain('resolveGondolinPackageSpec');
 		expect(indexSource).toContain('hasBuiltImageAssets');

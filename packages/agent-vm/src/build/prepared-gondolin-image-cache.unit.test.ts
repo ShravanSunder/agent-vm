@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { buildImageAssetFileNames } from '@agent-vm/gondolin-adapter';
+import { managedVmImageAssetFileNames as buildImageAssetFileNames } from './gondolin-managed-vm-build-tooling.js';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {

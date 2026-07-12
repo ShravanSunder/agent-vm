@@ -3,17 +3,17 @@ import { fork } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import {
-	buildImage as buildImageFromCore,
-	computeEffectiveBuildFingerprint,
-	type BuildConfig,
-	type BuildImageOptions,
-	type BuildImageResult,
-} from '@agent-vm/gondolin-adapter';
-
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { TaskOutput } from '../shared/run-task.js';
+import {
+	createManagedVmBackendImageBuildTooling,
+	type ManagedVmBackendImageBuildOptions,
+	type ManagedVmBackendImageBuildResult,
+} from './gondolin-managed-vm-build-tooling.js';
 import { resolveRuntimeBuildVersionTag as resolveRuntimeBuildVersionTagDefault } from './runtime-versions.js';
+
+type BuildImageResult = ManagedVmBackendImageBuildResult;
+const defaultImageBuildTooling = createManagedVmBackendImageBuildTooling();
 
 export interface GondolinImageBuildRequest {
 	readonly buildConfigPath: string;
@@ -31,10 +31,10 @@ export interface RunGondolinBuildChildProcessOptions {
 
 export interface GondolinImageBuilderDependencies {
 	readonly buildImage?: (
-		options: BuildImageOptions,
+		options: ManagedVmBackendImageBuildOptions,
 		dependencies?: { readonly gondolinVersion?: string },
 	) => Promise<BuildImageResult>;
-	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<BuildConfig>;
+	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<unknown>;
 	readonly runBuildChildProcess?: (
 		options: RunGondolinBuildChildProcessOptions,
 	) => Promise<BuildImageResult>;
@@ -74,9 +74,9 @@ function hasRuntimeBuildVersionDependency(
 	return 'resolveRuntimeBuildVersionTag' in optionsOrDependencies;
 }
 
-async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
+async function loadBuildConfigFromJson(buildConfigPath: string): Promise<unknown> {
 	try {
-		return (await loadJsonConfigFile(buildConfigPath)) as BuildConfig;
+		return await loadJsonConfigFile(buildConfigPath);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
@@ -110,13 +110,12 @@ export async function computeFingerprintFromConfigPath(
 		resolvedDependencies.resolveRuntimeBuildVersionTag ?? resolveRuntimeBuildVersionTagDefault
 	)();
 
-	const effectiveBuildFingerprint = await computeEffectiveBuildFingerprint({
+	return await defaultImageBuildTooling.computeFingerprint({
 		buildConfig,
 		configDir: path.dirname(path.resolve(buildConfigPath)),
 		...(options.fingerprintInput === undefined ? {} : { fingerprintInput: options.fingerprintInput }),
 		gondolinVersion: runtimeBuildVersionTag,
 	});
-	return effectiveBuildFingerprint.fingerprint;
 }
 
 function isGondolinBuildChildMessage(value: unknown): value is GondolinBuildChildMessage {
@@ -201,7 +200,7 @@ export async function runGondolinImageBuildRequest(
 	dependencies: Omit<GondolinImageBuilderDependencies, 'runBuildChildProcess'> = {},
 ): Promise<BuildImageResult> {
 	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
-	const buildImage = dependencies.buildImage ?? buildImageFromCore;
+	const buildImage = dependencies.buildImage ?? defaultImageBuildTooling.buildImage;
 	const configDir = path.dirname(path.resolve(request.buildConfigPath));
 	const buildConfig = await loadBuildConfig(request.buildConfigPath);
 	const runtimeBuildVersionTag = await (

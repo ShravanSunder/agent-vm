@@ -1,4 +1,3 @@
-import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import {
 	createSecretResolver,
 	probeOnePasswordServiceAccountHeadlessAuth,
@@ -8,6 +7,7 @@ import {
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
+import { resolveManagedVmMinimumZigVersion } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	loadSystemConfig,
 	type LoadedSystemConfig,
@@ -94,7 +94,7 @@ export interface CliDependencies {
 		arguments_: readonly string[],
 	) => Promise<void>;
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
-	readonly resolveGondolinMinimumZigVersion: typeof resolveGondolinMinimumZigVersion;
+	readonly resolveGondolinMinimumZigVersion: typeof resolveManagedVmMinimumZigVersion;
 	readonly runControllerDoctor: typeof runControllerDoctor;
 	readonly runControllerOfflineCleanup?: typeof runControllerOfflineCleanup;
 	readonly runConfigValidation?: typeof runConfigValidation;
@@ -136,7 +136,7 @@ export const defaultCliDependencies: CliDependencies = {
 	runBuildCommand,
 	runCacheCommand,
 	probeOnePasswordServiceAccountHeadlessAuth,
-	resolveGondolinMinimumZigVersion,
+	resolveGondolinMinimumZigVersion: resolveManagedVmMinimumZigVersion,
 	resolveServiceAccountToken,
 	runControllerDoctor,
 	runControllerOfflineCleanup,

@@ -7,7 +7,13 @@ import { Writable } from 'node:stream';
 import type { BuildConfig } from '@earendil-works/gondolin';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildImage, buildImageAssetFileNames, computeBuildFingerprint } from './build-pipeline.js';
+import {
+	buildImage,
+	buildImageAssetFileNames,
+	computeBuildFingerprint,
+	computeEffectiveBuildFingerprint,
+	createGondolinImageBuildTooling,
+} from './build-pipeline.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -33,6 +39,29 @@ afterEach(() => {
 });
 
 describe('buildImage', () => {
+	it('projects fingerprinting through the narrow build-tooling capability', async () => {
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+		};
+		const tooling = createGondolinImageBuildTooling();
+
+		const [projectedFingerprint, directFingerprint] = await Promise.all([
+			tooling.computeFingerprint({ buildConfig, gondolinVersion: 'gondolin@1' }),
+			computeEffectiveBuildFingerprint({ buildConfig, gondolinVersion: 'gondolin@1' }),
+		]);
+
+		expect(projectedFingerprint).toBe(directFingerprint.fingerprint);
+	});
+
+	it('rejects invalid recipes at the narrow build-tooling boundary', async () => {
+		const tooling = createGondolinImageBuildTooling();
+
+		await expect(tooling.computeFingerprint({ buildConfig: { distro: 'alpine' } })).rejects.toThrow(
+			'invalid build shape',
+		);
+	});
+
 	it('injects rootfs init lines that recreate standard /dev fd symlinks at boot', async () => {
 		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
 		temporaryDirectories.push(cacheDirectory);
