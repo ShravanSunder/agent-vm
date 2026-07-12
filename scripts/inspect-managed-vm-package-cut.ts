@@ -344,9 +344,27 @@ function validateManagedImages(
 	if (managedImages === undefined) {
 		throw new Error('@agent-vm/agent-vm tarball is missing managed-images.json.');
 	}
-	const managedImageText = decodeText(managedImages);
-	JSON.parse(managedImageText);
-	if (/@agent-vm\/[a-z0-9-]+@(?:\^|~)?\d/u.test(managedImageText)) {
+	const parsedManagedImages: unknown = JSON.parse(decodeText(managedImages));
+	const pendingValues: unknown[] = [parsedManagedImages];
+	let containsAgentVmPackageSelector = false;
+	while (pendingValues.length > 0) {
+		const currentValue = pendingValues.pop();
+		if (typeof currentValue === 'string') {
+			if (/@agent-vm\/[a-z0-9-]+@/u.test(currentValue)) {
+				containsAgentVmPackageSelector = true;
+				break;
+			}
+			continue;
+		}
+		if (Array.isArray(currentValue)) {
+			pendingValues.push(...currentValue);
+			continue;
+		}
+		if (currentValue !== null && typeof currentValue === 'object') {
+			pendingValues.push(...Object.values(currentValue));
+		}
+	}
+	if (containsAgentVmPackageSelector) {
 		throw new Error('managed-images.json must not pin @agent-vm npm package versions.');
 	}
 }

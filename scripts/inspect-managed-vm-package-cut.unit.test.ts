@@ -318,6 +318,22 @@ describe('managed VM exact-HEAD package inspector', () => {
 		);
 	});
 
+	it.each(['@agent-vm/managed-vm@latest', 'npm:@agent-vm/managed-vm@beta'])(
+		'rejects non-numeric agent-vm package selector %s in managed image metadata',
+		(selector) => {
+			// Arrange
+			const packageManifest = manifest('@agent-vm/agent-vm');
+			const input = packedPackage(packageManifest, {
+				managedImages: JSON.stringify({ packageOverrides: { npm: [selector] } }),
+			});
+
+			// Act / Assert
+			expect(() => inspectPackedPackage(input, new Map([[packageManifest.name, '1.2.3']]))).toThrow(
+				'managed-images.json must not pin @agent-vm npm package versions',
+			);
+		},
+	);
+
 	it('removes stale owned dist output and rejects any stale build artifact record', async () => {
 		// Arrange
 		const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'package-inspector-unit-'));

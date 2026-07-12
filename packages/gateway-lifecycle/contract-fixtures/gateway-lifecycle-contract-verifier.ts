@@ -57,7 +57,7 @@ function compileFixture(fixtureName: string): CompileFixtureResult {
 
 const negativeFixtureExpectations = [
 	{
-		expectedPackageName: '@agent-vm/gondolin-adapter',
+		expectedPackageName: '@agent-vm/gondolin-vm-adapter',
 		fixtureName: 'concrete-adapter-import',
 	},
 	{

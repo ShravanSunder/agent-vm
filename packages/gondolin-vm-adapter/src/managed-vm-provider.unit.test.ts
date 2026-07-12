@@ -285,7 +285,7 @@ describe('createGondolinManagedVmProvider', () => {
 		expect(vm.getHostProcessId()).toBeNull();
 		await vm.start();
 		nativeHostProcessId = 9876;
-		expect(vm.getHostProcessId()).toBe(9876);
+		expect(() => vm.getHostProcessId()).toThrow('runner identity changed');
 		nativeHostProcessId = null;
 		expect(vm.getHostProcessId()).toBeNull();
 

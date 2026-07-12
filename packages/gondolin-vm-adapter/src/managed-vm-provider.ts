@@ -323,7 +323,19 @@ function wrapManagedVm(
 			return wrapExecProcess(nativeProcess);
 		},
 		getHostProcessId(): number | null {
-			return hostProcessId === null ? null : nativeVm.getHostPid();
+			if (hostProcessId === null) {
+				return null;
+			}
+			const currentHostProcessId = nativeVm.getHostPid();
+			if (currentHostProcessId === null) {
+				return null;
+			}
+			if (currentHostProcessId !== hostProcessId) {
+				throw new Error(
+					`Gondolin runner identity changed for managed VM '${nativeVm.id}': expected pid ${String(hostProcessId)}, observed ${String(currentHostProcessId)}.`,
+				);
+			}
+			return hostProcessId;
 		},
 		id: nativeVm.id,
 		async start(): Promise<void> {
