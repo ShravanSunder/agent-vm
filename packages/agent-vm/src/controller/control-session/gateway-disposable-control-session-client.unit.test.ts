@@ -1549,7 +1549,11 @@ describe('Gateway disposable control session client', () => {
 		client.close();
 	});
 
-	it('returns a typed stale caller-context rejection before lease renewal admission', async () => {
+	it.each([
+		'caller_context_absent',
+		'caller_context_stale',
+		'caller_context_session_mismatch',
+	] as const)('returns typed %s before lease renewal admission', async (leaseRejectionReason) => {
 		const connectionId = '11111111-1111-4111-8111-111111111111';
 		const sessionId = '22222222-2222-4222-8222-222222222222';
 		const fake = createFakeSocket({ connectionId, sessionId });
@@ -1576,10 +1580,7 @@ describe('Gateway disposable control session client', () => {
 			nextAttachmentGeneration: () => 1,
 			policyByOperation: { lease_renew: 'single_use_critical' },
 			refreshExtraHeaders: async () => ({}),
-			resolveInboundStablePrincipal: () => ({
-				leaseRejectionReason: 'caller_context_stale',
-				status: 'rejected',
-			}),
+			resolveInboundStablePrincipal: () => ({ leaseRejectionReason, status: 'rejected' }),
 		});
 		await client.ready;
 		const messageId = '55555555-5555-4555-8555-555555555555';
@@ -1607,7 +1608,7 @@ describe('Gateway disposable control session client', () => {
 			kind: 'command_result',
 			operation: 'lease_renew',
 			payload: {
-				leaseRejectionReason: 'caller_context_stale',
+				leaseRejectionReason,
 				responseToMessageId: messageId,
 				result: 'rejected',
 			},
