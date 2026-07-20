@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema } from '@agent-vm/gateway-control-contracts';
+import {
+	GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema,
+	type GatewayRuntimeControllerHostActionDispatchReservation,
+} from '@agent-vm/gateway-control-contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
@@ -75,6 +78,7 @@ async function writeToolPortalAuthoredConfig(
 		)[];
 		readonly controllerHostActionPolicy?: boolean;
 		readonly profileId?: string;
+		readonly requiresApproval?: boolean;
 	} = {},
 ): Promise<string> {
 	const configDir = path.join(testRoot, 'gateway-config');
@@ -82,13 +86,18 @@ async function writeToolPortalAuthoredConfig(
 	const controllerHostActionTools = props.controllerHostActionTools ?? ['workspace_git_push'];
 	const controllerHostActionPolicy = props.controllerHostActionPolicy ?? true;
 	const profileId = props.profileId ?? 'default';
+	const requiresApproval = props.requiresApproval ?? false;
 	const namespaces = controllerHostActionPolicy
 		? {
 				controller_host_action: {
 					backend: { kind: 'controller_host_action' },
 					calls: {
-						requiresApproval: { allow: [] },
-						withoutApproval: { allow: controllerHostActionTools },
+						requiresApproval: {
+							allow: requiresApproval ? controllerHostActionTools : [],
+						},
+						withoutApproval: {
+							allow: requiresApproval ? [] : controllerHostActionTools,
+						},
 					},
 					tools: { allow: controllerHostActionTools },
 				},
@@ -257,7 +266,10 @@ function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 
 async function writeEffectiveToolPortalSnapshot(
 	systemConfig: LoadedSystemConfig,
-	options: { readonly eligibleAgentIds?: readonly string[] } = {},
+	options: {
+		readonly approvalAccessConfigured?: boolean;
+		readonly eligibleAgentIds?: readonly string[];
+	} = {},
 ): Promise<void> {
 	const zone = systemConfig.zones.find(
 		(configuredZone) => configuredZone.id === acceptedSession.zoneId,
@@ -266,7 +278,7 @@ async function writeEffectiveToolPortalSnapshot(
 		throw new Error('test fixture expected a Tool Portal zone');
 	}
 	await writeMcpPortalEffectiveConfig({
-		approvalAccessConfigured: false,
+		approvalAccessConfigured: options.approvalAccessConfigured ?? false,
 		allowedRawEnvSecretNames: ['OPENCLAW_GATEWAY_TOKEN'],
 		authoredConfigDir: zone.toolPortal.configDir,
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
@@ -290,11 +302,13 @@ async function writeEffectiveToolPortalSnapshot(
 
 function createWorkspaceGitPushPayload(
 	overrides: {
+		readonly approvalReservation?: GatewayRuntimeControllerHostActionDispatchReservation;
 		readonly capabilityName?: string;
 		readonly capabilityNamespace?: string;
 	} = {},
 ): {
 	readonly actionId: 'workspace_git_push';
+	readonly approvalReservation?: GatewayRuntimeControllerHostActionDispatchReservation;
 	readonly callerContext: {
 		readonly callerContextId: string;
 	};
@@ -308,6 +322,9 @@ function createWorkspaceGitPushPayload(
 } {
 	return {
 		actionId: 'workspace_git_push' as const,
+		...(overrides.approvalReservation === undefined
+			? {}
+			: { approvalReservation: overrides.approvalReservation }),
 		callerContext: {
 			callerContextId: trustedCallerContext.callerContextId,
 		},
@@ -320,6 +337,23 @@ function createWorkspaceGitPushPayload(
 		expectedHead: '0123456789abcdef0123456789abcdef01234567',
 	};
 }
+
+const approvalReservation = {
+	approvalId: '55555555-5555-4555-8555-555555555555',
+	authorityContext: {
+		controllerEpoch: acceptedSession.controllerEpoch,
+		frameworkEpoch: acceptedSession.bootId,
+		gatewayEpoch: 'gateway-epoch-a',
+		runtimeEpoch: 'runtime-epoch-a',
+		zoneId: acceptedSession.zoneId,
+	},
+	backendKind: 'controller_host_action',
+	expiresAt: '2026-07-20T16:05:00.000Z',
+	fingerprint: `sha256:${'c'.repeat(64)}`,
+	operationId: '66666666-6666-4666-8666-666666666666',
+	reservationId: '77777777-7777-4777-8777-777777777777',
+	stablePrincipal: trustedCallerContext.stablePrincipal,
+} as const satisfies GatewayRuntimeControllerHostActionDispatchReservation;
 
 function createControllerHostProbePayload(
 	overrides: {
@@ -361,6 +395,33 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({ authorized: true });
+	});
+
+	it('uses direct projection authorization only when no approval reservation is present', async () => {
+		const configDir = await writeToolPortalAuthoredConfig({ requiresApproval: true });
+		const systemConfig = await createSystemConfigFixture({ configDir });
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createWorkspaceGitPushPayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_host_action_policy_denied',
+			safeMessage: 'controller host action policy denied the requested capability',
+		});
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createWorkspaceGitPushPayload({ approvalReservation }),
 				session: acceptedSession,
 				systemConfig,
 			}),

@@ -6420,7 +6420,7 @@ describe('startGatewayZone', () => {
 		const agentIds = ['main', 'second'] as const;
 		const zoneFilesDir = zone.gateway.zoneFilesDir;
 		let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
-		const { managedVm } = createHealthyGatewayVmStub('vm-managed-hermes', 28_402);
+		const { exec, managedVm } = createHealthyGatewayVmStub('vm-managed-hermes', 28_402);
 		const createControlSessionMaterial = vi.fn(
 			(
 				options: Parameters<
@@ -6523,6 +6523,13 @@ describe('startGatewayZone', () => {
 			(await stat(path.join(systemConfig.runtimeDir, 'zones', zone.id, 'logs'))).isDirectory(),
 		).toBe(true);
 		await managedResult.destroyGateway();
+		expect(exec).toHaveBeenCalledWith(
+			expect.stringContaining('hermes-copy-back.complete'),
+			expect.objectContaining({
+				env: expect.objectContaining({ HERMES_HOME: '/home/hermes/.hermes' }),
+				signal: expect.any(AbortSignal),
+			}),
+		);
 	});
 
 	it('exposes managed OpenClaw as an image-owned cohort without controller process authority', async () => {

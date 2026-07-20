@@ -15,7 +15,7 @@ import {
 	type GatewayRuntimeApprovalAuthorityContext,
 	type GatewayRuntimeApprovalChallenge,
 	type GatewayRuntimeApprovalChallengeIntent,
-	type GatewayRuntimeGatewayDispatchReservation,
+	type GatewayRuntimeApprovalDispatchReservation,
 } from '@agent-vm/gateway-control-contracts';
 import { z } from 'zod/v4';
 
@@ -172,7 +172,7 @@ export type ControllerApprovalOperatorView =
 export interface ControllerApprovalLedger {
 	readonly armDispatch: (props: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
-		readonly reservation: GatewayRuntimeGatewayDispatchReservation;
+		readonly reservation: GatewayRuntimeApprovalDispatchReservation;
 	}) => Promise<GatewayRuntimeApprovalArmDispatchResult>;
 	readonly decide: (props: {
 		readonly approvalId: string;
@@ -481,7 +481,7 @@ export function createControllerApprovalLedger(
 
 	async function armDispatch(request: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
-		readonly reservation: GatewayRuntimeGatewayDispatchReservation;
+		readonly reservation: GatewayRuntimeApprovalDispatchReservation;
 	}): Promise<GatewayRuntimeApprovalArmDispatchResult> {
 		const authorityContext = parseAuthorityContextForTarget(request.authorityContext);
 		const reservation = GatewayRuntimeApprovalDispatchReservationSchema.parse(request.reservation);

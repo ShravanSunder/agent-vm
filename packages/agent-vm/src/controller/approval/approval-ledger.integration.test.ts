@@ -77,6 +77,18 @@ const baseIntent = {
 	},
 } satisfies GatewayRuntimeApprovalChallengeIntent;
 
+const controllerHostActionIntent = {
+	...baseIntent,
+	backendKind: 'controller_host_action',
+	call: {
+		arguments: {},
+		id: 'controller_host_action.controller_host_probe',
+		name: 'controller_host_probe',
+		namespace: 'controller_host_action',
+	},
+	operationId: SECOND_OPERATION_ID,
+} satisfies GatewayRuntimeApprovalChallengeIntent;
+
 interface MutableTestClock {
 	readonly advance: (milliseconds: number) => void;
 	readonly now: () => number;
@@ -307,6 +319,54 @@ describe('controller approval ledger durability and authority', () => {
 			kind: 'dispatch-armed',
 		});
 		expect(storedView).toMatchObject({ challenge, kind: 'dispatch-armed' });
+	});
+
+	it('atomically arms one controller-host-action reservation and rejects replay', async () => {
+		// Arrange
+		const { ledger } = await createTestLedgerHarness();
+		const challenge = await requireApprovalChallenge(ledger, controllerHostActionIntent);
+		await approveChallenge({ challenge, ledger });
+		const reservationResult = await ledger.requestApproval({
+			authorityContext,
+			intent: controllerHostActionIntent,
+		});
+		if (
+			reservationResult.kind !== 'dispatch-reserved' ||
+			reservationResult.reservation.backendKind !== 'controller_host_action'
+		) {
+			throw new Error('Expected a controller-host-action dispatch reservation.');
+		}
+
+		// Act
+		const armResult = await ledger.armDispatch({
+			authorityContext,
+			reservation: reservationResult.reservation,
+		});
+		const replayResult = await ledger.armDispatch({
+			authorityContext,
+			reservation: reservationResult.reservation,
+		});
+
+		// Assert
+		expect(armResult).toMatchObject({
+			grant: {
+				approvalId: challenge.approvalId,
+				authorityContext,
+				backendKind: 'controller_host_action',
+				fingerprint: challenge.fingerprint,
+				operationId: controllerHostActionIntent.operationId,
+			},
+			kind: 'dispatch-armed',
+		});
+		expect(replayResult).toEqual({
+			kind: 'ambiguous',
+			operationId: controllerHostActionIntent.operationId,
+			reason: 'dispatch-armed',
+		});
+		expect(await ledger.read(challenge.approvalId)).toMatchObject({
+			challenge,
+			kind: 'dispatch-armed',
+		});
 	});
 
 	it('retains a denial and never dispatches the denied operation', async () => {

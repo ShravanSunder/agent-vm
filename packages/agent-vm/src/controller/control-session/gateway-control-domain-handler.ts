@@ -23,7 +23,7 @@ import {
 	type GatewayRuntimeApprovalArmDispatchResult,
 	type GatewayRuntimeApprovalAuthorityContext,
 	type GatewayRuntimeApprovalChallengeIntent,
-	type GatewayRuntimeGatewayDispatchReservation,
+	type GatewayRuntimeApprovalDispatchReservation,
 	type GatewayRuntimeReadinessSnapshot,
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlLeaseSnapshotSchema,
@@ -201,7 +201,7 @@ export interface GatewayControlDomainHandlerOptions {
 export interface GatewayControlApprovalLedgerOperations {
 	readonly armDispatch: (props: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
-		readonly reservation: GatewayRuntimeGatewayDispatchReservation;
+		readonly reservation: GatewayRuntimeApprovalDispatchReservation;
 	}) => Promise<GatewayRuntimeApprovalArmDispatchResult>;
 	readonly requestApproval: (props: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
@@ -775,6 +775,8 @@ function currentApprovalAuthorityContext(
 
 async function executeToolPortalControllerHostAction(options: {
 	readonly actions: GatewayControlControllerHostActionOperations | undefined;
+	readonly approvalLedger: GatewayControlApprovalLedgerOperations | undefined;
+	readonly approvalAuthorityContext: GatewayRuntimeApprovalAuthorityContext;
 	readonly callerContexts: GatewayControlCallerContextRegistry;
 	readonly payload: GatewayControlToolPortalControllerHostActionPayload;
 	readonly propagateMutationFailure?: boolean;
@@ -850,6 +852,72 @@ async function executeToolPortalControllerHostAction(options: {
 				responseToMessageId: options.responseToMessageId,
 				result: 'rejected',
 			});
+		}
+		const approvalReservation = options.payload.approvalReservation;
+		if (approvalReservation !== undefined) {
+			if (approvalReservation.stablePrincipal !== callerContext.stablePrincipal) {
+				return commandResultPayload({
+					error: {
+						errorClass: 'controller_host_action_approval_principal_mismatch',
+						retryable: false,
+						safeMessage: 'controller host action approval does not match the caller',
+					},
+					responseToMessageId: options.responseToMessageId,
+					result: 'rejected',
+				});
+			}
+			const armResult = await assertApprovalLedgerConfigured(options.approvalLedger).armDispatch({
+				authorityContext: options.approvalAuthorityContext,
+				reservation: approvalReservation,
+			});
+			if (armResult.kind === 'not-dispatched') {
+				return commandResultPayload({
+					error: {
+						errorClass: `controller_host_action_approval_${armResult.reason.replaceAll('-', '_')}`,
+						retryable: false,
+						safeMessage: 'controller host action approval is no longer dispatchable',
+					},
+					responseToMessageId: options.responseToMessageId,
+					result: 'rejected',
+				});
+			}
+			if (armResult.kind === 'ambiguous') {
+				return commandResultPayload({
+					error: {
+						errorClass: 'controller_host_action_approval_dispatch_armed',
+						retryable: false,
+						safeMessage: 'controller host action approval dispatch state is ambiguous',
+					},
+					responseToMessageId: options.responseToMessageId,
+					result: 'failed',
+				});
+			}
+			const grant = armResult.grant;
+			if (
+				grant.backendKind !== 'controller_host_action' ||
+				grant.approvalId !== approvalReservation.approvalId ||
+				grant.expiresAt !== approvalReservation.expiresAt ||
+				grant.fingerprint !== approvalReservation.fingerprint ||
+				grant.operationId !== approvalReservation.operationId ||
+				grant.stablePrincipal !== approvalReservation.stablePrincipal ||
+				grant.authorityContext.controllerEpoch !==
+					approvalReservation.authorityContext.controllerEpoch ||
+				grant.authorityContext.frameworkEpoch !==
+					approvalReservation.authorityContext.frameworkEpoch ||
+				grant.authorityContext.gatewayEpoch !== approvalReservation.authorityContext.gatewayEpoch ||
+				grant.authorityContext.runtimeEpoch !== approvalReservation.authorityContext.runtimeEpoch ||
+				grant.authorityContext.zoneId !== approvalReservation.authorityContext.zoneId
+			) {
+				return commandResultPayload({
+					error: {
+						errorClass: 'controller_host_action_approval_grant_mismatch',
+						retryable: false,
+						safeMessage: 'controller host action approval grant is invalid',
+					},
+					responseToMessageId: options.responseToMessageId,
+					result: 'failed',
+				});
+			}
 		}
 		switch (options.payload.actionId) {
 			case 'workspace_git_push': {
@@ -1261,6 +1329,8 @@ export function createGatewayControlDomainHandler(
 					execute: async () =>
 						await executeToolPortalControllerHostAction({
 							actions: options.controllerHostActions,
+							approvalLedger: options.approvalLedger,
+							approvalAuthorityContext: currentApprovalAuthorityContext(options),
 							callerContexts: options.callerContexts,
 							payload: message.payload,
 							propagateMutationFailure: true,
@@ -1694,6 +1764,8 @@ export function createGatewayControlDomainHandler(
 						operation: 'tool_portal_controller_host_action',
 						payload: await executeToolPortalControllerHostAction({
 							actions: options.controllerHostActions,
+							approvalLedger: options.approvalLedger,
+							approvalAuthorityContext: currentApprovalAuthorityContext(options),
 							callerContexts: options.callerContexts,
 							payload: message.payload,
 							responseToMessageId: envelope.messageId,

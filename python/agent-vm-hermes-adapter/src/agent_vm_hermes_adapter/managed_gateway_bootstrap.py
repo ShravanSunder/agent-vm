@@ -44,6 +44,7 @@ DEFAULT_MANAGED_FRAMEWORK_CONFIGURATION_PATH = Path(
 )
 DEFAULT_PROTECTED_HERMES_HOME = Path("/home/hermes/.hermes")
 DEFAULT_DURABLE_HERMES_HOME = Path("/run/agent-vm/hermes-durable-home")
+DEFAULT_COPY_BACK_RECEIPT_PATH = Path("/run/agent-vm/gateway-runtime/hermes-copy-back.complete")
 _MANAGED_CONFIGURATION_PATH_ENVIRONMENT_NAME = "AGENT_VM_HERMES_MANAGED_CONFIG_PATH"
 _MANAGED_HERMES_HOME_ENVIRONMENT_NAME = "HERMES_HOME"
 _MANAGED_DURABLE_HERMES_HOME_ENVIRONMENT_NAME = "AGENT_VM_HERMES_DURABLE_HOME"
@@ -590,6 +591,7 @@ def run_managed_hermes_gateway(
     configuration_path: Path = DEFAULT_MANAGED_FRAMEWORK_CONFIGURATION_PATH,
     protected_hermes_home: Path = DEFAULT_PROTECTED_HERMES_HOME,
     durable_hermes_home: Path | None = None,
+    copy_back_receipt_path: Path = DEFAULT_COPY_BACK_RECEIPT_PATH,
     managed_configuration_loader: Callable[[], Mapping[str, object]] = (
         hermes_managed_scope.load_managed_config
     ),
@@ -597,6 +599,7 @@ def run_managed_hermes_gateway(
     terminal_tool_module: _HermesTerminalToolModule | None = None,
 ) -> None:
     if durable_hermes_home is not None:
+        copy_back_receipt_path.unlink(missing_ok=True)
         _restore_durable_hermes_home(
             durable_hermes_home=durable_hermes_home,
             protected_hermes_home=protected_hermes_home,
@@ -615,6 +618,8 @@ def run_managed_hermes_gateway(
                 durable_hermes_home=durable_hermes_home,
                 protected_hermes_home=protected_hermes_home,
             )
+            copy_back_receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            copy_back_receipt_path.touch()
 
 
 def main() -> None:

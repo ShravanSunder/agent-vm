@@ -14,6 +14,7 @@ import {
 	type GatewayRuntimeApprovalAuthorityContext,
 	type GatewayRuntimeApprovalChallenge,
 	type GatewayRuntimeApprovalChallengeIntent,
+	deriveGatewayControlStablePrincipal,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -29,14 +30,18 @@ import { createControlSessionDispatcher } from './control-session-dispatcher.js'
 import {
 	createGatewayControlCallerContextRegistry,
 	type GatewayControlCallerContextSessionRef,
+	type GatewayControlCallerContextRegistry,
+	type GatewayControlTrustedCallerContext,
 } from './gateway-control-caller-context.js';
 import {
 	createGatewayControlDomainHandler,
 	type GatewayControlApprovalLedgerOperations,
+	type GatewayControlControllerHostActionOperations,
 } from './gateway-control-domain-handler.js';
 
 const BASE_TIME_MS = Date.parse('2026-07-13T12:00:00.000Z');
 const OPERATION_ID = '11111111-1111-4111-8111-111111111111';
+const CONTROLLER_HOST_ACTION_OPERATION_ID = '66666666-6666-4666-8666-666666666666';
 const APPROVAL_ID = '22222222-2222-4222-8222-222222222222';
 const APPROVAL_FINGERPRINT = `sha256:${'a'.repeat(64)}`;
 
@@ -96,6 +101,18 @@ const approvalIntent = {
 	},
 } satisfies GatewayRuntimeApprovalChallengeIntent;
 
+const controllerHostActionIntent = {
+	...approvalIntent,
+	backendKind: 'controller_host_action',
+	call: {
+		arguments: {},
+		id: 'controller_host_action.controller_host_probe',
+		name: 'controller_host_probe',
+		namespace: 'controller_host_action',
+	},
+	operationId: CONTROLLER_HOST_ACTION_OPERATION_ID,
+} satisfies GatewayRuntimeApprovalChallengeIntent;
+
 const approvalChallenge = {
 	approvalId: APPROVAL_ID,
 	createdAt: '2026-07-13T12:00:00.000Z',
@@ -121,7 +138,9 @@ const temporaryDirectories: string[] = [];
 function createEnvelope(props: {
 	readonly operation: Extract<
 		GatewayControlRpcOperation,
-		'tool_portal_admission_reserve' | 'tool_portal_dispatch_arm'
+		| 'tool_portal_admission_reserve'
+		| 'tool_portal_controller_host_action'
+		| 'tool_portal_dispatch_arm'
 	>;
 	readonly sequence: number;
 	readonly session?: GatewayControlCallerContextSessionRef;
@@ -146,9 +165,43 @@ function createEnvelope(props: {
 	};
 }
 
+function createStaticCallerContextRegistry(
+	callerContexts: readonly GatewayControlTrustedCallerContext[],
+): GatewayControlCallerContextRegistry {
+	const contextById = new Map(
+		callerContexts.map((callerContext) => [callerContext.callerContextId, callerContext]),
+	);
+	return {
+		register: () => {
+			throw new Error('Static integration registry does not register new caller contexts.');
+		},
+		release: (callerContextId) => {
+			contextById.delete(callerContextId);
+		},
+		resolve: (callerContextId) => contextById.get(callerContextId),
+		resolveForSession: ({ callerContextId, session }) => {
+			const callerContext = contextById.get(callerContextId);
+			if (callerContext === undefined) return { status: 'absent' };
+			return callerContext.bootId === session.bootId &&
+				callerContext.connectionId === session.connectionId &&
+				callerContext.controllerEpoch === session.controllerEpoch &&
+				callerContext.peerId === session.peerId &&
+				callerContext.sessionId === session.sessionId &&
+				callerContext.zoneId === session.zoneId
+				? { callerContext, status: 'ok' }
+				: { status: 'session_mismatch' };
+		},
+		validateRegistrationForSession: () => {
+			throw new Error('Static integration registry does not validate registrations.');
+		},
+	};
+}
+
 function createApprovalDispatcher(
 	props: {
 		readonly approvalLedger?: GatewayControlApprovalLedgerOperations;
+		readonly callerContexts?: GatewayControlCallerContextRegistry;
+		readonly controllerHostActions?: GatewayControlControllerHostActionOperations;
 		readonly gateway?: GatewayEpochIdentity;
 		readonly session?: GatewayControlCallerContextSessionRef;
 	} = {},
@@ -169,10 +222,15 @@ function createApprovalDispatcher(
 		'gateway_control',
 		createGatewayControlDomainHandler({
 			...(props.approvalLedger === undefined ? {} : { approvalLedger: props.approvalLedger }),
-			callerContexts: createGatewayControlCallerContextRegistry({
-				agentAuthorityKeys: {},
-				callerContextProofKey: 'approval-rpc-test-caller-context-proof-key',
-			}),
+			callerContexts:
+				props.callerContexts ??
+				createGatewayControlCallerContextRegistry({
+					agentAuthorityKeys: {},
+					callerContextProofKey: 'approval-rpc-test-caller-context-proof-key',
+				}),
+			...(props.controllerHostActions === undefined
+				? {}
+				: { controllerHostActions: props.controllerHostActions }),
 			gateway: props.gateway ?? gateway,
 			session,
 		}),
@@ -394,6 +452,158 @@ describe('gateway-control approval RPC integration', () => {
 			kind: 'dispatch-armed',
 		});
 		expect(armResponse.payload.result).toBe('ok');
+	});
+
+	it('arms an approved controller-host-action reservation before one controller dispatch', async () => {
+		// Arrange
+		const approvalLedger = await createDurableApprovalLedger();
+		const stablePrincipal = deriveGatewayControlStablePrincipal({
+			principal: controllerHostActionIntent.trustedContext.principal,
+		});
+		const createCallerContext = (callerContextId: string): GatewayControlTrustedCallerContext => ({
+			agentId: controllerHostActionIntent.trustedContext.principal.agentId,
+			...acceptedSession,
+			callerContextId,
+			principal: controllerHostActionIntent.trustedContext.principal,
+			purpose: 'tool_portal_controller_host_action',
+			stablePrincipal,
+		});
+		const firstCallerContextId = '77777777-7777-4777-8777-777777777777';
+		const replayCallerContextId = '88888888-8888-4888-8888-888888888888';
+		const attackerCallerContextId = '99999999-9999-4999-8999-999999999999';
+		const attackerPrincipal = {
+			...controllerHostActionIntent.trustedContext.principal,
+			agentId: 'agent-attacker',
+			frameworkIdentity: { agentId: 'agent-attacker', kind: 'openclaw' as const },
+		};
+		const callerContexts = createStaticCallerContextRegistry([
+			createCallerContext(firstCallerContextId),
+			createCallerContext(replayCallerContextId),
+			{
+				...createCallerContext(attackerCallerContextId),
+				agentId: attackerPrincipal.agentId,
+				principal: attackerPrincipal,
+				stablePrincipal: deriveGatewayControlStablePrincipal({ principal: attackerPrincipal }),
+			},
+		]);
+		const runControllerHostProbe = vi.fn(async () => ({
+			entryNames: ['approval-dispatched'],
+			probeKind: 'controller_cache_dir_listing' as const,
+		}));
+		const controllerHostActions = {
+			authorizeControllerHostAction: async () => ({ authorized: true as const }),
+			pushWorkspaceGit: async () => {
+				throw new Error('Controller approval integration must not push Git.');
+			},
+			runControllerHostProbe,
+		} satisfies GatewayControlControllerHostActionOperations;
+		const dispatcher = createApprovalDispatcher({
+			approvalLedger,
+			callerContexts,
+			controllerHostActions,
+		});
+		const pendingResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_admission_reserve',
+				payload: { intent: controllerHostActionIntent },
+			},
+			sequence: 12,
+		});
+		const pendingAdmission = pendingResponse.payload.approvalAdmission;
+		if (pendingAdmission?.kind !== 'approval-required') {
+			throw new Error('Expected a pending controller-host-action approval challenge.');
+		}
+		await approvalLedger.decide({
+			approvalId: pendingAdmission.challenge.approvalId,
+			authorityContext,
+			decision: 'approve',
+			operator: operatorIdentity,
+		});
+		const reservationResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_admission_reserve',
+				payload: { intent: controllerHostActionIntent },
+			},
+			sequence: 13,
+		});
+		const reservationAdmission = reservationResponse.payload.approvalAdmission;
+		if (
+			reservationAdmission?.kind !== 'dispatch-reserved' ||
+			reservationAdmission.reservation.backendKind !== 'controller_host_action'
+		) {
+			throw new Error('Expected an approved controller-host-action reservation.');
+		}
+		const controllerApprovalReservation = reservationAdmission.reservation;
+		const createHostActionMessage = (callerContextId: string): GatewayControlRpcMessage => ({
+			kind: 'command',
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				actionId: 'controller_host_probe',
+				approvalReservation: controllerApprovalReservation,
+				callerContext: { callerContextId },
+				correlation: {
+					capability: {
+						name: 'controller_host_probe',
+						namespace: 'controller_host_action',
+					},
+				},
+			},
+		});
+
+		// Act
+		const attackerResponse = await dispatcher.dispatch({
+			envelope: createEnvelope({
+				operation: 'tool_portal_controller_host_action',
+				sequence: 14,
+			}),
+			payload: createHostActionMessage(attackerCallerContextId),
+		});
+		const firstResponse = await dispatcher.dispatch({
+			envelope: createEnvelope({
+				operation: 'tool_portal_controller_host_action',
+				sequence: 15,
+			}),
+			payload: createHostActionMessage(firstCallerContextId),
+		});
+		const replayResponse = await dispatcher.dispatch({
+			envelope: createEnvelope({
+				operation: 'tool_portal_controller_host_action',
+				sequence: 16,
+			}),
+			payload: createHostActionMessage(replayCallerContextId),
+		});
+
+		// Assert
+		expect(attackerResponse).toMatchObject({
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				error: { errorClass: 'controller_host_action_approval_principal_mismatch' },
+				result: 'rejected',
+			},
+		});
+		expect(firstResponse).toMatchObject({
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				controllerHostAction: { actionId: 'controller_host_probe' },
+				result: 'ok',
+			},
+		});
+		expect(replayResponse).toMatchObject({
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				error: { errorClass: 'controller_host_action_approval_dispatch_armed' },
+				result: 'failed',
+			},
+		});
+		expect(runControllerHostProbe).toHaveBeenCalledOnce();
+		expect(await approvalLedger.read(pendingAdmission.challenge.approvalId)).toMatchObject({
+			challenge: { intent: controllerHostActionIntent },
+			kind: 'dispatch-armed',
+		});
 	});
 
 	it('refuses an old reservation under replacement framework or gateway epochs', async () => {

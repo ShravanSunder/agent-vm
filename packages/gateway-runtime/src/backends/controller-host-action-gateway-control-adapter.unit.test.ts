@@ -1,4 +1,7 @@
-import type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/gateway-control-contracts';
+import type {
+	GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
+	GatewayRuntimeTrustedInvocationContext,
+} from '@agent-vm/gateway-control-contracts';
 import type { ToolPortalBackendCallOptions } from '@agent-vm/tool-portal';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -38,19 +41,43 @@ const acceptedSession = Object.freeze({
 	zoneId: 'zone-a',
 }) satisfies GatewayControlAcceptedSession;
 
-function callOptions(signal?: AbortSignal): ToolPortalBackendCallOptions<'controller_host_action'> {
+function callOptions(
+	signal?: AbortSignal,
+	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'> = {
+		backendKind: 'controller_host_action',
+		fingerprint: `sha256:${'a'.repeat(64)}`,
+		kind: 'without-approval',
+		operationId,
+	},
+): ToolPortalBackendCallOptions<'controller_host_action'> {
 	return {
-		dispatchAuthority: {
-			backendKind: 'controller_host_action',
-			fingerprint: `sha256:${'a'.repeat(64)}`,
-			kind: 'without-approval',
-			operationId,
-		},
+		dispatchAuthority,
 		...(signal === undefined ? {} : { signal }),
 		surfaceClass: 'protected_uds',
 		trustedContext,
 	};
 }
+
+const approvalReservationDispatchAuthority = {
+	backendKind: 'controller_host_action',
+	kind: 'controller-approval-reservation',
+	reservation: {
+		approvalId: '77777777-7777-4777-8777-777777777777',
+		authorityContext: {
+			controllerEpoch: acceptedSession.controllerEpoch,
+			frameworkEpoch: acceptedSession.processEpoch,
+			gatewayEpoch: acceptedSession.gatewayEpoch,
+			runtimeEpoch: acceptedSession.generationId,
+			zoneId: acceptedSession.zoneId,
+		},
+		backendKind: 'controller_host_action',
+		expiresAt: '2026-07-20T16:05:00.000Z',
+		fingerprint: `sha256:${'c'.repeat(64)}`,
+		operationId,
+		reservationId: '88888888-8888-4888-8888-888888888888',
+		stablePrincipal: 'b'.repeat(64),
+	},
+} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'>;
 
 function createFixture(
 	props: {
@@ -168,6 +195,35 @@ describe('Gateway Control controller-host-action adapter', () => {
 			],
 			ok: true,
 		});
+	});
+
+	it('carries the complete controller approval reservation over Gateway Control', async () => {
+		const fixture = createFixture();
+
+		await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: {},
+						id: 'probe-approved',
+						name: 'controller_host_probe',
+						namespace: 'controller_host_action',
+					},
+				],
+			},
+			callOptions(undefined, approvalReservationDispatchAuthority),
+		);
+
+		expect(fixture.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				idempotencyKey: `controller-host-action:${operationId}:sha256:${'c'.repeat(64)}`,
+				message: expect.objectContaining({
+					payload: expect.objectContaining({
+						approvalReservation: approvalReservationDispatchAuthority.reservation,
+					}),
+				}),
+			}),
+		);
 	});
 
 	it('rejects non-exact workspace arguments before registration or dispatch', async () => {

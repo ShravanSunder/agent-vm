@@ -109,6 +109,9 @@ export async function authorizeGatewayControlControllerHostAction(
 			'controller host probe is not enabled',
 		);
 	}
+	if (request.payload.approvalReservation !== undefined) {
+		return { authorized: true };
+	}
 
 	let effectiveConfig: Awaited<ReturnType<typeof loadMcpPortalEffectiveToolPortalConfigSnapshot>>;
 	try {

@@ -49,7 +49,12 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(runtimePaths).not.toContain('gateway.zoneGit');
 		expect(runtimePaths).not.toContain('/scratch');
 		const toolVmLeases = await readText(targetDir, 'docs/manual/tool-vm-leases.md');
-		expect(toolVmLeases).toContain('gateway_control_rpc lease_reacquire');
+		expect(toolVmLeases).toContain(
+			'sends typed requests to the common Tool Portal service over the private UDS',
+		);
+		expect(toolVmLeases).toContain(
+			'common Tool Portal service owns current-epoch agent bindings, per-agent strict SSH connections',
+		);
 		expect(toolVmLeases).toContain('old lease id is correlation only, not authority');
 		expect(toolVmLeases).toContain('No later shell, file, exec, heartbeat, or finalize work');
 		const operationsManual = await readText(targetDir, 'docs/manual/operations.md');

@@ -1016,6 +1016,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             temporary_root = Path(directory)
             durable_hermes_home = temporary_root / "durable"
             protected_hermes_home = temporary_root / "local"
+            copy_back_receipt_path = temporary_root / "runtime/hermes-copy-back.complete"
 
             def failing_runtime(**_options: object) -> None:
                 with sqlite3.connect(protected_hermes_home / "state.db") as connection:
@@ -1032,6 +1033,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "stock runtime failed"),
             ):
                 managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    copy_back_receipt_path=copy_back_receipt_path,
                     durable_hermes_home=durable_hermes_home,
                     protected_hermes_home=protected_hermes_home,
                 )
@@ -1041,6 +1043,32 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     row[0] for row in connection.execute("SELECT session_id FROM sessions")
                 ]
             self.assertEqual(session_ids, ["persisted-session"])
+            self.assertTrue(copy_back_receipt_path.is_file())
+
+    def test_durable_projection_omits_completion_receipt_when_copy_back_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary_root = Path(directory)
+            copy_back_receipt_path = temporary_root / "runtime/hermes-copy-back.complete"
+
+            with (
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "_run_managed_hermes_gateway_runtime",
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "_persist_durable_hermes_home",
+                    side_effect=RuntimeError("copy back failed"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "copy back failed"),
+            ):
+                managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    copy_back_receipt_path=copy_back_receipt_path,
+                    durable_hermes_home=temporary_root / "durable",
+                    protected_hermes_home=temporary_root / "local",
+                )
+
+            self.assertFalse(copy_back_receipt_path.exists())
 
 
 if __name__ == "__main__":

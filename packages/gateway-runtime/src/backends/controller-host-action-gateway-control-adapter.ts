@@ -139,7 +139,11 @@ function controllerActionPayload(props: {
 	readonly callerContextId: string;
 	readonly request: ControllerHostActionDispatchRequest;
 }): GatewayControlToolPortalControllerHostActionPayload {
+	const dispatchAuthority = props.request.authority.dispatchAuthority;
 	const common = {
+		...(dispatchAuthority.kind === 'controller-approval-reservation'
+			? { approvalReservation: dispatchAuthority.reservation }
+			: {}),
 		callerContext: { callerContextId: props.callerContextId },
 		correlation: commandCorrelation(props.request),
 	};

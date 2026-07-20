@@ -687,6 +687,26 @@ describe('gateway control contract', () => {
 				toolCallId: 'tool-call-123',
 			},
 		};
+		const approvalReservation = {
+			approvalId: '11111111-1111-4111-8111-111111111111',
+			authorityContext: {
+				controllerEpoch: 'controller-epoch-a',
+				frameworkEpoch: 'framework-epoch-a',
+				gatewayEpoch: 'gateway-epoch-a',
+				runtimeEpoch: 'runtime-epoch-a',
+				zoneId: 'zone-a',
+			},
+			backendKind: 'controller_host_action',
+			expiresAt: '2026-07-20T16:05:00.000Z',
+			fingerprint: `sha256:${'a'.repeat(64)}`,
+			operationId: '22222222-2222-4222-8222-222222222222',
+			reservationId: '33333333-3333-4333-8333-333333333333',
+			stablePrincipal: 'b'.repeat(64),
+		} as const;
+		const approvedHostProbePayload = {
+			...validHostProbePayload,
+			approvalReservation,
+		};
 
 		expect(
 			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validWorkspaceGitPayload),
@@ -694,6 +714,9 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validHostProbePayload),
 		).toEqual(validHostProbePayload);
+		expect(
+			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(approvedHostProbePayload),
+		).toEqual(approvedHostProbePayload);
 
 		for (const invalidPayload of [
 			{ ...validWorkspaceGitPayload, agentId: 'main' },

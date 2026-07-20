@@ -257,6 +257,7 @@ async function writeProtectedRuntimeConfig(root: string): Promise<{
 				listen: { host: '127.0.0.1', port: 18_790 },
 			},
 			mcpConfigPath,
+			observability: { kind: 'disabled' },
 			runtimeRoot,
 			schemaVersion: 1,
 			semanticSnapshot,

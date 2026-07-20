@@ -35,7 +35,12 @@ export async function createEncryptedBackup(options: {
 
 	const stagingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-stage-'));
 	try {
-		await execFileAsync('cp', ['-a', options.stateDir, path.join(stagingDirectory, 'state')]);
+		const stagedStateDirectory = path.join(stagingDirectory, 'state');
+		await copyStateDirectoryExcludingNestedBackupDirectory({
+			backupDir: options.backupDir,
+			stagedStateDirectory,
+			stateDir: options.stateDir,
+		});
 		if (options.zoneFilesDir !== undefined) {
 			await execFileAsync('cp', [
 				'-a',
@@ -70,6 +75,36 @@ export async function createEncryptedBackup(options: {
 		timestamp,
 		zoneId: options.zoneId,
 	};
+}
+
+async function copyStateDirectoryExcludingNestedBackupDirectory(options: {
+	readonly backupDir: string;
+	readonly stagedStateDirectory: string;
+	readonly stateDir: string;
+}): Promise<void> {
+	const nestedBackupRelativePath = path.relative(
+		path.resolve(options.stateDir),
+		path.resolve(options.backupDir),
+	);
+	const nestedBackupDirectory =
+		nestedBackupRelativePath !== '' &&
+		nestedBackupRelativePath !== '..' &&
+		!nestedBackupRelativePath.startsWith(`..${path.sep}`) &&
+		!path.isAbsolute(nestedBackupRelativePath)
+			? path.resolve(options.backupDir)
+			: undefined;
+	if (nestedBackupDirectory === undefined) {
+		await execFileAsync('cp', ['-a', options.stateDir, options.stagedStateDirectory]);
+		return;
+	}
+	await fs.cp(options.stateDir, options.stagedStateDirectory, {
+		dereference: false,
+		filter: (sourcePath): boolean =>
+			nestedBackupDirectory === undefined || path.resolve(sourcePath) !== nestedBackupDirectory,
+		preserveTimestamps: true,
+		recursive: true,
+		verbatimSymlinks: true,
+	});
 }
 
 function isSameOrDescendantPath(childPath: string, parentPath: string): boolean {

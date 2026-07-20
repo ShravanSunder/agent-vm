@@ -23,6 +23,7 @@ import {
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
 	GatewayRuntimeApprovalChallengeIntentSchema,
+	GatewayRuntimeControllerHostActionDispatchReservationSchema,
 	GatewayRuntimeGatewayDispatchReservationSchema,
 } from './gateway-runtime-approval.js';
 import { GatewayRuntimeReadinessSnapshotSchema } from './gateway-runtime-readiness-snapshot.js';
@@ -476,6 +477,7 @@ const GatewayControlGitObjectIdSchema = z
 export const GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema = z
 	.object({
 		actionId: z.literal('workspace_git_push'),
+		approvalReservation: GatewayRuntimeControllerHostActionDispatchReservationSchema.optional(),
 		callerContext: GatewayControlCallerContextRefSchema,
 		correlation: GatewayControlToolCallCorrelationSchema,
 		expectedHead: GatewayControlGitObjectIdSchema,
@@ -485,6 +487,7 @@ export const GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema = z
 export const GatewayControlControllerHostProbePayloadSchema = z
 	.object({
 		actionId: z.literal('controller_host_probe'),
+		approvalReservation: GatewayRuntimeControllerHostActionDispatchReservationSchema.optional(),
 		callerContext: GatewayControlCallerContextRefSchema,
 		correlation: GatewayControlToolCallCorrelationSchema,
 	})
