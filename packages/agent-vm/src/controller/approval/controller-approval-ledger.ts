@@ -5,6 +5,7 @@ import {
 	GatewayRuntimeApprovalAuthorityContextSchema,
 	GatewayRuntimeApprovalChallengeIntentSchema,
 	GatewayRuntimeApprovalChallengeSchema,
+	GatewayRuntimeControllerHostActionDispatchReservationSchema,
 	GatewayRuntimeApprovalDispatchGrantSchema,
 	GatewayRuntimeApprovalDispatchReservationSchema,
 	deriveGatewayRuntimeApprovalFingerprint,
@@ -58,6 +59,27 @@ const ControllerApprovalRevocationSchema = z
 	})
 	.strict();
 
+const ControllerHostActionDispatchGrantSchema =
+	GatewayRuntimeControllerHostActionDispatchReservationSchema.omit({
+		reservationId: true,
+	})
+		.extend({ grantId: z.string().uuid() })
+		.strict();
+
+const ControllerApprovalDispatchGrantSchema = z.union([
+	GatewayRuntimeApprovalDispatchGrantSchema,
+	ControllerHostActionDispatchGrantSchema,
+]);
+
+type ControllerApprovalDispatchGrant = z.infer<typeof ControllerApprovalDispatchGrantSchema>;
+
+export type ControllerApprovalArmDispatchResult =
+	| Exclude<GatewayRuntimeApprovalArmDispatchResult, { readonly kind: 'dispatch-armed' }>
+	| {
+			readonly grant: ControllerApprovalDispatchGrant;
+			readonly kind: 'dispatch-armed';
+	  };
+
 const ControllerApprovalRecordBaseSchema = z.object({
 	authorityContext: GatewayRuntimeApprovalAuthorityContextSchema,
 	challenge: GatewayRuntimeApprovalChallengeSchema,
@@ -96,7 +118,7 @@ const ControllerApprovalRecordSchema = z.discriminatedUnion('kind', [
 	ControllerApprovalRecordBaseSchema.extend({
 		armedAt: z.string().datetime(),
 		decision: ControllerApprovalApprovedDecisionSchema,
-		grant: GatewayRuntimeApprovalDispatchGrantSchema,
+		grant: ControllerApprovalDispatchGrantSchema,
 		kind: z.literal('dispatch-armed'),
 		reservation: GatewayRuntimeApprovalDispatchReservationSchema,
 	}).strict(),
@@ -173,7 +195,7 @@ export interface ControllerApprovalLedger {
 	readonly armDispatch: (props: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
 		readonly reservation: GatewayRuntimeApprovalDispatchReservation;
-	}) => Promise<GatewayRuntimeApprovalArmDispatchResult>;
+	}) => Promise<ControllerApprovalArmDispatchResult>;
 	readonly decide: (props: {
 		readonly approvalId: string;
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
@@ -482,7 +504,7 @@ export function createControllerApprovalLedger(
 	async function armDispatch(request: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
 		readonly reservation: GatewayRuntimeApprovalDispatchReservation;
-	}): Promise<GatewayRuntimeApprovalArmDispatchResult> {
+	}): Promise<ControllerApprovalArmDispatchResult> {
 		const authorityContext = parseAuthorityContextForTarget(request.authorityContext);
 		const reservation = GatewayRuntimeApprovalDispatchReservationSchema.parse(request.reservation);
 		if (authorityContext.controllerEpoch !== currentControllerEpoch) {
@@ -492,7 +514,7 @@ export function createControllerApprovalLedger(
 				reason: 'stale-authority',
 			};
 		}
-		return await store.mutateRecord<GatewayRuntimeApprovalArmDispatchResult>(
+		return await store.mutateRecord<ControllerApprovalArmDispatchResult>(
 			reservation.approvalId,
 			(currentRecord) => {
 				if (currentRecord === null) {
@@ -543,7 +565,7 @@ export function createControllerApprovalLedger(
 					};
 				}
 				const armedAt = new Date(now()).toISOString();
-				const grant = GatewayRuntimeApprovalDispatchGrantSchema.parse({
+				const grant = ControllerApprovalDispatchGrantSchema.parse({
 					approvalId: reservation.approvalId,
 					authorityContext,
 					backendKind: reservation.backendKind,

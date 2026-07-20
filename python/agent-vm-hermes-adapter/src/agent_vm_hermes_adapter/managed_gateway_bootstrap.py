@@ -3,10 +3,7 @@
 import hashlib
 import json
 import os
-import shutil
-import sqlite3
 import stat
-import tempfile
 import threading
 import types
 import typing as t
@@ -43,11 +40,8 @@ DEFAULT_MANAGED_FRAMEWORK_CONFIGURATION_PATH = Path(
     "/run/agent-vm/managed-gateway/framework-service.json"
 )
 DEFAULT_PROTECTED_HERMES_HOME = Path("/home/hermes/.hermes")
-DEFAULT_DURABLE_HERMES_HOME = Path("/run/agent-vm/hermes-durable-home")
-DEFAULT_COPY_BACK_RECEIPT_PATH = Path("/run/agent-vm/gateway-runtime/hermes-copy-back.complete")
 _MANAGED_CONFIGURATION_PATH_ENVIRONMENT_NAME = "AGENT_VM_HERMES_MANAGED_CONFIG_PATH"
 _MANAGED_HERMES_HOME_ENVIRONMENT_NAME = "HERMES_HOME"
-_MANAGED_DURABLE_HERMES_HOME_ENVIRONMENT_NAME = "AGENT_VM_HERMES_DURABLE_HOME"
 _MANAGED_TOOL_PORTAL_PLUGIN_NAME = "agent-vm-tool-portal"
 _MANAGED_CACHE_KEY_PREFIX = "agent-vm-hermes:"
 _MANAGED_TOOL_VM_CWD = "/work"
@@ -436,86 +430,6 @@ class HermesManagedEnvironmentHooks:
             raise cleanup_error
 
 
-def _copy_file_atomically(source_path: Path, destination_path: Path) -> None:
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_descriptor, temporary_name = tempfile.mkstemp(
-        dir=destination_path.parent,
-        prefix=f".{destination_path.name}.agent-vm-",
-    )
-    os.close(temporary_descriptor)
-    temporary_path = Path(temporary_name)
-    try:
-        shutil.copy2(source_path, temporary_path)
-        os.replace(temporary_path, destination_path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-
-
-def _restore_durable_hermes_home(
-    *,
-    durable_hermes_home: Path,
-    protected_hermes_home: Path,
-) -> None:
-    protected_hermes_home.mkdir(parents=True, exist_ok=True)
-    if not durable_hermes_home.exists():
-        return
-    for durable_path in sorted(durable_hermes_home.rglob("*")):
-        relative_path = durable_path.relative_to(durable_hermes_home)
-        protected_path = protected_hermes_home / relative_path
-        if durable_path.is_symlink():
-            continue
-        if durable_path.is_dir():
-            protected_path.mkdir(parents=True, exist_ok=True)
-            continue
-        if durable_path.name.endswith("-shm"):
-            continue
-        _copy_file_atomically(durable_path, protected_path)
-
-
-def _create_local_sqlite_snapshot(*, database_path: Path, snapshot_path: Path) -> None:
-    source_connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
-    try:
-        destination_connection = sqlite3.connect(snapshot_path)
-        try:
-            source_connection.backup(destination_connection)
-        finally:
-            destination_connection.close()
-    finally:
-        source_connection.close()
-
-
-def _persist_durable_hermes_home(
-    *,
-    durable_hermes_home: Path,
-    protected_hermes_home: Path,
-) -> None:
-    durable_hermes_home.mkdir(parents=True, exist_ok=True)
-    sqlite_database_paths = {
-        database_path
-        for database_path in protected_hermes_home.rglob("*.db")
-        if database_path.is_file() and not database_path.is_symlink()
-    }
-    for protected_path in sorted(protected_hermes_home.rglob("*")):
-        if protected_path.is_symlink() or not protected_path.is_file():
-            continue
-        if protected_path.name.endswith(("-shm", "-wal", "-journal")):
-            continue
-        relative_path = protected_path.relative_to(protected_hermes_home)
-        durable_path = durable_hermes_home / relative_path
-        if protected_path in sqlite_database_paths:
-            with tempfile.TemporaryDirectory(dir=protected_path.parent) as temporary_directory:
-                snapshot_path = Path(temporary_directory) / protected_path.name
-                _create_local_sqlite_snapshot(
-                    database_path=protected_path,
-                    snapshot_path=snapshot_path,
-                )
-                _copy_file_atomically(snapshot_path, durable_path)
-            for sidecar_suffix in ("-journal", "-shm", "-wal"):
-                Path(f"{durable_path}{sidecar_suffix}").unlink(missing_ok=True)
-            continue
-        _copy_file_atomically(protected_path, durable_path)
-
-
 def _run_managed_hermes_gateway_runtime(
     *,
     configuration_path: Path = DEFAULT_MANAGED_FRAMEWORK_CONFIGURATION_PATH,
@@ -590,36 +504,19 @@ def run_managed_hermes_gateway(
     *,
     configuration_path: Path = DEFAULT_MANAGED_FRAMEWORK_CONFIGURATION_PATH,
     protected_hermes_home: Path = DEFAULT_PROTECTED_HERMES_HOME,
-    durable_hermes_home: Path | None = None,
-    copy_back_receipt_path: Path = DEFAULT_COPY_BACK_RECEIPT_PATH,
     managed_configuration_loader: Callable[[], Mapping[str, object]] = (
         hermes_managed_scope.load_managed_config
     ),
     stock_gateway_runner: Callable[[], None] | None = None,
     terminal_tool_module: _HermesTerminalToolModule | None = None,
 ) -> None:
-    if durable_hermes_home is not None:
-        copy_back_receipt_path.unlink(missing_ok=True)
-        _restore_durable_hermes_home(
-            durable_hermes_home=durable_hermes_home,
-            protected_hermes_home=protected_hermes_home,
-        )
-    try:
-        _run_managed_hermes_gateway_runtime(
-            configuration_path=configuration_path,
-            protected_hermes_home=protected_hermes_home,
-            managed_configuration_loader=managed_configuration_loader,
-            stock_gateway_runner=stock_gateway_runner,
-            terminal_tool_module=terminal_tool_module,
-        )
-    finally:
-        if durable_hermes_home is not None:
-            _persist_durable_hermes_home(
-                durable_hermes_home=durable_hermes_home,
-                protected_hermes_home=protected_hermes_home,
-            )
-            copy_back_receipt_path.parent.mkdir(parents=True, exist_ok=True)
-            copy_back_receipt_path.touch()
+    _run_managed_hermes_gateway_runtime(
+        configuration_path=configuration_path,
+        protected_hermes_home=protected_hermes_home,
+        managed_configuration_loader=managed_configuration_loader,
+        stock_gateway_runner=stock_gateway_runner,
+        terminal_tool_module=terminal_tool_module,
+    )
 
 
 def main() -> None:
@@ -635,15 +532,8 @@ def main() -> None:
             str(DEFAULT_PROTECTED_HERMES_HOME),
         )
     )
-    durable_hermes_home = Path(
-        os.environ.get(
-            _MANAGED_DURABLE_HERMES_HOME_ENVIRONMENT_NAME,
-            str(DEFAULT_DURABLE_HERMES_HOME),
-        )
-    )
     run_managed_hermes_gateway(
         configuration_path=configuration_path,
-        durable_hermes_home=durable_hermes_home,
         protected_hermes_home=protected_hermes_home,
     )
 

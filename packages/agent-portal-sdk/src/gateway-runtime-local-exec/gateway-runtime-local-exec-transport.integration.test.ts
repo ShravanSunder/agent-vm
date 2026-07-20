@@ -61,6 +61,7 @@ function requireValue<TValue>(value: TValue | undefined, label: string): TValue 
 function helperArgv(): readonly string[] {
 	return [
 		process.execPath,
+		'--disable-warning=DEP0205',
 		'--import',
 		'tsx',
 		fileURLToPath(new URL('./gateway-runtime-local-exec-helper.ts', import.meta.url)),

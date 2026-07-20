@@ -21,7 +21,9 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@agent-vm/gateway-lifecycle": "workspace:*",
+		"@agent-vm/gateway-lifecycle": "workspace:*"
+	},
+	"devDependencies": {
 		"yaml": "^2.9.0"
 	}
 }

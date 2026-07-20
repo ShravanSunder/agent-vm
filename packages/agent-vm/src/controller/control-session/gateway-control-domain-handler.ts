@@ -21,6 +21,7 @@ import {
 	type GatewayControlWorkspaceGitPushResult,
 	type GatewayRuntimeApprovalAdmissionResult,
 	type GatewayRuntimeApprovalArmDispatchResult,
+	GatewayRuntimeApprovalArmDispatchResultSchema,
 	type GatewayRuntimeApprovalAuthorityContext,
 	type GatewayRuntimeApprovalChallengeIntent,
 	type GatewayRuntimeApprovalDispatchReservation,
@@ -41,6 +42,7 @@ import {
 	type AgentVmHealthEvent,
 } from '@agent-vm/gateway-lifecycle';
 
+import type { ControllerApprovalArmDispatchResult } from '../approval/controller-approval-ledger.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import { WorkspaceGitPushNotDispatchedError } from '../workspace-git/workspace-git-operations.js';
@@ -202,7 +204,7 @@ export interface GatewayControlApprovalLedgerOperations {
 	readonly armDispatch: (props: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
 		readonly reservation: GatewayRuntimeApprovalDispatchReservation;
-	}) => Promise<GatewayRuntimeApprovalArmDispatchResult>;
+	}) => Promise<ControllerApprovalArmDispatchResult>;
 	readonly requestApproval: (props: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
 		readonly intent: GatewayRuntimeApprovalChallengeIntent;
@@ -1545,12 +1547,12 @@ export function createGatewayControlDomainHandler(
 					});
 				}
 				case 'tool_portal_dispatch_arm': {
-					const approvalDispatch = await assertApprovalLedgerConfigured(
-						options.approvalLedger,
-					).armDispatch({
-						authorityContext: currentApprovalAuthorityContext(options),
-						reservation: message.payload.reservation,
-					});
+					const approvalDispatch = GatewayRuntimeApprovalArmDispatchResultSchema.parse(
+						await assertApprovalLedgerConfigured(options.approvalLedger).armDispatch({
+							authorityContext: currentApprovalAuthorityContext(options),
+							reservation: message.payload.reservation,
+						}),
+					);
 					return GatewayControlRpcCommandResultMessageSchema.parse({
 						kind: 'command_result',
 						operation: message.operation,

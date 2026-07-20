@@ -6522,14 +6522,9 @@ describe('startGatewayZone', () => {
 		expect(
 			(await stat(path.join(systemConfig.runtimeDir, 'zones', zone.id, 'logs'))).isDirectory(),
 		).toBe(true);
+		const execCallCountBeforeDestroy = exec.mock.calls.length;
 		await managedResult.destroyGateway();
-		expect(exec).toHaveBeenCalledWith(
-			expect.stringContaining('hermes-copy-back.complete'),
-			expect.objectContaining({
-				env: expect.objectContaining({ HERMES_HOME: '/home/hermes/.hermes' }),
-				signal: expect.any(AbortSignal),
-			}),
-		);
+		expect(exec).toHaveBeenCalledTimes(execCallCountBeforeDestroy);
 	});
 
 	it('exposes managed OpenClaw as an image-owned cohort without controller process authority', async () => {

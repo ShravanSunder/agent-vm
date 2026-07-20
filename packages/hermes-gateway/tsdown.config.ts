@@ -2,6 +2,10 @@ import { defineConfig } from 'tsdown';
 
 export default defineConfig({
 	clean: true,
+	deps: {
+		alwaysBundle: ['yaml'],
+		onlyBundle: ['yaml'],
+	},
 	dts: true,
 	entry: 'src/index.ts',
 	format: 'esm',

@@ -29,7 +29,6 @@ const managedFrameworkEnvironmentInputPath =
 	'/run/agent-vm/managed-gateway/framework.environment.sh';
 const managedHermesConfigurationDirectoryPath = '/run/agent-vm/managed-gateway';
 const protectedHermesHomeVmPath = '/home/hermes/.hermes';
-const hermesDurableHomeVmPath = '/run/agent-vm/hermes-durable-home';
 const hermesCacheDirVmPath = '/home/hermes/.cache';
 const agentVmLogsDirVmPath = '/agent-vm/logs';
 const hermesGatewayGuestPath = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -99,7 +98,6 @@ function buildHermesFrameworkEnvironment(
 		);
 	}
 	for (const protectedEnvironmentName of [
-		'AGENT_VM_HERMES_DURABLE_HOME',
 		'AGENT_VM_HERMES_MANAGED_CONFIG_PATH',
 		'API_SERVER_ENABLED',
 		'API_SERVER_HOST',
@@ -116,7 +114,6 @@ function buildHermesFrameworkEnvironment(
 	}
 	return Object.freeze({
 		...environmentSecrets,
-		AGENT_VM_HERMES_DURABLE_HOME: hermesDurableHomeVmPath,
 		AGENT_VM_HERMES_MANAGED_CONFIG_PATH: managedFrameworkConfigurationInputPath,
 		API_SERVER_ENABLED: 'true',
 		API_SERVER_HOST: '0.0.0.0',
@@ -196,7 +193,6 @@ export const hermesLifecycle = {
 		return {
 			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
 			environment: {
-				AGENT_VM_HERMES_DURABLE_HOME: hermesDurableHomeVmPath,
 				HERMES_HOME: protectedHermesHomeVmPath,
 				HOME: '/home/hermes',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
@@ -214,7 +210,7 @@ export const hermesLifecycle = {
 					hostPath: gatewayCacheDir,
 					kind: 'host-directory',
 				},
-				[hermesDurableHomeVmPath]: {
+				[protectedHermesHomeVmPath]: {
 					access: 'read-write',
 					hostPath: zone.gateway.stateDir,
 					kind: 'host-directory',

@@ -16,6 +16,7 @@ export interface HermesManagedImagePythonWheelFiles {
 }
 
 export interface HermesManagedImageGatewayRuntimeArtifacts {
+	readonly executablePath: string;
 	readonly packageArchiveFiles: readonly string[];
 	readonly packageManifestFile: string;
 }
@@ -91,6 +92,24 @@ function dockerContextFileName(filePath: string): string {
 	return filePath.slice(filePath.lastIndexOf('/') + 1);
 }
 
+function requireAbsoluteGuestExecutablePath(filePath: string): string {
+	const pathSegments = filePath.split('/');
+	if (
+		!filePath.startsWith('/') ||
+		pathSegments
+			.slice(1)
+			.some(
+				(pathSegment) => pathSegment.length === 0 || pathSegment === '.' || pathSegment === '..',
+			) ||
+		!/^[A-Za-z0-9._/@-]+$/u.test(filePath)
+	) {
+		throw new Error(
+			`Hermes image Gateway Runtime executable '${filePath}' is not a safe guest path.`,
+		);
+	}
+	return filePath;
+}
+
 function renderCopyLine(sourcePath: string, destinationDirectory: string): string {
 	return `COPY ${sourcePath} ${destinationDirectory}/${dockerContextFileName(sourcePath)}`;
 }
@@ -112,6 +131,9 @@ function renderHermesManagedImageDockerfile(
 	}
 	const packageArchiveFiles = artifactContext.gatewayRuntime.packageArchiveFiles.map((filePath) =>
 		requireDockerContextFilePath(filePath, '.tgz'),
+	);
+	const gatewayRuntimeExecutablePath = requireAbsoluteGuestExecutablePath(
+		artifactContext.gatewayRuntime.executablePath,
 	);
 	const agentPortalSdkWheel = requireDockerContextFilePath(
 		artifactContext.pythonWheels.agentPortalSdk,
@@ -163,7 +185,7 @@ function renderHermesManagedImageDockerfile(
 		'RUN test -f /opt/agent-vm/local-packages/' + packageManifestFileName + ' && \\',
 		'    cd /opt/agent-vm/local-packages && \\',
 		'    pnpm install --prod --ignore-scripts && \\',
-		'    gateway_runtime_bin="/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js" && \\',
+		`    gateway_runtime_bin="${gatewayRuntimeExecutablePath}" && \\`,
 		'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
 		'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
 		'    command -v agent-vm-gateway-runtime',

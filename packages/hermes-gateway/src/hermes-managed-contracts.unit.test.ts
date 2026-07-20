@@ -142,7 +142,6 @@ plugins:
 			managedConfigurationSource: expect.stringContaining('agent-vm-tool-portal'),
 		});
 		expect(bootInputs.environment).toMatchObject({
-			AGENT_VM_HERMES_DURABLE_HOME: '/run/agent-vm/hermes-durable-home',
 			AGENT_VM_HERMES_MANAGED_CONFIG_PATH: '/run/agent-vm/managed-gateway/framework-service.json',
 			API_SERVER_ENABLED: 'true',
 			API_SERVER_KEY: 'test-only-key',
@@ -154,7 +153,7 @@ plugins:
 		expect(readFileMock).toHaveBeenCalledWith('/deployment/config/hermes.yaml', 'utf8');
 	});
 
-	it('keeps HERMES_HOME local while mounting durable state at the private projection path', () => {
+	it('mounts durable state directly at HERMES_HOME', () => {
 		const requirements = hermesLifecycle.buildVmRequirements({
 			controllerPort: 7777,
 			gatewayCacheDir: '/deployment/cache/hermes',
@@ -167,7 +166,6 @@ plugins:
 
 		expect(requirements.environment).not.toHaveProperty('API_SERVER_KEY');
 		expect(requirements.environment).toMatchObject({
-			AGENT_VM_HERMES_DURABLE_HOME: '/run/agent-vm/hermes-durable-home',
 			HERMES_HOME: '/home/hermes/.hermes',
 		});
 		expect(requirements.mounts).toEqual({
@@ -181,13 +179,12 @@ plugins:
 				hostPath: '/deployment/cache/hermes',
 				kind: 'host-directory',
 			},
-			'/run/agent-vm/hermes-durable-home': {
+			'/home/hermes/.hermes': {
 				access: 'read-write',
 				hostPath: '/deployment/state/hermes',
 				kind: 'host-directory',
 			},
 		});
-		expect(requirements.mounts).not.toHaveProperty('/home/hermes/.hermes');
 		expect(requirements.mounts).not.toHaveProperty('/workspace');
 		expect(requirements.tcpHosts).toEqual({
 			'tool-0.vm.host:22': '127.0.0.1:22000',
@@ -220,6 +217,8 @@ plugins:
 			artifactContext: {
 				kind: 'local-artifact-context',
 				gatewayRuntime: {
+					executablePath:
+						'/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js',
 					packageArchiveFiles: [
 						'local-agent-vm/agent-vm-gateway-runtime-0.0.114.tgz',
 						'local-agent-vm/agent-vm-tool-portal-0.0.114.tgz',
@@ -311,6 +310,8 @@ plugins:
 				artifactContext: {
 					kind: 'local-artifact-context',
 					gatewayRuntime: {
+						executablePath:
+							'/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js',
 						packageArchiveFiles: ['../gateway-runtime.tgz'],
 						packageManifestFile: 'local-agent-vm/package.json',
 					},

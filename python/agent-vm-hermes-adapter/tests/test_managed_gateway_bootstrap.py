@@ -1,6 +1,5 @@
 import json
 import os
-import sqlite3
 import tempfile
 import typing as t
 import unittest
@@ -968,107 +967,6 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 gateway_runtime_client.assert_not_called()
                 configure_plugin.assert_not_called()
                 stock_gateway_runner.assert_not_called()
-
-    def test_durable_projection_consolidates_and_restores_profile_sqlite_state(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            temporary_root = Path(directory)
-            durable_hermes_home = temporary_root / "durable"
-            protected_hermes_home = temporary_root / "local"
-            profile_database = durable_hermes_home / "profiles/research/state.db"
-            profile_database.parent.mkdir(parents=True)
-            with sqlite3.connect(profile_database) as connection:
-                connection.execute("CREATE TABLE messages (content TEXT NOT NULL)")
-                connection.execute("INSERT INTO messages VALUES ('before restart')")
-            Path(f"{profile_database}-shm").write_text("stale", encoding="utf-8")
-            (durable_hermes_home / "config.yaml").write_text("theme: light\n", encoding="utf-8")
-
-            managed_gateway_bootstrap._restore_durable_hermes_home(
-                durable_hermes_home=durable_hermes_home,
-                protected_hermes_home=protected_hermes_home,
-            )
-
-            local_profile_database = protected_hermes_home / "profiles/research/state.db"
-            self.assertFalse(Path(f"{local_profile_database}-shm").exists())
-            with sqlite3.connect(local_profile_database) as connection:
-                connection.execute("INSERT INTO messages VALUES ('after restart')")
-            managed_gateway_bootstrap._persist_durable_hermes_home(
-                durable_hermes_home=durable_hermes_home,
-                protected_hermes_home=protected_hermes_home,
-            )
-
-            restored_hermes_home = temporary_root / "restored"
-            managed_gateway_bootstrap._restore_durable_hermes_home(
-                durable_hermes_home=durable_hermes_home,
-                protected_hermes_home=restored_hermes_home,
-            )
-            with sqlite3.connect(restored_hermes_home / "profiles/research/state.db") as connection:
-                contents = [row[0] for row in connection.execute("SELECT content FROM messages")]
-            self.assertEqual(contents, ["before restart", "after restart"])
-            self.assertEqual(
-                (restored_hermes_home / "config.yaml").read_text(encoding="utf-8"),
-                "theme: light\n",
-            )
-            self.assertFalse(Path(f"{profile_database}-shm").exists())
-            self.assertFalse(Path(f"{profile_database}-wal").exists())
-
-    def test_durable_projection_persists_state_when_stock_runtime_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            temporary_root = Path(directory)
-            durable_hermes_home = temporary_root / "durable"
-            protected_hermes_home = temporary_root / "local"
-            copy_back_receipt_path = temporary_root / "runtime/hermes-copy-back.complete"
-
-            def failing_runtime(**_options: object) -> None:
-                with sqlite3.connect(protected_hermes_home / "state.db") as connection:
-                    connection.execute("CREATE TABLE sessions (session_id TEXT NOT NULL)")
-                    connection.execute("INSERT INTO sessions VALUES ('persisted-session')")
-                raise RuntimeError("stock runtime failed")
-
-            with (
-                patch.object(
-                    managed_gateway_bootstrap,
-                    "_run_managed_hermes_gateway_runtime",
-                    side_effect=failing_runtime,
-                ),
-                self.assertRaisesRegex(RuntimeError, "stock runtime failed"),
-            ):
-                managed_gateway_bootstrap.run_managed_hermes_gateway(
-                    copy_back_receipt_path=copy_back_receipt_path,
-                    durable_hermes_home=durable_hermes_home,
-                    protected_hermes_home=protected_hermes_home,
-                )
-
-            with sqlite3.connect(durable_hermes_home / "state.db") as connection:
-                session_ids = [
-                    row[0] for row in connection.execute("SELECT session_id FROM sessions")
-                ]
-            self.assertEqual(session_ids, ["persisted-session"])
-            self.assertTrue(copy_back_receipt_path.is_file())
-
-    def test_durable_projection_omits_completion_receipt_when_copy_back_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            temporary_root = Path(directory)
-            copy_back_receipt_path = temporary_root / "runtime/hermes-copy-back.complete"
-
-            with (
-                patch.object(
-                    managed_gateway_bootstrap,
-                    "_run_managed_hermes_gateway_runtime",
-                ),
-                patch.object(
-                    managed_gateway_bootstrap,
-                    "_persist_durable_hermes_home",
-                    side_effect=RuntimeError("copy back failed"),
-                ),
-                self.assertRaisesRegex(RuntimeError, "copy back failed"),
-            ):
-                managed_gateway_bootstrap.run_managed_hermes_gateway(
-                    copy_back_receipt_path=copy_back_receipt_path,
-                    durable_hermes_home=temporary_root / "durable",
-                    protected_hermes_home=temporary_root / "local",
-                )
-
-            self.assertFalse(copy_back_receipt_path.exists())
 
 
 if __name__ == "__main__":

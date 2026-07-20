@@ -140,19 +140,6 @@ import {
 	type WorkerRuntimeRecord,
 } from './worker-runtime-record.js';
 
-const managedHermesCopyBackReceiptPath = '/run/agent-vm/gateway-runtime/hermes-copy-back.complete';
-const managedHermesGracefulStopTimeoutMs = 30_000;
-const managedHermesGracefulStopCommand = `set -eu
-receipt_path=${managedHermesCopyBackReceiptPath}
-rm -f "$receipt_path"
-/opt/agent-vm/hermes-venv/bin/hermes gateway stop
-receipt_wait_attempt=0
-while [ "$receipt_wait_attempt" -lt 150 ]; do
-  if [ -f "$receipt_path" ]; then exit 0; fi
-  receipt_wait_attempt=$((receipt_wait_attempt + 1))
-  sleep 0.1
-done
-exit 1`;
 const defaultGatewayReadinessRetryDelayMs = 500;
 const defaultGatewayReadinessTimeoutMs = 60_000;
 const defaultGatewayReadinessMaxAttempts = Math.ceil(
@@ -904,22 +891,6 @@ async function execGatewayCommand(options: {
 		throw new Error(formatGatewayCommandFailure(options.stepName, result));
 	}
 	return result;
-}
-
-async function stopManagedHermesFrameworkService(managedVm: ManagedVm): Promise<void> {
-	const result = await managedVm.exec(managedHermesGracefulStopCommand, {
-		env: {
-			HERMES_HOME: '/home/hermes/.hermes',
-			HOME: '/home/hermes',
-			_HERMES_GATEWAY: '',
-		},
-		signal: AbortSignal.timeout(managedHermesGracefulStopTimeoutMs),
-	});
-	if (result.exitCode !== 0) {
-		throw new Error(
-			`Managed Hermes graceful stop did not confirm durable copy-back (exit ${String(result.exitCode)}).`,
-		);
-	}
 }
 
 async function readGatewayLogTail(options: {
@@ -2138,14 +2109,6 @@ async function startGatewayZoneImplementation(
 		withdrawAdmission: [
 			{ cleanup: disposeControlSession, stage: 'control-session-disposal' },
 			{ cleanup: withdrawManagedGatewayIngress, stage: 'ingress-withdrawal' },
-			...(zone.gateway.type === 'hermes'
-				? [
-						{
-							cleanup: async () => await stopManagedHermesFrameworkService(exactManagedVm),
-							stage: 'framework-service-persistence' as const,
-						},
-					]
-				: []),
 		],
 	});
 	const containManagedGatewayVm = async (): Promise<void> => {

@@ -155,17 +155,8 @@ export const GatewayRuntimeToolVmRunnerDispatchGrantSchema = z
 	})
 	.strict();
 
-export const GatewayRuntimeControllerHostActionDispatchGrantSchema = z
-	.object({
-		...approvalDispatchAuthorityShape,
-		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_host_action),
-		grantId: z.string().uuid(),
-	})
-	.strict();
-
 export const GatewayRuntimeApprovalDispatchGrantSchema = z.discriminatedUnion('backendKind', [
 	GatewayRuntimeMcpProviderDispatchGrantSchema,
-	GatewayRuntimeControllerHostActionDispatchGrantSchema,
 	GatewayRuntimeToolVmRunnerDispatchGrantSchema,
 ]);
 

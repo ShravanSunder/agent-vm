@@ -410,6 +410,7 @@ importers:
       '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
         version: link:../gateway-lifecycle
+    devDependencies:
       yaml:
         specifier: ^2.9.0
         version: 2.9.0

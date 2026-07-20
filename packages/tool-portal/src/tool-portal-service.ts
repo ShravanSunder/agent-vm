@@ -338,8 +338,6 @@ function approvalGrantDispatchAuthority(
 	grant: GatewayRuntimeApprovalDispatchGrant,
 ): GatewayRuntimeToolPortalDispatchAuthority {
 	switch (grant.backendKind) {
-		case 'controller_host_action':
-			throw new TypeError('Controller host-action approval grants must remain controller-side.');
 		case 'mcp_provider':
 			return { backendKind: 'mcp_provider', grant, kind: 'approval-grant' };
 		case 'tool_vm_runner':

@@ -916,6 +916,8 @@ async function materializeHermesBetaImageArtifacts(options: {
 		artifactContext: {
 			kind: 'local-artifact-context',
 			gatewayRuntime: {
+				executablePath:
+					'/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js',
 				packageArchiveFiles: options.packageEntries.map(
 					(packageEntry) => `local-agent-vm/${packageEntry.overlayFileName}`,
 				),

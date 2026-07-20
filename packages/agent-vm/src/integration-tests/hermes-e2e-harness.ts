@@ -202,6 +202,8 @@ export async function useLocalHermesGatewayImagePackages(options: {
 			artifactContext: {
 				kind: 'local-artifact-context',
 				gatewayRuntime: {
+					executablePath:
+						'/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js',
 					packageArchiveFiles: localPackageTarballs.map(
 						(tarball) => `local-agent-vm/${tarball.archiveName}`,
 					),

@@ -124,7 +124,6 @@ export type GatewayZonePreflightOptions = Omit<
 export type GatewayZoneCleanupFailureStage =
 	| 'control-session-disposal'
 	| 'control-session-material-deletion'
-	| 'framework-service-persistence'
 	| 'ingress-withdrawal'
 	| 'managed-boot-input-release'
 	| 'runtime-record-deletion';
