@@ -247,6 +247,21 @@ and Victoria sink. Correlation carries zone, framework, agent, Gateway epoch,
 Tool VM generation, operation, and trace identity without secrets or raw
 credentials.
 
+### A7. Security context remains unchanged
+
+- Framework-native identity is authenticated by the OpenClaw or Hermes
+  integration before it becomes a stable Agent VM `agentId`.
+- Model-visible, public API, request, provider, profile, and path fields never
+  select authority.
+- The protected UDS is a private shared-Gateway trust domain, not a separate OS
+  identity boundary. Attachment handshakes still fence Gateway epoch,
+  projection cohort, client kind, and duplicate or replayed connections.
+- The Tool Portal service retains custody of SSH material, provider sessions,
+  leases, handles, approvals, artifacts, and retained results. Frameworks and
+  agents receive operations and bounded results, not private authority.
+- Approval reservations are consumed before dispatching a controller host
+  action. No refactor in this PR may move that decision after dispatch.
+
 ## Storage Contract
 
 ### S1. Storage responsibility table
@@ -322,15 +337,23 @@ OpenClaw template:
 
 Hermes template:
 
-- uses a positive allowlist of portable agent-owned workspace paths;
+- positively selects only the canonical
+  `<zoneFilesDir>/agents/<agentId>` source root. Version 1 does not add a second
+  child-path configuration schema: arbitrary agent-authored project paths
+  inside that already isolated root remain visible;
 - native Hermes memories, skills, soul/profile files, credentials, sessions,
   configuration, logs, caches, databases, and complete `HERMES_HOME` are absent;
-- the exact portable path list must come from configured Agent VM workspace
-  projection, not from copying the Hermes Gateway home;
+- the selected source capability comes from the configured Agent VM workspace
+  projection, never from copying or inspecting the Hermes Gateway home;
 - configured `.git` pointer is read-only when `workspaceGit` is enabled.
 
 Policy proof must validate actual positive and negative paths. A policy object
 with empty placeholder lists is not proof.
+
+The positive Hermes boundary is the selected source capability, not a guessed
+list of filenames inside a Git worktree. Native Hermes categories are excluded
+by never sourcing them from `HERMES_HOME`; do not shadow a broad Hermes home and
+do not add a new workspace-policy config surface in this PR.
 
 ### S4. `/work`, `/workspace`, `/gitdirs`, and `/agent-vm`
 
@@ -356,7 +379,9 @@ from `/workspace`.
 The current optional `/agent-vm/managed-skills` helper with no production
 caller is removed. An `/agent-vm` Tool VM surface exists only if the final
 implementation names an exact controller-generated file inventory, host source,
-lifetime, and read-only mount. Do not retain a test-only pseudo-surface.
+lifetime, and read-only mount. Do not retain a test-only pseudo-surface. This
+requirement explicitly supersedes older generic statements that every managed
+Tool VM must mount `/agent-vm`; no mount is safer than an unowned placeholder.
 
 ### S5. Dead storage surfaces are removed
 
@@ -517,6 +542,9 @@ framework.
 - Hermes backup create and restore coverage.
 - Maintainer docs, generated manual templates, schemas, and tests aligned with
   the final behavior.
+- Packed Gateway Runtime host proof uses an ephemeral listener port rather than
+  fixed `127.0.0.1:18790`; another local process owning that port must not make
+  the host e2e lane fail.
 
 ### C3. Required functional completion/proof
 
@@ -594,6 +622,7 @@ Host e2e must prove external program and packaging boundaries:
 - OpenClaw and Hermes zoneFiles inclusion;
 - runtime Git/controller/cache/backup/observability exclusion;
 - packed Tool Portal CLI and artifact readback;
+- packed Gateway Runtime executable boot on an ephemeral listener port;
 - Python wheel contents and Hermes entrypoint;
 - workspace Git commit/push/refusal result classification;
 - generated manuals and built CLI behavior.
@@ -628,6 +657,8 @@ Real framework proof must include:
   Tool Portal, selected Tool VM, stock terminal/file/code/process behavior,
   capability call, replacement, restart persistence, and health;
 - no Hermes SQLite disk-I/O warning or copy-back activity;
+- every Gateway destruction/cleanup stage reports complete; a non-empty
+  cleanup-debt result fails the evidence lane instead of producing a green test;
 - no skipped, todo, or zero-test evidence lane.
 
 ### P5. Full quality gate
@@ -682,6 +713,10 @@ The implementation agent must verify:
 
 - beta package and workspace overrides point to tarballs produced from the
   exact final focused HEAD, not the old `c2065cda` sync worktree;
+- `scripts/sync-local-tarballs-to-deployment.ts` resolves the Tool VM overlay
+  under the deployment exactly once. The current duplicated
+  `path.join(deploymentDirectory, deploymentDirectory, ...)` construction is a
+  bounded sync-script defect to correct and cover before the final resync;
 - OpenClaw, Hermes, and Tool VM overlays consume that same package set;
 - generated schemas/manuals match the installed exact-HEAD CLI;
 - ignored tarballs/wheels, package caches, `.pnpm-store`, logs, runtime state,
