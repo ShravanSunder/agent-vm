@@ -81,7 +81,7 @@ Checkpoint proof:
 
 - A permanent test fails for the observed persistence defect before the fix.
 - Targeted unit/integration proof passes after the fix.
-- Real Hermes Gateway main/beta turns write queryable state.
+- Real Hermes Gateway clawfest/beta turns write queryable state.
 - Clean stop/start retains both profiles' state with no disk-I/O warnings.
 - `git diff --check` passes.
 

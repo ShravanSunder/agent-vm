@@ -682,17 +682,30 @@ The deployment must retain two zones:
 
 ```text
 OpenClaw zone  beta
-  agents       main, beta
+  auth owner   main
+  agents       clawfest, beta
   port         18891
 
 Hermes zone    hermes-beta
-  profiles     main, beta
+  profiles     clawfest, beta
   port         18892
 ```
 
+OpenClaw `main` is the internal shared LLM-auth owner, not a Discord-facing
+acceptance agent. Its existing auth store remains in place. The two native
+OpenClaw agent identities exercised below are `clawfest` and `beta`.
+
 Both use the same Tool VM image profile and distinct per-agent workspace Git
-branches. They share Discord credentials and therefore run one framework zone
-at a time during acceptance.
+branches. They use the same two bot accounts, one per user-facing identity, and
+therefore run one framework zone at a time so the same Discord credential is
+never polled by both frameworks concurrently.
+
+The two zones keep separate complete Tool Portal agent-assignment files because
+OpenClaw also admits the internal `main` auth owner. Their capability policy is
+otherwise identical. Hermes keeps each Discord token only in the corresponding
+profile-local `.env` under direct `stateDir` RealFS with mode `0600`; beta
+preparation resolves those files through 1Password without adding controller
+materialization, copying, or synchronization behavior.
 
 The preferred beta model is OpenRouter `openai/gpt-5.6-luna` with medium
 thinking. Allowed configured fallbacks are
@@ -740,7 +753,7 @@ Discord token, model key, GitHub token, or resolved secret values.
 
 ### M3. Multi-agent OpenClaw manual journey
 
-Run the `beta` zone and manually exercise both `main` and `beta` agents through
+Run the `beta` zone and manually exercise both `clawfest` and `beta` agents through
 native OpenClaw identity routing. Each agent must independently:
 
 1. report its authenticated Agent VM `agentId` without receiving host paths or
@@ -764,7 +777,7 @@ mock-client result does not replace Discord proof.
 ### M4. Multi-profile Hermes manual journey
 
 Stop OpenClaw before starting `hermes-beta`. Run stock Hermes with profiles
-`main` and `beta`. Each profile must independently:
+`clawfest` and `beta`. Each profile must independently:
 
 1. arrive with the authenticated native `profileName` and mapped stable
    Agent VM `agentId`;
@@ -993,8 +1006,8 @@ new design round.
 | R7 | `/work`, `/workspace`, conditional `/gitdirs` | unit/integration + real VM filesystem inspection |
 | R8 | Controller HTTPS Git push only | host e2e + four-agent beta push/refusal journeys |
 | R9 | Simple backup and full hard cut | source inventory + host e2e + running-framework manual backup |
-| R10 | OpenClaw `main` and `beta` | real native/Discord multi-agent acceptance |
-| R11 | Hermes `main` and `beta` | real native/Discord multi-profile acceptance |
+| R10 | OpenClaw auth owner `main`; agents `clawfest` and `beta` | shared-auth-owner validation + real native/Discord multi-agent acceptance |
+| R11 | Hermes `clawfest` and `beta` | real native/Discord multi-profile acceptance |
 | R12 | Lease health and replacement | real before/after process, SSH, workspace, and `/work` evidence |
 | R13 | Shared OTel sink | correlated logs/traces/metrics for both frameworks and Tool Portal |
 | R14 | Standalone and Worker non-regression | integration + real Worker lane |
