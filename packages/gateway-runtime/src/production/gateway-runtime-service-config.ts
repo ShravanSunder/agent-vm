@@ -9,6 +9,7 @@ import {
 	type McpConfig,
 } from '@agent-vm/config-contracts';
 import {
+	GATEWAY_RUNTIME_TOOL_PORTAL_CONTROL_LISTEN_HOST,
 	GatewayRuntimePortalSemanticSnapshotSchema,
 	GatewayRuntimeToolPortalProductionControlEndpointSchema,
 } from '@agent-vm/gateway-control-contracts';
@@ -23,6 +24,17 @@ const ProtectedAbsolutePathSchema = z
 
 const PositiveSafeIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const RuntimeIdentityValueSchema = z.string().min(1).max(256);
+
+const GatewayRuntimeToolPortalExecutableControlEndpointSchema =
+	GatewayRuntimeToolPortalProductionControlEndpointSchema.or(
+		z
+			.object({
+				host: z.literal(GATEWAY_RUNTIME_TOOL_PORTAL_CONTROL_LISTEN_HOST),
+				port: z.literal(0),
+			})
+			.strict()
+			.readonly(),
+	);
 
 const GatewayRuntimeOtlpHttpEndpointSchema = z
 	.string()
@@ -309,7 +321,7 @@ export async function loadGatewayRuntimeServiceConfig(
 	const serializedConfig = await readProtectedRuntimeInputFile(configPath);
 	const untrustedConfig = parseProtectedJson(serializedConfig, 'Gateway runtime service config');
 	const config = GatewayRuntimeServiceConfigSchema.parse(untrustedConfig);
-	GatewayRuntimeToolPortalProductionControlEndpointSchema.parse(config.controlEndpoint.listen);
+	GatewayRuntimeToolPortalExecutableControlEndpointSchema.parse(config.controlEndpoint.listen);
 	return config;
 }
 

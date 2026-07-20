@@ -62,18 +62,26 @@ function createMockExecutor(response: string): WorkExecutor {
 	};
 }
 
-function createNeverResolvingExecutor(): WorkExecutor {
+function createNeverResolvingExecutor(): {
+	readonly executor: WorkExecutor;
+	readonly started: Promise<void>;
+} {
+	const { promise: started, resolve: resolveStarted } = Promise.withResolvers<void>();
 	return {
-		async execute() {
-			return await new Promise<never>(() => {});
+		executor: {
+			async execute() {
+				resolveStarted();
+				return await new Promise<never>(() => {});
+			},
+			async fix() {
+				return await new Promise<never>(() => {});
+			},
+			async resumeOrRebuild() {},
+			getThreadId() {
+				return 'thread-never-resolving';
+			},
 		},
-		async fix() {
-			return await new Promise<never>(() => {});
-		},
-		async resumeOrRebuild() {},
-		getThreadId() {
-			return 'thread-never-resolving';
-		},
+		started,
 	};
 }
 
@@ -220,7 +228,8 @@ describe('worker runtime integration', () => {
 	});
 
 	it('keeps worker_control operation_cancel separate from the HTTP task close path', async () => {
-		mocks.createWorkExecutor.mockReturnValue(createNeverResolvingExecutor());
+		const neverResolvingExecutor = createNeverResolvingExecutor();
+		mocks.createWorkExecutor.mockReturnValue(neverResolvingExecutor.executor);
 		const config = workerConfigSchema.parse({
 			runtimeInstructions: 'runtime facts',
 			commonAgentInstructions: null,
@@ -260,6 +269,7 @@ describe('worker runtime integration', () => {
 			method: 'POST',
 		});
 		expect(createResponse.status).toBe(201);
+		await neverResolvingExecutor.started;
 		expect(coordinator.getActiveTaskId()).toBe('cancel-boundary-task');
 
 		const handler = createWorkerControlApplicationMessageHandler();

@@ -322,7 +322,10 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
 
         start_calls = [call for call in self.client.sandbox.execution.calls if call[0] == "start"]
         self.assertEqual(len(start_calls), 2)
-        self.assertTrue(start_calls[0][1]["command"].startswith("bash -l -c "))
+        bootstrap_command = start_calls[0][1]["command"]
+        if not isinstance(bootstrap_command, str):
+            self.fail("bootstrap command must be a string")
+        self.assertTrue(bootstrap_command.startswith("bash -l -c "))
         start_call = start_calls[-1]
         self.assertEqual(start_call[0], "start")
         self.assertEqual(start_call[1]["command"], "bash -c 'printf ready'")

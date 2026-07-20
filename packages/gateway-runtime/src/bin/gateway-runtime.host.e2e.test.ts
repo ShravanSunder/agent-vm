@@ -254,7 +254,7 @@ async function writeProtectedRuntimeConfig(root: string): Promise<{
 					processEpoch: 'process-epoch-packed',
 					zoneId: 'zone-packed',
 				},
-				listen: { host: '127.0.0.1', port: 18_790 },
+				listen: { host: '127.0.0.1', port: 0 },
 			},
 			mcpConfigPath,
 			observability: { kind: 'disabled' },

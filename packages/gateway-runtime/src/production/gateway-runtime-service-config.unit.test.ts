@@ -366,13 +366,32 @@ describe('Gateway runtime immutable service config', () => {
 		}
 	});
 
-	it('rejects a non-production control endpoint when loading executable input', async () => {
+	it('accepts the ephemeral listener sentinel when loading executable test input', async () => {
 		// Arrange
 		const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'gateway-runtime-config-port-'));
 		const configPath = path.join(temporaryRoot, 'runtime.json');
 		try {
 			const config = validServiceConfig(temporaryRoot);
 			config.controlEndpoint.listen = { host: '127.0.0.1', port: 0 };
+			await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
+
+			// Act
+			const loadedConfig = await loadGatewayRuntimeServiceConfig(configPath);
+
+			// Assert
+			expect(loadedConfig.controlEndpoint.listen).toEqual({ host: '127.0.0.1', port: 0 });
+		} finally {
+			await rm(temporaryRoot, { force: true, recursive: true });
+		}
+	});
+
+	it('rejects an unassigned fixed control endpoint when loading executable input', async () => {
+		// Arrange
+		const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'gateway-runtime-config-port-'));
+		const configPath = path.join(temporaryRoot, 'runtime.json');
+		try {
+			const config = validServiceConfig(temporaryRoot);
+			config.controlEndpoint.listen = { host: '127.0.0.1', port: 18_791 };
 			await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
 
 			// Act / Assert

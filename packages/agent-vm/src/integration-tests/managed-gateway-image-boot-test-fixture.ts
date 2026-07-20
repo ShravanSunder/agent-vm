@@ -88,6 +88,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 			listen: { host: '127.0.0.1', port: 18_790 },
 		},
 		mcpConfigPath: `${managedGatewayBootInputGuestRoot}/mcp.config.json`,
+		observability: { kind: 'disabled' },
 		runtimeRoot: '/run/agent-vm/gateway-runtime',
 		schemaVersion: 1,
 		semanticSnapshot,

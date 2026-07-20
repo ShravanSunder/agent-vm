@@ -638,7 +638,7 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 			...toolRecord,
 			processIdentity: {
 				...toolRecord.processIdentity,
-				lstart: 'Thu Jan 01 00:00:00 1970',
+				command: `${toolRecord.processIdentity.command} --mismatched-record`,
 			},
 		});
 		await persistGatewayRuntime({ deployment, gatewayIdentity, gatewayVm });
@@ -659,7 +659,7 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 					exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
 				},
 			),
-		).rejects.toThrow(/process identity changed/u);
+		).rejects.toThrow(/command changed/u);
 
 		expect(isProcessAlive(toolPid)).toBe(true);
 		expect(isProcessAlive(gatewayPid)).toBe(true);

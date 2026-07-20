@@ -515,7 +515,7 @@ describeLiveVmE2e('live e2e: controller restart composed cleanup', () => {
 			...c1FirstToolRecord,
 			processIdentity: {
 				...c1FirstToolRecord.processIdentity,
-				lstart: 'Thu Jan 01 00:00:00 1970',
+				command: `${c1FirstToolRecord.processIdentity.command} --mismatched-record`,
 			},
 		});
 		await expect(
@@ -529,7 +529,7 @@ describeLiveVmE2e('live e2e: controller restart composed cleanup', () => {
 					exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
 				},
 			),
-		).rejects.toThrow(/process identity changed/u);
+		).rejects.toThrow(/command changed/u);
 		expect([c1GatewayPid, c1FirstToolPid, c1SecondToolPid].every(isProcessAlive)).toBe(true);
 		await expect(
 			loadManagedGatewayRuntimeRecord(

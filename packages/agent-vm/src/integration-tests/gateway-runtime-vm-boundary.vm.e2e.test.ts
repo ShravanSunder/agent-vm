@@ -157,17 +157,6 @@ assert.equal(runtimeRootStatus.mode & 0o777, 0o700);
 assert.equal(runtimeRootStatus.uid, processUserId);
 assert.equal(runtimeRootStatus.gid, processGroupId);
 
-const attachment = {
-	attachmentGeneration: 7,
-	clientKind: 'openclaw-managed-plugin',
-	configuredAgentIds: ['main', 'research'],
-	frameworkEpoch: 'framework-epoch-current',
-	gatewayEpoch: 'gateway-epoch-current',
-	protocolVersion: 1,
-	runtimeEpoch: 'runtime-epoch-current',
-	schemaVersion: 1,
-};
-
 const mcpConfigPath = path.join(runtimeRoot, 'mcp.config.json');
 const serviceConfigPath = path.join(runtimeRoot, 'service.json');
 const { publicKey: controllerVerifierPublicKey } = generateKeyPairSync('ed25519');
@@ -185,13 +174,35 @@ const toolPortalConfig = {
 	schemaVersion: 1,
 };
 const semanticSnapshot = gatewayControlContracts.deriveGatewayRuntimePortalSemanticSnapshot({
-	environmentScope: 'gateway:zone-vm:runtime-epoch-current',
-	frameworkKind: 'openclaw',
+	agentProjections: [
+		{
+			agentId: 'main',
+			frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+			toolPortalProfileId: 'main-profile',
+		},
+		{
+			agentId: 'research',
+			frameworkIdentity: { agentId: 'research', kind: 'openclaw' },
+			toolPortalProfileId: 'research-profile',
+		},
+	],
 	mcpConfig,
 	surfaceEligibilityByProfile: { 'main-profile': {}, 'research-profile': {} },
 	toolPortalConfig,
-	workspaceIdsByAgent: { main: 'workspace-main', research: 'workspace-research' },
 });
+const attachment = {
+	attachmentGeneration: 7,
+	clientKind: 'openclaw-managed-plugin',
+	configuredAgentIds: ['main', 'research'],
+	frameworkEpoch: 'framework-epoch-current',
+	gatewayEpoch: 'gateway-epoch-current',
+	projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
+	protocolVersion: 1,
+	runtimeEpoch: 'runtime-epoch-current',
+	schemaVersion: 1,
+};
+const mainProjection = semanticSnapshot.agentProjections.main;
+assert.ok(mainProjection, 'Gateway runtime VM proof is missing the main projection.');
 await writeFile(mcpConfigPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 await writeFile(serviceConfigPath, JSON.stringify({
 	artifactLimits: {
@@ -206,6 +217,7 @@ await writeFile(serviceConfigPath, JSON.stringify({
 		configuredAgentIds: attachment.configuredAgentIds,
 		frameworkEpoch: attachment.frameworkEpoch,
 		gatewayEpoch: attachment.gatewayEpoch,
+		projectionCohortDigest: attachment.projectionCohortDigest,
 		runtimeEpoch: attachment.runtimeEpoch,
 	},
 	controlEndpoint: {
@@ -228,6 +240,7 @@ await writeFile(serviceConfigPath, JSON.stringify({
 		listen: { host: '127.0.0.1', port: 18790 },
 	},
 	mcpConfigPath,
+	observability: { kind: 'disabled' },
 	runtimeRoot,
 	schemaVersion: 1,
 	semanticSnapshot,
@@ -321,13 +334,14 @@ try {
 		{ requests: [{ id: 'vm-list', limit: 20, namespaces: [] }] },
 		{
 			trustedContext: {
-				agentId: 'main',
-				authenticatedSubjectId: 'subject-vm',
-				environmentScope: 'gateway:vm',
-				frameworkKind: 'openclaw',
-				profileAssignmentRevision: 'main-assignment-vm',
-				sessionId: 'session-vm',
-				workspaceId: 'workspace-vm',
+				correlation: { sessionId: 'session-vm' },
+				principal: {
+					agentId: 'main',
+					frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+					profileAssignmentRevision: mainProjection.profileAssignmentRevision,
+					toolPortalProfileId: 'main-profile',
+				},
+				requester: { authenticatedSubjectId: 'subject-vm' },
 			},
 		},
 	);
